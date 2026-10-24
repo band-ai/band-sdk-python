@@ -37,15 +37,34 @@ and consequences differ.
   contents, secrets).
 
 **D — Test Quality**
-Test code gets every angle above, more strictly, plus:
-- Apply `band-python-test-conventions` "Coverage and realistic flows" to the
-  changed behavior and relevant existing tests, even when no test file changed.
-  Map scenarios to meaningful assertions, identify gaps, and name the concrete
-  regression each proposed test would catch. Check complete complex flows at
-  a boundary that preserves their real interactions; passing tests or high
-  line coverage alone are not sufficient evidence.
-- A skipped, disabled, or silently-ignored failing test is always a blocking
-  issue (`band-python-test-conventions`).
+Test code belongs here alone. Read the whole `band-python-test-conventions`
+skill, not only "Coverage is branches, not lines". Apply A–C more strictly
+than on production code (SSoT, intent-named helpers, no mixed-concern files,
+no magic wire strings). Each of the following is an `issue:`, not a nit:
+
+- Coverage of complementary branches, not line counts. Map each changed
+  `match`/`if`/timeout/OS decision to the test that proves each reachable
+  outcome. Proving fail-closed does not prove the success side; a
+  `skipif(os.name)` is a missing branch on the skipped OS. Name the
+  regression each proposed test would catch. Passing tests or high line
+  coverage alone are not evidence.
+- Assertions of plumbing or assumptions: occupancy arithmetic, private
+  fields, mock call counts, event-type tallies as a proxy, empty collections
+  the test does not own, or tautologies. The assertion must be a named
+  projection of the decision.
+- A test function that branches on scenario/kind (`if scenario != ...`) or
+  re-types a wire literal the peer or product already names. Parametrize
+  `(scenario, expected)` so each row *is* the claim.
+- The interaction under test is patched away (`unittest.mock.patch` of
+  private names, stdlib spawn, or timeout constants) instead of a public
+  seam or a real peer. `AsyncMock` of the unit under test is the same smell.
+- Wall-clock sleep or waiting out a grace period used as proof.
+  `asyncio.timeout` is a hung-test guard only; a public timeout of `0` is
+  "check now", and it still needs the complementary "finished before wait"
+  sequence.
+- A skipped, disabled, or silently-ignored failing test.
+- A Hypothesis model or kit file that looks like a collected test (a `Test*`
+  class, or a missing role docstring, in a non-`test_*.py` module).
 
 **E — Edge-Case Flow Analysis**
 Owns failures that need a *sequence* of state transitions or interactions. A

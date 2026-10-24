@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -50,14 +51,14 @@ async def assert_fresh_cycle_still_propagates_shutdown_cancel(
 def backlog_message(msg_id: str = "msg-bk") -> PlatformMessage:
     return PlatformMessage(
         id=msg_id,
-        room_id="room-123",
+        room_id=ROOM_ID,
         content="hi",
         sender_id="user-1",
         sender_type="User",
         sender_name="User One",
         message_type="text",
         metadata={},
-        created_at=None,
+        created_at=datetime.now(UTC),
     )
 
 

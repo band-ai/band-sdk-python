@@ -3,6 +3,7 @@
 Facts about the ACP integration that span modules or that the code cannot say for
 itself. The client side is `ACPClientAdapter` (Band room → room-owned ACP subprocess);
 the server side is `ACPServer` + `BandACPServerAdapter`.
+The native OMP adapter does not use ACP; see [OMP native RPC](#omp-native-rpc).
 
 Client-side automatic idle release is unavailable pending provider-specific
 safety qualification; see [idle room resource retention](idle-room-release.md).
@@ -157,13 +158,15 @@ assert slow.retention.transition_timeout_s == 120
   selection fails that turn only and reverts to the configured one; the room keeps
   its session, and when that refusal follows a reload, the room's process is
   recovered too, so the next turn reloads the session on a new process rather
-  than twice on the same one. Only a bootstrap resume candidate is closed when its configuration
-  is refused.
+  than twice on the same one. Only a bootstrap resume candidate is closed when
+  its configuration is refused.
 - **Closure is confirmed, not assumed.** The process handle stays on the room until
-  `__aexit__` succeeds and the agent's stdout reaches EOF, so a descendant that
-  inherited it keeps the room closing until it exits, with a warning naming the
-  agent's pid. A failed or cancelled exit leaves the room owned, and a retry kills
-  and waits for the same process. `cleanup_all()` and its alias `stop()` share one
+  `__aexit__` succeeds, its child is reaped and the agent's stdout reaches EOF.
+  A child left running by a successful context exit is killed and waited for;
+  a descendant that inherited stdout keeps the room closing until it exits, with
+  a warning naming the agent's pid. A failed or cancelled exit leaves the room
+  owned, and a retry kills and waits for the same process. `cleanup_all()` and
+  its alias `stop()` share one
   `transition_timeout_s` budget across the rooms and the shared Band MCP server,
   and keep that server open while any room is still held. A cancelled, failed or
   overdue server close stays owned and a retry joins it. A stop is final: later
@@ -176,12 +179,56 @@ assert slow.retention.transition_timeout_s == 120
   permission or extension requests carry no prompt id, so a call arriving after its
   turn is served with the room's current tools.
 
+## Per-room MCP servers
+
+`resolve_mcp_servers(workspace)`, a keyword-only constructor argument of
+`ACPClientAdapter`, `CopilotACPAdapter` and `CursorACPAdapter`, returns native
+`acp.schema` descriptors for that room's workspace.
+It runs once per session setup after the agent initializes. A reused live session
+keeps its servers; a restored session and its fresh-session fallback share one
+deep-copied snapshot. Recovery and a deliberate wake resolve anew on the new
+connection, as does a new session replacing a stale Band MCP endpoint.
+
+The result replaces `config.mcp_servers`, including when empty, except Band routing:
+a configured `band` entry and the injected Band server remain after the resolved
+external servers. Callback failure never falls back to configured external servers.
+
+- `McpServerStdio` is always accepted. `HttpMcpServer` and `SseMcpServer` require the
+  agent to explicitly advertise that transport in `initialize`. `AcpMcpServer` is
+  refused. Names must be unique and may not be `band`.
+- A refused descriptor fails the turn with `ACPMcpServerResolutionError`, naming
+  only its server and transport, never its URL, headers, command or environment.
+  Resolution failures recover the room's process through its retained owner; the
+  next turn resolves again on a fresh connection.
+- Queued turns share the room's initializer. One cancelled waiter leaves it for
+  another; the last waiter cancels it once without waiting for callback settlement.
+  The initializer's retained lease holds the process and workspace until it settles.
+  A callback that swallows cancellation or requests teardown cannot publish a session
+  or pass its late result to the agent.
+- An abandoned initializer's failure is observed even without a successor. Its
+  diagnostic names only the exception type; a successor waits for settlement
+  before resolving again and does not inherit the abandoned failure.
+- A callback requesting `on_cleanup`, `cleanup_all` or `stop` gets
+  `CleanupIncompleteError` rather than waiting on itself. The retained owner continues
+  teardown after the callback unwinds, preserving the process, workspace and Band
+  MCP server until closure is confirmed.
+- There is no resolver timeout: a callback that never returns holds that room's
+  setup, while other rooms continue independently.
+
 ## Session config
 
 `resolve_session_config` runs after each new or restored session and before its first
 prompt. Each successful `session/set_config_option` response replaces the catalog the next
 selection is validated against (choosing a model can change the reasoning levels). Any
 failure fails that room turn visibly instead of falling back.
+
+A configuration callback for an accepted prompt on an acquired process may request
+cleanup. It receives `CleanupIncompleteError` without cancelling its shared session
+setup or the accepted prompt currently waiting for it. That prompt may finish
+through native prompting beyond the cleanup grace; unrelated queued work is
+cancelled normally. Teardown retains resources until the accepted work finishes.
+Later work is refused. MCP resolution still cannot start a new session scope after
+cleanup. Explicit caller cancellation and provider timeouts remain effective.
 
 ## Backends
 
@@ -235,3 +282,142 @@ failure fails that room turn visibly instead of falling back.
   credential-redacted; values under credential-named fields are redacted in full.
 - The ACP Python client drains queued update handlers before surfacing a prompt error, so
   a slow client handler can still delay its own `prompt()`.
+
+## Native OMP transport
+
+`band.integrations.omprpc.OmpRpcClient` speaks OMP's native RPC v2 protocol,
+including structured ask questions and answers. It is separate from the ACP
+transport; adding it does not deprecate or remove the public `OmpACPAdapter`.
+
+Event callbacks run serially with a bounded backlog. Exhausting that backlog
+fails the owning prompt with `OmpProcessError` and starts cleanup rather than
+silently dropping events and reporting success. The wire reader does not wait
+for callback capacity, so callbacks can still issue correlated commands and
+answer native UI requests while delivery is held.
+
+An observed root-process exit also retires the transport when descendants still
+hold stdout open. Command errors, including an error reported after prompt
+admission, raise `OmpRpcError` without retiring an otherwise usable process.
+Host-tool and UI callbacks admitted while a settled turn drains share its
+original callback-exit deadline; an unfinished callback fails the turn and starts
+cleanup. SDK debug logs report stderr byte counts, never the child's raw stderr.
+
+Explicit MCP transports use `band.integrations.ompprocess.OmpMcpTransport`.
+Native session metadata uses `band.converters.omp.OmpMetadataKey.ROOM` and
+`OmpMetadataKey.SESSION`.
+
+A `create_process` factory customizes creation without bypassing containment.
+On Windows it launches the existing helper; the client still owns the Job
+containing the native process and its descendants, including during cancelled
+or incomplete startup.
+To hold or observe the owned launch, wrap `spawn_owned_process` and delegate to
+its bound original (or override it and call `super()`). Do not pass that wrapper
+as `create_process`: that factory runs below the ownership boundary. The owned
+method retains the process before returning, so wrapper failure still reaps it.
+
+On POSIX, process-group capture rechecks a reaped leader's identity after
+enumerating members, before retaining that group. A reused leader PID does not
+transfer custody to an unrelated session. Platforms without process-group support
+use their existing Job and environment-marker ownership instead of probing that
+PID as a group identity.
+
+## OMP native RPC
+
+`OmpAdapter`, `OmpAdapterConfig` and `OmpPermissionRequest` live in
+`band.adapters.omp` and are exported from `band.adapters`. Install `band-sdk[omp]`
+and an OMP executable at `band.integrations.ompprocess.OMP_NATIVE_PINNED_PACKAGE`
+or later (Bun 1.3.14 or later). The `omp` extra does not require the ACP runtime,
+and the adapter exists beside the ACP-bridged `OmpACPAdapter`; the CI backends lane
+installs one shared `omp` binary at the native pin for both. Native sessions
+negotiate RPC protocol v2 to preserve structured text/image tool results.
+
+- **Configuration.** Pass `OmpAdapterConfig` to the adapter. `model` selects
+  `provider/model`, and `reasoning_effort` selects the native thinking level,
+  including `"auto"`. Automatic effort stays automatic rather than being replaced
+  with the effective level chosen for one turn.
+  `api_key` requires `model` and reaches the child in that provider's environment
+  variable; OMP does not read an `OMP_MODEL` environment variable.
+  `workspace_for_room` and `resolve_permission` are constructor callables.
+  The native adapter has no ACP `resolve_session_config` callback.
+- **Tools and replies.** Canonical Band tools and `additional_tools` are
+  registered through native `set_host_tools`; results retain text/image content.
+  Room replies still require `band_send_message`, and deliberate declines use
+  `band_no_reply`. Native assistant text is optional thought telemetry, not a
+  room reply. `SimpleAdapter.run_judged_turn` remains the sole turn-judging owner:
+  native-only output and failed tools followed by narration still reach the
+  missing-reply verdict.
+- **Instructions and attribution.** A private always-apply native rule places Band's
+  shared communication and completion guidance in OMP's genuine system prompt,
+  preserving native instructions, user prompt additions and append-file discovery.
+  A startup command verifies the rule is present before inference, even without
+  external MCP servers. Disabling rules or using a system-prompt template that
+  omits them fails startup rather than silently dropping Band's connection policy.
+  The rule survives restored sessions and prompt rebuilds during background work.
+  Per-message platform context contains room, requester, roster and contact facts
+  as JSON. Replayed history is identified as previously handled data; it is not a
+  new participant handoff.
+- **Background settlement.** Prompt acceptance, an initial `prompt_result`, and
+  `agent_end` with async work remaining are not completion. The reader stays
+  attached through automatic background continuations and waits for both the
+  matching prompt outcome and actual native session settlement
+  (`session_settled` or `get_state.isSettled`). An error in a resumed assistant
+  message fails the same Band turn. `turn_timeout_s` covers the whole lifecycle.
+  Timeout, errors and cancellation run cleanup for that room's process; a
+  subsequent message starts a fresh native process rather than reusing the
+  failed one. Cancelling a prompt still waiting for admission does not
+  interrupt the active prompt.
+- **Process close.** A usable reader gets a best-effort abort request bounded to
+  one second, then stdin closes for EOF while output is drained. The root gets
+  one second to exit before forced cleanup, which still runs if the root has
+  already exited. POSIX cleanup kills the process group established at spawn
+  and discovers additional descendants through a per-launch inherited
+  environment marker. Signals validate captured process identities to avoid
+  killing unrelated processes. This discovery is best effort: a detached
+  descendant whose environment is replaced or hidden by the OS may remain
+  undiscovered and outlive close. It is not an OS containment guarantee or a
+  security sandbox. Windows establishes job membership before the command runs
+  and retains the job handle through cleanup. Successful close confirms root
+  exit and settlement of identified members, not a zero exit status or exit
+  of every possible POSIX descendant. Caller cancellation still waits for
+  shared cleanup, and cleanup failures propagate. A failed close retains the
+  room, startup files and exclusive workspace claim; cleanup or the next turn
+  retries that same close before releasing resources or starting a fresh process.
+  A model or reasoning selection accepted while close is blocked is kept for the
+  replacement process, whether cleanup is retried explicitly or by the next turn.
+- **Isolation and state.** Each room owns a native process, persistent session
+  and workspace. OMP receives the workspace via `--cwd`; the subprocess itself
+  starts without a supplied cwd. Session state carries `omp_session_id`,
+  `omp_session_file` and `omp_room_id`. A workspace is not an OS sandbox.
+- **External MCP servers.** `mcp_servers` is a name-to-`OmpMcpServer` map; import
+  that typed model from `band.integrations.ompprocess`. Stdio entries use
+  `command`, `args`, `env` and optional `cwd`; remote entries use `url`, `headers`
+  and optional `type` (`http` or `sse`). Relative stdio `cwd` resolves from the
+  room workspace; relative path-like commands resolve from that server cwd, or
+  the room workspace when cwd is omitted, before plugin projection. The adapter
+  writes an owner-only temporary `band-sdk/.mcp.json` plugin overlay and passes
+  it with `--plugin-dir`. The overlay stays alive until the child closes, then is
+  removed. User profiles and native credentials are not rewritten.
+  The SDK requires native connection receipts for every configured server before
+  inference. It uses the RPC UI event mode and a private startup setting to
+  enable those receipts without rewriting user settings. Missing or failed
+  receipts fail startup rather than allowing a model to answer without its
+  required tools. The enclosing turn timeout still bounds startup.
+- **Permissions.** `approval_mode="yolo"` bypasses native approval checks without
+  changing Band platform permissions. Otherwise `resolve_permission` receives
+  `OmpPermissionRequest(room_id, session_id, title, options)` and returns an
+  offered option or `None`. Unknown or unoffered choices cancel the request.
+  Without a resolver, only the exact native `("Approve", "Deny")` select is
+  approved. Unsupported interactive forms are cancelled; this is not approval
+  for arbitrary UI requests.
+  A cancelled select posts an independent `omp_permission` call/result pair only
+  with `Emit.TOOL_CALLS`. Offered selections stay silent; option labels do not
+  determine an SDK denial outcome. Permission narration records no turn effect
+  or chat reply. Permission titles and native events share full-registry privacy
+  redaction, including `mcp__` names and executed `xd://` device writes. Native
+  names and turn effects still use enabled capabilities plus contacts; withheld
+  device writes retain their path, other fields and string payload. Unparseable
+  arguments use a fixed placeholder. Synthetic IDs use `band-permission:`;
+  metadata retains the original `omp_request_id`. Native event IDs are never
+  changed or merged with permission records. If encoding a tool-call envelope
+  fails, the record keeps its event name and ID, scalar `path`/`file_path`/`target`
+  fields and an opaque arguments placeholder.

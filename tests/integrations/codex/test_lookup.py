@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from band.integrations.codex.stdio_client import CodexStdioClient
+from band.integrations.codex.winspawn import command_in_job
 from tests.integrations.codex.lookup import WindowsLookup, selected_executable
 
 
@@ -16,9 +16,7 @@ class TestWindowsExecutableLookup:
         self, windows_lookup: WindowsLookup
     ) -> None:
         peer = windows_lookup
-        command = CodexStdioClient(command=[str(peer.image)])._windows_command(
-            "test-job", 1
-        )
+        command = command_in_job([str(peer.image)], "test-job", 1)
         assert Path(command[0]).samefile(peer.image)
 
     @pytest.mark.parametrize(

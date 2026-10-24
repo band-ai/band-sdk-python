@@ -4,6 +4,7 @@ stops everything the launched process spawned."""
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import logging
 import os
 import shutil
@@ -19,13 +20,15 @@ import pytest
 import pytest_asyncio
 
 from band.integrations.codex import CodexStdioClient, stdio_client
-from band.integrations.codex.stdio_client import HELPER_PATH, kill_process_tree
 from band.integrations.codex.winspawn import (
+    HELPER_PATH,
     Job,
     JobNotDrained,
     SpawnFailure,
     _read_status,
     _start_and_wait,
+    command_in_job,
+    kill_process_tree,
 )
 from tests.integrations.codex.cleanup import cleanup_snapshot
 from tests.paths import ROOM_PEER
@@ -223,8 +226,7 @@ class TestSubprocessCleanup:
     async def test_close_reaps_a_worker_when_its_launcher_exits_on_stdin_eof(
         self, tmp_path: Path
     ) -> None:
-        """A launcher that exits on stdin EOF would otherwise leave its child
-        holding the workdir."""
+        """POSIX launchers observe stdin EOF; every platform reaps their worker."""
         workdir = tmp_path / "room"
         workdir.mkdir()
         client = CodexStdioClient(
@@ -237,7 +239,8 @@ class TestSubprocessCleanup:
             await asyncio.wait_for(wait_for_heartbeat(heartbeat), timeout=CLOSE_BOUND_S)
             await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
             await assert_heartbeat_stopped(heartbeat)
-            assert not (workdir / STDIN_EOF_MARKER).exists()
+            if sys.platform != "win32":
+                assert (workdir / STDIN_EOF_MARKER).exists()
             shutil.rmtree(workdir)
         finally:
             await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
@@ -311,27 +314,19 @@ class TestSubprocessCleanup:
     async def test_idle_wait_preserves_ownership_until_explicit_release(
         self, active: int | None, drained: bool
     ) -> None:
-        job = Job.__new__(Job)
-        job._handle = object()  # type: ignore[assignment]
-        job.name = "test"
-        closed = False
+        handle = ctypes.c_void_p(1)
+        job = Job(handle, "test")
 
         def active_processes() -> int | None:
             return active
 
-        def close() -> None:
-            nonlocal closed
-            closed = True
-            job._handle = None
-
         job.active_processes = active_processes  # type: ignore[method-assign]
-        job.close = close  # type: ignore[method-assign]
         if drained:
             await job.wait_until_idle(0)
         else:
             with pytest.raises(JobNotDrained):
                 await job.wait_until_idle(0)
-        assert not closed
+        assert job._handle is handle
 
     def test_windows_helper_does_not_import_a_room_package(
         self, tmp_path: Path
@@ -343,7 +338,7 @@ class TestSubprocessCleanup:
             command=[sys.executable, "-c", "pass"],
             cwd=str(workdir),
         )
-        argv = client._windows_command("job", 1)
+        argv = command_in_job(client.command, "job", 1)
         completed = subprocess.run(
             argv[:4],
             cwd=workdir,
@@ -379,11 +374,9 @@ class TestSubprocessCleanup:
             cwd=str(workdir),
         )
         with pytest.raises(FileNotFoundError):
-            client._windows_command("job", 1)
+            command_in_job(client.command, "job", 1)
         named = Path(sys.executable).name
-        resolved = CodexStdioClient(command=[named, "-c", "pass"])._windows_command(
-            "job", 1
-        )
+        resolved = command_in_job([named, "-c", "pass"], "job", 1)
         assert Path(resolved[resolved.index("--") + 1]).is_absolute()
 
     @pytest.mark.skipif(os.name == "nt", reason="session-group teardown is Unix")

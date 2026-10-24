@@ -7,7 +7,7 @@ from typing import Self
 
 from band.core.content import has_visible_content
 from band.core.protocols import AgentToolsProtocol, send_event_safe
-from band.core.types import Emit, MessageType
+from band.core.types import Emit, MessageType, PermissionEventKey
 from band.integrations.acp.types import (
     ACPToolCall,
     ACPToolResult,
@@ -148,11 +148,11 @@ class RoomTurnEmitter:
         if Emit.TOOL_CALLS not in self._emit:
             return
         metadata: dict[str, object] = {
-            "permission_request": True,
-            "tool_name": call.name,
-            "tool_call_id": call.tool_call_id,
+            PermissionEventKey.REQUEST: True,
+            PermissionEventKey.TOOL_NAME: call.name,
+            PermissionEventKey.TOOL_CALL_ID: call.tool_call_id,
             "acp_session_id": session_id,
-            "auto_allowed": False,
+            PermissionEventKey.AUTO_ALLOWED: False,
         }
         await self._tools.send_event(
             content=call.room_event().model_dump_json(),
@@ -167,7 +167,7 @@ class RoomTurnEmitter:
         await self._tools.send_event(
             content=result.room_event().model_dump_json(),
             message_type="tool_result",
-            metadata={**metadata, "permission_outcome": outcome},
+            metadata={**metadata, PermissionEventKey.OUTCOME: outcome},
         )
 
     async def __aenter__(self) -> Self:

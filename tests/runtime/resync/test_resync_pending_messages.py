@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from band.runtime.execution import ExecutionContext
-from tests.runtime.conftest import wait_for_condition
-from tests.runtime.resync.kit import make_platform_message
+from band.runtime.execution import ExecutionContext, ResyncOutcome
+from tests.runtime.resync.kit import ReconciledRoom, make_platform_message
 
 
 class TestResyncPendingMessages:
@@ -20,24 +19,16 @@ class TestResyncPendingMessages:
 
         mock_handler.assert_not_called()
 
-    async def test_processes_single_missed_message(self, mock_link, mock_handler):
+    async def test_processes_single_missed_message(
+        self, reconciled_room: ReconciledRoom
+    ) -> None:
         """/next returning one message then None should process that message."""
-        msg = make_platform_message(msg_id="missed-1", room_id="room-1")
-        # First call returns the missed message, second returns None
-        mock_link.get_next_message.side_effect = [msg, None]
+        ctx, peer, invoked = reconciled_room
+        peer.add_message("missed-1")
 
-        ctx = ExecutionContext("room-1", mock_link, mock_handler)
-        await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
-
-        # Reset state so _resync_pending_messages runs fresh
-        mock_link.get_next_message.side_effect = [msg, None]
-        await ctx._resync_pending_messages()
-
-        # Handler should have been called for the missed message
-        mock_handler.assert_called()
-
-        await ctx.stop()
+        assert await ctx._resync_pending_messages() is ResyncOutcome.WORK
+        assert invoked == ["missed-1"]
+        assert peer.marked("processed") == ["missed-1"]
 
     async def test_skips_duplicate_message(self, mock_link, mock_handler):
         """A message already recorded as completed should be skipped."""

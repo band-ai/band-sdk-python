@@ -38,6 +38,7 @@ from tests.e2e.baseline.toolkit.adapters import (
 )
 from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.omp_credentials import (
+    native_omp_command,
     omp_command,
     omp_model,
     omp_provider_api_key,
@@ -713,6 +714,42 @@ def _build_omp_acp(
         config_kwargs.pop("cwd")
     adapter = OmpACPAdapter(
         config=OmpACPAdapterConfig(**config_kwargs),
+        workspace_for_room=workspace_for_room,
+        additional_tools=_custom_tool_defs(tools),
+        **feature_kwargs(features),
+    )
+    _own_sandbox(adapter, sandbox)
+    return adapter
+
+
+@adapter(
+    Adapter.OMP,
+    requires=[Dep.OMP_NATIVE],
+    supports=_EVERY_CAPABILITY,
+    runs_tool_loop=False,
+)
+def _build_omp(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
+) -> SimpleAdapter[Any]:
+    from band.adapters.omp import (  # noqa: PLC0415 -- isolates the omp extra from other framework builders
+        OmpAdapter,
+        OmpAdapterConfig,
+    )
+
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-omp-")
+    adapter = OmpAdapter(
+        config=OmpAdapterConfig(
+            command=native_omp_command(s),
+            custom_section=prompt or "",
+            cwd=sandbox.name if workspace_for_room is None else None,
+            model=omp_model(s),
+            env=omp_acp_env(s, omp_agent_home_dir(sandbox.name)),
+        ),
         workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),

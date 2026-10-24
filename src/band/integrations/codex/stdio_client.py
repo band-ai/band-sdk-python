@@ -7,10 +7,7 @@ import json
 import logging
 import os
 import shutil
-import signal
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import suppress
-from pathlib import Path
 from typing import Any
 
 from band.core.exceptions import BandConnectionError
@@ -21,8 +18,7 @@ from band.integrations.codex.winspawn import (
     WindowsProcess,
     await_returncode,
     close_stdin,
-    find_executable,
-    process_image,
+    kill_process_tree,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,55 +26,10 @@ logger = logging.getLogger(__name__)
 # Long enough for the child watcher to record an exit, short enough that a
 # held stdio pipe cannot stall room cleanup.
 _EXIT_OBSERVE_S = 2.0
+# How long a closed stdin gets to end the whole Codex session before it is killed.
+_SESSION_EXIT_S = 1.0
+_SESSION_POLL_S = 0.02
 _STDOUT_LIMIT = 16 * 1024 * 1024
-HELPER_PATH = Path(__file__).resolve().with_name("winmain.py")
-
-
-def _absolute_command(command: Sequence[str]) -> tuple[str, ...]:
-    """Resolve the executable in this process, not in the room directory.
-
-    The helper's current directory is the room. ``CreateProcessW`` searches
-    that directory when the application name is relative, so a room-local
-    binary would run in place of the one this process would have started.
-    """
-    head, *rest = command
-    if Path(head).is_absolute():
-        return (head, *rest)
-    if os.name == "nt" and not os.path.dirname(head):
-        found = find_executable(head)
-    else:
-        found = shutil.which(head)
-        if found is None and Path(head).exists():
-            found = str(Path(head).resolve())
-    if found is None:
-        raise FileNotFoundError(head)
-    return (str(Path(found).resolve()), *rest)
-
-
-def _session_pid_reused(process: asyncio.subprocess.Process) -> bool:
-    """True when ``process.pid`` now names some other live process.
-
-    After the leader is reaped, its session id stays reserved only while a
-    member of that session still exists. Once the id is free it can be given
-    to a new session, and ``killpg`` would signal that session.
-    """
-    if process.returncode is None:
-        return False
-    try:
-        os.kill(process.pid, 0)
-    except ProcessLookupError:
-        return False
-    except OSError:
-        logger.warning(
-            "Codex process %s pid is not signalable; leaving its session",
-            process.pid,
-        )
-        return True
-    logger.warning(
-        "Codex process %s pid was reused; not signaling that session",
-        process.pid,
-    )
-    return True
 
 
 def _missing_cli_message(binary: str) -> str:
@@ -98,18 +49,28 @@ async def _wait_readers(readers: Sequence[asyncio.Task[None]]) -> None:
         logger.warning("Codex stdio readers still pending after tree kill")
 
 
-async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
-    """Force-stop a Unix process and everything in its session.
+async def _await_session_exit(
+    process: asyncio.subprocess.Process, timeout: float
+) -> bool:
+    """True once the child and every other process in its session are gone.
 
-    The codex launcher is a shim whose real CLI is its child. On Unix the
-    child leads a session, so ``killpg`` still reaches that group after the
-    leader has exited.
+    The session id stays reserved while any member lives, so probing the
+    group is exact; the launcher alone exiting is not enough, since its
+    real CLI child would keep the room's working directory.
     """
-    if os.name != "nt":
-        if not _session_pid_reused(process):
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-        return
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            pass
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(_SESSION_POLL_S, remaining))
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -177,8 +138,8 @@ class CodexStdioClient(BaseJsonRpcClient):
                 raise BandConnectionError("Codex process is already starting")
             self._windows_process = owner = WindowsProcess()
             try:
-                return await owner.start(
-                    self._windows_command,
+                return await owner.start_command(
+                    self.command,
                     cwd=self.cwd,
                     env=self.env,
                     limit=_STDOUT_LIMIT,
@@ -197,18 +158,6 @@ class CodexStdioClient(BaseJsonRpcClient):
             start_new_session=True,
             limit=_STDOUT_LIMIT,
         )
-
-    def _windows_command(self, job_name: str, status_handle: int) -> list[str]:
-        return [
-            str(process_image()),
-            "-I",
-            "-S",
-            str(HELPER_PATH),
-            job_name,
-            str(status_handle),
-            "--",
-            *_absolute_command(self.command),
-        ]
 
     def _spawn_connection_error(self, failure: SpawnFailure) -> BandConnectionError:
         if failure.winerror in MISSING_EXECUTABLE:
@@ -258,8 +207,11 @@ class CodexStdioClient(BaseJsonRpcClient):
                 await self._windows_process.close(_EXIT_OBSERVE_S)
                 self._windows_process = None
             elif (process := self._proc) is not None:
-                await kill_process_tree(process)
+                # Codex and its launcher exit on their own once stdin closes; the
+                # tree kill is the fallback for a session that does not.
                 await close_stdin(process)
+                if not await _await_session_exit(process, _SESSION_EXIT_S):
+                    await kill_process_tree(process)
                 if not await await_returncode(process, _EXIT_OBSERVE_S):
                     logger.warning(
                         "Codex process %s still alive after tree kill", process.pid

@@ -226,11 +226,16 @@ class RoomApprovals:
         )
         self._ports.release_turn_wait()
 
+    def recognizes_reply(self, content: str) -> bool:
+        """Recognize a reply without claiming an ask or posting."""
+        return route_reply(self._asks, content) is not None
+
     async def try_handle_reply(self, content: str, sender_id: str | None) -> bool:
         """Consume a room message iff it answers the pending ask.
 
         Returns True when the message was a permission/question reply (the
-        adapter must then NOT forward it to OpenCode as a prompt).
+        adapter must then NOT forward it to OpenCode as a prompt). Recheck
+        pending state here: earlier recognition reserves no ask.
         """
         # Mention the sender of THIS control message, not the turn mentions --
         # those belong to whichever turn is currently open (_begin_turn), which
