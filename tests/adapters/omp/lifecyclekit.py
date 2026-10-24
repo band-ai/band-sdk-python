@@ -44,6 +44,18 @@ class HeldCloseRuntime(RecordingRuntime):
         await super().close()
 
 
+class SignallingCloseRuntime(RecordingRuntime):
+    """Wake an independent caller at the physical-close boundary."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.physical_close = asyncio.Event()
+
+    async def close(self) -> None:
+        await super().close()
+        self.physical_close.set()
+
+
 class ObservedRoomGate(RoomGate):
     """Report entry attempts while preserving production callback reentry."""
 

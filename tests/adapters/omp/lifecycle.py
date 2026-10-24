@@ -1,3 +1,5 @@
+"""Model native OMP lifecycle sequences for the collected lifecycle test."""
+
 from __future__ import annotations
 
 import asyncio

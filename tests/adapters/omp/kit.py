@@ -934,12 +934,15 @@ class BandMcpReplyRuntime(PendingRuntime):
         args = {"content": "done"}
         await on_event(
             OmpEvent(
-                type="tool_execution_start", toolCallId="c1", toolName=name, args=args
+                type=OmpEventType.TOOL_START, toolCallId="c1", toolName=name, args=args
             )
         )
         await on_event(
             OmpEvent(
-                type="tool_execution_end", toolCallId="c1", toolName=name, isError=False
+                type=OmpEventType.TOOL_END,
+                toolCallId="c1",
+                toolName=name,
+                isError=False,
             )
         )
 

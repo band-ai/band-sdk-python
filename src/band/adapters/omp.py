@@ -522,6 +522,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             servers = {BAND_MCP_SERVER_NAME: protected, **servers}
         return MappingProxyType(servers)
 
+    def _room_gate(self, room_id: str) -> RoomGate:
+        return self._locks.setdefault(room_id, RoomGate())
+
     def _room(self, room_id: str) -> OmpRoom:
         room = self._rooms.get(room_id)
         if room is None:
@@ -691,7 +694,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         self, selection: ModelSelection, *, room_id: str
     ) -> None:
         async with (
-            self._locks.setdefault(room_id, RoomGate()),
+            self._room_gate(room_id),
             self._selection_locks.setdefault(room_id, asyncio.Lock()),
         ):
             room = self._rooms.get(room_id)
@@ -802,8 +805,6 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        # Deliver pending caller cancellation before enrolling a fresh operation.
-        await asyncio.sleep(0)
         room = self._rooms.get(room_id)
         if room is not None and room.retained.closing:
             attempt = room.disposal
@@ -847,7 +848,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         is_session_bootstrap: bool,
     ) -> None:
         room_id = room.room_id
-        async with self._locks.setdefault(room_id, RoomGate()):
+        async with self._room_gate(room_id):
             if room.retained.closing:
                 raise asyncio.CancelledError
             task = asyncio.current_task()
@@ -1296,7 +1297,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             room.clear_selection = False
 
     async def _release_room(self, room: OmpRoom, cause: ReleaseCause) -> ReleaseOutcome:
-        async with self._locks.setdefault(room.room_id, RoomGate()):
+        async with self._room_gate(room.room_id):
             room.retiring = True
             try:
                 if room.runtime is not None:
@@ -1310,7 +1311,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         return ReleaseOutcome.RELEASED
 
     async def _dispose_room(self, room: OmpRoom) -> None:
-        async with self._locks.setdefault(room.room_id, RoomGate()):
+        async with self._room_gate(room.room_id):
             self._finalize_selection(room)
             room.servers = {}
             self._workspaces.release(room.room_id)

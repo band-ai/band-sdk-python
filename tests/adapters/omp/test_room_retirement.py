@@ -10,6 +10,7 @@ from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.omp.kit import (
     Launches,
     PendingRuntime,
+    RecordingRuntime,
     SettlingResolver,
     SignallingLock,
     failing_runtime,
@@ -21,11 +22,39 @@ from tests.adapters.omp.kit import (
     start_blocked_turn,
     start_cleanup,
 )
+from tests.adapters.omp.lifecyclekit import SignallingCloseRuntime
 
 __all__ = ["launches"]
 
 
 class TestRoomRetirement:
+    @pytest.mark.asyncio
+    async def test_input_entering_at_physical_close_cannot_reopen_the_room(
+        self, launches: Launches, tmp_path: Path
+    ) -> None:
+        runtime = SignallingCloseRuntime()
+        launches.runtime_factory = lambda: runtime
+        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        await run_turn(adapter, FakeAgentTools())
+
+        async def arrive_at_close() -> None:
+            await runtime.physical_close.wait()
+            with pytest.raises(asyncio.CancelledError):
+                await run_turn(adapter, FakeAgentTools())
+
+        arrival = asyncio.create_task(arrive_at_close())
+        try:
+            await adapter.on_cleanup("room-123")
+            await arrival
+            assert runtime.closed and len(launches.runtimes) == 1
+            launches.runtime_factory = RecordingRuntime
+            await run_turn(adapter, FakeAgentTools())
+            assert len(launches.runtimes) == 2
+        finally:
+            arrival.cancel()
+            await asyncio.gather(arrival, return_exceptions=True)
+            await adapter.cleanup_all()
+
     @pytest.mark.asyncio
     async def test_cleanup_settles_a_turn_queued_behind_a_blocked_resolution(
         self, launches: Launches, tmp_path: Path
