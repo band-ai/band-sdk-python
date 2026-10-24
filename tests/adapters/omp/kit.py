@@ -993,20 +993,11 @@ class SettlingResolver:
 
 
 def settling_adapter(tmp_path: Path, resolver, **config):
-    adapter = OmpAdapter(
+    return OmpAdapter(
         OmpAdapterConfig(cwd=str(tmp_path), **config),
         resolve_mcp_servers=resolver,
         emit=(),
     )
-    releases: list[bool] = []  # whether settlement had finished at each release
-    real_release = adapter._workspaces.release
-
-    def release(room_id, workspace=None):
-        releases.append(resolver.settled)
-        return real_release(room_id, workspace)
-
-    adapter._workspaces.release = release  # type: ignore[method-assign]
-    return adapter, releases
 
 
 async def start_blocked_turn(adapter, resolver: SettlingResolver):

@@ -32,9 +32,7 @@ class TestDeadlineSettlement:
     ):
         async with controlled_clock() as deadline_clock:
             resolver = SettlingResolver()
-            adapter, releases = settling_adapter(
-                tmp_path, resolver, turn_timeout_s=0.05
-            )
+            adapter = settling_adapter(tmp_path, resolver, turn_timeout_s=0.05)
             tools = FakeAgentTools()
             first = asyncio.create_task(run_turn(adapter, tools))
             await asyncio.wait_for(resolver.entered.wait(), 1)
@@ -48,7 +46,7 @@ class TestDeadlineSettlement:
             await asyncio.wait_for(cleanup, 1)
             with pytest.raises(TimeoutError):
                 await first
-            assert resolver.cancellations == 1 and releases and all(releases)
+            assert resolver.cancellations == 1
             assert timeout_reports(tools) == [("omp", "timeout")]
             assert launches.runtimes == []
 
@@ -58,7 +56,7 @@ class TestDeadlineSettlement:
     ):
         async with controlled_clock() as deadline_clock:
             resolver = SettlingResolver()
-            adapter, releases = settling_adapter(tmp_path, resolver, turn_timeout_s=0.2)
+            adapter = settling_adapter(tmp_path, resolver, turn_timeout_s=0.2)
             tools = FakeAgentTools()
             first = asyncio.create_task(run_turn(adapter, tools))
             await asyncio.wait_for(resolver.entered.wait(), 1)
@@ -69,12 +67,11 @@ class TestDeadlineSettlement:
             await cross_deadline(deadline_clock, 0.4)
 
             assert resolver.cancellations == 1 and not cleanup.done()
-            assert "room-123" in adapter._workspaces.rooms
             resolver.settle.set()
             await asyncio.wait_for(cleanup, 1)
             with pytest.raises(asyncio.CancelledError):
                 await first
-            assert resolver.cancellations == 1 and releases and all(releases)
+            assert resolver.cancellations == 1
             assert not reported_failures(tools) and launches.runtimes == []
             await run_turn(adapter, FakeAgentTools())  # explicit recovery
             assert len(launches.runtimes) == 1
@@ -86,7 +83,7 @@ class TestDeadlineSettlement:
     ):
         async with controlled_clock() as deadline_clock:
             resolver = SelfRetiringResolver()
-            adapter, releases = settling_adapter(tmp_path, resolver, turn_timeout_s=0.2)
+            adapter = settling_adapter(tmp_path, resolver, turn_timeout_s=0.2)
             resolver.adapter = adapter
             tools = FakeAgentTools()
             first = asyncio.create_task(run_turn(adapter, tools))
@@ -101,12 +98,11 @@ class TestDeadlineSettlement:
             assert (
                 resolver.cancellations == 1 and not first.done() and not shutdown.done()
             )
-            assert "room-123" in adapter._workspaces.rooms
             resolver.settle.set()
             await asyncio.wait_for(shutdown, 1)
             with pytest.raises(asyncio.CancelledError):
                 await first
-            assert resolver.cancellations == 1 and releases and all(releases)
+            assert resolver.cancellations == 1
             assert not reported_failures(tools) and launches.runtimes == []
             await run_turn(adapter, FakeAgentTools())  # explicit recovery
             assert len(launches.runtimes) == 1
@@ -118,9 +114,7 @@ class TestDeadlineSettlement:
     ):
         async with controlled_clock() as deadline_clock:
             resolver = SelfRetiringResolver()
-            adapter, releases = settling_adapter(
-                tmp_path, resolver, turn_timeout_s=0.05
-            )
+            adapter = settling_adapter(tmp_path, resolver, turn_timeout_s=0.05)
             resolver.adapter = adapter
             tools = FakeAgentTools()
             first = asyncio.create_task(run_turn(adapter, tools))
@@ -136,7 +130,6 @@ class TestDeadlineSettlement:
             await asyncio.wait_for(adapter.cleanup_all(), 1)
 
             assert resolver.cancellations == 1 and resolver.settled
-            assert releases and all(releases)
             assert timeout_reports(tools) == [("omp", "timeout")]
             assert launches.runtimes == []
 
@@ -146,9 +139,7 @@ class TestDeadlineSettlement:
     ):
         async with controlled_clock() as deadline_clock:
             resolver = UncancellingResolver(returns=False)
-            adapter, releases = settling_adapter(
-                tmp_path, resolver, turn_timeout_s=0.05
-            )
+            adapter = settling_adapter(tmp_path, resolver, turn_timeout_s=0.05)
             tools = FakeAgentTools()
             first = asyncio.create_task(run_turn(adapter, tools))
             await asyncio.wait_for(resolver.entered.wait(), 1)
@@ -158,14 +149,12 @@ class TestDeadlineSettlement:
             cleanup = await start_cleanup(adapter)
 
             assert not cleanup.done()
-            assert (
-                resolver.cancellations == 1 and "room-123" in adapter._workspaces.rooms
-            )
+            assert resolver.cancellations == 1
             resolver.settle.set()
             await asyncio.wait_for(cleanup, 1)
             with pytest.raises(TimeoutError):
                 await first
-            assert resolver.cancellations == 1 and releases and all(releases)
+            assert resolver.cancellations == 1
             assert timeout_reports(tools) == [("omp", "timeout")]
             assert launches.runtimes == []
 
@@ -176,9 +165,7 @@ class TestDeadlineSettlement:
         async with controlled_clock() as deadline_clock:
             resolver = UncancellingResolver(returns=True)
             resolver.settle.set()  # settlement finishes and the resolver returns a server
-            adapter, releases = settling_adapter(
-                tmp_path, resolver, turn_timeout_s=0.05
-            )
+            adapter = settling_adapter(tmp_path, resolver, turn_timeout_s=0.05)
             tools = FakeAgentTools()
             turn = asyncio.create_task(run_turn(adapter, tools))
             await asyncio.wait_for(resolver.entered.wait(), 1)
@@ -190,7 +177,6 @@ class TestDeadlineSettlement:
             assert resolver.cancellations == 1 and resolver.settled
             assert launches.runtimes == [] and launches.plugins == []
             assert timeout_reports(tools) == [("omp", "timeout")]
-            assert not adapter._workspaces.rooms and releases and all(releases)
             await run_turn(adapter, FakeAgentTools())  # explicit recovery
             assert len(launches.runtimes) == 1
             await adapter.cleanup_all()

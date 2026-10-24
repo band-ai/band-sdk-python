@@ -18,6 +18,7 @@ from band.integrations.ompprocess import (
     omp_mcp_ready,
 )
 from band.integrations.ompwire import OmpCommandName
+from band.runtime.tools import BAND_MCP_SERVER_NAME
 from band.testing import FakeAgentTools, failure_reports
 from tests.adapters.omp.kit import (
     BandMcpReplyRuntime,
@@ -307,7 +308,9 @@ class TestMcpResolution:
     ):
         adapter = OmpAdapter(
             OmpAdapterConfig(cwd=str(tmp_path)),
-            resolve_mcp_servers=AsyncMock(return_value={"band": remote("x")}),
+            resolve_mcp_servers=AsyncMock(
+                return_value={BAND_MCP_SERVER_NAME: remote("x")}
+            ),
             emit=(),
         )
         tools = FakeAgentTools()
@@ -377,7 +380,7 @@ class TestMcpResolution:
             OmpAdapterConfig(
                 cwd=str(tmp_path),
                 inject_band_tools=False,
-                mcp_servers={"band": band, "stale": remote("old")},
+                mcp_servers={BAND_MCP_SERVER_NAME: band, "stale": remote("old")},
             ),
             resolve_mcp_servers=AsyncMock(return_value=external),
             emit=(),
@@ -386,12 +389,15 @@ class TestMcpResolution:
 
         await run_turn(adapter, tools)
 
-        expected = {"band", *external}
+        expected = {BAND_MCP_SERVER_NAME, *external}
         (overlay,) = overlays
         assert (
             set(overlay["mcpServers"]) == expected
         )  # the cached external entry is gone
-        assert overlay["mcpServers"]["band"]["url"] == "http://127.0.0.1:9/band"
+        assert (
+            overlay["mcpServers"][BAND_MCP_SERVER_NAME]["url"]
+            == "http://127.0.0.1:9/band"
+        )
         assert set(ready.await_args.args[2]) == expected
         assert (
             tools.turn.replied

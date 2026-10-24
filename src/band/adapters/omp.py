@@ -698,7 +698,12 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             self._selection_locks.setdefault(room_id, asyncio.Lock()),
         ):
             room = self._rooms.get(room_id)
-            if room is not None and room.runtime is not None and not room.retiring:
+            if (
+                room is not None
+                and room.runtime is not None
+                and not room.retained.closing
+                and not room.retiring
+            ):
                 await self._select_model(room, selection)
             self._room_selections[room_id] = _selection_after(
                 self._room_selections.get(room_id, self.model_selection),

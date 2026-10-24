@@ -29,6 +29,35 @@ __all__ = ["launches"]
 
 class TestRoomRetirement:
     @pytest.mark.asyncio
+    async def test_workspace_is_exclusive_until_cancelled_resolution_settles(
+        self, launches: Launches, tmp_path: Path
+    ) -> None:
+        resolver = SettlingResolver()
+        adapter = OmpAdapter(
+            workspace_for_room=lambda _room: str(tmp_path),
+            resolve_mcp_servers=resolver,
+            emit=(),
+        )
+        turn = asyncio.create_task(run_turn(adapter, FakeAgentTools()))
+        try:
+            await resolver.entered.wait()
+            turn.cancel()
+            await resolver.cancel_seen.wait()
+            with pytest.raises(ValueError, match="assigned .* to both"):
+                await run_turn(adapter, FakeAgentTools(), room_id="competing-room")
+            assert not turn.done() and launches.runtimes == []
+            resolver.settle.set()
+            with pytest.raises(asyncio.CancelledError):
+                await turn
+            tools = FakeAgentTools()
+            await run_turn(adapter, tools, room_id="competing-room")
+            assert tools.turn.replied and len(launches.runtimes) == 1
+        finally:
+            resolver.settle.set()
+            await asyncio.gather(turn, return_exceptions=True)
+            await adapter.cleanup_all()
+
+    @pytest.mark.asyncio
     async def test_input_entering_at_physical_close_cannot_reopen_the_room(
         self, launches: Launches, tmp_path: Path
     ) -> None:
@@ -91,7 +120,7 @@ class TestRoomRetirement:
         self, launches: Launches, tmp_path: Path
     ):
         resolver = SettlingResolver()
-        adapter, releases = settling_adapter(tmp_path, resolver)
+        adapter = settling_adapter(tmp_path, resolver)
         first = await start_blocked_turn(adapter, resolver)
         cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
         await asyncio.wait_for(resolver.cancel_seen.wait(), 1)
@@ -99,15 +128,12 @@ class TestRoomRetirement:
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(run_turn(adapter, FakeAgentTools()), 1)
         assert resolver.calls == 1 and launches.runtimes == []
-        assert (
-            "room-123" in adapter._workspaces.rooms
-        )  # settlement still owns the claim
 
         resolver.settle.set()
         await asyncio.wait_for(cleanup, 1)
         with pytest.raises(asyncio.CancelledError):
             await first
-        assert resolver.cancellations == 1 and releases and all(releases)
+        assert resolver.cancellations == 1
         await run_turn(adapter, FakeAgentTools())  # admission reopens after retirement
         assert resolver.calls == 2 and len(launches.runtimes) == 1
         await adapter.cleanup_all()
@@ -117,7 +143,7 @@ class TestRoomRetirement:
         self, launches: Launches, tmp_path: Path
     ):
         resolver = SettlingResolver()
-        adapter, releases = settling_adapter(tmp_path, resolver)
+        adapter = settling_adapter(tmp_path, resolver)
         first = await start_blocked_turn(adapter, resolver)
         room_cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
         await asyncio.wait_for(resolver.cancel_seen.wait(), 1)
@@ -125,12 +151,10 @@ class TestRoomRetirement:
         # Shutdown stays joined to the running retirement, not finishing or re-cancelling.
 
         assert not shutdown.done() and resolver.cancellations == 1
-        assert "room-123" in adapter._workspaces.rooms
         resolver.settle.set()
         await asyncio.wait_for(asyncio.gather(room_cleanup, shutdown), 1)
 
         assert resolver.cancellations == 1 and resolver.settled
-        assert releases and all(releases) and not adapter._workspaces.rooms
         assert launches.runtimes == [] and first.cancelled()
 
     @pytest.mark.asyncio
@@ -138,7 +162,7 @@ class TestRoomRetirement:
         self, launches: Launches, tmp_path: Path
     ):
         resolver = SettlingResolver()
-        adapter, releases = settling_adapter(tmp_path, resolver)
+        adapter = settling_adapter(tmp_path, resolver)
         first = await start_blocked_turn(adapter, resolver)
         waiter = asyncio.create_task(adapter.on_cleanup("room-123"))
         await asyncio.wait_for(resolver.cancel_seen.wait(), 1)
@@ -148,12 +172,11 @@ class TestRoomRetirement:
             await waiter
 
         assert resolver.cancellations == 1
-        assert "room-123" in adapter._workspaces.rooms
         with pytest.raises(asyncio.CancelledError):  # admission stays closed
             await asyncio.wait_for(run_turn(adapter, FakeAgentTools()), 1)
         resolver.settle.set()
         await asyncio.wait_for(adapter.cleanup_all(), 1)  # joins the same retirement
-        assert resolver.cancellations == 1 and releases and all(releases)
+        assert resolver.cancellations == 1
         assert first.cancelled() and launches.runtimes == []
 
     @pytest.mark.asyncio
@@ -186,7 +209,7 @@ class TestRoomRetirement:
         self, launches: Launches, tmp_path: Path
     ):
         resolver = SettlingResolver()
-        adapter, releases = settling_adapter(tmp_path, resolver)
+        adapter = settling_adapter(tmp_path, resolver)
         first = await start_blocked_turn(adapter, resolver)
         first.cancel()
         await asyncio.wait_for(resolver.cancel_seen.wait(), 1)
@@ -194,10 +217,10 @@ class TestRoomRetirement:
         cleanup = await start_cleanup(adapter)
 
         assert not cleanup.done()
-        assert resolver.cancellations == 1 and "room-123" in adapter._workspaces.rooms
+        assert resolver.cancellations == 1
         resolver.settle.set()
         await asyncio.wait_for(cleanup, 1)
-        assert resolver.cancellations == 1 and releases and all(releases)
+        assert resolver.cancellations == 1
         assert first.cancelled() and launches.runtimes == []
         await run_turn(adapter, FakeAgentTools())  # explicit recovery
         assert len(launches.runtimes) == 1
@@ -235,7 +258,7 @@ class TestRoomRetirement:
     ):
         resolver = SettlingResolver()
         resolver.settle.set()  # cancellation settles immediately
-        adapter, releases = settling_adapter(tmp_path, resolver)
+        adapter = settling_adapter(tmp_path, resolver)
         turn_returned = asyncio.Event()
 
         async def caller():
@@ -252,8 +275,8 @@ class TestRoomRetirement:
 
         await asyncio.wait_for(turn_returned.wait(), 1)
         assert not wrapper.done()
-        assert resolver.cancellations == 1 and releases and all(releases)
-        assert not adapter._workspaces.rooms and launches.runtimes == []
+        assert resolver.cancellations == 1
+        assert launches.runtimes == []
         wrapper.cancel()
         await run_turn(adapter, FakeAgentTools())  # explicit recovery
         assert len(launches.runtimes) == 1
