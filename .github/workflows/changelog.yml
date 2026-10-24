@@ -1,0 +1,128 @@
+# Changelogs every published band-sdk release with the changelog agent: a
+# Claude Agent SDK session running the `changelog-generator:generate` skill
+# from band-ai/private-agent-skills. It opens a changelog PR on the Fern docs
+# repo for a person to merge, posts the Slack and Discord announcements, and
+# records a Linear Release when LINEAR_API_KEY is set. A failed run alerts
+# Slack.
+#
+# Triggered by a successful band-publish run, so a release is announced only
+# once it is installable from PyPI. workflow_dispatch reruns any published tag
+# (band-publish runs dispatched for recovery carry no tag, so they never chain).
+#
+# The model runs on its own key, CHANGELOG_ANTHROPIC_API_KEY.
+#
+# Needs the GitHub App installed on thenvoi/fern (changelog PR) and on
+# band-ai/private-agent-skills (plugin clone). The thenvoi-scoped token also
+# reads this public repo's releases and PRs.
+
+name: changelog
+
+on:
+  workflow_run:
+    workflows: [band-publish]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published band-sdk release tag to changelog (e.g. band-sdk-v4.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changelog-${{ inputs.tag || github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  changelog:
+    # band-publish also runs (its jobs skipped) for band-mcp-v* and prerelease
+    # events; only a published band-sdk release proceeds.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'release' &&
+       startsWith(github.event.workflow_run.head_branch, 'band-sdk-v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+    steps:
+      # The default branch, not the tag: the agent reads the release range from
+      # git history and the config from .band/changelog.yml, and older tags
+      # predate this workflow's script.
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate GitHub App token (Fern docs repo)
+        id: fern-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: thenvoi
+          repositories: fern
+
+      - name: Generate GitHub App token (private skills)
+        id: skills-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: band-ai
+          repositories: private-agent-skills
+
+      # Outside the workspace, so the agent's clone of this repo stays clean.
+      - name: Fetch the changelog-generator plugin
+        env:
+          GH_TOKEN: ${{ steps.skills-token.outputs.token }}
+        run: gh repo clone band-ai/private-agent-skills "$RUNNER_TEMP/private-agent-skills" -- --depth 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '20'
+
+      # The skill gates the Fern PR on `fern check`.
+      - name: Install the Fern CLI
+        run: npm install -g fern-api
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Install dependencies
+        run: uv sync --extra claude_sdk
+
+      - name: Configure the git identity for the changelog commit
+        run: |
+          git config --global user.name "band-release-bot"
+          git config --global user.email "release-bot@band.ai"
+
+      - name: Run the changelog agent
+        env:
+          PYTHONPATH: .
+          ANTHROPIC_API_KEY: ${{ secrets.CHANGELOG_ANTHROPIC_API_KEY }}
+          CHANGELOG_PLUGIN_DIR: ${{ runner.temp }}/private-agent-skills/changelog-generator
+          # Read by the skill inside the agent's Claude CLI session.
+          GH_TOKEN: ${{ steps.fern-token.outputs.token }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: uv run python .github/scripts/changelog-agent.py "$TAG"
+
+      - name: Alert Slack on failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "::warning::SLACK_WEBHOOK_URL is not set; no failure alert sent"
+            exit 0
+          fi
+          jq -n --arg text ":rotating_light: The changelog agent failed for ${TAG}; the run log shows which steps completed: ${RUN_URL}" '{text: $text}' |
+            curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
