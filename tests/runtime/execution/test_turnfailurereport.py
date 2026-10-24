@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from band_sdk_core import AgentFailure
 
+from band.client.streaming import DeliveryStatus
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TURN_FAILURE_PROVIDER,
@@ -26,8 +29,20 @@ from band.runtime.tools import AgentTools
 from tests.conftest import (
     make_message_event,
 )
-from tests.runtime.executioninterrupt.kit import auxiliary_context
-from tests.runtime.helpers import LifecyclePlatform, rest_client_over
+from tests.platform.settlement.kit import link_over
+from tests.runtime.execution.kit import (
+    FinalAttemptFailure,
+    HydratedTurns,
+    backlog_source,
+    websocket_source,
+)
+from tests.runtime.helpers import (
+    AGENT_ID,
+    ROOM_ID,
+    LifecyclePlatform,
+    page,
+    rest_client_over,
+)
 from tests.runtime.scheduler.driver import attempt_delivery
 
 
@@ -122,19 +137,8 @@ class TestTurnFailureReport:
     ) -> None:
         """A failure the message will be retried from is not final; only the
         last attempt in the retry budget reports, exactly once."""
-        final_started = asyncio.Event()
-        finish_final = asyncio.Event()
-        attempts = 0
-
-        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
-            nonlocal attempts
-            attempts += 1
-            if attempts == 2:
-                final_started.set()
-                await finish_final.wait()
-            raise RuntimeError("provider down")
-
-        ctx = self._context(mock_link, handler, max_message_retries=2)
+        handler = FinalAttemptFailure(budget=2)
+        ctx = self._context(mock_link, handler, max_message_retries=handler.budget)
         event = make_message_event(
             room_id="room-123", msg_id="msg-retried", sender_id="user-1"
         )
@@ -142,11 +146,11 @@ class TestTurnFailureReport:
         async with asyncio.TaskGroup() as tasks:
             delivery = tasks.create_task(attempt_delivery(ctx, event))
             try:
-                await final_started.wait()
+                await handler.final_started.wait()
                 mock_link.mark_failed.assert_awaited_once()
                 error_events.assert_not_awaited()
             finally:
-                finish_final.set()
+                handler.finish_final.set()
             assert await delivery is TurnOutcome.ADVANCED
 
         assert mock_link.mark_failed.await_count == 2
@@ -186,39 +190,62 @@ class TestTurnFailureReport:
         mock_link.mark_failed.assert_awaited_once()
         error_events.assert_not_awaited()
 
-    @pytest.mark.parametrize("path", ["websocket", "backlog"])
-    async def test_hydration_failure_keeps_the_original_recoverable_without_charging_execution(
-        self, path: str
+    @pytest.mark.looptime
+    @pytest.mark.parametrize(
+        "source", [websocket_source, backlog_source], ids=["websocket", "backlog"]
+    )
+    async def test_history_http_outage_preserves_delivery_and_explicit_refresh_recovers(
+        self, source: Callable[[LifecyclePlatform, str], MessageEvent | PlatformMessage]
     ) -> None:
         peer = LifecyclePlatform()
         peer.add_message("msg-hydration")
-        handler = AsyncMock()
-        original = (
-            peer.event("msg-hydration")
-            if path == "websocket"
-            else self._backlog_message("msg-hydration")
+        history = peer.add_message("msg-history", listed=False)
+        peer.context_response = httpx.Response(
+            503, json={"error": "history unavailable"}
         )
+        handler = HydratedTurns()
+        original = source(peer, "msg-hydration")
         async with rest_client_over(peer.answer) as rest:
-            ctx = auxiliary_context(rest, handler)
-            ctx.prepare_delivery_context = AsyncMock(
-                side_effect=RuntimeError("history down")
+            ctx = ExecutionContext(
+                ROOM_ID,
+                link_over(rest),
+                handler,
+                agent_id=AGENT_ID,
+                config=SessionConfig(
+                    enable_context_hydration=True,
+                    enable_working_state=False,
+                    max_message_retries=1,
+                ),
             )
-            assert await attempt_delivery(ctx, original) is TurnOutcome.RETRY_LATER
-            while_down = (
-                handler.await_count,
-                list(peer.requested_marks),
-                list(peer.posts),
-            )
-
-            ctx.prepare_delivery_context = AsyncMock()
             assert await attempt_delivery(ctx, original) is TurnOutcome.ADVANCED
+            assert handler.observed == [("msg-hydration", [])]
+            assert ctx.context_hydrated
+            assert peer.context_reads > 0
+            assert peer.requested_marks == [
+                ("msg-hydration", DeliveryStatus.PROCESSING),
+                ("msg-hydration", DeliveryStatus.PROCESSED),
+            ]
+            assert peer.posts == []
 
-        assert while_down == (0, [], [])
-        assert (handler.await_count, peer.requested_marks, peer.posts) == (
-            1,
-            [("msg-hydration", "processing"), ("msg-hydration", "processed")],
-            [],
-        )
+            peer.context_response = page([history])
+            reads_before_refresh = peer.context_reads
+            await ctx.prepare_delivery_context(force_refresh=True)
+            assert peer.context_reads > reads_before_refresh
+            peer.add_message("msg-restored")
+            restored = source(peer, "msg-restored")
+            assert await attempt_delivery(ctx, restored) is TurnOutcome.ADVANCED
+
+        assert handler.observed == [
+            ("msg-hydration", []),
+            ("msg-restored", ["msg-history"]),
+        ]
+        assert peer.requested_marks == [
+            ("msg-hydration", DeliveryStatus.PROCESSING),
+            ("msg-hydration", DeliveryStatus.PROCESSED),
+            ("msg-restored", DeliveryStatus.PROCESSING),
+            ("msg-restored", DeliveryStatus.PROCESSED),
+        ]
+        assert peer.posts == []
 
     async def test_failure_the_adapter_reported_is_not_repeated(
         self, mock_link: MagicMock, error_events: AsyncMock

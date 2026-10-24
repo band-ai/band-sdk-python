@@ -39,14 +39,11 @@ from tests.platform.settlement.kit import (
     accepted,
     link_over,
 )
+from tests.runtime.conftest import Waiting
 from tests.runtime.helpers import AGENT_ID, EPOCH, SENDER_ID, agent_hooks
 
 # Requests the generated client spends on one logical write that keeps answering 5xx.
 HTTP_ATTEMPTS = NO_RETRY_REQUEST_OPTIONS["max_retries"] + 1
-# Fake seconds that let every non-timer-driven step finish; far below the
-# room's reconciliation interval yet above the 15.6 ms loop clock tick of
-# Windows before Python 3.13, which treats any shorter sleep as already due.
-DRAIN_SECONDS = 0.05
 RESYNC_SECONDS = SessionConfig().idle_resync_seconds
 # Text a failing model raises with; it must never reach the platform.
 SECRET = "secret-token-in-the-exception"
@@ -433,6 +430,7 @@ class ScriptedAdapter(SimpleAdapter[Any]):
         self.turns: list[tuple[str, ...]] = []
         self.controls: list[str] = []
         self.gate: asyncio.Event | None = None
+        self.model_entered = asyncio.Event()
         self.late_failure = asyncio.Event()
         self.detached: list[asyncio.Task[None]] = []
 
@@ -469,6 +467,7 @@ class ScriptedAdapter(SimpleAdapter[Any]):
         room_id: str,
     ) -> None:
         self.turns.append(tuple(message.id for message in messages))
+        self.model_entered.set()
         if self.gate is not None:
             await self.gate.wait()
         match self.ending:
@@ -546,11 +545,12 @@ class Harness:
         await self.drain()
 
     async def drain(self) -> None:
-        """Let every step that does not wait on a timer finish."""
-        await asyncio.sleep(DRAIN_SECONDS)
+        """Wait for the room to finish its pass and suspend."""
+        await Waiting.suspended(self.ctx)
 
     async def advance(self, seconds: float) -> None:
         await asyncio.sleep(seconds)
+        await self.drain()
 
     def heal(self) -> None:
         """End the outage; ``recovery`` reads what the platform saw after it."""

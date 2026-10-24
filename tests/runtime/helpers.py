@@ -210,6 +210,8 @@ class LifecyclePlatform:
         self.actionable_cursors: list[str | None] = []
         self.activity_reports: list[ActivityReport] = []
         self.stamps: dict[str, str] = {}
+        self.context_response: httpx.Response | None = None
+        self.context_reads = 0
 
     @property
     def reports_without_refreshes(self) -> list[ActivityReport]:
@@ -265,6 +267,11 @@ class LifecyclePlatform:
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         tail = path.rsplit("/", 1)[-1]
+        if tail == "context" and request.method == "GET":
+            self.context_reads += 1
+            return (
+                self.context_response if self.context_response is not None else page([])
+            )
         if tail == "activity":
             working = json.loads(request.content)["working"]
             recorded = working and not self.stopped

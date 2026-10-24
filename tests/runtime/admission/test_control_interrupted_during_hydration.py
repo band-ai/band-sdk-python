@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from band.client.streaming import DeliveryStatus
 from tests.runtime.admission.barriers import (
     QUEUED,
     REFRESH,
@@ -48,7 +49,7 @@ class TestControlInterruptedDuringHydration:
             await room.quiesce()
 
         assert (interrupted, room.observed()) == (
-            ({HEAD: "processing", CONTROL: "processed"}, []),
+            ({HEAD: DeliveryStatus.PROCESSING, CONTROL: DeliveryStatus.PROCESSED}, []),
             Observed(
                 statuses=all_processed(QUEUED),
                 runs=[(HEAD,)],
@@ -80,6 +81,6 @@ class TestControlInterruptedDuringHydration:
             await room.quiesce()
 
         assert (stopped, room.observed().statuses) == (
-            ({HEAD: "processing", CONTROL: "processing"}, []),
+            ({HEAD: DeliveryStatus.PROCESSING, CONTROL: DeliveryStatus.PROCESSING}, []),
             all_processed(QUEUED),
         )

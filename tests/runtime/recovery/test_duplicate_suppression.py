@@ -24,11 +24,14 @@ class TestDuplicateSuppression:
         self, harness: Harness, ending: Ending
     ) -> None:
         harness.adapter.gate = asyncio.Event()
-        await harness.start(Route.BACKLOG)
-
-        await harness.push(*harness.members)
-        harness.adapter.gate.set()
-        await harness.drain()
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(harness.start(Route.BACKLOG))
+            try:
+                await harness.adapter.model_entered.wait()
+                for message_id in harness.members:
+                    await harness.ctx.on_event(harness.peer.event(message_id))
+            finally:
+                harness.adapter.gate.set()
 
         assert harness.model_turns == [harness.members]
         assert harness.peer.written_since(0) == {
