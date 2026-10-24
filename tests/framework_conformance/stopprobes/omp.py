@@ -57,6 +57,8 @@ class HeldOmpClient:
         match command:
             case OmpCommandName.GET_STATE:
                 return {"sessionId": "stop-probe-session", "isSettled": True}
+            case OmpCommandName.SET_ASK_DIALOG:
+                return {"enabled": True}
             case OmpCommandName.SET_HOST_TOOLS:
                 return {}
             case _:
