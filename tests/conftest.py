@@ -17,6 +17,15 @@ from __future__ import annotations
 
 import os
 
+from tests.xdistworker import (
+    configure_hypothesis_worker_database,
+    configure_parlant_worker_home,
+    restore_parlant_worker_home,
+)
+
+if os.environ.get("E2E_TESTS_ENABLED", "").lower() != "true":
+    configure_parlant_worker_home()
+
 # Must be set before crewai is first imported: its event bus installs a
 # global OpenTelemetry provider and a live exporter thread at import time.
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
@@ -72,7 +81,7 @@ from tests.paths import ENV_TEST_FILE
 
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
-pytest_plugins = ["pytester"]
+pytest_plugins = ["pytester", "tests.testdurations"]
 
 # Env-var prefixes that adapter config classes (CodexAdapterConfig,
 # LettaAdapterConfig, OpencodeAdapterConfig) self-source from.
@@ -81,6 +90,9 @@ _ADAPTER_CONFIG_ENV_PREFIXES = ("CODEX_", "LETTA_", "OPENCODE_")
 
 def pytest_configure(config: pytest.Config) -> None:
     """Block ``.env.test``'s adapter-config keys before collection can leak them.
+
+    Also point Hypothesis at a per-worker example database so xdist workers
+    do not share ``.hypothesis/examples``.
 
     ``tests/e2e/baseline/settings.py`` calls ``load_dotenv(ENV_TEST_FILE,
     override=False)`` at import time; several subdirectory ``conftest.py``
@@ -101,11 +113,17 @@ def pytest_configure(config: pytest.Config) -> None:
     Skipped entirely when ``E2E_TESTS_ENABLED`` is set: a live E2E run wants
     ``.env.test``'s real values (e.g. ``CODEX_CWD``), not neutralized ones.
     """
+    configure_hypothesis_worker_database()
     if os.environ.get("E2E_TESTS_ENABLED", "").lower() == "true":
         return
     for key in dotenv_values(ENV_TEST_FILE):
         if key.startswith(_ADAPTER_CONFIG_ENV_PREFIXES) and key not in os.environ:
             os.environ[key] = ""
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Restore the caller's Parlant setting after all local servers stop."""
+    restore_parlant_worker_home()
 
 
 class CollectionGateSettings(BaseSettings):

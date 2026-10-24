@@ -60,6 +60,14 @@ async def finished_within_grace(task: asyncio.Task[Any]) -> bool:
     return task.done()
 
 
+def retire_provider_timeout(timer: asyncio.Timeout) -> bool:
+    """Disarm an entered provider timer; report whether it already fired."""
+    if timer.expired():
+        return True
+    timer.reschedule(None)
+    return False
+
+
 class TurnTask:
     """Own cancellation and bounded draining for one concrete turn task."""
 
@@ -121,10 +129,8 @@ class TurnTask:
             return bound
         if self._cleanup_timer and (timer_bound := timer.when()) is not None:
             bound = min(bound, timer_bound)
-        if timer.expired():
+        if retire_provider_timeout(timer):
             self._cancel_delivered = True
-        else:
-            timer.reschedule(None)
         return bound
 
     def _cancel(self) -> None:

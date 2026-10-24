@@ -4,7 +4,11 @@ One cycle = one full-PR review with every group, its verification, and its
 fix round. Nothing needs an extra cycle to get fixed, the last cycle's
 findings included. Fresh cycles shift focus and surface missed issues, so
 later cycles never narrow to the fix area; closed no-fix records are the
-only history their agents see. "Resolve the target and scope" and "Simplify" run once, up front. Without `--fix`, exactly one
+only history their agents see. "Resolve the target and scope", "Initial
+triage", and "Simplify" run once, up front, in that order. Initial triage
+also runs without `--fix`; neither triage nor simplify consumes a cycle.
+Resuming the same run or restarting its cycle cap does not rerun triage.
+Without `--fix`, exactly one
 review runs, then the verdict-only close-out.
 
 Convergence asks whether fixes are settling or each fix creates the next
@@ -45,7 +49,8 @@ convergence and are fixed along the way.
    as early as cycle 1. → **Stop the run**: fix this cycle's nits and
    suggestions in the same round, then end. Start no further cycle and no
    re-review, even with cycles left; those last fixes are unreviewed, so
-   say so in the report. The verification gate must still pass.
+   say so in the report. Run the applicable validation checks from
+   `band-here-is-a-review` Phase 5 for those fixes.
 3. **Continue** — verified `issue:` findings exist and row 1 didn't match
    (fresh findings and a single fix-induced bug are normal corrections):
    fix, then run the next cycle.
@@ -68,8 +73,8 @@ threads stay open as evidence, and start no further cycle. Then:
    stop here with threads left open.
 3. Wait. Apply no design change and open no ticket without their answer.
 4. If they pick a design change, have the fix stage apply it as one root-cause
-   change and run the gate; the coordinator commits and pushes, then resumes the
-   loop. Their decision restarts the cycle cap and the ledger lineage for that
-   hotspot, even if the run had reached the cap, and the open threads reach
-   the next cycle as unresolved digest items. If they stop, go to the final
-   report.
+   change and run the applicable checks from `band-here-is-a-review` Phase 5;
+   the coordinator commits and pushes, then resumes the loop. Their decision
+   restarts the cycle cap and the ledger lineage for that hotspot, even if the
+   run had reached the cap, and the open threads reach the next cycle as
+   unresolved digest items. If they stop, go to the final report.

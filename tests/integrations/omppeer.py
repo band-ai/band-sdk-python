@@ -199,6 +199,18 @@ class Peer:
         self.result(settled=True)
         self.settle()
 
+    @staticmethod
+    def reused_callback() -> None:
+        send(
+            {
+                "type": "host_tool_call",
+                "id": "host-dup",
+                "toolCallId": "call-dup",
+                "toolName": "band_chat",
+                "arguments": {},
+            }
+        )
+
     def invalid_chunk(self) -> None:
         chunk: dict[str, JsonValue] = {
             "type": "rpc_chunk",
@@ -352,15 +364,7 @@ class Peer:
                 self.result(settled=True)
                 self.settle()
             case "reused-callback":
-                call = {
-                    "type": "host_tool_call",
-                    "id": "host-dup",
-                    "toolCallId": "call-dup",
-                    "toolName": "band_chat",
-                    "arguments": {},
-                }
-                send(call)
-                send(call)
+                self.reused_callback()
             case "frame-overflow":
                 send(
                     {
@@ -562,6 +566,9 @@ class Peer:
                         "options": [UI_APPROVE, UI_DENY],
                     }
                 )
+            case "repeat-callback":
+                self.reused_callback()
+                self.respond(frame)
             case "ask-ui":
                 self.held = frame
                 send(

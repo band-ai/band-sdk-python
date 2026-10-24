@@ -1,13 +1,14 @@
 ---
 name: band-pr-triage
-description: Use this skill when the user wants a quick, cheap, read-only check of whether a PR can be merged or needs the heavy band-code-review — also invoked as /band-pr-triage [target] [--level low|medium]. Never posts, fixes, or changes anything. Reads cheap signals (CI, size, file kinds, tests alongside source, skipped tests, open threads, ticket scope) plus a scan of the diff, reads the PR's earlier review history for signs the review is not converging, and returns DRAFT, MERGE, HEAVY REVIEW (naming the angles and the command to run), CHANGES NEEDED, or RETHINK (repeated comments on the same area; stop patching); any doubt escalates. --level low (default) adds one scan agent; --level medium adds Edge-Case and Logical-Bug hypothesis scans, still unproven. Does not call the built-in code-review skill.
+description: Use this skill for a quick, cheap, read-only PR triage, also invoked as /band-pr-triage [target] [--level low|medium]. First assess whether the PR and linked task pursue a worthwhile goal at the right owning layer, then inspect readiness signals, the diff, and review history. Returns DRAFT, MERGE, HEAVY REVIEW, CHANGES NEEDED, or RETHINK for an evidence-backed design concern or a nonconverging fix loop. Never posts, fixes, or changes anything. Low adds one scan agent; medium adds Edge-Case and Logical-Bug hypothesis scans, still unproven. Does not call the built-in code-review skill.
 argument-hint: "[target] [--level low|medium]"
 ---
 
 # PR Triage
 
-Decides one thing: can this PR merge, does it need `band-code-review`, or has the
-review history shown it needs rethinking? It is not a review. It posts nothing, fixes nothing, and proves nothing; its scans
+First assesses whether the PR's goal, approach, and owning layer are worth
+pursuing; then decides whether it can merge, needs `band-code-review`, or
+needs rethinking. It is not a review. It posts nothing, fixes nothing, and proves nothing; its scans
 produce leads that only ever push the verdict toward more review.
 
 Follow [the shared runtime guidance](../workflow-runtime.md) for available
@@ -24,7 +25,7 @@ treat this scan as evidence that planning, implementation, and testing are compl
 - **target** — PR number, URL, or branch; none means the current branch's PR.
   A path target is treated as its PR, unscoped.
 - **low** — signals plus one scan agent over angles A–D and three fixed
-  questions.
+  questions, plus the goal and ownership assessment.
 - **medium** — low, plus an Edge-Case mapper and a Logical-Bugs explorer that
   return hypotheses only (no skeptic, no proofs).
 
@@ -34,7 +35,9 @@ session's working-directory diff, not a PR.
 ## Steps
 
 1. **Target and scope.** Follow
-   `.claude/skills/band-code-review/pr-target-scope.md`. The user's working
+   `.claude/skills/band-code-review/pr-target-scope.md`, including its goal
+   and owning-layer questions before technical readiness signals. Report
+   this assessment even when size or stage prevents a scan. The user's working
    tree is never touched: no checkout, no
    `.claude/skills/band-here-is-a-review/pr-workspace.md` step.
 2. **Worktree.** Fetch the PR head, then
@@ -89,13 +92,15 @@ session's working-directory diff, not a PR.
      Write one line per thread (`file`, `line`, round, resolved, first 200
      characters) to `<scratchpad>/triage-<n>.threads.txt`.
 4. **Scan.** Scan agents are read-only. Each gets the worktree path, the diff
-   path, the scope statement, and
+   path, the scope statement, the goal and ownership assessment, and
    `.claude/skills/band-code-review/angle-groups.md` with its group letters.
    - **low** — one agent inheriting the session model skims A–D for what the diff
      itself shows, and answers: does it do what the scope says; is there a
      plain blocking defect; does it touch stateful, concurrent, lifecycle, or
      protocol logic; and, from the thread digest, do the earlier comments
-     share one root concern.
+     share one root concern. Challenge the goal and ownership assessment:
+     does the diff support the claimed need and placement, or reveal an
+     existing owner, a local workaround, or unjustified scope?
    - **medium** — also the E mapper and F explorer on the session model,
      hypotheses only, at most five each, ranked by consequence. Each gets
      the closed records (`.claude/skills/band-code-review/no-fix-records.md`,
@@ -108,14 +113,17 @@ session's working-directory diff, not a PR.
    short structured list (`file`, `line`, `severity`, one-sentence `body`) and
    nothing else. Treat every item as an unverified lead.
 5. **Verdict**, taking the first row that matches:
-   1. **DRAFT** — the PR is a draft. List any blockers and scan leads, and
+   1. **RETHINK** — the goal and ownership assessment found an evidence-backed
+      reason to reconsider the task, approach, or owning layer; or there are
+      fix-induced rounds, or any two of the other history signals. State the
+      concrete concern, sources, and consequence. For history signals, name
+      hotspot files, thread counts, and the shared concern, marked as an
+      unverified lead. Do not recommend `band-code-review --fix`; recommend
+      the smallest design investigation or scope correction. Still list
+      CHANGES NEEDED blockers and draft status where applicable.
+   2. **DRAFT** — the PR is a draft. List any blockers and scan leads, and
       identify remaining author readiness work; do not issue a MERGE verdict.
       Early feedback is allowed, but promotion requires the author's review.
-   2. **RETHINK** — fix-induced rounds, or any two of the other history
-      signals. Patching further is the wrong move: do not recommend
-      `band-code-review --fix`. Name the hotspot files with their thread counts,
-      the signals that fired, and the shared concern the scan agent found,
-      marked as an unverified lead. Still list any CHANGES NEEDED blockers.
    3. **CHANGES NEEDED** — failing CI, an added skipped or disabled test, or
       a scan item you confirm yourself by reading the cited lines to be a
       plain defect. List each with `file:line`. Never confirm by running a
@@ -124,7 +132,8 @@ session's working-directory diff, not a PR.
       protocol logic; public API or signature change; dependency, migration,
       or CI-config change; a scan `issue:` or hypothesis you didn't confirm;
       unresolved threads; scope mismatch; source change without tests; any
-      material author-readiness evidence missing; or other doubt. Name the
+      material author-readiness evidence missing; an UNCERTAIN goal or
+      ownership assessment; or other doubt. Name the
       angle groups warranted (E and F for lifecycle or
       any hypothesis, else A–D) and end with `/band-code-review <n>`.
    5. **MERGE** — every signal clear and the scans returned nothing beyond
@@ -142,7 +151,8 @@ session's working-directory diff, not a PR.
 
 ## Output
 
-At most ten lines: the verdict; the reasons, one line each with `file:line`
+At most ten lines: the verdict; a short goal and owning-layer assessment;
+the reasons, one line each with `file:line`
 where there is one; one `Not checked:` line; the next command if any.
 
 `Not checked:` is always present: at low, flow and logic bugs weren't
@@ -152,7 +162,8 @@ both this skill and `band-code-review`, so say so when sensitive paths
 that moved lines were matched, not read. A MERGE is a statement about
 what was checked, not an approval.
 
-A RETHINK ends with options, not a command: stop the fix loop; split into
-stacked single-concern PRs (`band-stacked-prs`); add a model-based test of the
-component under change; file the true redesign as its own ticket. Ask which
-before doing anything.
+A RETHINK ends with relevant options, not an automatic fix command: clarify
+the outcome, narrow or split the PR, reuse an existing owner, investigate a
+specific shared gap, or drop superseded work. Recommend one with evidence;
+do not prescribe a redesign or model-based test for every concern. Triage
+remains read-only; ask for a decision only when the next action needs one.
