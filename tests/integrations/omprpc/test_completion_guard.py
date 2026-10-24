@@ -39,7 +39,8 @@ from tests.toolkit.clock import binary_clock_resolution
 @pytest.mark.looptime(resolution=binary_clock_resolution())
 class TestCompletionGuard:
     @pytest.mark.parametrize(
-        "scenario", ["no-result", "stale-idle-result", "lost-settlement"]
+        "scenario",
+        ["no-result", "pending-no-result", "stale-idle-result", "lost-settlement"],
     )
     async def test_idle_completion_failure_retires_before_explicit_restart(
         self, client_factory: ClientFactory, scenario: str
@@ -51,6 +52,10 @@ class TestCompletionGuard:
                 prompt_task(client, observer)
             ) as running:
                 await observer.wait_for(OmpEventType.AGENT_END)
+                if scenario == "pending-no-result":
+                    await session.clock.elapse(BACKGROUND_WINDOW_S)
+                    assert not running.done()
+                    await client.request("release")
                 await snapshots_observed(client)
                 assert not running.done()
 
@@ -109,10 +114,13 @@ class TestCompletionGuard:
                 await session.clock.run_io(running)
             assert BACKGROUND_COMPLETE in observer.assistant_texts
 
+    @pytest.mark.parametrize(
+        "scenario", ["drain-blocked-event", "drain-blocked-background"]
+    )
     async def test_blocked_event_drain_fails_after_settlement(
-        self, client_factory: ClientFactory
+        self, client_factory: ClientFactory, scenario: str
     ) -> None:
-        async with completion_session(client_factory, "drain-blocked-event") as session:
+        async with completion_session(client_factory, scenario) as session:
             observer = BlockedEventObserver()
             async with session.clock.background(
                 prompt_task(session.client, observer)
@@ -121,6 +129,11 @@ class TestCompletionGuard:
                     await observer.entered.wait()
                     await snapshots_observed(session.client)
                     assert not running.done()
+                    if scenario == "drain-blocked-background":
+                        await session.clock.elapse(BACKGROUND_WINDOW_S)
+                        assert not running.done()
+                        await session.client.request("release")
+                        await snapshots_observed(session.client, count=2)
 
                     await session.clock.elapse(COMPLETION_BUDGET_S)
                     with pytest.raises(OmpProcessError):

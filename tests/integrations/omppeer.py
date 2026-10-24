@@ -462,14 +462,17 @@ class Peer:
                 self.result(settled=True)
                 self.settle()
                 return
-            case "drain-blocked-event":
-                # Result and settlement complete while one event callback stays
-                # undelivered, so the event drain never finishes.
+            case "drain-blocked-event" | "drain-blocked-background":
+                # Result completes while an event callback stays undelivered.
+                # The background variant loses the final agent_end, retaining
+                # its earlier pending-work claim until settlement/state proof.
+                pending = self.scenario == "drain-blocked-background"
                 self.respond(frame)
                 send({"type": "agent_start"})
-                self.end("complete")
-                self.result(settled=True)
-                self.settle()
+                self.end("complete", pending=pending)
+                self.result(settled=not pending)
+                if not pending:
+                    self.settle()
                 send(
                     {
                         "type": "message_update",
@@ -601,6 +604,8 @@ class Peer:
             case "no-result":
                 self.end(COMPLETE)
                 self.settle()
+            case "pending-no-result":
+                self.end(COMPLETE, pending=True)
             case scenario if scenario == SETTLED_CALLBACK_SCENARIO:
                 send(
                     {
@@ -803,6 +808,11 @@ class Peer:
                     return
                 if self.scenario == "settlement-before-result":
                     self.result(settled=False)
+                elif self.scenario in {
+                    "drain-blocked-background",
+                    "pending-no-result",
+                }:
+                    self.settle()
                 elif self.scenario == "silent-settled-continuation":
                     # The background work completes and the session goes idle,
                     # but its session_settled frame is lost.
