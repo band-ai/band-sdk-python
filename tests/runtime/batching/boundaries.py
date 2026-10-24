@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator, Collection
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -19,8 +18,8 @@ from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event, make_participant_added_event
 from tests.platform.settlement.kit import ROOM_ID, link_over
 from tests.runtime.batching.kit import Turns
-from tests.runtime.conftest import wait_for_condition
-from tests.runtime.helpers import AGENT_ID, QUIET_SECONDS
+from tests.runtime.conftest import Waiting, wait_for_condition
+from tests.runtime.helpers import AGENT_ID
 from tests.runtime.recovery.kit import EPOCH, RoomPeer, Row
 
 WARMUP = "warmup"
@@ -72,7 +71,7 @@ class BoundaryRoom:
             ),
             timeout=5,
         )
-        await asyncio.sleep(QUIET_SECONDS)
+        await Waiting.suspended(self.ctx)
 
 
 @asynccontextmanager
