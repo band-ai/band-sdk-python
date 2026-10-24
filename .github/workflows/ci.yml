@@ -120,7 +120,10 @@ jobs:
       run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
 
     - name: Run tests
-      run: uv run --all-packages pytest
+      run: |
+        uv run --all-packages pytest \
+          -n 4 --dist worksteal \
+          --ignore=tests/e2e --ignore=tests/integration
 
     - name: Run markdown doc tests
       # Linux-only: doc snippets are OS-independent, and this step relies on
@@ -180,6 +183,7 @@ jobs:
       # tests/framework_conformance/test_crewai_job_coverage.py keeps this honest.
       run: |
         uv run --all-packages pytest \
+          -n 4 --dist worksteal \
           tests/adapters/test_crewai_flow_phase3.py \
           tests/adapters/crewaiworker/test_native_settlement.py \
           tests/adapters/crewaiworker/test_flow_admission.py \
@@ -249,6 +253,7 @@ jobs:
         BAND_TEST_EXTRA: "dev-strands-nooa"
       run: |
         uv run --all-packages pytest \
+          -n 4 --dist worksteal \
           tests/adapters/strands/ \
           tests/adapters/nooa/ \
           tests/converters/test_strands.py \
@@ -321,6 +326,7 @@ jobs:
       # tests/framework_conformance/test_parlant_job_coverage.py keeps this honest.
       run: |
         uv run --all-packages pytest \
+          -n 4 --dist worksteal \
           tests/integrations/parlant/test_catalog.py \
           tests/integrations/parlant/test_chattools.py \
           tests/integrations/parlant/test_contacttools.py \

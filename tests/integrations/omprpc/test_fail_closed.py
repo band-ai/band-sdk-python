@@ -5,14 +5,20 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from pydantic import JsonValue
 
 from band.integrations.omprpc import OmpProtocolError
-from band.integrations.ompwire import OmpFrameType, OmpUIRequest, OmpUIResponse
+from band.integrations.ompwire import (
+    OmpFrameType,
+    OmpHostToolCall,
+    OmpToolResult,
+    OmpUIRequest,
+    OmpUIResponse,
+)
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
     checkpoint_frames,
-    prompt_task,
 )
 
 
@@ -72,11 +78,41 @@ class TestFailClosedDispatch:
     ) -> None:
         client = await client_factory("reused-callback")
         observer = Observer()
-        async with asyncio.timeout(6):
-            with pytest.raises(
-                OmpProtocolError, match="callback request id was reused"
-            ):
-                await prompt_task(client, observer)
+        callback_entered = asyncio.Event()
+        release_callback = asyncio.Event()
+
+        async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
+            callback_entered.set()
+            await release_callback.wait()
+            return await observer.on_tool(call)
+
+        prompt = asyncio.create_task(
+            client.prompt(
+                "first",
+                on_event=observer.on_event,
+                on_tool=on_tool,
+                on_ui=observer.on_ui,
+            )
+        )
+        repeat: asyncio.Task[dict[str, JsonValue]] | None = None
+        try:
+            async with asyncio.timeout(6):
+                await callback_entered.wait()
+                repeat = asyncio.create_task(client.request("repeat-callback"))
+                with pytest.raises(
+                    OmpProtocolError, match="callback request id was reused"
+                ):
+                    await prompt
+                with pytest.raises(OmpProtocolError):
+                    await repeat
+        finally:
+            release_callback.set()
+            prompt.cancel()
+            if repeat is not None:
+                repeat.cancel()
+                await asyncio.gather(prompt, repeat, return_exceptions=True)
+            else:
+                await asyncio.gather(prompt, return_exceptions=True)
 
     async def test_request_rejects_id_and_type_overrides(
         self, client_factory: ClientFactory
