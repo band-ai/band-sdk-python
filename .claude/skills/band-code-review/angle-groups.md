@@ -18,6 +18,11 @@ and consequences differ.
 - Files that mix unrelated concerns (`band-python-conventions`).
 
 **B — Design & Reuse**
+- Challenge the goal and owning-layer assessment from
+  [pr-target-scope.md](pr-target-scope.md). Ground objections in the real
+  use case, existing owners and consumers, and concrete contract differences.
+  Distinguish a supported redesign concern from a preference or an unproven
+  reuse hypothesis; do not assume the ticket's proposed approach is correct.
 - Idiomatic constructs (`band-python-conventions`); weigh real tradeoffs
   (recursion on deep input is a regression).
 - Reuse of an existing helper over new logic (`band-python-conventions`). No

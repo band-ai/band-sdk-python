@@ -388,8 +388,9 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   and workspace. OMP receives the workspace via `--cwd`; the subprocess itself
   starts without a supplied cwd. Session state carries `omp_session_id`,
   `omp_session_file` and `omp_room_id`. A workspace is not an OS sandbox.
-- **External MCP servers.** `mcp_servers` is a name-to-`OmpMcpServer` map; import
-  that typed model from `band.integrations.ompprocess`. Stdio entries use
+- **External MCP servers.** `mcp_servers` is a name-to-`OmpMcpServer` map. Import
+  `OmpMcpServer` and `OmpMcpTransport` from `band.integrations.ompprocess`;
+  use `OmpMcpTransport` members for Python `type` arguments. Stdio entries use
   `command`, `args`, `env` and optional `cwd`; remote entries use `url`, `headers`
   and optional `type` (`http` or `sse`). Relative stdio `cwd` resolves from the
   room workspace; relative path-like commands resolve from that server cwd, or
@@ -402,6 +403,48 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   enable those receipts without rewriting user settings. Missing or failed
   receipts fail startup rather than allowing a model to answer without its
   required tools. The enclosing turn timeout still bounds startup.
+- **Per-connection MCP servers.** Pass the constructor callable
+  `resolve_mcp_servers`, an async `(workspace: str) -> Mapping[str, OmpMcpServer]`,
+  when external servers (or their credentials) can change while the adapter runs.
+  It is called once for each new room process, with the room's claimed workspace,
+  before the overlay or process exists; the same result feeds both the overlay and
+  the startup receipt check. Its result is the room's complete **external** server
+  set: it replaces every external entry in `mcp_servers` (an empty mapping means
+  none), and an exception fails that startup with no fallback to them. A `band`
+  entry in `mcp_servers` is the SDK's own Band endpoint, not an external server: it
+  is kept beside the resolved set, so Band tools still route through it with
+  `inject_band_tools=False`. The resolver itself may not return `band`, because OMP
+  would mint that server's tools under Band tool names. A reused room process never
+  calls it again; a retired room (cancellation, failure, or cleanup) resolves afresh
+  on its next start. The callable is runtime-only and never part of
+  `OmpAdapterConfig`.
+- **Room retirement.** Shared Python `RoomRetention` / `RetainedRoom` owns
+  admission, enrolled operations and disposal. OMP owns native startup and
+  deadline outcomes. `on_cleanup` requests shared disposal; overlapping
+  `on_cleanup` and `cleanup_all` calls join that attempt. The enrolled operation
+  spans one `on_message` invocation, independently of its caller's task lifetime.
+  A cancellation already requested when that call starts is delivered at its first step, before anything
+  is resolved or launched; one its caller had already received and handled does
+  not stop it. Retirement marks the active turn retired, so nothing it resolves
+  afterwards can start a process. While the turn is still running, retirement
+  becomes the cause of its end: it disarms the turn deadline if that has not fired,
+  so the deadline cannot cancel the turn's settlement again, and cancels the turn
+  once, or joins a cancellation it is already handling. A turn whose deadline has
+  fired, or that is already handling its own outcome, keeps its timeout or other
+  result and its failure report. A fired deadline counts as that cancellation even
+  if the resolver consumed it with `uncancel()`: cleanup joins it rather than
+  cancelling again, and a server set the resolver returns afterwards is refused, so
+  the turn ends with `TimeoutError` and nothing is launched. A turn that has already
+  finished is never
+  cancelled, so its caller's later work is untouched. Retirement then waits for
+  that call's own finalization (not for the rest of its caller's work), and only
+  then closes the process and releases the workspace. A turn may request cleanup of
+  its own room, for example from its resolver: that call returns at once, the turn
+  is not cancelled again but its unfired deadline is disarmed all the same, it stops
+  before launching, and teardown follows its settlement. Cancelling a cleanup
+  call stops only that caller's wait. Until the retirement ends, turns already
+  waiting for the room and turns that arrive during it are cancelled rather than
+  starting a new process. Once cleanup succeeds, a later turn can start normally.
 - **Permissions.** `approval_mode="yolo"` bypasses native approval checks without
   changing Band platform permissions. Otherwise `resolve_permission` receives
   `OmpPermissionRequest(room_id, session_id, title, options)` and returns an

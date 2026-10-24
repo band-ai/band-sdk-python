@@ -184,10 +184,29 @@ user's confirmation before implementing. Routine fixes proceed without asking.
 1. Implement the planned fixes, root cause first.
 2. For each CONFIRMED or PARTIALLY RIGHT bug, make the regression test the guard: it
    fails on the old code, passes on the new.
-3. Select and run the applicable checks from AGENTS.md "Pre-Commit Checklist".
-   Prose-only edits do not require the SDK unit suite. Executable helpers are
-   code and need behavioral checks. Run checks quietly and distinguish passed,
-   failed, blocked, and not-run checks in the report.
+3. Select local checks from AGENTS.md "Pre-Commit Checklist" based on the
+   behavior and code the fix can affect:
+   - For a localized fix, run its proof or regression test and tests for the
+     changed behavior in each affected owning test module or package. Do not
+     run the full SDK suite solely because review is using `--fix`.
+   - If a root cause or fix crosses concerns, include tests for each affected
+     concern and expand to the affected packages and callers. Choose the full
+     gate when the actual change falls into a category that requires it.
+   - Run lint, format, and type checks on changed Python files and affected
+     callers where relevant. Broaden these checks when the change crosses
+     packages or changes shared runtime or protocol behavior.
+   - Use the full gate and any boundary-specific checks for shared runtime or
+     protocol behavior, dependencies, packaging, or broad refactors, as the
+     checklist specifies. A wider run is also appropriate when focused checks
+     expose a related failure.
+   - In later fix rounds, rerun the regression tests and checks affected by the
+     new edits. Carry forward earlier results only when those edits cannot
+     invalidate them; record the checked scope and commit or diff they cover.
+
+   CI remains the required broad validation for merging; focused local checks
+   do not waive CI. Prose-only edits do not require the SDK unit suite.
+   Executable helpers are code and need behavioral checks. Run checks quietly
+   and distinguish passed, failed, blocked, and not-run checks in the report.
 4. Re-check each fixed finding against its original failure scenario.
    If the fixes materially change the design, scope, or tested behavior,
    reassess author readiness under `AGENTS.md` "PR Lifecycle and Readiness

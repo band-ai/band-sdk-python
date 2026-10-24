@@ -14,6 +14,7 @@ from band.core.retention.cleanup import (
     await_owned,
     cleanup_deadline,
     finish_by,
+    rejoin_owned,
     report_owned,
     reporting,
     spawn_owned,
@@ -106,6 +107,7 @@ class RetainedRoom:
         self._drained.set()
         self._transition: asyncio.Task[None] | None = None
         self._disposal: asyncio.Task[None] | None = None
+        self._cancelled_acquisition: asyncio.Task[None] | None = None
 
     @property
     def snapshot(self) -> RetentionSnapshot:
@@ -430,6 +432,12 @@ class RetainedRoom:
                 self.room_id,
                 self._generation,
             )
+            self._cancel_acquisition(transition)
+
+    def _cancel_acquisition(self, transition: asyncio.Task[None]) -> None:
+        """Deliver cancellation once, including across abandoned-start settlement."""
+        if transition is not self._cancelled_acquisition:
+            self._cancelled_acquisition = transition
             transition.cancel(f"Room {self.room_id} acquisition was abandoned")
 
     def _request(self, cause: ReleaseCause) -> None:
@@ -442,6 +450,7 @@ class RetainedRoom:
 
     def _start_acquire(self) -> asyncio.Task[None]:
         self._generation += 1
+        self._cancelled_acquisition = None
         self._state = Residency.ACQUIRING
         self._activity = ProviderActivity.UNKNOWN
         self._reason = UNKNOWN_ACTIVITY_REASON
@@ -631,6 +640,17 @@ class RetainedRoom:
             )
         return True
 
+    def begin_settlement(self, task: asyncio.Task[Any]) -> None:
+        """Join an enrolled operation without cancelling its outcome handling."""
+        if task not in self._owned:
+            raise ValueError("Settlement requires an enrolled operation")
+        self._unwinding.add(task)
+
+    def request_disposal(self) -> asyncio.Task[None] | None:
+        """Close admission and return the owned attempt without awaiting it."""
+        self._spare_requester()
+        return self._begin_disposal()
+
     async def dispose(self) -> None:
         """Close admission now; settle accepted work before physical disposal.
 
@@ -639,8 +659,8 @@ class RetainedRoom:
         await its own disposal: it is told cleanup is pending, is not
         cancelled by it, and is joined once it unwinds.
         """
-        requested_from_inside = self._spare_requester()
-        disposal = self._begin_disposal()
+        requested_from_inside = self.enrolls(asyncio.current_task())
+        disposal = self.request_disposal()
         if disposal is None:
             return
         if requested_from_inside:
@@ -655,14 +675,17 @@ class RetainedRoom:
         self._schedule()
         if self._state == Residency.CLOSED:
             return None
-        if self._disposal is None or self._disposal.done():
-            self._disposal = self._spawn(self._run_dispose())
+        self._disposal = rejoin_owned(
+            self._disposal,
+            self._run_dispose,
+            label=f"Room {self.room_id} disposal",
+        )
         return self._disposal
 
     async def _run_dispose(self) -> None:
         await self._settle_accepted()
-        if self._transition is not None:
-            await asyncio.wait({self._transition})
+        if (transition := self._in_flight()) is not None:
+            await asyncio.wait({transition})
         if self._state != Residency.SUSPENDED:
             # Awaited directly so cancelling disposal also cancels its release.
             release = self._start_release(ReleaseCause.FINAL, automatic=False)
@@ -691,7 +714,7 @@ class RetainedRoom:
             for task in self._uncancelled_work():
                 task.cancel()
             if self._state == Residency.ACQUIRING and self._transition is not None:
-                self._transition.cancel()
+                self._cancel_acquisition(self._transition)
         await self._drained.wait()
 
     def _uncancelled_work(self) -> set[asyncio.Task[Any]]:

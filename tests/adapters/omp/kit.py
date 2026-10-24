@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections.abc import Callable
 from contextvars import copy_context
 from functools import partial
 from pathlib import Path
+from typing import Literal
 
 import psutil
 import pytest
@@ -23,6 +25,7 @@ from band.core.delivery import DeliveryFailedError
 from band.core.model_catalog import ModelSelection
 from band.core.types import MessageType
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
+from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
@@ -38,7 +41,7 @@ from band.integrations.ompwire import (
     OmpUIRequest,
 )
 from band.runtime.tools import ToolCallOutcome
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, reported_failures
 from band.testing.fake_tools import events_of_type
 from tests.integrations.acp.conftest import make_platform_message
 from tests.integrations.omppermissionpeer import (
@@ -156,6 +159,7 @@ class RecordingRuntime(PendingRuntime):
         super().__init__(*_args, **_kwargs)
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.prompt_text = ""
+        self.models_at_prompt: tuple[tuple[str, str] | None, ...] = ()
         self.switch_error: OmpRpcError | None = None
         self.switch_cancelled = False
         self.new_session_cancelled = False
@@ -198,6 +202,7 @@ class RecordingRuntime(PendingRuntime):
 
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         self.prompt_text = _message
+        self.models_at_prompt += (self.model,)
         await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
 
 
@@ -886,6 +891,7 @@ class Launches:
         self.envs: list[dict[str, str] | None] = []
         self.spawned = asyncio.Event()
         self.fail_first_close = False
+        self.runtime_factory: Callable[[], RecordingRuntime] = RecordingRuntime
 
     def __call__(
         self, command: list[str], env=None, **_kwargs: object
@@ -897,7 +903,9 @@ class Launches:
         self.commands.append(list(command))
         self.envs.append(None if env is None else dict(env))
         runtime = (
-            FirstCloseFailsRuntime() if self.fail_first_close else RecordingRuntime()
+            FirstCloseFailsRuntime()
+            if self.fail_first_close
+            else self.runtime_factory()
         )
         self.fail_first_close = False
         runtime.finish.set()
@@ -911,3 +919,218 @@ def launches(monkeypatch: pytest.MonkeyPatch) -> Launches:
     record = Launches()
     monkeypatch.setattr("band.adapters.omp.OmpRpcClient", record)
     return record
+
+
+def remote(token: str) -> OmpMcpServer:
+    return OmpMcpServer(
+        type=OmpMcpTransport.HTTP,
+        url="http://127.0.0.1:9/mcp",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+class BandMcpReplyRuntime(PendingRuntime):
+    """Replies through the Band MCP server mounted in the overlay, not a host tool."""
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        name = "mcp__band_sdk_band_send_message"
+        args: dict[str, JsonValue] = {"content": "done"}
+        await on_event(
+            OmpEvent(
+                type=OmpEventType.TOOL_START, toolCallId="c1", toolName=name, args=args
+            )
+        )
+        await on_event(
+            OmpEvent(
+                type=OmpEventType.TOOL_END,
+                toolCallId="c1",
+                toolName=name,
+                isError=False,
+            )
+        )
+
+
+class SignallingLock(asyncio.Lock):
+    """A room lock that reports when a second turn starts waiting for it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.contended = asyncio.Event()
+
+    async def acquire(self) -> Literal[True]:
+        if self.locked():
+            self.contended.set()
+        return await super().acquire()
+
+
+class SettlingResolver:
+    """Blocks the first resolution; when cancelled it settles durable work before
+    re-raising, and counts every cancellation it receives along the way."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.entered = asyncio.Event()
+        self.cancel_seen = asyncio.Event()
+        self.settle = asyncio.Event()
+        self.settled = False
+        self.cancellations = 0
+
+    async def __call__(self, _workspace: str):
+        self.calls += 1
+        if self.calls > 1:
+            return {}
+        self.entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancellations += 1
+            self.cancel_seen.set()
+            try:
+                await self.settle.wait()
+            except asyncio.CancelledError:
+                self.cancellations += 1  # settlement interrupted by a second cancel
+                raise
+            self.settled = True
+            raise
+        return {}
+
+
+def settling_adapter(tmp_path: Path, resolver, **config):
+    return OmpAdapter(
+        OmpAdapterConfig(cwd=str(tmp_path), **config),
+        resolve_mcp_servers=resolver,
+        emit=(),
+    )
+
+
+async def start_blocked_turn(adapter, resolver: SettlingResolver):
+    first = asyncio.create_task(run_turn(adapter, FakeAgentTools()))
+    await asyncio.wait_for(resolver.entered.wait(), 1)
+    return first
+
+
+async def checkpoint() -> None:
+    resumed = asyncio.Event()
+    asyncio.get_running_loop().call_soon(resumed.set)
+    await resumed.wait()
+
+
+async def start_cleanup(adapter: OmpAdapter, *, shutdown: bool = False):
+    entered = asyncio.Event()
+    original = adapter.on_cleanup
+
+    async def cleanup(room_id):
+        entered.set()
+        await original(room_id)
+
+    adapter.on_cleanup = cleanup  # type: ignore[method-assign]
+    try:
+        operation = (
+            adapter.cleanup_all() if shutdown else adapter.on_cleanup("room-123")
+        )
+        task = asyncio.create_task(operation)
+        await asyncio.wait_for(entered.wait(), 1)
+    finally:
+        adapter.on_cleanup = original  # type: ignore[method-assign]
+    return task
+
+
+async def cross_deadline(clock, seconds: float) -> None:
+    crossed = asyncio.Event()
+    handle = asyncio.get_running_loop().call_later(seconds, crossed.set)
+    try:
+        clock.advance(seconds)
+        await asyncio.wait_for(crossed.wait(), 1)
+    finally:
+        handle.cancel()
+
+
+class SwallowingResolver:
+    """Catches a cancellation at its first await and returns a server anyway."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(self, _workspace: str):
+        self.calls += 1
+        try:
+            await checkpoint()
+        except asyncio.CancelledError:
+            pass
+        return {"linear": remote("late")}
+
+
+class SelfRetiringResolver(SettlingResolver):
+    """On its first cancellation it asks for its own room's cleanup, then holds
+    its settlement until released."""
+
+    adapter: OmpAdapter
+
+    async def __call__(self, workspace: str):
+        self.calls += 1
+        if self.calls > 1:
+            return {}
+        self.entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancellations += 1
+            await self.adapter.on_cleanup("room-123")  # returns at once for self
+            self.cancel_seen.set()
+            try:
+                await self.settle.wait()
+            except asyncio.CancelledError:
+                self.cancellations += 1
+                raise
+            self.settled = True
+            raise
+        return {}
+
+
+class UncancellingResolver(SettlingResolver):
+    """Consumes the deadline's cancellation with the public ``uncancel()``, then
+    settles; ``returns`` decides whether it re-raises or returns a server."""
+
+    def __init__(self, *, returns: bool) -> None:
+        super().__init__()
+        self.returns = returns
+
+    async def __call__(self, _workspace: str):
+        self.calls += 1
+        if self.calls > 1:
+            return {}
+        self.entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            assert task is not None
+            task.uncancel()
+            self.cancellations += 1
+            self.cancel_seen.set()
+            try:
+                await self.settle.wait()
+            except asyncio.CancelledError:
+                self.cancellations += 1
+                raise
+            self.settled = True
+            if not self.returns:
+                raise
+        return {"linear": remote("late")}
+
+
+def timeout_reports(tools) -> list[tuple[str, str | None]]:
+    return [(f["provider"], f.get("code")) for f in reported_failures(tools)]
+
+
+def failing_runtime(closing: asyncio.Event, finish_close: asyncio.Event):
+    class FailingRuntime(PendingRuntime):
+        async def prompt(self, *_args, **_kwargs):
+            raise RuntimeError("native turn failed")
+
+        async def close(self):
+            closing.set()
+            await finish_close.wait()
+            self.closed = True
+
+    return FailingRuntime()
