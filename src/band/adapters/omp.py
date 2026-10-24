@@ -345,7 +345,7 @@ class OmpTurn:
 
 
 @dataclass
-class _ActiveTurn:
+class ActiveTurn:
     """One ``on_message`` invocation that owns its room.
 
     ``task`` is what retirement cancels; ``settled`` is set by the invocation's own
@@ -436,7 +436,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         self._rooms: dict[str, OmpRoom] = {}
         self._locks: dict[str, RoomGate] = {}
         self._selection_locks: dict[str, asyncio.Lock] = {}
-        self._owners: dict[str, _ActiveTurn] = {}
+        self._owners: dict[str, ActiveTurn] = {}
         self._room_selections: dict[str, ModelSelection] = {}
         self._retirements: dict[str, int] = {}
         self._retiring: dict[str, asyncio.Task[None]] = {}
@@ -827,7 +827,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 raise asyncio.CancelledError
             task = asyncio.current_task()
             assert task is not None, "OMP turns run inside an asyncio task"
-            active = _ActiveTurn(task)
+            active = ActiveTurn(task)
             self._owners[room_id] = active
             deadline = asyncio.timeout(self.config.turn_timeout_s)
             turn: OmpTurn | None = None
@@ -1303,7 +1303,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
     async def _retire(
         self,
         room_id: str,
-        active: _ActiveTurn | None,
+        active: ActiveTurn | None,
         requester: asyncio.Task[object] | None,
     ) -> None:
         if active is not None:
