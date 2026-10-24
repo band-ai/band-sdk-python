@@ -17,8 +17,9 @@ The team's fixed-criteria review of an open PR. Four lenses (A–D) scan the
 diff in parallel while Edge-Case Flow Analysis and Logical Bugs run a staged
 investigation. The coordinator posts verified findings as one batch of inline
 comments. The PR's existing open feedback (anyone's) always goes through
-`band-here-is-a-review` for a verdict. With `--fix`, a `simplify` pass runs
-first, then `band-here-is-a-review` applies root-cause fixes and replies on and
+`band-here-is-a-review` for a verdict. Triage runs once before cycle 1.
+With `--fix`, a `simplify` pass follows triage, then
+`band-here-is-a-review` applies root-cause fixes and replies on and
 resolves every thread.
 
 Every fix targets the root cause. A wrapper, special case, or try/except over
@@ -44,8 +45,34 @@ automatically promote a PR, establish mergeability, or waive missing validation.
 
 Follow [pr-target-scope.md](pr-target-scope.md): it resolves the
 target and PR state, then writes the scope statement every subagent gets.
+Apply its goal and owning-layer assessment before workspace mutation or
+`simplify`. If it returns `RETHINK`, report the evidence and recommended scope
+or design correction before entering the fix loop. Continue read-only review
+where useful, but defer fixes that depend on an unresolved goal or architecture
+decision. Existing authorization for a concrete correction still applies.
 
-Then prepare the workspace per
+## Initial triage (once, before cycle 1)
+
+Run [band-pr-triage](../band-pr-triage/SKILL.md) at its default `low` level
+on the resolved PR before preparing a mutable workspace, running `simplify`,
+or starting cycle 1. This applies with and without `--fix`. Record its head
+SHA, verdict, goal and ownership assessment, and unverified leads. Reuse the
+scope evidence already collected; do not repeat source reads unnecessarily.
+
+- `RETHINK`: report the concern and recommended next step first. Continue
+  read-only investigation where useful; defer changes that depend on an
+  unresolved goal or architecture decision.
+- Other verdicts: continue the explicitly requested full review. `MERGE`
+  does not skip it; `DRAFT` does not promote the PR. Carry blockers and leads
+  into the appropriate angle groups for verification.
+
+Triage's suggested review command is routing advice, not a recursive skill
+invocation. Do not call `band-code-review` again from this preflight. Triage
+is not a review cycle and does not consume `--cycles`. Run it once per review
+run, not before later cycles or when resuming the same run. If the head changes,
+refresh affected evidence rather than treating the earlier verdict as current.
+
+After triage, prepare the workspace per
 `.claude/skills/band-here-is-a-review/pr-workspace.md` (repo, PR head in sync,
 and with `--fix` push access). `--fix` without push access runs as if absent
 (no `simplify`, one review, verdict-only close-out) and says so up front.
@@ -170,6 +197,9 @@ that could not be stopped. Delete this run's `pr-<n>-cycle-<k>.diff` files.
 Short and nothing else (no restated comment bodies, no process narration):
 - PR link; the scope statement, plus any scope mismatch or missing-ticket
   note.
+- Goal and owning-layer assessment, its evidence, and any unresolved design
+  decision; lead with this when the approach needs rethinking.
+- Initial triage verdict and the head assessed.
 - Comment counts by group and severity, totalled across cycles.
 - Existing feedback handled: item count with verdict counts.
 - Out-of-scope findings, one `file:line` each: fixed now, left open, or

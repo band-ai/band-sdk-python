@@ -4,7 +4,11 @@ One cycle = one full-PR review with every group, its verification, and its
 fix round. Nothing needs an extra cycle to get fixed, the last cycle's
 findings included. Fresh cycles shift focus and surface missed issues, so
 later cycles never narrow to the fix area; closed no-fix records are the
-only history their agents see. "Resolve the target and scope" and "Simplify" run once, up front. Without `--fix`, exactly one
+only history their agents see. "Resolve the target and scope", "Initial
+triage", and "Simplify" run once, up front, in that order. Initial triage
+also runs without `--fix`; neither triage nor simplify consumes a cycle.
+Resuming the same run or restarting its cycle cap does not rerun triage.
+Without `--fix`, exactly one
 review runs, then the verdict-only close-out.
 
 Convergence asks whether fixes are settling or each fix creates the next
