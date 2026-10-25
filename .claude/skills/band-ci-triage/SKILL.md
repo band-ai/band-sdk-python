@@ -6,9 +6,10 @@ description: Investigate failing GitHub Actions checks for a PR or commit in the
 # CI Triage
 
 Read [the shared runtime guidance](../workflow-runtime.md), `AGENTS.md`, and
-the relevant files in `.github/workflows/`. A diagnosis request is read-only; an explicit fix
-request authorizes in-scope implementation without a second plan-approval
-pause. Reuse existing authorization for pushes, reruns, and publication.
+the relevant files in `.github/workflows/`. A diagnosis request is read-only;
+an explicit fix request authorizes in-scope implementation without a second
+plan-approval pause. Reuse existing authorization for pushes, reruns, and
+publication.
 
 ## Establish the tested revision
 
@@ -33,6 +34,8 @@ gh pr checks <pr> -R <owner/repo> --json name,state,bucket,link,workflow
 gh run view <run-id> -R <owner/repo> --json headSha,event,attempt,status,conclusion,jobs,url
 gh run view <run-id> -R <owner/repo> --log-failed
 gh run view -R <owner/repo> --job <job-id> --log
+gh api repos/band-ai/band-sdk-python/rulesets
+gh api repos/band-ai/band-sdk-python/environments/release/deployment-branch-policies
 ```
 
 If logs are inaccessible or the check belongs to another service, report the
@@ -58,6 +61,21 @@ Redact credentials and sensitive message contents from excerpts.
   and query current GitHub rulesets or environment policies when relevant. Do
   not disable required jobs, weaken assertions, increase retries, or publish
   artifacts to manufacture a green result.
+- For a missing required check or a red `ci-status`, inspect
+  `.github/workflows/ci.yml`'s event filters, `needs`, and rollup table, plus
+  `tests/framework_conformance/test_ci_status_coverage.py`. Pull-request branch
+  filters match the PR base; required checks also need a `merge_group` trigger
+  to run in the queue. Compare the event and matrix before treating a skipped
+  suite as a product regression.
+- For a release failure, inspect both `.github/workflows/release.yml` and
+  `.github/workflows/band-publish.yml`. Trusted publishing and deployment
+  restrictions involve GitHub's live ruleset and environment policy; workflow
+  YAML alone cannot establish that those policies currently allow or block a
+  run. Query the repository rulesets and release deployment policy directly.
+  PyPI registers the top-level `band-publish.yml` filename as its trusted
+  publisher, so keep that publish job in this workflow. For an authorized
+  recovery after a partial upload, dispatch it against the existing tag;
+  `skip-existing` makes that retry idempotent, so do not retag.
 
 ## Fix and report
 

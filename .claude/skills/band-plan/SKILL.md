@@ -88,8 +88,9 @@ Never assume, always verify — the one rule everything else follows from.
      the pinned version. A capability that only exists in a newer release, or
      only sounds plausible from its name, is not verified.
 4. Read `AGENTS.md`, the relevant implementation and behavior tests, and the
-   guideline skills it lists. Treat current source and tests as the contract;
-   don't re-derive or contradict them.
+   guideline skills it lists. Use source and behavior tests to establish the
+   SDK's current behavior; follow `AGENTS.md` and skills for project rules, and
+   primary specifications for external contracts.
 
 If all of this lives in one place, do it inline. Once it spans more than one
 independent area (a sibling repo, a library, a separate doc area), give each
