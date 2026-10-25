@@ -602,9 +602,6 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             )
             if not dialog.enabled:
                 raise RuntimeError("OMP refused the structured ask dialog")
-            await self._select_model(
-                room, self._room_selections.get(room_id, selection)
-            )
             await self._refresh_state(room)
         finally:
             room.servers = {}
@@ -704,6 +701,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         self._room_selections[room_id] = _selection_after(
             self._room_selections.get(room_id, self.model_selection), selection
         )
+
+    async def _reconcile_selection(self, room: OmpRoom) -> None:
+        selection = self._room_selections.get(room.room_id, self.model_selection)
+        if selection != room.applied_selection:
+            await self._select_model(room, selection)
 
     async def _exclusive(self, room_id: str, run: Callable[[], Awaitable[T]]) -> T:
         """Serialize provider mutations, inlining reentry from the current job."""
@@ -994,6 +996,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     return await self._ask_room(request, msg, tools, room_id)
                 return await self._permission(request, room_id, room.session_id, turn)
 
+            await self._exclusive(room_id, partial(self._reconcile_selection, room))
             await room.client.prompt(
                 prompt, on_event=on_event, on_tool=on_tool, on_ui=on_ui
             )
