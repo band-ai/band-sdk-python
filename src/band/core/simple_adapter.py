@@ -13,7 +13,6 @@ from typing_extensions import Unpack
 
 from band.client.rest import AsyncRestClient
 from band.client.streaming import ControlMode
-from band.core.activity import sync_activity_tool_names
 from band.core.disposal import AdapterDisposal, CleanupCallback
 from band.core.exceptions import BandConfigError, InputNotAccepted
 from band.core.handoff import context_handoff
@@ -512,7 +511,6 @@ class SimpleAdapter(ABC, Generic[H]):
         ``TurnResultAlreadyReported`` so the runtime marks it FAILED without a
         second report. A detached turn is judged at its real end instead.
         """
-        sync_activity_tool_names(tools, self.features.emit)
         turn = tools.turn
         turn.judged = self.judges_turns and not any(
             is_contact_hub_turn(sender_type=m.sender_type, sender_id=m.sender_id)

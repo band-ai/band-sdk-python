@@ -656,9 +656,10 @@ class TestCrashRecoverySync:
             )
             peer.confirm_terminal = True
             await session.deliver(peer.post("new-ws", at=2))
-            # One clock jump avoids thousands of polling timers before reconciliation.
-            await asyncio.sleep(2 * session.ctx.config.idle_resync_seconds)
-            assert peer.status_of("old-ws") is DeliveryStatus.PROCESSED
+            await wait_for_condition(
+                lambda: peer.status_of("old-ws") is DeliveryStatus.PROCESSED,
+                timeout=2 * session.ctx.config.idle_resync_seconds,
+            )
 
         assert session.turns.ids == [("old-ws",), ("new-ws",)]
         assert peer.status_of("new-ws") is DeliveryStatus.PROCESSED
