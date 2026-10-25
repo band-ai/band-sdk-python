@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
-from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_participant_added_event
 from tests.runtime.batching.kit import FakeRoom, started_room
 from tests.runtime.helpers import AGENT_ID, ROOM_ID
@@ -15,8 +12,6 @@ pytestmark = pytest.mark.looptime
 
 PAGE_SIZE = 2
 REST_ROWS = [f"row-{index}" for index in range(1, 2 * PAGE_SIZE + 2)]
-# Long enough for a room that skipped rows to come back for them on its own.
-PERIODIC_WAKE = SessionConfig().idle_resync_seconds + 1
 
 
 class TestScanBoundary:
@@ -32,6 +27,6 @@ class TestScanBoundary:
         boundary = make_participant_added_event(room_id=ROOM_ID)
 
         async with started_room(platform, arrived=(echo, boundary)) as room:
-            await asyncio.sleep(PERIODIC_WAKE)
+            await room.quiesce()
 
         assert room.turns.order == ["participant_added", *REST_ROWS]

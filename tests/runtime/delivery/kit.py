@@ -206,6 +206,7 @@ class RestPeer:
         self.events_posted = 0
         self.journal: list[str] = []
         self.refuse_processing: set[str] = set()
+        self.processing_not_found_once: set[str] = set()
         self.deleted: set[str] = set()
         # A non-participant gets 404 not_found on every room route, as a deleted message does.
         self.participant = True
@@ -399,6 +400,11 @@ class RestPeer:
         terminal = action is not DeliveryStatus.PROCESSING
         if message_id in self.deleted or not self.participant:
             failure: Reply | None = NOT_FOUND
+        elif action is DeliveryStatus.PROCESSING and (
+            message_id in self.processing_not_found_once
+        ):
+            self.processing_not_found_once.remove(message_id)
+            failure = NOT_FOUND
         else:
             failure = self.terminal_error if terminal else None
         confirmed = failure is None and (

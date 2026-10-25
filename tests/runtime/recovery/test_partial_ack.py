@@ -22,24 +22,56 @@ CONFIRMED = ("m1", "m3")
 
 
 @pytest.mark.parametrize("shape", [Shape.BATCH])
-@pytest.mark.parametrize("ending", [Ending.DECLINES, Ending.RAISES])
-@pytest.mark.parametrize("fault", list(Fault))
 class TestPartialAck:
+    @pytest.mark.parametrize(
+        ("ending", "fault", "unconfirmed_status"),
+        [
+            pytest.param(
+                Ending.DECLINES,
+                Fault.LOST,
+                DeliveryStatus.PROCESSED,
+                id="decline-applied-response-lost",
+            ),
+            pytest.param(
+                Ending.RAISES,
+                Fault.LOST,
+                DeliveryStatus.FAILED,
+                id="failure-applied-response-lost",
+            ),
+            pytest.param(
+                Ending.DECLINES,
+                Fault.REFUSED,
+                DeliveryStatus.PROCESSING,
+                id="decline-refused",
+            ),
+            pytest.param(
+                Ending.RAISES,
+                Fault.REFUSED,
+                DeliveryStatus.PROCESSING,
+                id="failure-refused",
+            ),
+        ],
+    )
     async def test_the_confirmed_originals_are_settled_while_one_is_owed(
-        self, harness: Harness, ending: Ending, fault: Fault
+        self,
+        harness: Harness,
+        ending: Ending,
+        fault: Fault,
+        unconfirmed_status: DeliveryStatus,
     ) -> None:
         harness.peer.fail_terminals(fault, UNCONFIRMED)
 
         await harness.start(Route.BACKLOG)
 
-        unconfirmed = ending.intent if fault.applied else DeliveryStatus.PROCESSING
         assert harness.peer.statuses == {
             "m1": ending.intent,
-            UNCONFIRMED: unconfirmed,
+            UNCONFIRMED: unconfirmed_status,
             "m3": ending.intent,
         }
         assert harness.model_turns == [harness.members]
 
+    @pytest.mark.parametrize("ending", [Ending.DECLINES, Ending.RAISES])
+    @pytest.mark.parametrize("fault", list(Fault))
     async def test_only_the_unconfirmed_original_is_written_again(
         self, harness: Harness, ending: Ending, fault: Fault
     ) -> None:

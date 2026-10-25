@@ -13,8 +13,10 @@ from band.platform.message_lifecycle import ACTIONABLE_PAGE_SIZE
 # Keep-alive validation leaves headroom for a missed or slow refresh.
 PLATFORM_WORKING_STATE_TTL_SECONDS: float = 10.0
 
-# Model attempts per message when batching is off; batching allows only this.
+# Default attempts per message for singleton delivery.
 DEFAULT_MAX_MESSAGE_RETRIES = 1
+# A batch cannot safely replay model effects after its shared attempt fails.
+BATCH_MAX_MESSAGE_RETRIES = 1
 
 # How many queued messages one turn consumes when batching is on.
 DEFAULT_MAX_QUEUED_MESSAGES = 10
@@ -93,6 +95,7 @@ class SessionConfig(BaseSettings):
     @field_validator("max_queued_messages", mode="before")
     @classmethod
     def reject_boolean_ceiling(cls, value: object) -> object:
+        # bool is an int subclass, so the numeric bound alone accepts True as 1.
         if isinstance(value, bool):
             raise ValueError("max_queued_messages must be an integer, not a bool")
         return value
@@ -101,11 +104,11 @@ class SessionConfig(BaseSettings):
     def validate_queueing(self) -> Self:
         if (
             self.consume_all_queued
-            and self.max_message_retries != DEFAULT_MAX_MESSAGE_RETRIES
+            and self.max_message_retries != BATCH_MAX_MESSAGE_RETRIES
         ):
             raise ValueError(
                 "consume_all_queued runs one model attempt per batch; "
-                f"max_message_retries must stay {DEFAULT_MAX_MESSAGE_RETRIES} "
+                f"max_message_retries must stay {BATCH_MAX_MESSAGE_RETRIES} "
                 f"(got {self.max_message_retries})"
             )
         return self

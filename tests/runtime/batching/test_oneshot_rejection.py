@@ -24,6 +24,18 @@ class TestOneShotRejection:
                 session_config=SessionConfig(consume_all_queued=True),
             )
 
+    def test_environment_batching_configuration_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CONSUME_ALL_QUEUED", "true")
+
+        with pytest.raises(BandConfigError, match="one-shot"):
+            OneShotInvoker(
+                link=MagicMock(),
+                adapter=MagicMock(),
+                agent_id=AGENT_ID,
+            )
+
     async def test_a_session_config_that_leaves_batching_off_runs_the_event(
         self,
     ) -> None:

@@ -295,8 +295,11 @@ class DeliveryLifecycle:
                 result = await self.processing(identity)
             except RoomExecutionStoppedError:
                 return False
-            if result is SettlementResult.NOT_FOUND and await self.is_gone(identity):
-                continue
+            if result is SettlementResult.NOT_FOUND:
+                if self.config.consume_all_queued:
+                    return False
+                if await self.is_gone(identity):
+                    continue
             if result is not SettlementResult.ACCEPTED or not self.host.owns_delivery(
                 scope, revision
             ):

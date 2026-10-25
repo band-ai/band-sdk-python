@@ -169,7 +169,7 @@ class OneShotInvoker:
             one-shot drain runs one event per invocation and never batches.
 
     Raises:
-        BandConfigError: ``session_config.consume_all_queued`` is set.
+        BandConfigError: the effective session config enables batching.
     """
 
     def __init__(
@@ -182,7 +182,8 @@ class OneShotInvoker:
         history_page_cap: int = DEFAULT_HISTORY_PAGE_CAP,
         session_config: SessionConfig | None = None,
     ) -> None:
-        if session_config is not None and session_config.consume_all_queued:
+        effective_config = SessionConfig() if session_config is None else session_config
+        if effective_config.consume_all_queued:
             raise BandConfigError(
                 "consume_all_queued is not supported by one-shot invocation"
             )

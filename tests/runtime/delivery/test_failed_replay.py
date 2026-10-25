@@ -6,34 +6,31 @@ import pytest
 
 from band.client.streaming import DeliveryStatus
 from tests.runtime.delivery.kit import RestPeer, runtime_room, started_session
-from tests.runtime.helpers import ROOM_ID
 
 pytestmark = pytest.mark.looptime
 
 FAILED_BY_THE_MODEL = "failed-by-the-model"
+FOLLOWUP = "followup-after-replacement"
 
 
 class TestFailedReplay:
-    async def test_eviction_from_the_completed_memory_does_not_replay_it(
+    async def test_a_fresh_execution_does_not_replay_a_durably_failed_input(
         self, rest_peer: RestPeer
     ) -> None:
         rest_peer.post(FAILED_BY_THE_MODEL)
 
         async with started_session(
             rest_peer, fail_on=frozenset({FAILED_BY_THE_MODEL}), batching=True
-        ) as session:
-            await session.reached(DeliveryStatus.FAILED, FAILED_BY_THE_MODEL)
-            claims = session.ctx.claims
-            for index in range(claims.max_completed):
-                claims.remember_completed(ROOM_ID, f"completed-{index}")
-            forgotten = not claims.is_completed(ROOM_ID, FAILED_BY_THE_MODEL)
-            await session.resync()
+        ) as failed_session:
+            await failed_session.reached(DeliveryStatus.FAILED, FAILED_BY_THE_MODEL)
 
-        assert (forgotten, session.turns.ids, session.admission_attempts) == (
-            True,
-            [(FAILED_BY_THE_MODEL,)],
-            [FAILED_BY_THE_MODEL],
-        )
+        processing_writes = len(rest_peer.writes_of(DeliveryStatus.PROCESSING))
+        async with started_session(rest_peer, batching=True) as fresh_session:
+            await fresh_session.quiesce()
+
+        assert failed_session.turns.ids == [(FAILED_BY_THE_MODEL,)]
+        assert fresh_session.turns.ids == []
+        assert len(rest_peer.writes_of(DeliveryStatus.PROCESSING)) == processing_writes
 
     async def test_a_replacement_room_does_not_replay_it(
         self, rest_peer: RestPeer
@@ -44,12 +41,12 @@ class TestFailedReplay:
             rest_peer, fail_on=frozenset({FAILED_BY_THE_MODEL})
         ) as room:
             await room.reached(DeliveryStatus.FAILED, FAILED_BY_THE_MODEL)
-            original = room.ctx
             await room.replace()
-            replaced = room.ctx is not original
+            await room.quiesce()
+            await room.ctx.on_event(rest_peer.post(FOLLOWUP))
+            await room.settled(FOLLOWUP)
+            await room.ctx.request_resync()
+            await room.quiesce()
 
-        assert (replaced, room.turns.ids, room.admission_attempts) == (
-            True,
-            [(FAILED_BY_THE_MODEL,)],
-            [FAILED_BY_THE_MODEL],
-        )
+        assert room.turns.ids == [(FAILED_BY_THE_MODEL,), (FOLLOWUP,)]
+        assert room.admission_attempts == [FAILED_BY_THE_MODEL, FOLLOWUP]

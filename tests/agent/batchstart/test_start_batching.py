@@ -45,11 +45,18 @@ class TestStartBatching:
         assert adapter.turns == [("m1", "m2", "m3")]
 
     @pytest.mark.parametrize(
-        "preprocessor",
-        [DefaultPreprocessor, IdentityPreprocessor, ProjectingPreprocessor],
+        ("preprocessor", "prefix"),
+        [
+            pytest.param(DefaultPreprocessor, "", id="default"),
+            pytest.param(IdentityPreprocessor, "", id="identity"),
+            pytest.param(ProjectingPreprocessor, PROJECTED_PREFIX, id="projecting"),
+        ],
     )
     async def test_the_started_agent_retries_a_refused_queue_as_one_turn(
-        self, platform: Platform, preprocessor: type[DefaultPreprocessor]
+        self,
+        platform: Platform,
+        preprocessor: type[DefaultPreprocessor],
+        prefix: str,
     ) -> None:
         peer, adapter = platform.peer, QueuedAdapter()
         for content in ("first", "second", "third"):
@@ -76,7 +83,6 @@ class TestStartBatching:
             Turn(("m4",), bootstrap=False),
         ]
         assert adapter.refused == [("m1", "m2", "m3")]
-        prefix = PROJECTED_PREFIX if preprocessor is ProjectingPreprocessor else ""
         assert adapter.contents == [
             tuple(f"{prefix}{content}" for content in ("first", "second", "third")),
             (f"{prefix}fourth",),
