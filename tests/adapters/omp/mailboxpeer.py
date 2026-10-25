@@ -38,7 +38,8 @@ class PeerCommand(StrEnum):
     TOOL = "mailbox-tool"
     CANCEL_CALLBACK = "mailbox-cancel"
     FINISH = "mailbox-finish"
-    WAIT_ROLLBACK = "mailbox-wait-rollback"
+    HOLD_MODEL_RESPONSE = "mailbox-hold-model-response"
+    WAIT_MODEL_RESPONSE = "mailbox-wait-model-response"
 
 
 def model_reply(model: str) -> str:
@@ -51,8 +52,9 @@ class MailboxPeer(Peer):
         self.callback_turn = int(sys.argv[1])
         self.callback_count = int(sys.argv[2])
         self.initial_tool = sys.argv[4] == OmpFrameType.HOST_TOOL_CALL
-        self.rollback: Frame | None = None
-        self.rollback_waiter: Frame | None = None
+        self.hold_model: str | None = None
+        self.held_model_request: Frame | None = None
+        self.model_waiter: Frame | None = None
         self.model = ORIGINAL_MODEL
         self.pending: set[str] = set()
         self.plugin = (
@@ -136,22 +138,25 @@ class MailboxPeer(Peer):
         match frame.type:
             case OmpCommandName.SET_MODEL:
                 self.frames.append(frame.model_dump(exclude_unset=True))
-                restoring = self.model == REJECTED_MODEL
                 self.model = str((frame.model_extra or {})["modelId"])
-                if restoring:
-                    self.rollback = frame
-                    if self.rollback_waiter is not None:
-                        self.respond(self.rollback_waiter)
-                        self.rollback_waiter = None
+                if self.model == self.hold_model:
+                    self.held_model_request = frame
+                    if self.model_waiter is not None:
+                        self.respond(self.model_waiter)
+                        self.model_waiter = None
                 else:
                     self.respond(frame)
             case OmpCommandName.GET_AVAILABLE_THINKING_LEVELS:
                 self.respond(frame, {"levels": ["low", "high"]})
-            case PeerCommand.WAIT_ROLLBACK:
-                if self.rollback is not None:
+            case PeerCommand.HOLD_MODEL_RESPONSE:
+                self.hold_model = str((frame.model_extra or {})["modelId"])
+                self.held_model_request = None
+                self.respond(frame)
+            case PeerCommand.WAIT_MODEL_RESPONSE:
+                if self.held_model_request is not None:
                     self.respond(frame)
                 else:
-                    self.rollback_waiter = frame
+                    self.model_waiter = frame
             case OmpCommandName.GET_STATE:
                 self.frames.append(frame.model_dump(exclude_unset=True))
                 self.respond(

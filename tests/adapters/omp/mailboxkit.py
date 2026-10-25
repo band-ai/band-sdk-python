@@ -52,7 +52,7 @@ class MailboxTools(FakeAgentTools):
 
 def mailbox_adapter(
     tmp_path: Path,
-    resolver: PermissionResolver,
+    resolver: PermissionResolver | None = None,
     *,
     callback_turn: int = 1,
     callback_count: int = 1,
