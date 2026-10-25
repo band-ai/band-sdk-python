@@ -32,6 +32,10 @@ class NestedMailboxAsk(BandError):
     """The room worker asked itself and would wait forever."""
 
 
+class MailboxClosing(BandError):
+    """The room mailbox is draining and cannot accept more jobs."""
+
+
 @dataclass
 class MailboxJob:
     run: Callable[[], Awaitable[Any]]
@@ -44,10 +48,11 @@ class MailboxRoom:
     queue: asyncio.Queue[MailboxJob | None] = field(default_factory=asyncio.Queue)
     worker: asyncio.Task[None] | None = None
     current: MailboxJob | None = None
+    closing: bool = False
 
 
 class RoomMailbox:
-    """FIFO worker per room: ``cast`` does not wait, ``ask`` does."""
+    """FIFO worker per room; closing drains work and temporarily rejects arrivals."""
 
     def __init__(self) -> None:
         self._rooms: dict[str, MailboxRoom] = {}
@@ -64,13 +69,13 @@ class RoomMailbox:
         return current is not None and current.running is me
 
     def cast(self, room_id: str, run: Callable[[], Awaitable[None]]) -> None:
-        """Enqueue ``run`` and return immediately."""
+        """Enqueue ``run`` and return immediately, or raise while closing."""
         self._submit(room_id, run, result=None)
 
     def spawn(
         self, room_id: str, run: Callable[[], Awaitable[None]]
     ) -> asyncio.Future[None]:
-        """Enqueue ``run`` and return a future that settles with it."""
+        """Enqueue ``run`` and return a future, or raise while closing."""
         future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._submit(room_id, run, result=future)
         return future
@@ -78,8 +83,9 @@ class RoomMailbox:
     async def ask(self, room_id: str, run: Callable[[], Awaitable[T]]) -> T:
         """Enqueue ``run`` and wait for its result.
 
-        Raises ``NestedMailboxAsk`` when the caller is this room's worker.
-        Cancelling the waiter cancels the in-flight job.
+        Raises ``NestedMailboxAsk`` from this room's worker and ``MailboxClosing``
+        while this room's worker is draining. Cancelling the waiter cancels the
+        in-flight job.
         """
         if self.occupying(room_id):
             raise NestedMailboxAsk(
@@ -94,7 +100,7 @@ class RoomMailbox:
             raise
 
     async def close(self, room_id: str) -> None:
-        """Drain queued jobs, then stop the worker."""
+        """Drain queued jobs and stop the worker; later submissions start anew."""
         if self.occupying(room_id):
             raise NestedMailboxAsk(
                 f"Room {room_id} mailbox cannot close from its own worker"
@@ -102,7 +108,9 @@ class RoomMailbox:
         room = self._rooms.get(room_id)
         if room is None:
             return
-        await room.queue.put(None)
+        if not room.closing:
+            room.closing = True
+            await room.queue.put(None)
         worker = room.worker
         if worker is not None:
             await worker
@@ -114,6 +122,8 @@ class RoomMailbox:
         result: asyncio.Future[Any] | None,
     ) -> MailboxJob:
         room = self._rooms.get(room_id)
+        if room is not None and room.closing:
+            raise MailboxClosing(f"Room {room_id} mailbox is closing")
         if room is None:
             room = MailboxRoom()
             self._rooms[room_id] = room
