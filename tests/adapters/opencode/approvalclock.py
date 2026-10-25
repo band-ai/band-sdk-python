@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from band.adapters.opencode import OpencodeAdapterConfig
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, reported_failures
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.hold import Hold
 from tests.adapters.opencode.helpers import (
@@ -61,7 +62,7 @@ class ApprovalTurn:
         await deliver_message(
             self.adapter,
             make_platform_message(content="approve req-1"),
-            tools_protocol(FakeAgentTools()),
+            tools_protocol(FakeAgentTools(participants=ROOM_MEMBERS)),
             OpencodeSessionState(session_id="sess-1", room_id="room-1"),
             participants_msg=None,
             contacts_msg=None,
@@ -102,7 +103,7 @@ async def pending_approval() -> AsyncIterator[ApprovalTurn]:
                 approval_wait_timeout_s=APPROVAL_WINDOW_S,
             ),
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         try:
             await run_single_turn(adapter, tools, content="run it")
             await adapter.watcher_started.wait()

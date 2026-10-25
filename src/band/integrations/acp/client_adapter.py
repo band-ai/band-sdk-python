@@ -79,6 +79,7 @@ from band.core.types import (
     Emit,
     FeatureKwargs,
     PlatformMessage,
+    ids_of,
 )
 from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import ACPRuntime
@@ -1853,9 +1854,7 @@ class ACPClientAdapter(
                 exc_info=True,
             )
             return None
-        raw = messages_before(
-            context.get("data") or [], {message.id for message in messages}
-        )
+        raw = messages_before(context.get("data") or [], set(ids_of(messages)))
         return build_replay_messages(raw)
 
 

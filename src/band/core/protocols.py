@@ -233,6 +233,15 @@ class AgentToolsProtocol(Protocol):
         """Get participants in the current room."""
         ...
 
+    async def get_participants_snapshot(self) -> list[ChatParticipant]:
+        """Read fresh membership without changing any participant cache.
+
+        Raise for failed, missing, empty, malformed or duplicate-ID rosters.
+        Custom tools and delegating wrappers must implement this contract;
+        this method is not an LLM tool.
+        """
+        ...
+
     async def lookup_peers(
         self, page: int = 1, page_size: int = 50
     ) -> ListAgentPeersResponse:

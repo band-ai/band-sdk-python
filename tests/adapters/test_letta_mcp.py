@@ -34,6 +34,7 @@ from band.integrations.letta.prompts import (
 from band.integrations.mcp import BandMCPTransport
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools, reported_failures
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.lettakit import (
     letta_mcp_servers_api,
     make_assistant_message,
@@ -437,7 +438,7 @@ class TestSelfHostedMCPLifecycle:
             make_assistant_message("Back online!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         with backends_created_by(then=None):
             await adapter.on_message(
                 make_platform_message(),
@@ -478,7 +479,7 @@ class TestSelfHostedMCPLifecycle:
 
         await adapter.on_message(
             make_platform_message(),
-            FakeAgentTools(),
+            FakeAgentTools(participants=ROOM_MEMBERS),
             LettaSessionState(),
             None,
             None,
@@ -508,7 +509,9 @@ class TestSelfHostedMCPLifecycle:
         mock_client.agents.tools.list.side_effect = ConnectionError("letta hiccup")
 
         with pytest.raises(RuntimeError, match="MCP tools are not attached"):
-            await adapter._ensure_agent("room-1", LettaSessionState(), FakeAgentTools())
+            await adapter._ensure_agent(
+                "room-1", LettaSessionState(), FakeAgentTools(participants=ROOM_MEMBERS)
+            )
 
         assert room_ctx.stale_tools is True
 
@@ -525,7 +528,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1", stale_tools=True)
         mock_client.agents.tools.list.side_effect = ConnectionError("letta hiccup")
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         with pytest.raises(RuntimeError, match="not attached"):
             await adapter.on_message(
                 make_platform_message(),
@@ -640,7 +643,7 @@ class TestSelfHostedMCPLifecycle:
     def test_room_tools_resolver(self) -> None:
         """The MCP resolver reads the room context's current tools."""
         adapter = LettaAdapter()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         adapter._rooms["room-1"] = RoomContext(agent_id="agent-1", tools=tools)
         assert adapter._get_room_tools("room-1") is tools
         assert adapter._get_room_tools("other") is None
@@ -773,7 +776,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._system_prompt = "Test"
         mock_client.mcp_servers.list.side_effect = ConnectionError("letta down")
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         with pytest.raises(RuntimeError, match="MCP server registration failed"):
             await adapter.on_message(
                 make_platform_message(),

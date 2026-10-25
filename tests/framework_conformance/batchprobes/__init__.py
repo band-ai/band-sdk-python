@@ -141,7 +141,35 @@ async def delivery_input(originals: Sequence[Original]) -> AgentInput:
     ctx = room_context(stored=[stored_message(o) for o in STORED_ROOM])
     inp = await DefaultPreprocessor().process_batch(ctx, events, AGENT_ID)
     assert inp is not None
-    return replace(inp, tools=FakeAgentTools(room_id=ROOM_ID))
+    return replace(
+        inp,
+        tools=FakeAgentTools(
+            room_id=ROOM_ID,
+            participants=[
+                {
+                    "id": ALICE_FIRST.sender_id,
+                    "name": ALICE_FIRST.sender_name,
+                    "type": ALICE_FIRST.sender_type,
+                    "role": "member",
+                    "status": "active",
+                },
+                {
+                    "id": HELPER.sender_id,
+                    "name": HELPER.sender_name,
+                    "type": HELPER.sender_type,
+                    "role": "member",
+                    "status": "active",
+                },
+                {
+                    "id": AGENT_ID,
+                    "name": "SDK Agent",
+                    "type": "Agent",
+                    "role": "member",
+                    "status": "active",
+                },
+            ],
+        ),
+    )
 
 
 async def deliver(adapter: SimpleAdapter[Any], inp: AgentInput) -> None:

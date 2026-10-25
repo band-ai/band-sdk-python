@@ -13,6 +13,7 @@ from band.converters.letta import LettaSessionState
 from band.core.protocols import TurnResultAlreadyReported
 from band.runtime.tools import BandTool
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.letta.kit import sent_contents
 from tests.adapters.lettakit import (
     call_id,
@@ -51,7 +52,7 @@ class TestExternalToolRecording:
             make_tool_call_message(BandTool.SEND_MESSAGE),
             make_tool_return_message(BandTool.SEND_MESSAGE, status=status),
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_message(
             make_platform_message(),
@@ -83,7 +84,7 @@ class TestExternalToolRecording:
                 tool_return="result",
             ),
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_message(
             make_platform_message(),

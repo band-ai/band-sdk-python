@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 
 import pytest
 from acp import RequestError
 
 from band.core.exceptions import InputNotAccepted
 from band.integrations.acp.client_adapter import ACPTurnTimeoutError
-from tests.adapters.cursorturns.conftest import OpenCursor
+from tests.adapters.cursorturns.conftest import OpenCursor, cursor_session
 from tests.adapters.cursorturns.kit import (
     ROOM_A,
     active_turn,
@@ -23,6 +24,9 @@ from tests.adapters.cursorturns.kit import (
     terminated,
 )
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
+from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.tasks import background
+from tests.toolkit.timecontrol import controlled_clock
 
 # A deadlock fails here instead of hanging the suite.
 DEADLOCK_GUARD_S = 10
@@ -48,20 +52,35 @@ class TestCursorTurnCleanup:
 
         assert len(agent.prompts) == 2
 
-    async def test_a_timeout_cleanup_run_by_a_child_frees_the_room(
-        self, open_cursor: OpenCursor
-    ) -> None:
+    @pytest.mark.timeout(DEADLOCK_GUARD_S)
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
+    async def test_a_timeout_cleanup_run_by_a_child_frees_the_room(self) -> None:
         provider = busy_provider("prompt")
-        session = await open_cursor(
-            provider.agent, turn_timeout_s=0.05, decision_timeout_s=0.01
-        )
+        async with controlled_clock() as clock:
+            resources = AsyncExitStack()
+            try:
+                session = await clock.run_io(
+                    resources.enter_async_context(
+                        cursor_session(
+                            provider.agent, turn_timeout_s=2, decision_timeout_s=1
+                        )
+                    )
+                )
+                sending = await resources.enter_async_context(
+                    background(await clock.run_io(occupy(session, provider)))
+                )
+                assert not sending.done()
 
-        async with asyncio.timeout(DEADLOCK_GUARD_S):
-            with pytest.raises(ACPTurnTimeoutError):
-                await session.send("hello", room=ROOM_A)
-            await session.send("hello again", room=ROOM_A)
+                await clock.elapse(2)
+                with pytest.raises(ACPTurnTimeoutError):
+                    await sending
+                assert cancels_sent(provider.agent) == [provider.agent.session_ids()[0]]
 
-        assert len(provider.agent.prompts) == 2
+                await clock.run_io(session.send("hello again", room=ROOM_A))
+                assert len(provider.agent.prompts) == 2
+            finally:
+                provider.finish.set()
+                await clock.run_io(resources.aclose())
 
     async def test_a_stale_turns_retirement_leaves_its_successor_running(
         self, open_cursor: OpenCursor

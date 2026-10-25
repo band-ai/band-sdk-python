@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import reported_failures
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
@@ -71,7 +72,7 @@ class TestEventFailures:
             ]
         )
         adapter = make_adapter(fake_client)
-        tools = TaskEventFailingTools()
+        tools = TaskEventFailingTools(participants=ROOM_MEMBERS)
 
         await run_single_turn(adapter, tools)
 

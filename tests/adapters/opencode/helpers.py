@@ -31,6 +31,7 @@ from band.integrations.opencode import (
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import TOOL_DEFINITIONS
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.mcpbackends import BackendStarts
 
@@ -334,7 +335,7 @@ class HeldReplyTools(FakeAgentTools):
     keeping the turn's watcher in the delivery tail after the model has finished."""
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(participants=ROOM_MEMBERS)
         self.reply_entered = asyncio.Event()
         self.release = asyncio.Event()
 
@@ -532,7 +533,9 @@ def room_reply(content: str, sender_id: str = "user-2") -> PlatformMessage:
 
 async def handle_control(adapter: OpencodeAdapter, message: PlatformMessage) -> bool:
     """Offer ``message`` to the adapter's control handler on its own delivery tools."""
-    return await adapter.try_handle_control(message, tools_protocol(FakeAgentTools()))
+    return await adapter.try_handle_control(
+        message, tools_protocol(FakeAgentTools(participants=ROOM_MEMBERS))
+    )
 
 
 class HeldPermissionReplyClient(FakeOpencodeClient):
@@ -656,7 +659,7 @@ async def park_turn(adapter: OpencodeAdapter, tools: FakeAgentTools) -> None:
 
 async def approve(adapter: OpencodeAdapter) -> FakeAgentTools:
     """A person approves the parked ask; returns the approval's own tools."""
-    approver_tools = FakeAgentTools()
+    approver_tools = FakeAgentTools(participants=ROOM_MEMBERS)
     control = agent_input(APPROVAL_REPLY, approver_tools)
     assert await adapter.try_handle_control(control.msg, control.tools)
     return approver_tools

@@ -15,9 +15,11 @@ from pydantic_core import to_jsonable_python
 from typing_extensions import Unpack
 
 from band.converters.letta import LettaHistoryConverter, LettaSessionState
+from band.core.content import has_visible_content
 from band.core.delivery import (
     DeliveryFailedError,
-    relay_reply,
+    automatic_mentions,
+    finish_automatic_reply,
     reraise_delivery_cause,
 )
 from band.core.protocols import (
@@ -651,14 +653,20 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
                 self._mcp.send_message_tool,
             )
         else:
-            final_text = "\n\n".join(final_text_parts)
-            mentions = list(reply_to_sender_ids) or None
             logger.warning(
                 "Room %s: Agent did not call %s — auto-relaying assistant text",
                 room_id,
                 self._mcp.send_message_tool,
             )
-            await relay_reply(tools, final_text, mentions=mentions)
+
+        reply = "\n\n".join(final_text_parts) if self.config.auto_relay else None
+        if not tools.turn.replied and (
+            has_visible_content(reply or "") or not tools.turn.complete
+        ):
+            mentions = await automatic_mentions(tools, reply_to_sender_ids)
+            if self._get_room_tools(room_id) is not tools:
+                raise asyncio.CancelledError
+            await finish_automatic_reply(tools, reply, mentions)
 
         return final_text_parts
 

@@ -5,11 +5,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from types import SimpleNamespace
-from typing import Any
+from types import SimpleNamespace, TracebackType
+from typing import Any, Self
 
 from parlant.core.application import Application
+from parlant.core.background_tasks import BackgroundTaskService
+from parlant.core.loggers import StdoutLogger
 from parlant.core.sessions import EventKind, EventSource
+from parlant.core.tracer import LocalTracer
 
 SESSION_ID = "probe-session"
 AGENT_ID = "probe-agent"
@@ -41,11 +44,28 @@ class ParlantPeer:
     def __init__(self, reply: str) -> None:
         self._reply = reply
         self._events: list[SessionEvent] = []
+        self.background_tasks = BackgroundTaskService(StdoutLogger(LocalTracer()))
         self.agent: Any = SimpleNamespace(id=AGENT_ID)
         self.server: Any = SimpleNamespace(
-            container={Application: SimpleNamespace(sessions=self)},
+            container={
+                Application: SimpleNamespace(sessions=self),
+                BackgroundTaskService: self.background_tasks,
+            },
             create_customer=self.create_customer,
         )
+
+    async def __aenter__(self) -> Self:
+        await self.background_tasks.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        await self.background_tasks.cancel_all(reason="Probe completed")
+        return await self.background_tasks.__aexit__(exc_type, exc_value, traceback)
 
     @property
     def engine_input(self) -> str:

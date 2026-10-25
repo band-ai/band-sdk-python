@@ -15,6 +15,7 @@ from pydantic import Field, PositiveFloat, PositiveInt, model_validator
 from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
+from band.core.delivery import automatic_mentions, finish_automatic_reply
 from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     TURN_FAILURE_PROVIDER,
@@ -403,7 +404,11 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                     contacts_msg,
                     is_session_bootstrap=is_session_bootstrap,
                 )
-                # A failed or cancelled turn never gets here.
+                if not turn.tools.turn.complete:
+                    mentions = await automatic_mentions(turn.tools, turn.audience)
+                    if turn.closed or self._turns.get(room.room_id) is not turn:
+                        raise asyncio.CancelledError
+                    await finish_automatic_reply(turn.tools, None, mentions)
                 await judge_detached_turn(turn.tools, room_id=room.room_id)
         finally:
             _close_turn(turn)
@@ -666,10 +671,16 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             self._resolve_evicted_decision(registration.evicted)
         entry = registration.entry
         try:
-            await turn.tools.send_notice(
-                prompt.replace("{token}", entry.token),
-                mentions=_audience_mentions(turn),
-            )
+            mentions = await automatic_mentions(turn.tools, turn.audience)
+            if turn.closed:
+                raise asyncio.CancelledError
+            if not mentions:
+                if decisions.withdraw(entry):
+                    return None
+            elif entry in decisions.unclaimed():
+                await turn.tools.send_notice(
+                    prompt.replace("{token}", entry.token), mentions=mentions
+                )
         except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
             logger.warning("Could not deliver Cursor %s decision prompt", kind)
             # A reply that claimed it meanwhile owns the answer; wait for it.
@@ -694,10 +705,14 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         turn: CursorTurn, kind: DecisionKind, token: str
     ) -> None:
         try:
-            await turn.tools.send_notice(
-                DECISION_TIMED_OUT_TEMPLATE.format(kind=kind, token=token),
-                mentions=_audience_mentions(turn),
-            )
+            mentions = await automatic_mentions(turn.tools, turn.audience)
+            if turn.closed:
+                raise asyncio.CancelledError
+            if mentions:
+                await turn.tools.send_notice(
+                    DECISION_TIMED_OUT_TEMPLATE.format(kind=kind, token=token),
+                    mentions=mentions,
+                )
         except Exception:  # noqa: BLE001 -- best-effort room notify; the decision has already timed out, so a delivery failure here changes nothing
             logger.warning("Could not deliver Cursor %s timeout notice", kind)
 
@@ -873,10 +888,6 @@ def _cancel_decisions(
             reason,
         )
         entry.payload.future.set_result(None)
-
-
-def _audience_mentions(turn: CursorTurn) -> list[str] | None:
-    return list(turn.audience) or None
 
 
 __all__ = [

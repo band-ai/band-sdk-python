@@ -20,6 +20,7 @@ from band.integrations.copilot_sdk.room_ask_user import (
     room_inactive_answer,
 )
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     make_started_adapter,
@@ -61,7 +62,7 @@ class TestAskUserRoom:
         answers: list[dict[str, Any]] = []
         client = FakeCopilotClient(turn_events=[ask_mid_turn(QUESTION, answers)])
         adapter = await make_started_adapter(client, ask_user=ASK_USER_ROOM)
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await run_message(adapter, tools)
 
@@ -84,7 +85,7 @@ class TestAskUserRoom:
             turn_events=[ask_mid_turn(QUESTION, answers)],
         )
         adapter = await make_started_adapter(client, ask_user=ASK_USER_ROOM)
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await run_message(adapter, tools)
 
@@ -97,7 +98,7 @@ class TestAskUserRoom:
 
         class FailingOnceTools(FakeAgentTools):
             def __init__(self) -> None:
-                super().__init__()
+                super().__init__(participants=ROOM_MEMBERS)
                 self.failed = False
 
             async def send_message(self, content, mentions=None):
@@ -126,7 +127,7 @@ class TestAskUserRoom:
         answer benignly instead of crashing on missing turn state."""
         client = FakeCopilotClient()
         adapter = await make_started_adapter(client, ask_user=ASK_USER_ROOM)
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await run_message(adapter, tools)
 
         handler = client.sessions[0].kwargs["on_user_input_request"]

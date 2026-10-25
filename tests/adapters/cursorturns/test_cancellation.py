@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
 from tests.adapters.cursorturns.conftest import OpenCursor
 from tests.adapters.cursorturns.kit import (
     ROOM_A,
@@ -16,7 +17,6 @@ from tests.adapters.cursorturns.kit import (
     busy_provider,
     cancels_sent,
     cursor_adapter,
-    hold_cancellation,
     interrupt,
     occupy,
     provider_task,
@@ -55,7 +55,9 @@ class TestCursorProviderCancellation:
         self, open_cursor: OpenCursor
     ) -> None:
         provider = busy_provider("approval")
-        session = await open_cursor(provider.agent)
+        session = await open_cursor(
+            provider.agent, turn_settle_timeout_s=TURN_SETTLE_GRACE_S
+        )
         sending = await occupy(session, provider)
         turn = active_turn(session)
 
@@ -72,14 +74,15 @@ class TestCursorProviderCancellation:
         provider = busy_provider("approval")
         session = await open_cursor(provider.agent)
         await occupy(session, provider)
-        teardown = hold_cancellation(session)
         turn = active_turn(session)
 
-        await stop(cursor_adapter(session), ROOM_A)
-        await teardown.received.wait()
-        await stop(cursor_adapter(session), ROOM_A)
-        teardown.release.set()
-        await terminated(session, turn)
+        try:
+            await stop(cursor_adapter(session), ROOM_A)
+            await stop(cursor_adapter(session), ROOM_A)
+            await terminated(session, turn)
+        finally:
+            provider.finish.set()
+            await terminated(session, turn)
 
         assert cancels_sent(provider.agent) == [provider.agent.session_ids()[0]]
 

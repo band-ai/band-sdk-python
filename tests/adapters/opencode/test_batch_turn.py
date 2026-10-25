@@ -11,6 +11,7 @@ from band.adapters.opencode.approvals.wording import (
 )
 from band.core.exceptions import InputNotAccepted
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.conftest import ParkRoom
 from tests.adapters.opencode.helpers import (
     ALICE,
@@ -84,7 +85,7 @@ class TestBatchTurn:
     ) -> None:
         client = FakeOpencodeClient(prompt_event_sequences=[[PERMISSION_ASK]])
         adapter = await park_room(client)
-        busy_tools = FakeAgentTools()
+        busy_tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         with pytest.raises(InputNotAccepted):
             await deliver_turn(

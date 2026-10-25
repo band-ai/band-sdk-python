@@ -55,7 +55,31 @@ def sample_message() -> PlatformMessage:
 @pytest.fixture
 def mock_tools() -> FakeAgentTools:
     """The room's tools, recording what the adapter posted."""
-    return FakeAgentTools()
+    return FakeAgentTools(
+        participants=[
+            {
+                "id": SENDER_ID,
+                "name": SENDER_NAME,
+                "type": "User",
+                "role": "member",
+                "status": "active",
+            },
+            {
+                "id": "alice",
+                "name": "Alice",
+                "type": "User",
+                "role": "member",
+                "status": "active",
+            },
+            {
+                "id": "helper",
+                "name": "Helper",
+                "type": "Agent",
+                "role": "member",
+                "status": "active",
+            },
+        ]
+    )
 
 
 @pytest.fixture

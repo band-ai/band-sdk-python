@@ -124,7 +124,12 @@ class ClaudeRoom:
     room saw."""
 
     def __init__(
-        self, adapter: ClaudeSDKAdapter, claude: FakeClaude, room_id: str = "room-1"
+        self,
+        adapter: ClaudeSDKAdapter,
+        claude: FakeClaude,
+        room_id: str = "room-1",
+        *,
+        participants: list[dict[str, Any]] | None = None,
     ) -> None:
         self.adapter = adapter
         self.claude = claude
@@ -132,9 +137,9 @@ class ClaudeRoom:
         # The room's shared log: every message's tools post into it.
         self.tools = FakeAgentTools(
             room_id=room_id,
-            participants=[
-                {**APPROVER, "role": "member", "status": "active", "type": "User"}
-            ],
+            participants=participants
+            if participants is not None
+            else [{**APPROVER, "role": "member", "status": "active", "type": "User"}],
         )
         self._message_ids = itertools.count(1)
         self._bootstrapped = False
@@ -154,7 +159,10 @@ class ClaudeRoom:
     def mentions(self, fragment: str) -> list[list[str]]:
         """Whom each room message containing ``fragment`` mentions, in order."""
         return [
-            message["mentions"]
+            [
+                mention["id"] if isinstance(mention, dict) else mention
+                for mention in message["mentions"]
+            ]
             for message in self.tools.messages_sent
             if fragment in message["content"]
         ]

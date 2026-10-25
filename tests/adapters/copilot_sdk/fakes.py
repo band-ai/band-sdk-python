@@ -24,6 +24,7 @@ from band.adapters.copilot_sdk import (
 from band.converters.copilot_sdk import CopilotSDKSessionState
 from band.core.types import PlatformMessage
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.framework_conformance.turnprobes import turn_input
 
 requires_copilot_sdk = pytest.mark.skipif(
@@ -52,6 +53,9 @@ def make_platform_message(
 
 
 class ToolSchemaFakeTools(FakeAgentTools):
+    def __init__(self) -> None:
+        super().__init__(participants=ROOM_MEMBERS)
+
     def get_openai_tool_schemas(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
             {

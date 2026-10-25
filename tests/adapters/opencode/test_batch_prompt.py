@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from band.runtime.formatters import InputField
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.helpers import (
     ALICE,
     CAROL,
@@ -55,12 +56,16 @@ class TestBatchPrompt:
                     message_from(HELPER, "a side note"),
                     message_from(ALICE, "second ask"),
                 ],
-                FakeAgentTools(),
+                FakeAgentTools(participants=ROOM_MEMBERS),
                 is_session_bootstrap=True,
             ),
         )
         await deliver_turn(
-            adapter, batch_input([message_from(CAROL, "later ask")], FakeAgentTools())
+            adapter,
+            batch_input(
+                [message_from(CAROL, "later ask")],
+                FakeAgentTools(participants=ROOM_MEMBERS),
+            ),
         )
 
         assert [prompted_inputs(client, turn) for turn in (0, 1)] == [
@@ -84,11 +89,15 @@ class TestBatchPrompt:
             adapter,
             batch_input(
                 [message_from(ALICE, "first ask"), message_from(HELPER, "a note")],
-                FakeAgentTools(),
+                FakeAgentTools(participants=ROOM_MEMBERS),
             ),
         )
         await deliver_turn(
-            adapter, batch_input([message_from(CAROL, "later ask")], FakeAgentTools())
+            adapter,
+            batch_input(
+                [message_from(CAROL, "later ask")],
+                FakeAgentTools(participants=ROOM_MEMBERS),
+            ),
         )
 
         identities = (*ALICE, *HELPER, *CAROL)

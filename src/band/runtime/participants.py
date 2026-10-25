@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from band.client.rest import ChatParticipant
 from band.logging_config import core_issues, trace_context_extra
 
 # Fields retained for the always-injected passive roster (and the WS/REST cache
@@ -23,6 +24,21 @@ def participant_snapshot(participant: Mapping[str, Any]) -> dict[str, Any]:
     ``OneShotInvoker``, which keep their own participant cache.
     """
     return {name: participant.get(name) for name in _PARTICIPANT_FIELDS}
+
+
+def validate_participants_snapshot(
+    participants: list[ChatParticipant] | None,
+) -> list[ChatParticipant]:
+    """Require an authoritative roster with distinct, nonempty identities."""
+    if not participants:
+        raise ValueError("Participant snapshot is missing or empty")
+    validated = [ChatParticipant.model_validate(p) for p in participants]
+    ids = [p.id for p in validated]
+    if any(not participant_id.strip() for participant_id in ids):
+        raise ValueError("Participant snapshot contains an empty identity")
+    if len(set(ids)) != len(ids):
+        raise ValueError("Participant snapshot contains duplicate identities")
+    return validated
 
 
 def log_roster_error(

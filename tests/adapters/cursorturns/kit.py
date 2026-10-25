@@ -18,7 +18,6 @@ from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
 from tests.integrations.acp.acp_toolkit.agent import (
     CANCEL_RECORD,
     FakeACPAgent,
-    Gate,
     allow_or_reject,
 )
 from tests.integrations.acp.acp_toolkit.harness import (
@@ -39,9 +38,8 @@ BATCH_INPUT_SENDERS = ("alice", "bob", "alice")
 # The coroutine a room's owner runs as its detached work, which a Cursor turn is.
 OWNED_TASK_NAME = f"{RetainedRoom.start_owned.__qualname__}.<locals>.run"
 
-# How long a room's running turn may finish on its own at retirement or stop
-# before it is cancelled; short, so a turn left parked never holds a teardown.
-SETTLE_S = 0.05
+# Check pending work immediately; tests hold its lifecycle with explicit gates.
+SETTLE_S = 0
 
 # A hang in a peer or a held room fails a test within this, not at the suite timeout.
 WAIT_S = 5.0
@@ -177,10 +175,16 @@ async def occupy(
     """
     provider.parked.clear()
     sending = asyncio.create_task(deliver(session, "go", room=room, batch=batch))
-    async with asyncio.timeout(WAIT_S):
-        await provider.parked.wait()
-        if provider.kind == "approval":
-            await sending
+    try:
+        async with asyncio.timeout(WAIT_S):
+            await provider.parked.wait()
+            if provider.kind == "approval":
+                await sending
+    except BaseException:
+        provider.finish.set()
+        sending.cancel()
+        await asyncio.gather(sending, return_exceptions=True)
+        raise
     return sending
 
 
@@ -227,26 +231,6 @@ def select_command(token: str, option: str = "allow-1") -> str:
 def deny_command(token: str) -> str:
     """The room command that denies the decision ``token``."""
     return f"{ROOM_COMMAND} {CursorCommandWord.DENY} {token}"
-
-
-def hold_cancellation(session: AcpSession, room: str = ROOM_A) -> Gate:
-    """Hold the room's ``session/cancel`` until ``release`` is set.
-
-    The backend stop stays in flight while the gate is closed, so the room's
-    next turn and its teardown wait behind it.
-    """
-    runtime = active_turn(session, room).room.runtime
-    assert runtime is not None, f"{room} has no running ACP process"
-    gate = Gate()
-    send_cancel = runtime.cancel_turn
-
-    async def held(session_id: str) -> None:
-        gate.received.set()
-        await gate.release.wait()
-        await send_cancel(session_id)
-
-    runtime.cancel_turn = held  # type: ignore[method-assign]
-    return gate
 
 
 @contextmanager

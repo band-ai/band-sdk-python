@@ -10,6 +10,7 @@ the two apart and re-raise the original cause before its provider branch.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from band.core.content import has_visible_content
@@ -78,3 +79,34 @@ async def relay_reply(
     if text is None or tools.turn.replied or not has_visible_content(text):
         return False
     return await deliver_reply(tools, text, mentions) is not None
+
+
+async def automatic_mentions(
+    tools: AgentToolsProtocol, sender_ids: Sequence[str]
+) -> list[dict[str, str]]:
+    """Address original senders who remain in a fresh room snapshot."""
+    try:
+        audience = dict.fromkeys(sender_id for sender_id in sender_ids if sender_id)
+        if not audience:
+            raise ValueError("Automatic delivery requires an originating sender")
+        participants = await tools.get_participants_snapshot()
+        present_ids = {participant.id for participant in participants}
+        return [{"id": sender_id} for sender_id in audience if sender_id in present_ids]
+    except Exception as exc:
+        raise DeliveryFailedError(exc) from exc
+
+
+async def finish_automatic_reply(
+    tools: AgentToolsProtocol,
+    text: str | None,
+    mentions: list[dict[str, str]],
+) -> None:
+    """Finish a successful provider operation after its owner checks authority."""
+    if tools.turn.replied:
+        return
+    if not mentions:
+        if not tools.turn.complete:
+            tools.turn.settle()
+        return
+    if text is not None and has_visible_content(text):
+        await deliver_reply(tools, text, mentions)

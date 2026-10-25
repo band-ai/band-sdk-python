@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from band_rest import ChatParticipant, ListAgentChatParticipantsResponse
 
 from band.core.types import (
     Emit,
@@ -23,6 +24,21 @@ from tests.runtime.verdict.kit import (
     NATIVE_OUTCOMES,
     assert_runtime_outcome,
 )
+
+
+@pytest.fixture
+def link(link: MagicMock) -> MagicMock:
+    """Keep the original sender present in the strict delivery snapshot."""
+    link.rest.agent_api_participants.list_agent_chat_participants.return_value = (
+        ListAgentChatParticipantsResponse(
+            data=[
+                ChatParticipant(
+                    id="user-1", role="member", status="active", type="User"
+                )
+            ]
+        )
+    )
+    return link
 
 
 class TestCodexNativeTextDoesNotChangeTheRuntimeVerdict:

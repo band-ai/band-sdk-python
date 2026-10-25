@@ -40,7 +40,9 @@ from band.core.content import has_visible_content
 from band.core.defaultmodels import OPENAI_MODEL
 from band.core.delivery import (
     DeliveryFailedError,
+    automatic_mentions,
     deliver_notice,
+    finish_automatic_reply,
     reraise_delivery_cause,
 )
 from band.core.exceptions import InputNotAccepted
@@ -2760,11 +2762,20 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             self.config.approval_mode != "manual"
             and self.config.approval_text_notifications
         ):
+            room = self._room_clients.get(room_id)
             try:
-                await tools.send_notice(
-                    f"Approval requested ({summary}). Policy decision: {decision}.",
-                    mentions=audience,
+                mentions = await automatic_mentions(
+                    tools, [person["id"] for person in audience]
                 )
+                if (
+                    self._room_clients.get(room_id) is room
+                    and not self._room_closing(room_id)
+                    and mentions
+                ):
+                    await tools.send_notice(
+                        f"Approval requested ({summary}). Policy decision: {decision}.",
+                        mentions=mentions,
+                    )
             except Exception:
                 logger.exception("Failed to send approval policy notification")
 
@@ -2824,6 +2835,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         include_reply: bool = True,
     ) -> None:
         # Look up token usage once for both marker and lifecycle events.
+        room = self._room_clients.get(room_id)
         usage = self._token_usage.get(thread_id)
         has_usage = usage is not None and usage.total_tokens > 0
 
@@ -2923,6 +2935,15 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         },
                         log_label="Codex completed thought",
                     )
+            if not tools.turn.complete:
+                mentions = await automatic_mentions(
+                    tools, [person["id"] for person in audience]
+                )
+                if self._room_clients.get(room_id) is not room or self._room_closing(
+                    room_id
+                ):
+                    return
+                await finish_automatic_reply(tools, None, mentions)
             return
 
         if turn_status == "interrupted":
@@ -2933,7 +2954,13 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
         else:
             outcome_text = f"I couldn't complete this request ({turn_status})."
-        await deliver_notice(tools, outcome_text, mentions=audience)
+        mentions = await automatic_mentions(
+            tools, [person["id"] for person in audience]
+        )
+        if self._room_clients.get(room_id) is not room or self._room_closing(room_id):
+            return
+        if mentions:
+            await deliver_notice(tools, outcome_text, mentions=mentions)
         tools.turn.settle()
 
     async def _emit_item_completed_events(
@@ -3263,6 +3290,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             yield "decline"
             return
         entry = registration.entry
+        room = self._room_clients.get(room_id)
         token = entry.token
         for removed in registration.removed:
             removed.payload.future.set_result("decline")
@@ -3298,9 +3326,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     if params.get("reason"):
                         approval_metadata["codex_reason"] = params["reason"]
                     # Network context (domains, IPs) when available
-                    net_ctx = params.get("networkContext") or params.get(
-                        "network_context"
-                    )
+                    net_ctx = params.get("networkContext") or params.get("network_context")
                     if net_ctx:
                         approval_metadata["codex_network_context"] = net_ctx
                     await send_event_safe(
@@ -3317,7 +3343,19 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         log_level=logging.DEBUG,
                     )
                 try:
-                    await tools.send_notice(approval_msg, mentions=audience)
+                    mentions = await automatic_mentions(
+                        tools, [person["id"] for person in audience]
+                    )
+                    if (
+                        self._room_clients.get(room_id) is room
+                        and not self._room_closing(room_id)
+                        and mentions
+                        and entry in registry.unclaimed()
+                    ):
+                        await tools.send_notice(approval_msg, mentions=mentions)
+                    elif registry.withdraw(entry):
+                        yield "decline"
+                        return
                 except Exception:
                     logger.exception(
                         "Failed to notify room %s about pending approval %s",
@@ -3348,16 +3386,22 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     if decision is Timeout.TIMED_OUT:
                         decision = self.config.approval_timeout_decision
                         try:
-                            await tools.send_notice(
-                                APPROVAL_TIMED_OUT_TEMPLATE.format(
-                                    token=token, decision=decision
-                                ),
-                                mentions=audience,
+                            mentions = await automatic_mentions(
+                                tools, [person["id"] for person in audience]
                             )
+                            if (
+                                self._room_clients.get(room_id) is room
+                                and not self._room_closing(room_id)
+                                and mentions
+                            ):
+                                await tools.send_notice(
+                                    APPROVAL_TIMED_OUT_TEMPLATE.format(
+                                        token=token, decision=decision
+                                    ),
+                                    mentions=mentions,
+                                )
                         except Exception:
-                            logger.exception(
-                                "Failed to send approval timeout notification"
-                            )
+                            logger.exception("Failed to send approval timeout notification")
                     yield decision
             finally:
                 self._clear_pending_approval(room_id, entry)

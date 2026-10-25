@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import asyncio
+from contextlib import AsyncExitStack
+
+import pytest
 
 from band.integrations.acp.cursor import (
     DECISION_RESOLVED_TEMPLATE,
     DECISION_UNAUTHORIZED_MESSAGE,
 )
 from band.testing import FakeAgentTools
-from tests.adapters.cursorturns.conftest import OpenCursor
+from tests.adapters.cursorturns.conftest import OpenCursor, cursor_session
 from tests.adapters.cursorturns.kit import (
     LIST_DECISIONS,
-    WAIT_S,
     active_turn,
     busy_provider,
     command,
@@ -22,8 +23,10 @@ from tests.adapters.cursorturns.kit import (
     terminated,
     turn_tools,
 )
+from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.timecontrol import controlled_clock
 
-ALICE_AND_BOB = ["alice", "bob"]
+ALICE_AND_BOB = [{"id": "alice"}, {"id": "bob"}]
 
 
 def posts(tools: FakeAgentTools) -> list[tuple[str, object]]:
@@ -46,20 +49,38 @@ class TestCursorDecisionAudience:
 
         assert mentioned(turn_tools(session)) == [ALICE_AND_BOB]
 
+    @pytest.mark.timeout(10)
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_a_later_message_does_not_change_who_the_timeout_notice_addresses(
-        self, open_cursor: OpenCursor
+        self,
     ) -> None:
         provider = busy_provider("approval")
-        session = await open_cursor(provider.agent, decision_timeout_s=0.2)
-        await occupy(session, provider, batch=True)
-        tools = turn_tools(session)
+        async with controlled_clock() as clock:
+            resources = AsyncExitStack()
+            try:
+                session = await clock.run_io(
+                    resources.enter_async_context(
+                        cursor_session(
+                            provider.agent, decision_timeout_s=1, turn_timeout_s=10
+                        )
+                    )
+                )
+                await clock.run_io(occupy(session, provider, batch=True))
+                turn = active_turn(session)
+                tools = turn_tools(session)
+                _, listing = await command(session, LIST_DECISIONS, sender_id="carol")
+                assert mentioned(tools) == [ALICE_AND_BOB]
 
-        _, listing = await command(session, LIST_DECISIONS, sender_id="carol")
-        async with asyncio.timeout(WAIT_S):
-            await tools.until_said("timed out")
+                await clock.elapse(1)
+                await tools.until_said("timed out")
+                await terminated(session, turn)
 
-        assert mentioned(listing) == [["carol"]]
-        assert mentioned(tools) == [ALICE_AND_BOB, ALICE_AND_BOB]
+                assert mentioned(listing) == [["carol"]]
+                assert mentioned(tools) == [ALICE_AND_BOB, ALICE_AND_BOB]
+                assert provider.agent.approved is False
+            finally:
+                provider.finish.set()
+                await clock.run_io(resources.aclose())
 
     async def test_being_notified_grants_no_authority_to_resolve_the_decision(
         self, open_cursor: OpenCursor

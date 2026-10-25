@@ -13,6 +13,7 @@ import pytest
 from band.adapters.opencode import OpencodeAdapterConfig
 from band.adapters.opencode.approvals.wording import REJECTED_PERMISSION_FEEDBACK
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.conftest import ParkRoom
 from tests.adapters.opencode.helpers import (
     ASK_DEADLINE_S,
@@ -159,7 +160,7 @@ class TestControlRecognition:
             room_reply("approve req-1", sender_id="user-2"),
             room_reply("approve req-1", sender_id="user-3"),
         )
-        second_tools = FakeAgentTools()
+        second_tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         resolving = asyncio.create_task(handle_control(adapter, first))
         await client.reply_in_flight.wait()

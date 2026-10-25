@@ -83,7 +83,7 @@ class TestRelayAgentResponse:
         await relay(timeout=LONG_BUDGET_SECONDS)
 
         mock_tools.assert_message_sent(
-            content="Hello there!", mentions=[SENDER_ID], count=1
+            content="Hello there!", mentions=[{"id": SENDER_ID}], count=1
         )
 
     async def test_one_reply_addresses_every_sender_of_the_turn(
@@ -96,7 +96,7 @@ class TestRelayAgentResponse:
         await relay(audience=["alice", "helper"], timeout=LONG_BUDGET_SECONDS)
 
         mock_tools.assert_message_sent(
-            content="Hello all!", mentions=["alice", "helper"], count=1
+            content="Hello all!", mentions=[{"id": "alice"}, {"id": "helper"}], count=1
         )
 
     async def test_relays_all_final_parts_in_one_batch_without_preamble(
@@ -112,7 +112,7 @@ class TestRelayAgentResponse:
             await relay(timeout=LONG_BUDGET_SECONDS)
 
         mock_tools.assert_message_sent(
-            content=f"{BOOKED}\n\n{PEANUTS}", mentions=[SENDER_ID], count=1
+            content=f"{BOOKED}\n\n{PEANUTS}", mentions=[{"id": SENDER_ID}], count=1
         )
         assert not any(
             "left Parlant text unsent" in message for message in caplog.messages
@@ -127,7 +127,9 @@ class TestRelayAgentResponse:
         if declined:
             await mock_tools.no_reply("No response needed.")
         else:
-            await mock_tools.send_message(ALREADY_ANSWERED, mentions=[SENDER_ID])
+            await mock_tools.send_message(
+                ALREADY_ANSWERED, mentions=[{"id": SENDER_ID}]
+            )
         answer_after(
             mock_app,
             waits=[True],
@@ -145,7 +147,7 @@ class TestRelayAgentResponse:
             mock_tools.assert_no_messages_sent()
         else:
             mock_tools.assert_message_sent(
-                content=ALREADY_ANSWERED, mentions=[SENDER_ID], count=1
+                content=ALREADY_ANSWERED, mentions=[{"id": SENDER_ID}], count=1
             )
 
     async def test_empty_window_after_a_tool_reply_ends_the_wait(
@@ -153,7 +155,7 @@ class TestRelayAgentResponse:
     ):
         """Once a Band tool replied, an empty window means the engine is done:
         the wait returns at once instead of polling out the whole budget."""
-        await mock_tools.send_message(ALREADY_ANSWERED, mentions=[SENDER_ID])
+        await mock_tools.send_message(ALREADY_ANSWERED, mentions=[{"id": SENDER_ID}])
 
         with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
             await relay(timeout=LONG_BUDGET_SECONDS)
@@ -224,7 +226,7 @@ class TestRelayAgentResponse:
         await relay(timeout=LONG_BUDGET_SECONDS)
 
         mock_tools.assert_message_sent(
-            content="The answer.", mentions=[SENDER_ID], count=1
+            content="The answer.", mentions=[{"id": SENDER_ID}], count=1
         )
 
     async def test_empty_final_ends_the_wait_with_a_warning_naming_the_room(

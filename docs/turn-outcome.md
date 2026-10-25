@@ -2,10 +2,10 @@
 
 Every message pushed to an agent @mentions it, so every turn owes the room an
 answer: a reply, or a deliberate decision not to reply.
-`SimpleAdapter.run_judged_turn`, which `on_event` and the Slack adapter's
-inbound path both call, judges each turn with one rule from `band-sdk-core`,
+`SimpleAdapter.judged_turn` judges each turn with one rule from `band-sdk-core`,
 shared with the TypeScript SDK, and tells the platform honestly whether the
-delivery succeeded.
+delivery succeeded. Singleton entry points use `run_judged_turn`; batch entry
+points enter the same judge through `BatchInputAdapter.on_messages`.
 
 ## The rule
 
@@ -324,10 +324,26 @@ turn. Its failure path reports `generic_provider_failure(provider, error)` from
 `SAFETY`). The provider's `detail` can echo the prompt, so it goes only to the
 agent log. Agno, Google ADK and Gemini follow this rule.
 
+## Automatic reply audiences
+
+Automatic replies and approval prompts address the originating senders who
+remain in the room. `AgentToolsProtocol.get_participants_snapshot()` reads fresh
+membership without updating the participant cache; custom tools and wrappers
+must implement or delegate this method. The model-facing `get_participants()`
+continues to refresh the cached roster.
+
+When no originating sender remains, a required prompt is declined through its
+existing decision owner. Successful provider completion can then settle without
+posting, including a silent completion. An optional notice never changes an
+approval policy or settles running work. Failed or unavailable membership reads
+are delivery failures, not proof that everyone left. The roster read and message
+post are separate requests, so a later departure can still make the post fail.
+Explicit model-selected mentions keep their existing strict validation.
+
 ## Detached turns
 
-An adapter whose turn outlives `on_message` (one parked on a human approval)
-calls `tools.turn.detach()` when it releases the turn early. `run_judged_turn` then
+An adapter whose provider work outlives its turn entry (one parked on a human approval)
+calls `tools.turn.detach()` when it releases the turn early. `judged_turn` then
 leaves the verdict to the adapter, which reports at the turn's normal end. Such a
 turn starts through `start_releasable_turn` from `band.core.turn_lifecycle`: if its
 room's leave or shutdown cancels it after the settle grace, it is judged then, since
@@ -342,7 +358,7 @@ from band.testing.fake_tools import FakeAgentTools, reported_failures
 
 async def main() -> None:
     tools = FakeAgentTools()
-    tools.turn.judged = True  # set by SimpleAdapter.run_judged_turn
+    tools.turn.judged = True  # set by SimpleAdapter.judged_turn
     tools.turn.detach()  # released while waiting for an approval
 
     # ...later, on the turn's normal completion path (never a ``finally``):

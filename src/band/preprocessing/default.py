@@ -12,6 +12,7 @@ from band.core.types import (
     AgentInput,
     HistoryProvider,
     PlatformMessage,
+    ids_of,
     metadata_to_dict,
 )
 from band.integrations.base import check_and_format_participants
@@ -151,7 +152,7 @@ class DefaultPreprocessor(Preprocessor):
         try:
             logger.info("Room %s: Loading history...", ctx.room_id)
             context = await ctx.get_context()
-            earlier = messages_before(context.messages, {msg.id for msg in messages})
+            earlier = messages_before(context.messages, set(ids_of(messages)))
             history = format_history_for_llm(earlier, participants=ctx.participants)
             logger.info(
                 "Room %s: Got %s messages",

@@ -9,6 +9,7 @@ import pytest
 from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
 from band.converters.letta import LettaSessionState
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.lettakit import (
     make_assistant_message,
     make_mock_agent,
@@ -47,7 +48,7 @@ class TestLettaAdapterSharedMode:
             make_assistant_message("Hi from shared!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message(room_id="room-1")
         history = LettaSessionState()
 
@@ -90,7 +91,7 @@ class TestLettaAdapterSharedMode:
             make_assistant_message("Hi room 2!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message(room_id="room-2")
         history = LettaSessionState()
 
@@ -129,7 +130,7 @@ class TestLettaAdapterSharedMode:
             make_assistant_message("Resumed shared!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message(room_id="room-1")
         history = LettaSessionState()
 
@@ -168,7 +169,7 @@ class TestLettaAdapterSharedMode:
             conversation_id="conv-persisted",
             replay_messages=["[Alice]: earlier"],
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await adapter.on_message(
             make_platform_message(room_id="room-1"),
             tools,
@@ -212,7 +213,7 @@ class TestLettaAdapterSharedMode:
         )
         await adapter.on_message(
             make_platform_message(room_id="room-1"),
-            FakeAgentTools(),
+            FakeAgentTools(participants=ROOM_MEMBERS),
             history,
             None,
             None,
@@ -246,7 +247,7 @@ class TestLettaAdapterSharedMode:
             conversation_id="conv-dead",
             replay_messages=["[Alice]: the secret is kumquat"],
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await adapter.on_message(
             make_platform_message(room_id="room-1"),
             tools,
@@ -279,7 +280,7 @@ class TestLettaAdapterSharedMode:
             make_assistant_message("Hi!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await adapter.on_message(
             make_platform_message(room_id="room-42"),
             tools,

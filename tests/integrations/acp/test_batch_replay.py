@@ -24,7 +24,8 @@ from tests.framework_conformance.batchprobes import (
 from tests.framework_conformance.batchprobes.acp import ADAPTERS
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 from tests.integrations.acp.acp_toolkit.harness import started_acp_adapter
-from tests.runtime.helpers import ROOM_ID
+from tests.runtime.helpers import AGENT_ID, ROOM_ID
+from tests.testing.support import seeded_participant
 
 # Alice's two inputs with a message of someone else's between them.
 AROUND_HELPER = (ALICE_FIRST, ALICE_SECOND)
@@ -37,7 +38,16 @@ async def replayed_prompt(
     already holds ``room``: the session is minted after bootstrap, so its
     history is re-fetched from the room."""
     agent = FakeACPAgent().will_say("ok")
-    tools = FakeAgentTools(room_id=ROOM_ID)
+    tools = FakeAgentTools(
+        room_id=ROOM_ID,
+        participants=[
+            seeded_participant(ALICE_FIRST.sender_id, name=ALICE_FIRST.sender_name),
+            seeded_participant(
+                HELPER.sender_id, name=HELPER.sender_name, type=HELPER.sender_type
+            ),
+            seeded_participant(AGENT_ID, name="SDK Agent", type="Agent"),
+        ],
+    )
     tools.set_room_context(
         [{**stored_message(o), "message_type": "text"} for o in room]
     )

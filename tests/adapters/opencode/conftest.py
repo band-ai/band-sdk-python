@@ -10,6 +10,7 @@ import pytest_asyncio
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import PlatformMessage
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.helpers import (
     AskFactory,
     BandMCPCalls,
@@ -31,7 +32,7 @@ def asks() -> AskFactory:
 @pytest.fixture
 def tools() -> FakeAgentTools:
     """Fresh platform tools for one adapter test."""
-    return FakeAgentTools()
+    return FakeAgentTools(participants=ROOM_MEMBERS)
 
 
 @pytest_asyncio.fixture(loop_scope="function")

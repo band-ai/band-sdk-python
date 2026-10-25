@@ -13,6 +13,7 @@ from band.integrations.mcp import BandMCPTransport
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
@@ -123,7 +124,7 @@ class TestSetup:
             additional_tools=[(EchoInput, echo_tool)],
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         with backends_created_by(fake_backend) as starts:
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -182,7 +183,7 @@ class TestSetup:
         adapter = OpencodeAdapter(
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         with backends_created_by(fake_backend):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -227,7 +228,7 @@ class TestSetup:
             prompt_event_sequences=[[event_session_idle("sess-1")]] * 3,
         )
         adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         registrations_after_each_message = []
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -396,7 +397,7 @@ class TestSetup:
             await deliver_message(
                 bare_adapter,
                 make_platform_message(),
-                tools_protocol(FakeAgentTools()),
+                tools_protocol(FakeAgentTools(participants=ROOM_MEMBERS)),
                 OpencodeSessionState(),
                 participants_msg=None,
                 contacts_msg=None,
@@ -413,7 +414,7 @@ class TestSetup:
             await deliver_message(
                 full_adapter,
                 make_platform_message(),
-                tools_protocol(FakeAgentTools()),
+                tools_protocol(FakeAgentTools(participants=ROOM_MEMBERS)),
                 OpencodeSessionState(),
                 participants_msg=None,
                 contacts_msg=None,

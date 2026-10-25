@@ -27,6 +27,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    distinct_sender_ids,
     ids_of,
 )
 from band.runtime.capabilities import with_hub_room_contacts
@@ -333,7 +334,7 @@ class AgnoAdapter(BatchInputAdapter[AgnoMessages]):
             "Room %s msgs %s: handling from senders %s (bootstrap=%s)",
             room_id,
             msg_ids,
-            ", ".join(msg.sender_id for msg in messages),
+            ", ".join(distinct_sender_ids(messages)),
             is_session_bootstrap,
         )
 

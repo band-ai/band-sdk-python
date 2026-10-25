@@ -20,7 +20,8 @@ from band.adapters.opencode.approvals.ports import ApprovalPorts
 from band.adapters.opencode.approvals.room import RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
-from band.core.delivery import relay_reply
+from band.core.content import has_visible_content
+from band.core.delivery import automatic_mentions, finish_automatic_reply
 from band.core.exceptions import BandConnectionError, InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
@@ -1240,9 +1241,6 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         room_state.persisted_session_id = room_state.session_id
 
     async def _deliver_fallback_text(self, room_id: str, turn: TurnState) -> None:
-        if not self.config.fallback_send_agent_text:
-            return
-
         text = "\n".join(
             part_text.strip()
             for part_text in turn.text_parts.values()
@@ -1262,8 +1260,26 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
 
         # An error is still surfaced after a tool reply -- it is not a text reply.
         try:
-            relayed = await relay_reply(turn.tools, text, turn.pending_mentions)
-            if not relayed and turn.last_error_message:
+            reply = text if self.config.fallback_send_agent_text else None
+            relayed = False
+            if not turn.tools.turn.replied and (
+                has_visible_content(reply or "")
+                or (not turn.tools.turn.complete and not turn.last_error_message)
+            ):
+                mentions = await automatic_mentions(
+                    turn.tools, tuple(sender["id"] for sender in turn.pending_mentions)
+                )
+                room = self._rooms.get(room_id)
+                if room is None or room.turn is not turn:
+                    raise asyncio.CancelledError
+                if mentions or not turn.last_error_message:
+                    relayed = (
+                        bool(mentions)
+                        and has_visible_content(reply or "")
+                        and not turn.tools.turn.replied
+                    )
+                    await finish_automatic_reply(turn.tools, reply, mentions)
+            if turn.last_error_message and not relayed:
                 await turn.tools.send_failure(
                     AgentFailure(_PROVIDER, turn.last_error_message)
                 )

@@ -5,6 +5,7 @@ import asyncio
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, events_of_type, failure_reports
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
@@ -56,7 +57,7 @@ class TestReplyDelivery:
             config=OpencodeAdapterConfig(approval_mode="manual"),
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         # No hang: on_message returns once the relay releases the turn wait,
@@ -97,7 +98,7 @@ class TestReplyDelivery:
             ],
         )
         adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await asyncio.wait_for(

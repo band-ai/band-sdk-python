@@ -10,6 +10,7 @@ from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import BandTool
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.adapters.opencode.helpers import (
     BandMCPCalls,
@@ -155,7 +156,7 @@ class TestReplySelection:
         await deliver_message(
             adapter,
             make_platform_message(content="approve req-1"),
-            tools_protocol(FakeAgentTools()),
+            tools_protocol(FakeAgentTools(participants=ROOM_MEMBERS)),
             OpencodeSessionState(session_id="sess-1", room_id="room-1"),
             participants_msg=None,
             contacts_msg=None,

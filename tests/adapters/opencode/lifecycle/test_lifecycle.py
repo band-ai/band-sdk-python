@@ -16,6 +16,7 @@ from band.core.types import (
 from band.integrations.opencode import OpencodePermissionRequest
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
@@ -46,7 +47,7 @@ class TestLifecycle:
             client_factory=lambda _config: fake_client,
             emit=Emit.USAGE,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await adapter.on_started("OpenCode Agent", "A coding agent")
 
         room_state = await adapter._get_or_create_room_state("room-1")
@@ -59,6 +60,7 @@ class TestLifecycle:
             room_state.turn.usage_by_message["msg-1"] = TurnUsage(
                 input_tokens=100, output_tokens=20
             )
+            tools.turn.settle()
             adapter._finish_turn(room_state)
             # ...and a racing message begins (and finishes) the next turn
             # before the first on_message resumes.
@@ -105,7 +107,7 @@ class TestLifecycle:
             client_factory=lambda _config: FakeOpencodeClient(),
             emit=Emit.USAGE,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         room_state = await adapter._get_or_create_room_state("room-1")
         room_state.tools = tools_protocol(tools)
 
@@ -270,7 +272,7 @@ class TestLifecycle:
         adapter = OpencodeAdapter(
             client_factory=lambda _config: clients.pop(0),
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         with backends_created_by(fake_backend):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -388,8 +390,8 @@ class TestLifecycle:
 
         fake_client = InterleavedClient()
         adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-        tools_r1 = FakeAgentTools()
-        tools_r2 = FakeAgentTools()
+        tools_r1 = FakeAgentTools(participants=ROOM_MEMBERS)
+        tools_r2 = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
 

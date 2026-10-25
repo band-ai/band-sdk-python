@@ -24,11 +24,16 @@ async def run_parlant(inp: AgentInput, final_text: str) -> str:
         ParlantPeer,
     )
 
-    peer = ParlantPeer(reply=final_text)
-    adapter = ParlantAdapter(PROBE_CONFIG, server=peer.server, parlant_agent=peer.agent)
-    await adapter.on_started("Agent", "A test agent")
-    await deliver(adapter, inp)
-    return peer.engine_input
+    async with ParlantPeer(reply=final_text) as peer:
+        adapter = ParlantAdapter(
+            PROBE_CONFIG, server=peer.server, parlant_agent=peer.agent
+        )
+        await adapter.on_started("Agent", "A test agent")
+        try:
+            await deliver(adapter, inp)
+            return peer.engine_input
+        finally:
+            await adapter.on_cleanup(inp.room_id)
 
 
 PROBES: dict[str, BatchProbe] = {"parlant": BatchProbe(run=run_parlant, relays=True)}

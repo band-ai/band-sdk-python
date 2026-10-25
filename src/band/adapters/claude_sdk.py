@@ -84,6 +84,12 @@ from band.converters.claude_sdk import (
 )
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
+from band.core.delivery import (
+    DeliveryFailedError,
+    automatic_mentions,
+    finish_automatic_reply,
+    reraise_delivery_cause,
+)
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -1110,6 +1116,9 @@ class ClaudeSDKAdapter(
             # the call stack; propagate without reporting it a second time.
             raise
 
+        except DeliveryFailedError as error:
+            reraise_delivery_cause(error)
+
         except CLIConnectionError as e:
             # The CLI process is dead: the next message starts a new session.
             logger.error(
@@ -1504,6 +1513,15 @@ class ClaudeSDKAdapter(
             raise TurnResultAlreadyReported(detail)
         if self._declined_the_reply(sdk_message.permission_denials, notified):
             tools.turn.settle()
+        if not tools.turn.complete:
+            generation = session.generation
+            sender_ids = self._turn_audience.get(room_id, ())
+            mentions = await automatic_mentions(tools, sender_ids)
+            if self._room_tools.get(room_id) is not tools or not session.speaks_for(
+                generation
+            ):
+                return
+            await finish_automatic_reply(tools, None, mentions)
         await judge_detached_turn(tools, room_id=room_id)
 
     def _declined_the_reply(
@@ -1755,7 +1773,7 @@ class ClaudeSDKAdapter(
         # this approval surfaces to the user (summary, notifications, logs).
         tool_name = self._semantic_tool_name(tool_name)
         summary = self._approval_summary(tool_name, tool_input)
-        mentions = list(self._turn_audience.get(room_id, ())) or None
+        mentions = list(self._turn_audience.get(room_id, ()))
         # Always a real string for a can_use_tool callback (see
         # ToolPermissionContext.tool_use_id); matched against this same call's
         # entry in ResultMessage.permission_denials at turn end.
@@ -1796,7 +1814,7 @@ class ClaudeSDKAdapter(
         self,
         tools: AgentToolsProtocol,
         message: str,
-        mentions: list[str] | None,
+        mentions: list[str] | list[dict[str, str]] | None,
         *,
         room_id: str,
         failure_note: str,
@@ -1820,7 +1838,7 @@ class ClaudeSDKAdapter(
         summary: str,
         decision: ApprovalDecision,
         *,
-        mentions: list[str] | None,
+        mentions: list[str],
     ) -> bool:
         """Best-effort chat notification for auto-approve / auto-decline.
 
@@ -1832,7 +1850,7 @@ class ClaudeSDKAdapter(
         tools = self._room_tools.get(room_id)
         if not tools:
             return False
-        return await self._send_best_effort(
+        return await self._send_automatic_notice(
             tools,
             APPROVAL_POLICY_DECISION_TEMPLATE.format(
                 summary=summary, decision=decision
@@ -1842,6 +1860,42 @@ class ClaudeSDKAdapter(
             failure_note="Failed to send approval policy notification",
         )
 
+    async def _send_automatic_notice(
+        self,
+        tools: AgentToolsProtocol,
+        message: str,
+        sender_ids: list[str],
+        *,
+        room_id: str,
+        failure_note: str,
+        log_level: int = logging.WARNING,
+    ) -> bool:
+        session = (
+            self._session_manager.session(room_id) if self._session_manager else None
+        )
+        if session is None:
+            return False
+        generation = session.generation
+        try:
+            mentions = await automatic_mentions(tools, sender_ids)
+            if (
+                self._room_tools.get(room_id) is not tools
+                or not session.speaks_for(generation)
+                or not mentions
+            ):
+                return False
+            return await self._send_best_effort(
+                tools,
+                message,
+                mentions,
+                room_id=room_id,
+                failure_note=failure_note,
+                log_level=log_level,
+            )
+        except DeliveryFailedError as error:
+            logger.log(log_level, "Room %s: %s: %s", room_id, failure_note, error)
+            return False
+
     async def _resolve_manual_approval(
         self,
         room_id: str,
@@ -1850,7 +1904,7 @@ class ClaudeSDKAdapter(
         summary: str,
         tool_use_id: str | None,
         *,
-        mentions: list[str] | None,
+        mentions: list[str],
     ) -> PermissionResultAllow | PermissionResultDeny:
         """Block until a user approves / declines via ``/approve`` or ``/decline``."""
         loop = asyncio.get_running_loop()
@@ -1885,16 +1939,33 @@ class ClaudeSDKAdapter(
         # Notify user — if we can't deliver the prompt, decline immediately
         # so the caller isn't left waiting for a timeout nobody will see.
         tools = self._room_tools.get(room_id)
+        session = (
+            self._session_manager.session(room_id) if self._session_manager else None
+        )
+        generation = session.generation if session else None
         with permission_wait(tools):
             try:
                 if tools:
                     try:
-                        await tools.send_notice(
-                            APPROVAL_REQUESTED_TEMPLATE.format(
-                                summary=summary, token=token
-                            ),
-                            mentions=mentions,
-                        )
+                        recipients = await automatic_mentions(tools, mentions)
+                        if (
+                            self._room_tools.get(room_id) is tools
+                            and session is not None
+                            and generation is not None
+                            and session.speaks_for(generation)
+                            and recipients
+                            and entry in registry.unclaimed()
+                        ):
+                            await tools.send_notice(
+                                APPROVAL_REQUESTED_TEMPLATE.format(
+                                    summary=summary, token=token
+                                ),
+                                mentions=recipients,
+                            )
+                        elif registry.withdraw(entry):
+                            return PermissionResultDeny(
+                                message="Could not deliver approval prompt, tool use declined"
+                            )
                     except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                         logger.warning(
                             "Room %s: Failed to send approval notification", room_id
@@ -1959,13 +2030,13 @@ class ClaudeSDKAdapter(
         tools: AgentToolsProtocol | None,
         room_id: str,
         token: str,
-        mentions: list[str] | None,
+        mentions: list[str],
         tool_use_id: str | None,
     ) -> PermissionResultAllow | PermissionResultDeny:
         decision = self._approvals.timeout_decision
         notified = False
         if tools:
-            notified = await self._send_best_effort(
+            notified = await self._send_automatic_notice(
                 tools,
                 APPROVAL_TIMED_OUT_TEMPLATE.format(token=token, decision=decision),
                 mentions,

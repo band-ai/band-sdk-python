@@ -9,6 +9,7 @@ from band.integrations.opencode import (
     OpencodeClientProtocol,
 )
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.approvals.kit import (
     FailingReplyClient,
     make_room_approvals,
@@ -30,7 +31,7 @@ class TestReplyFailures:
         released: list[bool] = []
         approvals = make_room_approvals(
             cast(OpencodeClientProtocol, FakeOpencodeClient()),
-            tools=RaisingSendTools(),
+            tools=RaisingSendTools(participants=ROOM_MEMBERS),
             release_turn_wait=lambda: released.append(True),
         )
 
@@ -77,7 +78,7 @@ class TestReplyFailures:
             aborted.append(True)
 
         client = FailingReplyClient()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(
             client,
             tools=tools,

@@ -27,6 +27,10 @@ ALICE = {"id": "alice", "name": "Alice"}
 HELPER = {"id": "helper", "name": "Helper"}
 CAROL = {"id": "carol", "name": "Carol"}
 ADMIN = {"id": "admin-1", "name": "Admin"}
+ROOM_MEMBERS = [
+    {**sender, "role": "member", "status": "active", "type": "User"}
+    for sender in (ALICE, HELPER, CAROL, ADMIN)
+]
 
 
 def approval_request(request_id: int) -> RpcEvent:
@@ -86,7 +90,9 @@ class CodexBatchRoom:
         )
 
     def _turn_input(self, messages: tuple[PlatformMessage, ...]) -> AgentInput:
-        self.deliveries.append(tools := FakeAgentTools(room_id=ROOM_ID))
+        self.deliveries.append(
+            tools := FakeAgentTools(room_id=ROOM_ID, participants=ROOM_MEMBERS)
+        )
         return AgentInput(
             msg=messages[0],
             messages=messages,
@@ -114,7 +120,7 @@ class CodexBatchRoom:
         self, content: str, *, sender: dict[str, str] = ADMIN
     ) -> FakeAgentTools:
         """Deliver a room command as its own control; returns its tools."""
-        tools = FakeAgentTools(room_id=ROOM_ID)
+        tools = FakeAgentTools(room_id=ROOM_ID, participants=ROOM_MEMBERS)
         await self.adapter.try_handle_control(
             self.message(content, sender=sender), tools
         )

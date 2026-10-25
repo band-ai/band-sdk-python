@@ -24,10 +24,12 @@ from band.converters.copilot_sdk import (
     CopilotSDKSessionState,
 )
 from band.core.adapterconfig import BaseAdapterConfig
+from band.core.content import has_visible_content
 from band.core.delivery import (
     DeliveryFailedError,
+    automatic_mentions,
     deliver_reply,
-    relay_reply,
+    finish_automatic_reply,
     reraise_delivery_cause,
 )
 from band.core.exceptions import BandConfigError
@@ -522,7 +524,15 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             await self._emit_thoughts(turn, tools)
 
             try:
-                await relay_reply(tools, final_text, mentions=turn.audience)
+                if not tools.turn.replied and (
+                    has_visible_content(final_text or "") or not tools.turn.complete
+                ):
+                    mentions = await automatic_mentions(
+                        tools, tuple(sender["id"] for sender in turn.audience)
+                    )
+                    if self._room_tools.get(room_id) is not tools:
+                        raise asyncio.CancelledError
+                    await finish_automatic_reply(tools, final_text, mentions)
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
             if not tools.turn.complete:
@@ -700,7 +710,14 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         # The question is the turn's reply, so a "waiting for your answer"
         # wrap-up is not relayed on top of it.
         try:
-            await deliver_reply(room_tools, rendered, mentions=turn.audience)
+            mentions = await automatic_mentions(
+                room_tools, tuple(sender["id"] for sender in turn.audience)
+            )
+            if self._turn_state.get(room_id) is not turn:
+                return room_inactive_answer()
+            if not mentions:
+                return room_inactive_answer()
+            await deliver_reply(room_tools, rendered, mentions=mentions)
         except DeliveryFailedError as exc:
             logger.warning(
                 "Room %s: ask_user question delivery failed: %s", room_id, exc.cause

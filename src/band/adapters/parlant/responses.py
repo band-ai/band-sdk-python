@@ -15,7 +15,11 @@ from collections.abc import Sequence
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
-from band.core.delivery import relay_reply
+from band.core.delivery import (
+    automatic_mentions,
+    finish_automatic_reply,
+    relay_reply,
+)
 from band.core.protocols import AgentToolsProtocol
 
 if TYPE_CHECKING:
@@ -163,8 +167,14 @@ async def relay_agent_response(
             logger.warning("Room %s: the agent's final message was empty", room_id)
         already_settled = tools.turn.replied
         final_text = FINAL_SEGMENT_SEPARATOR.join(batch.final_texts)
-        if final_text:
-            await relay_reply(tools, final_text, mentions=list(audience))
+        if not tools.turn.replied and (
+            final_text or (batch.final_seen and not tools.turn.complete)
+        ):
+            mentions = await automatic_mentions(tools, audience)
+            if batch.final_seen:
+                await finish_automatic_reply(tools, final_text, mentions)
+            elif mentions:
+                await relay_reply(tools, final_text, mentions=mentions)
         if tools.turn.replied:
             if already_settled and final_text:
                 logger.info(

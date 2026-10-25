@@ -45,6 +45,7 @@ from tests.integrations.acp.acp_toolkit.agent import (
     FakeACPAgent,
     Gate,
 )
+from tests.testing.support import seeded_participant
 
 # The room ``AcpSession.send`` talks to unless told otherwise.
 DEFAULT_ROOM = "room-1"
@@ -94,7 +95,12 @@ class TranscriptTools(FakeAgentTools):
     """Fake tools that retain the complete order of room writes."""
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(
+            participants=[
+                seeded_participant(sender, handle=f"@{sender}")
+                for sender in ("peer-1", "alice", "bob", "carol", "user")
+            ]
+        )
         self.transcript: list[RoomActivity] = []
 
     @property
