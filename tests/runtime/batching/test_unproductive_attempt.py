@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 from band.runtime.delivery import DeliveryLifecycle, TurnOutcome
@@ -19,7 +18,7 @@ class TestUnproductiveAttempt:
         with patch.object(DeliveryLifecycle, "run", advanced_without_effect):
             async with started_room(platform) as room:
                 await room.until(lambda: advanced_without_effect.await_count >= 1)
-                await asyncio.sleep(0.05)
+                await room.quiesce()
                 attempts_in_first_drain = advanced_without_effect.await_count
                 await room.ctx.request_resync()
                 await room.until(lambda: advanced_without_effect.await_count > 1)
