@@ -90,7 +90,10 @@ lens 4 and run three passes.
 2. **Test-case assumptions.** Is the test itself wrong — does it assume a flow, ordering,
    timing, or result that doesn't match the actual (and correct) system behavior? Are its
    assertions checking the right thing? Check timing assumptions against `AGENTS.md`
-   "Test Synchronization". For an E2E test, scrutinize the matrix/baseline expectations
+   "Test Synchronization" and the [test conventions' controlled-clock
+   boundary](../band-python-test-conventions/SKILL.md#time-is-a-hung-test-guard-not-proof).
+   Prefer gates and awaited completion over timers for time-agnostic claims.
+   For an E2E test, scrutinize the matrix/baseline expectations
    (`tests/e2e/baseline/smoke/matrix/`), including agent-scoped `/context` recall
    assumptions and room rejoin/rehydration timing. Show the mismatch between what the test
    asserts and what the system correctly does.

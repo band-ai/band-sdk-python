@@ -23,7 +23,7 @@ from starlette.responses import Response
 from band.client.rest import NO_RETRY_REQUEST_OPTIONS, AsyncRestClient
 from band.client.streaming import DeliveryStatus
 from band.core.protocols import TURN_FAILURE_PROVIDER, AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import judge_detached_turn
 from band.platform.event import MessageEvent
 from band.runtime.execution import ExecutionContext
@@ -419,10 +419,8 @@ class RoomPeer(SettlementPeer):
         }
 
 
-class ScriptedAdapter(SimpleAdapter[Any]):
+class ScriptedAdapter(BatchInputAdapter[Any]):
     """A batch-capable adapter whose model is a script: it records every turn."""
-
-    supports_batch_input = True
 
     def __init__(self) -> None:
         super().__init__()
@@ -433,27 +431,6 @@ class ScriptedAdapter(SimpleAdapter[Any]):
         self.model_entered = asyncio.Event()
         self.late_failure = asyncio.Event()
         self.detached: list[asyncio.Task[None]] = []
-
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: Any,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
 
     async def on_turn(
         self,

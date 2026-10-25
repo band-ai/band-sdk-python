@@ -9,7 +9,11 @@ from band.adapters.strands import (
     StrandsAdapter,
     StrandsAdapterConfig,
 )
-from tests.adapters.strands.kit import ROOM, SEND_TURN, _run_message
+from tests.adapters.strands.kit import (
+    ROOM,
+    SEND_TURN,
+    _run_message,
+)
 
 
 class TestCleanup:

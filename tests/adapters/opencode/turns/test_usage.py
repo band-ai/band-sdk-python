@@ -4,6 +4,7 @@ from band.adapters.opencode import OpencodeAdapter
 from band.core.types import Emit
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
@@ -44,7 +45,7 @@ class TestUsage:
             client_factory=lambda _config: fake_client,
             emit=Emit.USAGE,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await deliver_message(

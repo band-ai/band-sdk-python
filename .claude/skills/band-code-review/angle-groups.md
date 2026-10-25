@@ -64,9 +64,11 @@ no magic wire strings). Each of the following is an `issue:`, not a nit:
   private names, stdlib spawn, or timeout constants) instead of a public
   seam or a real peer. `AsyncMock` of the unit under test is the same smell.
 - Wall-clock sleep or waiting out a grace period used as proof.
-  `asyncio.timeout` is a hung-test guard only; a public timeout of `0` is
-  "check now", and it still needs the complementary "finished before wait"
-  sequence.
+  Apply the test conventions' controlled-clock boundary: require gates and
+  awaited completion for time-agnostic claims, and clock advancement only
+  for deadline expiry. `asyncio.timeout` is a hung-test guard only; a public
+  timeout of `0`, when supported, is "check now" and still needs the
+  complementary "finished before wait" sequence.
 - A skipped, disabled, or silently-ignored failing test.
 - A Hypothesis model or kit file that looks like a collected test (a `Test*`
   class, or a missing role docstring, in a non-`test_*.py` module).

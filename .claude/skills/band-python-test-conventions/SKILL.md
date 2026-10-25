@@ -126,16 +126,23 @@ test claims to prove.
 
 ## Time is a hung-test guard, not proof
 
-Ordering, concurrency, and timeout behavior is proven with explicit
-synchronization and a controlled clock (`AGENTS.md` "Test Synchronization"):
-events, gates, barriers, or observable state transitions. Never use elapsed
-wall time, `asyncio.sleep` of a grace period, or "it finished within a
-duration" as proof.
+Prefer time-agnostic tests. Prove ordering, concurrency, cancellation, and
+lifecycle behavior with events, gates, barriers, observable state transitions,
+and awaited completion (`AGENTS.md` "Test Synchronization").
+
+**A controlled clock belongs only in tests whose claim is specifically
+“this deadline expires.”** Do not introduce timers or advance time merely to
+make work run, establish ordering, or prove cleanup. In a deadline-expiry
+test, establish the relevant wait before deliberately advancing the clock.
+Never use elapsed wall time, `asyncio.sleep` of a grace period, or "it
+finished within a duration" as proof.
 
 - `async with asyncio.timeout(N)` around a test is a hung-test guard. It
   must not be the mechanism that establishes the outcome.
-- To prove a timeout fail-closed path, set the public timeout to `0` and
-  assert the failure. Do not wait out the production grace period.
+- To prove a timeout fail-closed path, use a public timeout of `0` when its
+  contract supports "check now". When the claim requires deadline expiry,
+  use a controlled clock. Do not change validation to permit `0` or wait
+  out the production grace period.
 - `timeout = 0` proves "still pending at the wait". It does not prove the
   complementary branch: work that finishes before the wait succeeds. Cover
   that with a sequence that completes, not with a longer sleep.

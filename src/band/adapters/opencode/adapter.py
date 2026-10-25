@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ClassVar, TypeAlias, TypeVar
@@ -20,14 +20,15 @@ from band.adapters.opencode.approvals.ports import ApprovalPorts
 from band.adapters.opencode.approvals.room import RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
-from band.core.delivery import relay_reply
+from band.core.content import has_visible_content
+from band.core.delivery import automatic_mentions, finish_automatic_reply
 from band.core.exceptions import BandConnectionError, InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import BackendTurns, bind_turn_task
 from band.core.types import (
@@ -38,6 +39,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    distinct_sender_ids,
 )
 from band.integrations.mcp import (
     BandMCPBackendSettings,
@@ -64,7 +66,8 @@ from band.integrations.opencode import (
     parse_opencode_event,
 )
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
-from band.runtime.prompts import render_system_prompt
+from band.runtime.formatters import SENDER_METADATA_INSTRUCTION, format_current_inputs
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
 
 logger = logging.getLogger(__name__)
@@ -148,7 +151,7 @@ class RoomState:
         session_id: str,
         client: OpencodeClientProtocol,
         tools: AgentToolsProtocol,
-        sender_id: str | None,
+        sender_ids: Sequence[str],
     ) -> TurnState:
         """Reset reply state and create the futures for one new turn."""
         loop = asyncio.get_running_loop()
@@ -158,7 +161,7 @@ class RoomState:
             tools=tools,
             turn_future=loop.create_future(),
             turn_release_future=loop.create_future(),
-            pending_mentions=[{"id": sender_id}] if sender_id else [],
+            pending_mentions=[{"id": sender_id} for sender_id in sender_ids],
         )
         return self.turn
 
@@ -228,7 +231,7 @@ class McpRegistration:
     url: str
 
 
-class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
+class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
     """Band adapter for the OpenCode HTTP server.
 
     Maps each Band room to an OpenCode session. Messages from the room
@@ -271,14 +274,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-
-    def is_control_message(self, msg: PlatformMessage) -> bool:
-        # A room that was never seen has no ask to answer; looking it up must
-        # not create its state the way handling a control does.
-        room_state = self._rooms.get(msg.room_id)
-        return room_state is not None and room_state.approvals.recognizes_reply(
-            msg.content
-        )
 
     def __init__(
         self,
@@ -397,7 +392,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # the namespace-wide deny.
         return {namespace: False, current_registration: True}
 
-    def _build_turn_system(self, room_id: str, msg: PlatformMessage) -> str:
+    def _build_turn_system(self, room_id: str) -> str:
         """Per-turn system prompt: the static base plus this room's context.
 
         The band MCP tools' schemas require a ``chat_id`` argument (the shared
@@ -405,17 +400,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         current room id every turn or the platform tools are uncallable —
         the same per-turn room context the ACP client adapter injects.
         """
-        requester_name = msg.sender_name or msg.sender_id or "Unknown"
-        requester_id = msg.sender_id or "unknown"
         room_context = (
             "## Room Context\n"
             f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n"
-            f"Current requester name: {requester_name}\n"
-            f"Current requester id: {requester_id}\n"
             "\n"
             "Use each MCP tool's schema for its argument names. When a tool "
             f"needs the current room, use the Current {CHAT_ID_FIELD_NAME} "
             "value above.\n"
+            f"{SENDER_METADATA_INSTRUCTION}\n"
         )
         return f"{self._system_prompt}\n\n{room_context}".strip()
 
@@ -436,6 +428,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             len(self._custom_tools),
         )
 
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        # A room that was never seen has no ask to answer; looking it up must
+        # not create its state the way handling a control does.
+        room_state = self._rooms.get(msg.room_id)
+        return room_state is not None and room_state.approvals.recognizes_reply(
+            msg.content
+        )
+
     async def try_handle_control(
         self, msg: PlatformMessage, tools: AgentToolsProtocol
     ) -> bool:
@@ -449,9 +449,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     def backend_turns(self) -> BackendTurns[TurnState]:
         return self._backend_turns
 
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: OpencodeSessionState,
         participants_msg: str | None,
@@ -460,6 +460,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        """Handle one turn over its original messages, in one OpenCode prompt."""
         room_state = await self._get_or_create_room_state(room_id)
         # The room's previous turn may still be aborting its session; nothing
         # of this turn is bound, and no prompt is sent, until that settles.
@@ -498,7 +499,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 session_id=session_id,
                 client=client,
                 tools=tools,
-                sender_id=msg.sender_id,
+                sender_ids=distinct_sender_ids(messages),
             )
             # The watcher owns the turn's backend work, so it is registered
             # before the prompt can start any.
@@ -520,7 +521,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 await client.prompt_async(
                     session_id,
                     parts=self._build_prompt_parts(
-                        msg,
+                        messages,
                         participants_msg,
                         contacts_msg,
                         # A newly-created server session holds no prior context, so
@@ -534,7 +535,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         # not replay and double it.
                         replay_messages=(history.replay_messages if created else None),
                     ),
-                    system=self._build_turn_system(room_id, msg),
+                    system=self._build_turn_system(room_id),
                     model=self._build_model_payload(),
                     agent=self.config.agent,
                     variant=self.config.variant,
@@ -554,7 +555,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 await turn_task
         # NOTE: the turn timeout is owned solely by _watch_turn_completion (via
         # asyncio.wait_for), which aborts the session and emits the error event.
-        # Nothing awaited here re-raises asyncio.TimeoutError, so on_message has no
+        # Nothing awaited here re-raises asyncio.TimeoutError, so the input handler has no
         # timeout handler of its own.
         except asyncio.CancelledError:
             # The runtime interrupts a turn by cancelling this coroutine, but the
@@ -861,7 +862,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 # Idle is a terminal path: a permission/question still parked
                 # on a human can never be answered on this turn once the
                 # session has gone idle, and a later _begin_turn would make
-                # it unreachable from on_message.
+                # it unreachable from the input handler.
                 if room_state.turn is not None:
                     await room_state.turn.approvals.abandon()
                 self._finish_turn(room_state)
@@ -1000,7 +1001,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         session_id: str,
         client: OpencodeClientProtocol,
         tools: AgentToolsProtocol,
-        sender_id: str | None,
+        sender_ids: Sequence[str],
     ) -> TurnState:
         # Pinned to THIS turn specifically, not "whichever turn room_state.turn
         # currently is": an ask that outlives this _begin_turn must keep
@@ -1008,7 +1009,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # ambient lookup would silently misroute a reply or abort onto the
         # wrong turn.
         turn = room_state.begin_turn(
-            session_id=session_id, client=client, tools=tools, sender_id=sender_id
+            session_id=session_id, client=client, tools=tools, sender_ids=sender_ids
         )
         room_state.approvals = self._new_approvals(room_state, lambda: turn)
         turn.approvals = room_state.approvals
@@ -1057,9 +1058,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 )
                 await self._report_delivery_failure(turn)
         finally:
-            # Release the on_message waiter even if delivering the reply or
+            # Release the input handler waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
-            # @mention, which the platform rejects) — otherwise on_message
+            # @mention, which the platform rejects) — otherwise the input handler
             # waits on turn_release_future forever.
             self._release_turn_wait_for(turn)
             self._clear_turn_state(
@@ -1217,7 +1218,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         created_at = datetime.now(UTC).isoformat()
         # Best-effort bookkeeping: a transient post failure must not abort the
-        # turn before the model runs (the outer on_message handler would catch
+        # turn before the model runs (the input handler would catch
         # it and drop the user's message). Leave persisted_session_id unset on
         # failure so the next turn retries the event.
         try:
@@ -1240,9 +1241,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state.persisted_session_id = room_state.session_id
 
     async def _deliver_fallback_text(self, room_id: str, turn: TurnState) -> None:
-        if not self.config.fallback_send_agent_text:
-            return
-
         text = "\n".join(
             part_text.strip()
             for part_text in turn.text_parts.values()
@@ -1262,8 +1260,26 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         # An error is still surfaced after a tool reply -- it is not a text reply.
         try:
-            relayed = await relay_reply(turn.tools, text, turn.pending_mentions)
-            if not relayed and turn.last_error_message:
+            reply = text if self.config.fallback_send_agent_text else None
+            relayed = False
+            if not turn.tools.turn.replied and (
+                has_visible_content(reply or "")
+                or (not turn.tools.turn.complete and not turn.last_error_message)
+            ):
+                mentions = await automatic_mentions(
+                    turn.tools, tuple(sender["id"] for sender in turn.pending_mentions)
+                )
+                room = self._rooms.get(room_id)
+                if room is None or room.turn is not turn:
+                    raise asyncio.CancelledError
+                if mentions or not turn.last_error_message:
+                    relayed = (
+                        bool(mentions)
+                        and has_visible_content(reply or "")
+                        and not turn.tools.turn.replied
+                    )
+                    await finish_automatic_reply(turn.tools, reply, mentions)
+            if turn.last_error_message and not relayed:
                 await turn.tools.send_failure(
                     AgentFailure(_PROVIDER, turn.last_error_message)
                 )
@@ -1359,7 +1375,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     def _build_prompt_parts(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         participants_msg: str | None,
         contacts_msg: str | None,
         *,
@@ -1372,12 +1388,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             )
             lines.extend(replay_messages)
         if participants_msg:
-            lines.append(f"[System]: {participants_msg}")
+            lines.append(f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
         if contacts_msg:
-            lines.append(f"[System]: {contacts_msg}")
+            lines.append(f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
 
-        sender_name = msg.sender_name or "Unknown"
-        lines.append(f"[{sender_name}]: {msg.content}")
+        lines.append(format_current_inputs(messages))
         return [{"type": "text", "text": "\n".join(lines)}]
 
     def _format_http_error(self, exc: httpx.HTTPStatusError) -> str:

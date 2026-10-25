@@ -5,7 +5,7 @@ from agno.agent import Agent as AgnoAgent
 from agno.db.in_memory import InMemoryDb
 
 from band.adapters.agno import AgnoAdapter
-from band.runtime.formatters import format_history_for_llm
+from band.runtime.formatters import format_current_inputs, format_history_for_llm
 from tests.adapters.agno.helpers import (
     CapturingModel,
     ContactAwareTools,
@@ -21,7 +21,9 @@ from tests.adapters.agno.historypersistence.kit import (
 
 
 class TestHistoryPersistence:
-    async def test_history_survives_restart_and_is_loaded_by_agno_not_band(self):
+    async def test_history_survives_restart_and_is_loaded_by_agno_not_band(
+        self,
+    ):
         db = InMemoryDb()
 
         def build_agent(reply: str) -> AgnoAgent:
@@ -80,7 +82,7 @@ class TestHistoryPersistence:
         # The prior turn reappears tagged from_history -> loaded by Agno's db, not by
         # Band (whose sentinel above was dropped).
         rehydrated = [m for m in users if m.from_history]
-        assert any(m.content == first.format_for_llm() for m in rehydrated)
+        assert any(m.content == format_current_inputs([first]) for m in rehydrated)
         # The live message is the last user turn and is NOT history.
-        assert users[-1].content == second.format_for_llm()
+        assert users[-1].content == format_current_inputs([second])
         assert users[-1].from_history is False

@@ -14,9 +14,12 @@ from tests.integrations.acp.conftest import make_platform_message
 
 
 class TestReplayPages:
+    @pytest.mark.parametrize(
+        "recent_id", ["recent", None], ids=["independent-id", "trigger-id-prefix"]
+    )
     @pytest.mark.asyncio
     async def test_off_bootstrap_replay_includes_recent_pages(
-        self, monkeypatch, tmp_path: Path
+        self, monkeypatch, tmp_path: Path, recent_id: str | None
     ):
         runtime = RecordingRuntime()
         runtime.finish.set()
@@ -35,7 +38,7 @@ class TestReplayPages:
             for index in range(50)
         ]
         recent = {
-            "id": "recent",
+            "id": recent_id or msg.id[:-1],
             "content": "UNIQUE_RECENT",
             "sender_id": "user-1",
             "sender_type": "User",

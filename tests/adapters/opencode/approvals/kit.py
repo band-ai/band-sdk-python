@@ -29,6 +29,7 @@ from band.integrations.opencode import (
     OpencodeQuestion,
 )
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.helpers import (
     AskFactory,
     FakeOpencodeClient,
@@ -157,14 +158,14 @@ def make_room_approvals(
     abort_session: Callable[[], Awaitable[None]] = ignore_abort,
     config: OpencodeAdapterConfig | None = None,
 ) -> RoomApprovals:
-    tools = tools if tools is not None else FakeAgentTools()
+    tools = tools if tools is not None else FakeAgentTools(participants=ROOM_MEMBERS)
     return RoomApprovals(
         config or OpencodeAdapterConfig(),
         ApprovalPorts(
             room_id="room-1",
             client=lambda: cast(OpencodeClientProtocol, client),
             tools=lambda: cast(AgentToolsProtocol, tools),
-            turn_mentions=list,
+            turn_mentions=lambda: [{"id": ALICE_PARTICIPANT["id"]}],
             release_turn_wait=release_turn_wait,
             fail_turn=fail_turn,
             abort_session=abort_session,

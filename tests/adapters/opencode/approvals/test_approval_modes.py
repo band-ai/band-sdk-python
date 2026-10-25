@@ -13,6 +13,7 @@ from band.integrations.opencode.types import (
     OpencodeSessionState,
 )
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.approvals.kit import (
     DECLINED,
@@ -99,7 +100,7 @@ class TestApprovalModes:
             config=OpencodeAdapterConfig(approval_mode="auto_accept"),
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await deliver_message(
@@ -132,7 +133,7 @@ class TestApprovalModes:
             config=OpencodeAdapterConfig(approval_mode="auto_decline"),
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await deliver_message(
@@ -159,7 +160,7 @@ class TestApprovalModes:
             config=OpencodeAdapterConfig(question_mode="auto_reject"),
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await deliver_message(
@@ -204,7 +205,7 @@ class TestApprovalModes:
             config=OpencodeAdapterConfig(approval_mode="manual"),
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await run_single_turn(adapter, tools)
 
@@ -251,7 +252,7 @@ class TestApprovalModes:
                 )
             ]
         ]
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await run_single_turn(adapter, tools)
 
@@ -277,7 +278,7 @@ class TestApprovalModes:
             capabilities=Capability.MEMORY,
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await run_single_turn(adapter, tools)
 
@@ -304,7 +305,7 @@ class TestApprovalModes:
             config=OpencodeAdapterConfig(approval_mode="auto_accept"),
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await run_single_turn(adapter, tools)
 
@@ -339,7 +340,7 @@ class TestApprovalModes:
             config=OpencodeAdapterConfig(approval_mode="manual"),
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         first_turn = asyncio.create_task(

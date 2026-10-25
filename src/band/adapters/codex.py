@@ -7,7 +7,7 @@ import json
 import logging
 import time as _time
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
@@ -40,7 +40,9 @@ from band.core.content import has_visible_content
 from band.core.defaultmodels import OPENAI_MODEL
 from band.core.delivery import (
     DeliveryFailedError,
+    automatic_mentions,
     deliver_notice,
+    finish_automatic_reply,
     reraise_delivery_cause,
 )
 from band.core.exceptions import InputNotAccepted
@@ -60,7 +62,7 @@ from band.core.retention import (
     require_disabled_retention,
 )
 from band.core.retention.cleanup import spawn_owned
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import (
@@ -81,6 +83,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    distinct_sender_ids,
 )
 from band.integrations.codex import (
     TRANSPORT_CLOSED,
@@ -116,7 +119,7 @@ from band.runtime.decisions import (
     Registration,
     Timeout,
 )
-from band.runtime.formatters import strip_leading_mentions
+from band.runtime.formatters import format_current_inputs, strip_leading_mentions
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, render_system_prompt
 from band.runtime.toolactivity import (
     end_tool_activity,
@@ -480,6 +483,11 @@ class TurnResult:
     native_messages: dict[str, NativeMessage] = dataclass_field(default_factory=dict)
     turn_status: str = "failed"
     turn_error: str = ""
+
+
+def _audience_sender_ids(audience: Sequence[dict[str, str]]) -> list[str]:
+    """Project the current turn audience onto sender IDs."""
+    return [person["id"] for person in audience]
 
 
 def _event_params(event: RpcEvent) -> dict[str, Any]:
@@ -905,7 +913,7 @@ class CodexAdapterConfig(EnvAdapterConfig):
         )
 
 
-class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
+class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState]):
     """
     Codex adapter backed by codex app-server (stdio or websocket transport).
 
@@ -923,10 +931,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-
-    def is_control_message(self, msg: PlatformMessage) -> bool:
-        """Keep all local commands outside ordinary model input."""
-        return self._extract_local_command(msg.content) is not None
 
     def __init__(
         self,
@@ -977,9 +981,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._max_task_titles: int = _MAX_TASK_TITLES
         # Keep each registry's minting state across room disposal and restart.
         self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
-        # A turn runs as a detached task so a manual approval can release
-        # on_message: Band dispatches one message per room at a time, so the
-        # reply that resolves the approval arrives only after on_message returns.
+        # A detached turn releases the input handler during manual approval
+        # so the room can dispatch the reply that resolves it.
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         self._turn_tasks: dict[str, TurnTask] = {}
         self._backend_turns = BackendTurns[CodexTurn](
@@ -1156,14 +1159,25 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             self.config.emit_token_usage_events,
         )
 
-    async def on_event(self, inp: AgentInput) -> None:
+    def _keep_history_for_resume_failure(self, inp: AgentInput) -> None:
         if (
             self.config.inject_history_on_resume_failure
             and inp.is_session_bootstrap
             and inp.history.raw
         ):
             self._raw_history_by_room[inp.room_id] = inp.history.raw
+
+    async def on_event(self, inp: AgentInput) -> None:
+        self._keep_history_for_resume_failure(inp)
         await super().on_event(inp)
+
+    async def on_messages(self, inp: AgentInput) -> None:
+        self._keep_history_for_resume_failure(inp)
+        await super().on_messages(inp)
+
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        """Keep all local commands outside ordinary model input."""
+        return self._extract_local_command(msg.content) is not None
 
     async def try_handle_control(
         self, msg: PlatformMessage, tools: AgentToolsProtocol
@@ -1201,9 +1215,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         tools.turn.settle()
         return True
 
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: CodexSessionState,
         participants_msg: str | None,
@@ -1212,10 +1226,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        """Handle one turn over its original messages."""
         await self._admit_turn(room_id, "Codex")
         room = self._room_client(room_id)
         self._active_room.set(room_id)
-        command = self._extract_local_command(msg.content)
+        # A local command is always a turn of its own (see is_control_message).
+        command = (
+            self._extract_local_command(messages[0].content)
+            if len(messages) == 1
+            else None
+        )
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         turn = start_releasable_turn(
@@ -1223,7 +1243,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             partial(
                 self._run_turn,
                 room=room,
-                msg=msg,
+                messages=messages,
                 tools=tools,
                 history=history,
                 participants_msg=participants_msg,
@@ -1246,14 +1266,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if self._turn_release.get(room_id) is release:
                 del self._turn_release[room_id]
         if turn.done():
-            # No human was asked: the turn's outcome is on_message's own.
+            # No human was asked: the turn's outcome is the input handler's own.
             await turn
 
     async def _run_turn(
         self,
         *,
         room: RoomCodexClient,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: CodexSessionState,
         participants_msg: str | None,
@@ -1265,13 +1285,17 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         async with room.rpc_lock:
             try:
                 if command is not None and await self._run_local_command(
-                    room=room, msg=msg, tools=tools, history=history, command=command
+                    room=room,
+                    msg=messages[0],
+                    tools=tools,
+                    history=history,
+                    command=command,
                 ):
                     return
                 async with room.retained.use():
                     await self._serve_turn(
                         room=room,
-                        msg=msg,
+                        messages=messages,
                         tools=tools,
                         history=history,
                         participants_msg=participants_msg,
@@ -1340,7 +1364,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self,
         *,
         room: RoomCodexClient,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: CodexSessionState,
         participants_msg: str | None,
@@ -1348,6 +1372,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
     ) -> None:
         room_id = room.room_id
+        # The turn keeps its originals, and so its audience, in this frame
+        # through detached approval waits.
+        audience = self._turn_audience(messages)
         thread_id = await self._ensure_thread(
             room=room,
             history=history,
@@ -1355,7 +1382,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             is_session_bootstrap=is_session_bootstrap,
         )
         turn_input, has_pending_prompt_injection = self._build_turn_input(
-            msg=msg,
+            messages=messages,
             participants_msg=participants_msg,
             contacts_msg=contacts_msg,
             room_id=room_id,
@@ -1375,7 +1402,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 self._prompt_injected_rooms.add(room_id)
             await self._emit_turn_started(
                 tools=tools,
-                msg=msg,
+                messages=messages,
                 room_id=room_id,
                 thread_id=thread_id,
                 turn_id=native.turn_id,
@@ -1393,7 +1420,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 result = await self._process_turn_events(
                     native=native,
                     tools=tools,
-                    msg=msg,
+                    audience=audience,
                     room_id=room_id,
                     thread_id=thread_id,
                     turn_start=turn_start,
@@ -1407,7 +1434,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             except CodexJsonRpcError as error:
                 await self._emit_failed_turn_outcome(
                     tools=tools,
-                    msg=msg,
+                    audience=audience,
                     room_id=room_id,
                     thread_id=thread_id,
                     turn_id=native.turn_id,
@@ -1429,7 +1456,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 )
                 await self._emit_failed_turn_outcome(
                     tools=tools,
-                    msg=msg,
+                    audience=audience,
                     room_id=room_id,
                     thread_id=thread_id,
                     turn_id=native.turn_id,
@@ -1442,7 +1469,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 raise TurnResultAlreadyReported(TURN_PROCESSING_ERROR) from None
         await self._emit_turn_outcome(
             tools=tools,
-            msg=msg,
+            audience=audience,
             room_id=room_id,
             thread_id=thread_id,
             turn_id=native.turn_id,
@@ -1457,7 +1484,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self,
         *,
         tools: AgentToolsProtocol,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         room_id: str,
         thread_id: str,
         turn_id: str | None,
@@ -1483,6 +1510,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 log_level=logging.DEBUG,
             )
         if self.config.emit_turn_lifecycle_events:
+            input_summary = "\n".join(m.content or "" for m in messages)[:200]
             await send_event_safe(
                 tools,
                 content=self._build_task_event_content(
@@ -1498,15 +1526,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     "codex_thread_id": thread_id,
                     "codex_turn_id": turn_id,
                     "codex_turn_status": "started",
-                    "codex_input_summary": (msg.content or "")[:200],
+                    "codex_input_summary": input_summary,
                 },
                 log_label="turn started lifecycle event",
                 log_level=logging.DEBUG,
             )
 
     def _release_turn(self, room_id: str, tools: AgentToolsProtocol) -> None:
-        """Let on_message return while the room's turn waits on a human; the
-        turn is then judged at its real end, not when on_message returns."""
+        """Release the input handler while the turn waits for a human reply."""
         release = self._turn_release.get(room_id)
         if release is not None and not release.done():
             tools.turn.detach()
@@ -1521,7 +1548,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self,
         *,
         tools: AgentToolsProtocol,
-        msg: PlatformMessage,
+        audience: list[dict[str, str]],
         room_id: str,
         thread_id: str,
         turn_id: str | None,
@@ -1531,7 +1558,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         """Emit failure lifecycle events without posting a second reply."""
         await self._emit_turn_outcome(
             tools=tools,
-            msg=msg,
+            audience=audience,
             room_id=room_id,
             thread_id=thread_id,
             turn_id=turn_id,
@@ -1547,7 +1574,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         *,
         native: NativeTurn,
         tools: AgentToolsProtocol,
-        msg: PlatformMessage,
+        audience: list[dict[str, str]],
         room_id: str,
         thread_id: str,
         turn_start: float,
@@ -1567,7 +1594,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     raise event
                 if event.is_request:
                     await self._answer_native_request(
-                        native, tools=tools, msg=msg, room_id=room_id, event=event
+                        native,
+                        tools=tools,
+                        audience=audience,
+                        room_id=room_id,
+                        event=event,
                     )
                     continue
 
@@ -1816,7 +1847,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             result.turn_error = str(error)
             await self._emit_failed_turn_outcome(
                 tools=tools,
-                msg=msg,
+                audience=audience,
                 room_id=room_id,
                 thread_id=thread_id,
                 turn_id=turn_id,
@@ -1853,12 +1884,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             # sibling `except TurnResultAlreadyReported` above -- Python never
             # matches an exception raised inside one except against a sibling
             # of the same try. Call the same failed-turn telemetry directly
-            # (as on_message's CodexJsonRpcError branch already does) so a
+            # (as the input handler's CodexJsonRpcError branch already does) so a
             # timeout still gets the "Codex turn"/lifecycle failed-status
             # events every other TurnResultAlreadyReported path emits.
             await self._emit_failed_turn_outcome(
                 tools=tools,
-                msg=msg,
+                audience=audience,
                 room_id=room_id,
                 thread_id=thread_id,
                 turn_id=turn_id,
@@ -1873,7 +1904,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         native: NativeTurn,
         *,
         tools: AgentToolsProtocol,
-        msg: PlatformMessage,
+        audience: list[dict[str, str]],
         room_id: str,
         event: RpcEvent,
     ) -> None:
@@ -1885,7 +1916,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             await self._handle_server_request(
                 client=native.client,
                 tools=tools,
-                msg=msg,
+                audience=audience,
                 room_id=room_id,
                 event=event,
             )
@@ -2462,7 +2493,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     def _build_turn_input(
         self,
         *,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         participants_msg: str | None,
         contacts_msg: str | None,
         room_id: str,
@@ -2493,7 +2524,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if contacts_msg:
             items.append({"type": "text", "text": f"[System]: {contacts_msg}"})
 
-        items.append({"type": "text", "text": msg.format_for_llm()})
+        items.append({"type": "text", "text": format_current_inputs(messages)})
         return items, injected_system_prompt
 
     def _format_history_context(self, raw: list[dict[str, Any]]) -> str | None:
@@ -2514,7 +2545,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         *,
         client: CodexClientProtocol,
         tools: AgentToolsProtocol,
-        msg: PlatformMessage,
+        audience: list[dict[str, str]],
         room_id: str,
         event: RpcEvent,
     ) -> None:
@@ -2641,7 +2672,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             await self._handle_approval_request(
                 client=client,
                 tools=tools,
-                msg=msg,
+                audience=audience,
                 room_id=room_id,
                 event=event,
                 params=params,
@@ -2657,7 +2688,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         *,
         client: CodexClientProtocol,
         tools: AgentToolsProtocol,
-        msg: PlatformMessage,
+        audience: list[dict[str, str]],
         room_id: str,
         event: RpcEvent,
         params: dict[str, Any],
@@ -2689,14 +2720,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     decision = await answers.enter_async_context(
                         self._resolve_manual_approval(
                             tools=tools,
-                            msg=msg,
+                            audience=audience,
                             room_id=room_id,
                             event=event,
                             summary=summary,
                             params=params,
                         )
                     )
-                    decided_by = msg.sender_name or msg.sender_type or "user"
+                    decided_by = ", ".join(a["name"] for a in audience) or "user"
                 except Exception:
                     # Ensure we still answer the server request even if the
                     # human-facing notification flow fails.
@@ -2734,17 +2765,20 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             self.config.approval_mode != "manual"
             and self.config.approval_text_notifications
         ):
-            mention = [
-                {
-                    "id": msg.sender_id,
-                    "name": msg.sender_name or msg.sender_type,
-                }
-            ]
+            room = self._room_clients.get(room_id)
             try:
-                await tools.send_notice(
-                    f"Approval requested ({summary}). Policy decision: {decision}.",
-                    mentions=mention,
+                mentions = await automatic_mentions(
+                    tools, _audience_sender_ids(audience)
                 )
+                if (
+                    self._room_clients.get(room_id) is room
+                    and not self._room_closing(room_id)
+                    and mentions
+                ):
+                    await tools.send_notice(
+                        f"Approval requested ({summary}). Policy decision: {decision}.",
+                        mentions=mentions,
+                    )
             except Exception:
                 logger.exception("Failed to send approval policy notification")
 
@@ -2793,7 +2827,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self,
         *,
         tools: AgentToolsProtocol,
-        msg: PlatformMessage,
+        audience: list[dict[str, str]],
         room_id: str,
         thread_id: str,
         turn_id: str | None,
@@ -2804,6 +2838,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         include_reply: bool = True,
     ) -> None:
         # Look up token usage once for both marker and lifecycle events.
+        room = self._room_clients.get(room_id)
         usage = self._token_usage.get(thread_id)
         has_usage = usage is not None and usage.total_tokens > 0
 
@@ -2885,8 +2920,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if not include_reply:
             return
 
-        mention = self._sender_mention(msg)
-
         if turn_status == "completed":
             if not tools.turn.replied and Emit.THOUGHTS in self.features.emit:
                 for item_id, message in native_messages.items():
@@ -2905,6 +2938,15 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         },
                         log_label="Codex completed thought",
                     )
+            if not tools.turn.complete:
+                mentions = await automatic_mentions(
+                    tools, _audience_sender_ids(audience)
+                )
+                if self._room_clients.get(room_id) is not room or self._room_closing(
+                    room_id
+                ):
+                    return
+                await finish_automatic_reply(tools, None, mentions)
             return
 
         if turn_status == "interrupted":
@@ -2915,7 +2957,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
         else:
             outcome_text = f"I couldn't complete this request ({turn_status})."
-        await deliver_notice(tools, outcome_text, mentions=mention)
+        mentions = await automatic_mentions(tools, _audience_sender_ids(audience))
+        if self._room_clients.get(room_id) is not room or self._room_closing(room_id):
+            return
+        if mentions:
+            await deliver_notice(tools, outcome_text, mentions=mentions)
         tools.turn.settle()
 
     async def _emit_item_completed_events(
@@ -3213,13 +3259,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self,
         *,
         tools: AgentToolsProtocol,
-        msg: PlatformMessage,
+        audience: list[dict[str, str]],
         room_id: str,
         event: RpcEvent,
         summary: str,
         params: dict[str, Any],
     ) -> AsyncIterator[ApprovalDecision]:
-        mention = self._sender_mention(msg)
         if event.id is None:
             raise RuntimeError("approval request must have an id")
         loop = asyncio.get_running_loop()
@@ -3246,6 +3291,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             yield "decline"
             return
         entry = registration.entry
+        room = self._room_clients.get(room_id)
         token = entry.token
         for removed in registration.removed:
             removed.payload.future.set_result("decline")
@@ -3300,7 +3346,19 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         log_level=logging.DEBUG,
                     )
                 try:
-                    await tools.send_notice(approval_msg, mentions=mention)
+                    mentions = await automatic_mentions(
+                        tools, _audience_sender_ids(audience)
+                    )
+                    if (
+                        self._room_clients.get(room_id) is room
+                        and not self._room_closing(room_id)
+                        and mentions
+                        and entry in registry.unclaimed()
+                    ):
+                        await tools.send_notice(approval_msg, mentions=mentions)
+                    elif registry.withdraw(entry):
+                        yield "decline"
+                        return
                 except Exception:
                     logger.exception(
                         "Failed to notify room %s about pending approval %s",
@@ -3331,12 +3389,20 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     if decision is Timeout.TIMED_OUT:
                         decision = self.config.approval_timeout_decision
                         try:
-                            await tools.send_notice(
-                                APPROVAL_TIMED_OUT_TEMPLATE.format(
-                                    token=token, decision=decision
-                                ),
-                                mentions=mention,
+                            mentions = await automatic_mentions(
+                                tools, _audience_sender_ids(audience)
                             )
+                            if (
+                                self._room_clients.get(room_id) is room
+                                and not self._room_closing(room_id)
+                                and mentions
+                            ):
+                                await tools.send_notice(
+                                    APPROVAL_TIMED_OUT_TEMPLATE.format(
+                                        token=token, decision=decision
+                                    ),
+                                    mentions=mentions,
+                                )
                         except Exception:
                             logger.exception(
                                 "Failed to send approval timeout notification"
@@ -4414,6 +4480,15 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     @staticmethod
     def _sender_mention(msg: PlatformMessage) -> list[dict[str, str]]:
         return [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
+
+    @staticmethod
+    def _turn_audience(messages: Sequence[PlatformMessage]) -> list[dict[str, str]]:
+        """The automatic notices' recipients: one mention per distinct sender."""
+        names = {m.sender_id: m.sender_name or m.sender_type for m in messages}
+        return [
+            {"id": sender_id, "name": names[sender_id]}
+            for sender_id in distinct_sender_ids(messages)
+        ]
 
     @staticmethod
     def _extract_local_command(content: str) -> tuple[CodexCommand, str] | None:

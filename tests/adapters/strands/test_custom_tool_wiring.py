@@ -16,7 +16,9 @@ from band.adapters.strands import (
     StrandsAdapterConfig,
 )
 from band.runtime.tools import TurnEffect
-from tests.adapters.strands.kit import _turn_agent
+from tests.adapters.strands.kit import (
+    _turn_agent,
+)
 
 
 class TestCustomToolWiring:

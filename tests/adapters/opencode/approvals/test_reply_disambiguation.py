@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.approvals.kit import (
     make_room_approvals,
 )
@@ -38,7 +39,7 @@ class TestReplyDisambiguation:
         permission is also pending -- the permission branch must not consume
         it as a stale approval id."""
         client = FakeOpencodeClient()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
         await approvals.on_permission_asked(asks.permission("req-1"))
         await approvals.on_question_asked(asks.question("q-1"))
@@ -55,7 +56,7 @@ class TestReplyDisambiguation:
         """`approve <question-id>` is not the shared reject grammar -- it must
         not fall through and be submitted as a free-text question answer."""
         client = FakeOpencodeClient()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
         await approvals.on_permission_asked(asks.permission("req-1"))
         await approvals.on_question_asked(asks.question("q-1"))
@@ -73,7 +74,7 @@ class TestReplyDisambiguation:
     ) -> None:
         """Permission vocabulary must not be submitted as a question answer."""
         client = FakeOpencodeClient()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
         await approvals.on_question_asked(asks.question("q-1"))
 
@@ -85,7 +86,7 @@ class TestReplyDisambiguation:
         self, asks: AskFactory
     ) -> None:
         client = FakeOpencodeClient()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
         await approvals.on_question_asked(asks.question("q-1"))
 
@@ -111,7 +112,7 @@ class TestReplyDisambiguation:
         asks: AskFactory,
     ) -> None:
         client = FakeOpencodeClient()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
         await approvals.on_permission_asked(asks.permission("req-1"))
         await approvals.on_question_asked(asks.question("q-1"))
@@ -149,7 +150,7 @@ class TestReplyDisambiguation:
         asks: AskFactory,
     ) -> None:
         client = FakeOpencodeClient()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
         await approvals.on_question_asked(asks.question("q-1"))
         assert await approvals.try_handle_reply("reject q-1", "user-1")

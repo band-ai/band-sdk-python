@@ -15,6 +15,7 @@ from band.converters.letta import LettaSessionState
 from band.core.types import Emit
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.letta.kit import reported_tool_names
 from tests.adapters.lettakit import (
     make_assistant_message,
@@ -46,7 +47,7 @@ class TestExecutionReporting:
             make_assistant_message("Done"),
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState()
 
@@ -93,7 +94,7 @@ class TestExecutionReporting:
             make_grouped_return_message(returns, name=calls[0].name),
             make_assistant_message("Done"),
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_message(
             make_platform_message(),
@@ -130,7 +131,7 @@ class TestExecutionReporting:
             make_tool_return_message("band_send_message"),
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState()
 
@@ -176,7 +177,7 @@ class TestExecutionReporting:
             make_assistant_message("Done"),
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState()
 

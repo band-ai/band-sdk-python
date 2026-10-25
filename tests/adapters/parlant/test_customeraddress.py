@@ -10,7 +10,7 @@ import pytest
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.adapters.parlant.messages import name_this_agent
 from band.testing import FakeAgentTools
-from tests.adapters.parlant.helpers import BAND_NAME, SENDER_NAME
+from tests.adapters.parlant.helpers import BAND_NAME, SENDER_NAME, current_content
 from tests.testing.support import seeded_participant
 
 AGENT_ID = "agent-1"
@@ -61,9 +61,8 @@ class TestCustomerAddress:
             )
 
         posted = mock_app.sessions.create_customer_message.await_args.kwargs["message"]
-        assert posted == (
-            f"[{SENDER_NAME}]: {PARLANT_NAME} look up the code, {PARLANT_NAME}, "
-            f"and tell @{OTHER_HANDLE}"
+        assert current_content(posted) == (
+            f"{PARLANT_NAME} look up the code, {PARLANT_NAME}, and tell @{OTHER_HANDLE}"
         )
         assert (
             f"Room {message.room_id}: posting to Parlant (agent {PARLANT_NAME}): {posted}"
@@ -96,7 +95,7 @@ class TestCustomerAddress:
         )
 
         posted = mock_app.sessions.create_customer_message.await_args.kwargs["message"]
-        assert posted == f"[{SENDER_NAME}]: {BAND_NAME} look up the code"
+        assert current_content(posted) == f"{BAND_NAME} look up the code"
 
     def test_rewrites_a_raw_id_and_a_collapsed_name(self) -> None:
         participants = [{"id": AGENT_ID, "name": "Tool Agent"}]
@@ -147,7 +146,7 @@ class TestCustomerAddress:
         )
 
         posted = mock_app.sessions.create_customer_message.await_args.kwargs["message"]
-        assert posted == f"[{SENDER_NAME}]: Live Prompt Name look up the code"
+        assert current_content(posted) == "Live Prompt Name look up the code"
 
     async def test_rewrites_this_agent_in_bootstrap_history(
         self, start_adapter, mock_app, mock_parlant_agent, sample_message
@@ -194,10 +193,9 @@ class TestCustomerAddress:
             call.kwargs["message"]
             for call in mock_app.sessions.create_customer_message.await_args_list
         ]
-        assert posted == [
-            f"[{SENDER_NAME}]: Live Prompt Name what is the code",
-            f"[{SENDER_NAME}]: look this up",
-        ]
+        history, current = posted
+        assert history == f"[{SENDER_NAME}]: Live Prompt Name what is the code"
+        assert current_content(current) == "look this up"
         replayed = mock_app.sessions.create_event.await_args.kwargs["data"]["message"]
         assert replayed == f"Noted. @{HANDLE} remains"
 

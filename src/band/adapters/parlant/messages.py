@@ -4,19 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from band.core.types import PlatformMessage
-from band.runtime.formatters import mention_label
+from band.runtime.formatters import format_current_inputs, mention_label
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX
 
 if TYPE_CHECKING:
     from parlant.core.application import Application
     from parlant.core.sessions import SessionId
-
-# Prefixes the change-triggered roster/contacts updates injected into a turn,
-# so the model reads them as platform state, not as the requester speaking.
-SYSTEM_UPDATE_PREFIX = "[System Update]: "
 
 # A mention token is ``@`` plus a whitespace-free label. ``.``, ``/``, and ``-``
 # continue it (``alexander`` must not consume ``alexander.zaikman/tom``, and
@@ -48,24 +46,27 @@ def name_this_agent(
 
 def compose_user_message(
     *,
-    msg: PlatformMessage,
+    messages: Sequence[PlatformMessage],
     participants_msg: str | None,
     contacts_msg: str | None,
     agent_id: str | None = None,
     agent_name: str = "",
     participants: list[Any] | None = None,
 ) -> str:
-    """The turn's message with any roster/contacts updates in front of it."""
-    addressed = replace(
-        msg,
-        content=name_this_agent(
-            msg.content,
-            agent_id=agent_id,
-            agent_name=agent_name,
-            participants=participants or [],
-        ),
-    )
-    user_message = addressed.format_for_llm()
+    """The turn's inputs with any roster/contacts updates in front of them."""
+    addressed = [
+        replace(
+            message,
+            content=name_this_agent(
+                message.content,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                participants=participants or [],
+            ),
+        )
+        for message in messages
+    ]
+    user_message = format_current_inputs(addressed)
     for update in (participants_msg, contacts_msg):
         if update:
             user_message = f"{SYSTEM_UPDATE_PREFIX}{update}\n\n{user_message}"

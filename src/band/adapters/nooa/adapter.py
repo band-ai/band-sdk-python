@@ -9,7 +9,7 @@ JSON tool schemas.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
@@ -33,8 +33,11 @@ from band.adapters.nooa.tools import (
 from band.converters.nooa import NooaHistoryConverter, NooaTranscript
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.handoff import context_handoff
-from band.core.protocols import AgentToolsProtocol, generic_provider_failure
-from band.core.simple_adapter import SimpleAdapter
+from band.core.protocols import (
+    AgentToolsProtocol,
+    generic_provider_failure,
+)
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import (
     Capability,
     Emit,
@@ -43,6 +46,7 @@ from band.core.types import (
     TurnUsage,
 )
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt, with_system_updates
 from band.runtime.tools import BandTool, selected_tool_definitions
 
@@ -206,7 +210,7 @@ class NooaAdapterConfig(BaseAdapterConfig):
     custom_section: str | None = None
 
 
-class NooaAdapter(SimpleAdapter[NooaTranscript]):
+class NooaAdapter(BatchInputAdapter[NooaTranscript]):
     """Run a NOOA agent class in Band rooms, one agent instance per room.
 
     ``Emit.THOUGHTS`` posts each model call's **raw** ``reasoning_content`` as a
@@ -336,9 +340,9 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
                 )
         return self._agents[room_id]
 
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: NooaTranscript,
         participants_msg: str | None,
@@ -347,7 +351,7 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Run one room message through the agent's ``respond`` method."""
+        """Run a turn's room messages through one call of the agent's ``respond``."""
         with context_handoff() as handoff:
             agent = self._room_agent(
                 room_id,
@@ -356,7 +360,7 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
                 is_hub_room=tools.is_hub_room,
             )
             message = with_system_updates(
-                msg.format_for_llm(), participants_msg, contacts_msg
+                format_current_inputs(messages), participants_msg, contacts_msg
             )
             observer: TurnObserver | None = None
             try:

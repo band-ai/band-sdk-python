@@ -65,6 +65,14 @@ PATIENT_APPROVAL_S = 3600
 HANG_GUARD_S = 5
 # A process close bound a held close overruns.
 CLOSE_BOUND_S = 0.5
+ALICE = {
+    "id": "user-1",
+    "name": "Alice",
+    "handle": "alice",
+    "type": "User",
+    "role": "member",
+    "status": "active",
+}
 
 
 def make_platform_message(
@@ -103,6 +111,10 @@ def agent_input(
 
 
 class ToolSchemaFakeTools(FakeAgentTools):
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("participants", [ALICE])
+        super().__init__(**kwargs)
+
     def get_openai_tool_schemas(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
             {
@@ -428,7 +440,8 @@ class CodexApprovalRoom:
 
     def __init__(self, adapter: CodexAdapter) -> None:
         self.adapter = adapter
-        self.tools = FakeAgentTools()
+        self.tools = FakeAgentTools(participants=[ALICE])
+        self.adapter._room_client(ROOM_ID)
         self.asks: list[asyncio.Task[ApprovalDecision]] = []
 
     @property
@@ -445,12 +458,13 @@ class CodexApprovalRoom:
     def ask(
         self, approval_id: str, *, request_id: int
     ) -> asyncio.Task[ApprovalDecision]:
+        self.adapter._room_client(ROOM_ID)
         params = {"approvalId": approval_id, "command": "npm test"}
         self.asks.append(
             ask := asyncio.create_task(
                 self._ask(
                     tools=self.tools,
-                    msg=make_platform_message(room_id=ROOM_ID),
+                    audience=[{"id": "user-1", "name": "Alice"}],
                     room_id=ROOM_ID,
                     event=event_request(
                         request_id, CodexApprovalMethod.COMMAND_EXECUTION, params
