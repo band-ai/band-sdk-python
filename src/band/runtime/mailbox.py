@@ -3,7 +3,8 @@
 Band delivery already has ``ExecutionContext._process_loop``. This mailbox is
 the matching seam for *provider* work (subprocess RPC callbacks, model
 select, cleanup) that must not become fake platform events. Callers enqueue;
-they do not copy task context onto child tasks.
+each worker starts with an empty context so its jobs cannot inherit the first
+submitter's task context.
 
 ``ask`` from the room's own worker raises. Occupancy ("this prompt is active")
 is not the worker ("one mutation now"): a prompt waiter lives outside the
@@ -16,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from contextvars import Context
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
@@ -115,13 +117,18 @@ class RoomMailbox:
         if room is None:
             room = MailboxRoom()
             self._rooms[room_id] = room
-        if room.worker is None or room.worker.done():
-            room.worker = asyncio.create_task(
-                self._run(room_id, room), name=f"room-mailbox:{room_id}"
-            )
+        self._start_worker(room_id, room)
         job = MailboxJob(run, result)
         room.queue.put_nowait(job)
         return job
+
+    def _start_worker(self, room_id: str, room: MailboxRoom) -> None:
+        if room.worker is None or room.worker.done():
+            room.worker = asyncio.create_task(
+                self._run(room_id, room),
+                name=f"room-mailbox:{room_id}",
+                context=Context(),
+            )
 
     @staticmethod
     def _abandon(job: MailboxJob) -> None:
@@ -148,9 +155,7 @@ class RoomMailbox:
             if room.queue.empty():
                 self._rooms.pop(room_id, None)
             elif room.worker is None:
-                room.worker = asyncio.create_task(
-                    self._run(room_id, room), name=f"room-mailbox:{room_id}"
-                )
+                self._start_worker(room_id, room)
 
     async def _execute(self, room_id: str, room: MailboxRoom, job: MailboxJob) -> None:
         if job.result is not None and job.result.cancelled():
