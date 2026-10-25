@@ -19,11 +19,13 @@ from band.adapters.omp import (
     OMP_SESSION_DIRECTORY,
     OmpAdapter,
     OmpAdapterConfig,
+    OmpPermissionRequest,
+    PermissionResolver,
 )
 from band.converters.omp import OmpSessionState
 from band.core.delivery import DeliveryFailedError
 from band.core.model_catalog import ModelSelection
-from band.core.types import MessageType
+from band.core.types import Emit, MessageType
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
@@ -1136,3 +1138,63 @@ def failing_runtime(closing: asyncio.Event, finish_close: asyncio.Event):
             self.closed = True
 
     return FailingRuntime()
+
+
+EMIT_ON: tuple[Emit, ...] = (Emit.TOOL_CALLS,)
+EMIT_OFF: tuple[Emit, ...] = ()
+
+
+def make_adapter(
+    tmp_path: Path,
+    emit: tuple[Emit, ...],
+    resolve_permission: PermissionResolver | None = None,
+) -> OmpAdapter:
+    return OmpAdapter(
+        OmpAdapterConfig(cwd=str(tmp_path)),
+        emit=emit,
+        resolve_permission=resolve_permission,
+    )
+
+
+class GatedPermissionResolver:
+    """Hold each manual choice until its test supplies a result."""
+
+    def __init__(self, *titles: str) -> None:
+        self.entered = {title: asyncio.Event() for title in titles}
+        self.responses: dict[str, asyncio.Future[str | None]] = {
+            title: asyncio.get_running_loop().create_future() for title in titles
+        }
+
+    async def __call__(self, request: OmpPermissionRequest) -> str | None:
+        self.entered[request.title].set()
+        return await self.responses[request.title]
+
+
+def permission_request(request_id: str) -> OmpUIRequest:
+    return OmpUIRequest(
+        id=request_id,
+        method=OmpUIMethod.SELECT,
+        title=request_id,
+        options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
+    )
+
+
+def tool_start(call_id: str, name: str, **args: object) -> OmpEvent:
+    return OmpEvent(
+        type=OmpEventType.TOOL_START,
+        toolCallId=call_id,
+        toolName=name,
+        args=args,
+    )
+
+
+def tool_end(call_id: str, name: str, *, is_error: bool = False) -> OmpEvent:
+    return OmpEvent(
+        type=OmpEventType.TOOL_END,
+        toolCallId=call_id,
+        toolName=name,
+        result=OmpToolResult(
+            content=[OmpContent(type=OmpContentKind.TEXT, text="private-result")]
+        ),
+        isError=is_error,
+    )

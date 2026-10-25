@@ -86,9 +86,11 @@ class TimeoutNotSet:
     _instance: TimeoutNotSet | None = None
 
     def __new__(cls) -> Self:
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+        instance = cls._instance
+        if instance is None:
+            instance = super().__new__(cls)
+            cls._instance = instance
+        return cast(Self, instance)
 
     def __repr__(self) -> str:
         return "<TIMEOUT_NOT_SET>"

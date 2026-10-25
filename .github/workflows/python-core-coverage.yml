@@ -11,36 +11,20 @@ name: Python Core Coverage
 # there is nothing to duplicate here.
 
 on:
-  # Weekly consumer coverage report. This is separate from the PR gate so it
-  # observes main's current coverage without adding PR notifications.
+  # Consumer coverage is a weekly report, outside ordinary PR and queue CI.
   schedule:
     - cron: "33 20 * * 0" # Sunday night: 23:33 Israel summer time, 22:33 winter time
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - '.github/actions/git-https-auth/**'
-      - '.github/scripts/post-core-coverage-digest.py'
-      - '.github/workflows/python-core-coverage.yml'
-      - 'src/**'
-      - 'tests/**'
-      - 'pyproject.toml'
-      - 'uv.lock'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: python-core-coverage-${{ github.event.pull_request.number || github.ref }}
+  group: python-core-coverage-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   coverage:
-    # Dependabot cannot read repository Actions secrets, so it cannot check
-    # out the private Core repository with this workflow's token.
-    # Drafts get no CI; ready_for_review above fires the first real run.
-    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

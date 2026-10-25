@@ -6,7 +6,6 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 
-from acp.interfaces import Client
 from acp.schema import ConfigOptionUpdate, DeclineElicitationResponse
 
 from band.integrations.acp.client_profiles import ACPClientProfile, NoopACPClientProfile
@@ -24,7 +23,7 @@ from band.integrations.acp.updates import ACPUpdateParser
 logger = logging.getLogger(__name__)
 
 
-class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP Client has optional methods treated as abstract by pyrefly
+class ACPCollectingClient(ACPUpdateParser):
     """Generic ACP client that buffers session updates by session_id.
 
     The ``acp`` transport runs each incoming notification as its own task, so
@@ -78,7 +77,7 @@ class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP
             if chunk is not None:
                 await self._stream.ingest(session_id, chunk)
 
-    async def request_permission(  # type: ignore[override]  # ACP Client uses specific types; we widen to object
+    async def request_permission(
         self,
         options: object,
         session_id: str,
@@ -101,7 +100,7 @@ class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP
         logger.debug("Auto-cancelling permission request for session %s", session_id)
         return cancel_permission()
 
-    async def create_elicitation(  # type: ignore[override]
+    async def create_elicitation(
         self,
         message: str,
         mode: object,
