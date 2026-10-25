@@ -546,12 +546,14 @@ class ObservedExecution(ExecutionContext):
         on_execute: ExecutionHandler,
         *,
         on_started: Callable[[], None] | None = None,
+        on_local_started: Callable[[], None] | None = None,
         on_deferred: Callable[[], None] | None = None,
         on_finished: Callable[[], None] | None = None,
         **options: Any,
     ) -> None:
         super().__init__(room_id, link, on_execute, **options)
         self._on_started = on_started
+        self._on_local_started = on_local_started
         self._on_deferred = on_deferred
         self._on_finished = on_finished
 
@@ -561,6 +563,8 @@ class ObservedExecution(ExecutionContext):
             self._on_started()
 
     async def execute_local(self, event: PlatformEvent) -> TurnOutcome:
+        if self._on_local_started is not None:
+            self._on_local_started()
         outcome = await super().execute_local(event)
         if outcome is TurnOutcome.RETRY_LATER and self._on_deferred is not None:
             self._on_deferred()
