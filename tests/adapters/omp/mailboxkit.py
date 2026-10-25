@@ -99,7 +99,9 @@ def received_ui_responses(transcript: Path) -> list[str]:
 
 def received_callback_responses(transcript: Path, kind: OmpFrameType) -> list[str]:
     """Read responses received by this process, including after cancellation."""
-    frames = [json.loads(line) for line in transcript.read_text().splitlines()]
+    frames = [
+        json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines()
+    ]
     return [frame["id"] for frame in frames if frame["type"] == kind]
 
 
