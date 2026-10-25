@@ -46,11 +46,14 @@ class ActivityRecorder:
     def permission_wait(self) -> Iterator[None]:
         owner = self.activity.acquire_permission()
         try:
-            self.events.append({"waiting": self.waiting})
+            self._record_wait()
             yield
         finally:
             self.activity.release_permission(owner)
-            self.events.append({"waiting": self.waiting})
+            self._record_wait()
+
+    def _record_wait(self) -> None:
+        self.events.append({"waiting": self.waiting})
 
     @property
     def waiting(self) -> bool:
