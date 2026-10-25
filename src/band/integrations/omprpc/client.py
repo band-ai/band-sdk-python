@@ -59,6 +59,7 @@ from band.integrations.ompwire import (
     OmpResponse,
     OmpState,
     OmpToolResult,
+    OmpUIMethod,
     OmpUIRequest,
     OmpUIResponse,
     OmpWireModel,
@@ -599,7 +600,7 @@ class OmpRpcClient:
                     )
             case OmpFrameType.UI_REQUEST:
                 request = OmpUIRequest.model_validate(payload)
-                if request.method == "cancel":
+                if request.method == OmpUIMethod.CANCEL:
                     if request.targetId is None:
                         raise OmpProtocolError(
                             "OMP UI cancellation is missing targetId"

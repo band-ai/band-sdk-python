@@ -21,6 +21,7 @@ from band.integrations.ompwire import (
     OMP_REASSEMBLED_BYTES,
     OmpCommandName,
     OmpPromptStatus,
+    OmpUIMethod,
 )
 from tests.integrations.ompgate import GateRole, start_descendant
 
@@ -645,7 +646,7 @@ class Peer:
                     {
                         "type": "extension_ui_request",
                         "id": "ui-cancel-frame",
-                        "method": "cancel",
+                        "method": OmpUIMethod.CANCEL,
                         "targetId": UI_CANCELLED_ID,
                     }
                 )
@@ -720,7 +721,7 @@ class Peer:
                     {
                         "type": "extension_ui_request",
                         "id": "ui-cancel-orphan",
-                        "method": "cancel",
+                        "method": OmpUIMethod.CANCEL,
                     }
                 )
             case "checkpoint":

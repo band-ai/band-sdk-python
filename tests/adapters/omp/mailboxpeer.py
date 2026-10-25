@@ -195,7 +195,7 @@ class MailboxPeer(Peer):
                     {
                         "type": OmpFrameType.UI_REQUEST,
                         "id": "cancel-ui",
-                        "method": "cancel",
+                        "method": OmpUIMethod.CANCEL,
                         "targetId": callback_id,
                     }
                     if extra.get("kind") == OmpCallbackKind.UI

@@ -48,10 +48,11 @@ class OmpCommandName(StrEnum):
 
 
 class OmpUIMethod(StrEnum):
-    """UI request methods the native host answers."""
+    """UI request methods received from the native runtime."""
 
     SELECT = "select"
     ASK = "ask"
+    CANCEL = "cancel"
 
 
 class OmpPromptStatus(StrEnum):

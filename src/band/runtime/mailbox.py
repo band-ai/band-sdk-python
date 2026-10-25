@@ -202,12 +202,11 @@ class RoomMailbox:
                 self._start_worker(room_id, room)
 
     async def _execute(self, room: MailboxRoom, job: MailboxJob) -> None:
-        if job.result is not None and job.result.cancelled():
-            return
-
         async def run_job() -> Any:
             # An eager task can enter the job before create_task returns.
             job.running = asyncio.current_task()
+            if job.result is not None and job.result.cancelled():
+                return None
             token = _current_job.set(job)
             try:
                 return await job.run()

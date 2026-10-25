@@ -7,7 +7,7 @@ import sys
 from enum import StrEnum
 from pathlib import Path
 
-from band.integrations.ompwire import OmpCommandName, OmpFrameType
+from band.integrations.ompwire import OmpCommandName, OmpFrameType, OmpUIMethod
 from tests.integrations.omppeer import COMPLETE, Frame, Peer, announce_ready, send
 
 CALLBACK_ID = "reused-callback"
@@ -69,7 +69,7 @@ class CallbackPeer(Peer):
                     {
                         "type": OmpFrameType.UI_REQUEST,
                         "id": CANCEL,
-                        "method": "cancel",
+                        "method": OmpUIMethod.CANCEL,
                         "targetId": CALLBACK_ID,
                     }
                 )

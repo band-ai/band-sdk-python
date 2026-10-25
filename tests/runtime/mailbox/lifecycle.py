@@ -9,7 +9,12 @@ from functools import partial
 from hypothesis import strategies as st
 
 from band.runtime.mailbox import RoomMailbox
-from tests.runtime.mailbox.kit import JobHold, SettlingJob, checkpoint
+from tests.runtime.mailbox.kit import (
+    JobHold,
+    SettlingJob,
+    cancel_at_handoff,
+    checkpoint,
+)
 
 ROOM_ID = "lifecycle-room"
 SEQUENCE_GUARD_S = 5.0
@@ -21,6 +26,8 @@ class Step(StrEnum):
     ASK = auto()
     CANCEL_QUEUED_ASK = auto()
     CANCEL_RUNNING_ASK = auto()
+    CANCEL_HANDOFF_ASK = auto()
+    CANCEL_HANDOFF_SPAWN = auto()
     CLOSE = auto()
     REOPEN = auto()
 
@@ -50,6 +57,10 @@ class MailboxLifecycle:
                 await self.cancel_queued_ask()
             case Step.CANCEL_RUNNING_ASK:
                 await self.cancel_running_ask()
+            case Step.CANCEL_HANDOFF_ASK:
+                await cancel_at_handoff(self.mailbox, ROOM_ID, RoomMailbox.ask)
+            case Step.CANCEL_HANDOFF_SPAWN:
+                await cancel_at_handoff(self.mailbox, ROOM_ID, RoomMailbox.spawn)
             case Step.CLOSE:
                 await self.close_and_check()
             case Step.REOPEN:
