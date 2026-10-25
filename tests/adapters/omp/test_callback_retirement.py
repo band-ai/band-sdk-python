@@ -28,12 +28,13 @@ class TestCallbackRetirement:
         resolver.adapter = adapter
         tools = MailboxTools()
         turn = asyncio.create_task(run_turn(adapter, tools))
-        await resolver.settling.arrived()
-        client = room_client(adapter)
-        process = owned_rpc_process(client)
-        overlay = native_overlay(client)
-        cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
+        cleanup: asyncio.Task[None] | None = None
         try:
+            await resolver.settling.arrived()
+            client = room_client(adapter)
+            process = owned_rpc_process(client)
+            overlay = native_overlay(client)
+            cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
             assert not turn.done() and not cleanup.done()
             assert overlay.exists() and process.returncode is None
             resolver.settling.released.set()
@@ -46,7 +47,9 @@ class TestCallbackRetirement:
             assert follow_up.chat
         finally:
             resolver.settling.released.set()
-            await asyncio.gather(turn, cleanup, return_exceptions=True)
+            turn.cancel()
+            tasks = [turn, *([cleanup] if cleanup is not None else [])]
+            await asyncio.gather(*tasks, return_exceptions=True)
             await adapter.cleanup_all()
 
     async def test_cleanup_keeps_custody_until_the_running_callback_settles(
@@ -60,23 +63,26 @@ class TestCallbackRetirement:
         resolver = SettlingPermission()
         adapter = mailbox_adapter(tmp_path, resolver, callback_turn=2)
         resolver.adapter = adapter
-        await run_turn(adapter, MailboxTools())
-        client = room_client(adapter)
-        assert client.schedule_callback is not None
-        scheduler = ObservedScheduler(client.schedule_callback, resolver.trace)
-        client.schedule_callback = scheduler
-        joining = asyncio.Event()
-
-        async def join_close(closing: Awaitable[None]) -> None:
-            joining.set()
-            await asyncio.shield(closing)
-
-        client.join_close = join_close
-        process = owned_rpc_process(client)
-        overlay = native_overlay(client)
-        turn = asyncio.create_task(run_turn(adapter, MailboxTools(), bootstrap=False))
+        turn: asyncio.Task[None] | None = None
         cleanup: asyncio.Task[None] | None = None
         try:
+            await run_turn(adapter, MailboxTools())
+            client = room_client(adapter)
+            assert client.schedule_callback is not None
+            scheduler = ObservedScheduler(client.schedule_callback, resolver.trace)
+            client.schedule_callback = scheduler
+            joining = asyncio.Event()
+
+            async def join_close(closing: Awaitable[None]) -> None:
+                joining.set()
+                await asyncio.shield(closing)
+
+            client.join_close = join_close
+            process = owned_rpc_process(client)
+            overlay = native_overlay(client)
+            turn = asyncio.create_task(
+                run_turn(adapter, MailboxTools(), bootstrap=False)
+            )
             await resolver.entered.wait()
             await client.request(
                 PeerCommand.CANCEL_CALLBACK, targetId=FIRST_CALLBACK, kind="ui"
@@ -98,6 +104,8 @@ class TestCallbackRetirement:
             assert follow_up.chat
         finally:
             resolver.settling.released.set()
-            tasks = [turn, *([cleanup] if cleanup is not None else [])]
+            tasks = [task for task in (turn, cleanup) if task is not None]
+            if turn is not None:
+                turn.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await adapter.cleanup_all()

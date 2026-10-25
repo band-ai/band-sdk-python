@@ -70,15 +70,16 @@ async def exercise_callback_retirement(tmp_path: Path) -> None:
     adapter._mailbox = mailbox
     old_tools = MailboxTools()
     turn = asyncio.create_task(run_turn(adapter, old_tools))
-    await resolver.entered.wait()
-    client = room_client(adapter)
-    process = owned_rpc_process(client)
-    overlay = native_overlay(client)
-    mailbox.discard_admissions()
-    await client.request(PeerCommand.PERMISSION, callbackId=SECOND_CALLBACK)
-    await mailbox.admitted.get()
-    cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
+    cleanup: asyncio.Task[None] | None = None
     try:
+        await resolver.entered.wait()
+        client = room_client(adapter)
+        process = owned_rpc_process(client)
+        overlay = native_overlay(client)
+        mailbox.discard_admissions()
+        await client.request(PeerCommand.PERMISSION, callbackId=SECOND_CALLBACK)
+        await mailbox.admitted.get()
+        cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
         await resolver.settling.arrived()
         assert not cleanup.done()
         assert process.returncode is None and overlay.exists()
@@ -101,7 +102,9 @@ async def exercise_callback_retirement(tmp_path: Path) -> None:
         assert follow_up.chat and old_tools.chat == []
     finally:
         resolver.settling.released.set()
-        await asyncio.gather(turn, cleanup, return_exceptions=True)
+        turn.cancel()
+        tasks = [turn, *([cleanup] if cleanup is not None else [])]
+        await asyncio.gather(*tasks, return_exceptions=True)
         await adapter.cleanup_all()
 
 

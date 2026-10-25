@@ -57,6 +57,7 @@ def mailbox_adapter(
     callback_turn: int = 1,
     callback_count: int = 1,
     transcript: Path | None = None,
+    initial_tool: bool = False,
 ) -> OmpAdapter:
     return OmpAdapter(
         OmpAdapterConfig(
@@ -68,6 +69,9 @@ def mailbox_adapter(
                 str(callback_turn),
                 str(callback_count),
                 str(transcript) if transcript is not None else "",
+                OmpFrameType.HOST_TOOL_CALL
+                if initial_tool
+                else OmpFrameType.UI_REQUEST,
             ),
             env={"PYTHONPATH": str(REPO_ROOT)},
             cwd=str(tmp_path),
@@ -90,10 +94,13 @@ async def peer_frames(
 
 def received_ui_responses(transcript: Path) -> list[str]:
     """Read permission responses received by a particular native connection."""
+    return received_callback_responses(transcript, OmpFrameType.UI_RESPONSE)
+
+
+def received_callback_responses(transcript: Path, kind: OmpFrameType) -> list[str]:
+    """Read responses received by this process, including after cancellation."""
     frames = [json.loads(line) for line in transcript.read_text().splitlines()]
-    return [
-        frame["id"] for frame in frames if frame["type"] == OmpFrameType.UI_RESPONSE
-    ]
+    return [frame["id"] for frame in frames if frame["type"] == kind]
 
 
 def selection_order(frames: list[dict[str, JsonValue]]) -> list[str]:

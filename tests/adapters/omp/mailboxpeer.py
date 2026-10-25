@@ -25,6 +25,8 @@ ORIGINAL_MODEL = "original"
 CALLBACK_MODEL = "callback"
 SECOND_MODEL = "second-callback"
 PUBLIC_MODEL = "public"
+REJECTED_MODEL = "rejected"
+UNSUPPORTED_EFFORT = "extreme"
 FIRST_CALLBACK = "permission-first"
 SECOND_CALLBACK = "permission-second"
 TOOL_CALLBACK = "tool-held"
@@ -36,6 +38,7 @@ class PeerCommand(StrEnum):
     TOOL = "mailbox-tool"
     CANCEL_CALLBACK = "mailbox-cancel"
     FINISH = "mailbox-finish"
+    WAIT_ROLLBACK = "mailbox-wait-rollback"
 
 
 def model_reply(model: str) -> str:
@@ -47,6 +50,9 @@ class MailboxPeer(Peer):
         super().__init__("mailbox")
         self.callback_turn = int(sys.argv[1])
         self.callback_count = int(sys.argv[2])
+        self.initial_tool = sys.argv[4] == OmpFrameType.HOST_TOOL_CALL
+        self.rollback: Frame | None = None
+        self.rollback_waiter: Frame | None = None
         self.model = ORIGINAL_MODEL
         self.pending: set[str] = set()
         self.plugin = (
@@ -119,7 +125,10 @@ class MailboxPeer(Peer):
         send({"type": OmpEventType.AGENT_START})
         if self.prompt_count == self.callback_turn and self.callback_count:
             for callback_id in (FIRST_CALLBACK, SECOND_CALLBACK)[: self.callback_count]:
-                self.permission(callback_id)
+                if self.initial_tool:
+                    self.tool(callback_id)
+                else:
+                    self.permission(callback_id)
         else:
             self.complete()
 
@@ -127,8 +136,22 @@ class MailboxPeer(Peer):
         match frame.type:
             case OmpCommandName.SET_MODEL:
                 self.frames.append(frame.model_dump(exclude_unset=True))
+                restoring = self.model == REJECTED_MODEL
                 self.model = str((frame.model_extra or {})["modelId"])
-                self.respond(frame)
+                if restoring:
+                    self.rollback = frame
+                    if self.rollback_waiter is not None:
+                        self.respond(self.rollback_waiter)
+                        self.rollback_waiter = None
+                else:
+                    self.respond(frame)
+            case OmpCommandName.GET_AVAILABLE_THINKING_LEVELS:
+                self.respond(frame, {"levels": ["low", "high"]})
+            case PeerCommand.WAIT_ROLLBACK:
+                if self.rollback is not None:
+                    self.respond(frame)
+                else:
+                    self.rollback_waiter = frame
             case OmpCommandName.GET_STATE:
                 self.frames.append(frame.model_dump(exclude_unset=True))
                 self.respond(

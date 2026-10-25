@@ -111,10 +111,13 @@ class TestCallbackOccupancy:
         adapter = mailbox_adapter(tmp_path, resolver, callback_turn=2)
         resolver.adapter = adapter
         first_tools = MailboxTools()
-        await run_turn(adapter, first_tools)
-        blocked_tools = MailboxTools()
-        turn = asyncio.create_task(run_turn(adapter, blocked_tools, bootstrap=False))
+        turn: asyncio.Task[None] | None = None
         try:
+            await run_turn(adapter, first_tools)
+            blocked_tools = MailboxTools()
+            turn = asyncio.create_task(
+                run_turn(adapter, blocked_tools, bootstrap=False)
+            )
             await resolver.first.arrived()
             other_tools = MailboxTools()
             await run_turn(adapter, other_tools, room_id="other-room")
@@ -135,6 +138,7 @@ class TestCallbackOccupancy:
             assert follow_up.chat == [model_reply(CALLBACK_MODEL)]
         finally:
             resolver.first.released.set()
-            turn.cancel()
-            await asyncio.gather(turn, return_exceptions=True)
+            if turn is not None:
+                turn.cancel()
+                await asyncio.gather(turn, return_exceptions=True)
             await adapter.cleanup_all()
