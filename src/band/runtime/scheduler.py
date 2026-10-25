@@ -445,9 +445,10 @@ class Scheduler:
         *,
         bounded: bool,
     ) -> list[Candidate]:
-        """The page's rows and the retained segment, in arrival order, none past
-        the segment's local boundary: input queued behind a local event waits
-        for it."""
+        """Merge REST rows with retained originals in arrival order.
+
+        Respect the first local-event boundary when ``bounded`` is true.
+        """
         retained = {message_id(event) for event in segment}
         later = {
             message_id(event)
@@ -500,8 +501,10 @@ class Scheduler:
         return None
 
     def local_segment(self) -> tuple[list[MessageEvent], bool]:
-        """The retained originals ahead of the first local event, and whether
-        one bounds them."""
+        """Collect retained originals up to the first local event.
+
+        Return whether that event bounds the segment.
+        """
         segment: list[MessageEvent] = []
         for event in self.pending:
             if not is_ordinary(event):

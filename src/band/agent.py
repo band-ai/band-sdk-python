@@ -156,7 +156,7 @@ class Agent:
         self._shutdown_timeout: _ShutdownTimeout = _TIMEOUT_NOT_SET
 
     def _batch_hosts(self) -> tuple[BatchFrameworkAdapter, BatchPreprocessor]:
-        """The adapter and preprocessor, if both can run a turn over several originals."""
+        """Validate batching support and return the compatible hosts."""
         adapter, preprocessor = self._adapter, self._preprocessor
         if not (
             isinstance(adapter, BatchFrameworkAdapter) and adapter.supports_batch_input
