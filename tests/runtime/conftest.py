@@ -43,7 +43,7 @@ from tests.runtime.helpers import AGENT_ID, WAIT_SECONDS
 from tests.toolkit.clock import NATIVE_CLOCK_RESOLUTIONS
 
 
-@pytest_asyncio.fixture(params=NATIVE_CLOCK_RESOLUTIONS)
+@pytest_asyncio.fixture(params=NATIVE_CLOCK_RESOLUTIONS, loop_scope="function")
 async def native_timer_tolerance(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
