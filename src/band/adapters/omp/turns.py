@@ -179,7 +179,7 @@ class OmpTurnMixin(OmpAdapterContract):
                 await self._join_disposal(room)
             finally:
                 reraise_delivery_cause(error)
-        except omprpc.OmpCompletionTimeout as error:
+        except (asyncio.CancelledError, omprpc.OmpCompletionTimeout) as error:
             try:
                 await self._join_disposal(room)
             except omprpc.OmpProcessError:

@@ -14,6 +14,8 @@ from tests.integrations.ompscenarios import PeerScenario
 pytest.importorskip("psutil", reason="psutil not installed (band-sdk[omp])")
 
 from band.integrations.omprpc import OmpRpcClient
+from tests.integrations.omprpc.acknowledgements import StoppingObserver
+from tests.integrations.omprpc.backpressure import BackpressureSpawn
 from tests.integrations.omprpc.callbacks import (
     BlockedEventObserver,
     HeldEventFactory,
@@ -152,3 +154,71 @@ async def rpc_turn(
 ) -> AsyncIterator[RpcTurn[EventRecorder]]:
     async with rpc_session(client_factory, request.param, EventRecorder()) as turn:
         yield turn
+
+
+@pytest.fixture
+def stopping_observer() -> StoppingObserver:
+    return StoppingObserver()
+
+
+@pytest.fixture
+def stopping_client_factory(
+    client_factory: ClientFactory, stopping_observer: StoppingObserver
+) -> ClientFactory:
+    async def build(scenario: PeerScenario) -> OmpRpcClient:
+        client = await client_factory(scenario)
+        stopping_observer.client = client
+        return client
+
+    return build
+
+
+@pytest.fixture
+def stopping_completion_turn(
+    stopping_client_factory: ClientFactory, stopping_observer: StoppingObserver
+) -> CompletionContext[StoppingObserver]:
+    return completion_run(
+        stopping_client_factory, PeerScenario.LOST_ABORT_ACK, stopping_observer
+    )
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def stopping_turn(
+    stopping_client_factory: ClientFactory, stopping_observer: StoppingObserver
+) -> AsyncIterator[RpcTurn[StoppingObserver]]:
+    async with rpc_session(
+        stopping_client_factory, PeerScenario.LOST_ABORT_ACK, stopping_observer
+    ) as turn:
+        yield turn
+
+
+@pytest.fixture
+def pressure_spawn() -> BackpressureSpawn:
+    return BackpressureSpawn()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def pressure_client_factory(
+    pressure_spawn: BackpressureSpawn,
+) -> AsyncIterator[ClientFactory]:
+    async with AsyncExitStack() as resources:
+
+        async def build(scenario: PeerScenario) -> OmpRpcClient:
+            client = OmpRpcClient(
+                (*OMP_PEER_COMMAND, "--scenario", scenario),
+                create_process=pressure_spawn.create,
+            )
+            resources.push_async_callback(client.close)
+            await client.start()
+            return client
+
+        yield build
+
+
+@pytest.fixture
+def pressure_completion_turn(
+    pressure_client_factory: ClientFactory,
+) -> CompletionContext[EventRecorder]:
+    return completion_run(
+        pressure_client_factory, PeerScenario.COMPLETION_BACKPRESSURE, EventRecorder()
+    )

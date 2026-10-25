@@ -6,6 +6,14 @@ from enum import StrEnum
 
 
 class PeerScenario(StrEnum):
+    BUSY_STREAMING = "busy-streaming"
+    BUSY_COMPACTION = "busy-compaction"
+    BUSY_QUEUED = "busy-queued"
+    BUSY_ASYNC = "busy-async"
+    REARM_COMPLETION = "rearm-completion"
+    LOST_PROMPT_ACK = "lost-prompt-ack"
+    LOST_ABORT_ACK = "lost-abort-ack"
+    COMPLETION_BACKPRESSURE = "completion-backpressure"
     CALLBACK_CONTROLS = "callback-controls"
     BAD_ACCEPTANCE = "bad-acceptance"
     BAD_EVENT = "bad-event"
@@ -92,6 +100,10 @@ class PeerCommand(StrEnum):
     ORPHAN_UI = "orphan-ui"
     ORPHAN_UI_CANCEL = "orphan-ui-cancel"
     RELEASE_PROMPT = "release"
+    REPEAT_SETTLEMENT = "repeat-settlement"
+    RESUME_ACTIVITY = "resume-activity"
+    RELEASE_ACK = "release-ack"
+    PRESSURE = "pressure"
     REPEAT_CALLBACK = "repeat-callback"
     SECOND = "second"
     FILL_STDERR = "stderr"

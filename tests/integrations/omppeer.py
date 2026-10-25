@@ -22,9 +22,12 @@ from tests.integrations.ompframes import (
     send,
 )
 from tests.integrations.ompgate import GateRole, start_descendant
+from tests.integrations.omppeers.acknowledgements import AcknowledgementPeer
 from tests.integrations.omppeers.base import RpcPeer
 from tests.integrations.omppeers.callbacks import CallbackPeer
 from tests.integrations.omppeers.completion import CompletionPeer
+from tests.integrations.omppeers.idle import IdlePeer
+from tests.integrations.omppeers.pressure import PressurePeer
 from tests.integrations.omppeers.process import ProcessLifecyclePeer
 from tests.integrations.omppeers.transport import TransportPeer
 from tests.integrations.ompscenarios import PeerScenario
@@ -33,7 +36,15 @@ READY_LIMIT_BYTES = 1024
 
 PEER_TYPES = {
     scenario: peer_type
-    for peer_type in (CallbackPeer, CompletionPeer, TransportPeer, ProcessLifecyclePeer)
+    for peer_type in (
+        CallbackPeer,
+        CompletionPeer,
+        TransportPeer,
+        ProcessLifecyclePeer,
+        IdlePeer,
+        AcknowledgementPeer,
+        PressurePeer,
+    )
     for scenario in peer_type.SCENARIOS
 }
 

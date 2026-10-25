@@ -346,21 +346,23 @@ class OmpRpcClient:
         )
         self._pending[request_id] = PendingRequest(command, future)
         try:
-            if preceding_frame is None:
-                await self._write_frame(frame.root)
-            else:
-                await self._write_frames(preceding_frame, frame.root)
-            if completion:
-                try:
-                    async with asyncio.timeout(self.completion_timeout_s):
-                        response = await future
-                except TimeoutError as cause:
-                    raise OmpCompletionTimeout(
-                        f"OMP {command} response timed out during prompt completion;"
-                        " the turn outcome is uncertain"
-                    ) from cause
-            else:
-                response = await future
+            deadline = asyncio.timeout(
+                self.completion_timeout_s if completion else None
+            )
+            try:
+                async with deadline:
+                    if preceding_frame is None:
+                        await self._write_frame(frame.root)
+                    else:
+                        await self._write_frames(preceding_frame, frame.root)
+                    response = await future
+            except TimeoutError as cause:
+                if not deadline.expired():
+                    raise
+                raise OmpCompletionTimeout(
+                    f"OMP {command} response timed out during prompt completion;"
+                    " the turn outcome is uncertain"
+                ) from cause
             if isinstance(response, (OmpRpcError, OmpProcessError)):
                 raise response
             return response
@@ -399,7 +401,7 @@ class OmpRpcClient:
         event_worker = asyncio.create_task(self._deliver_events(turn))
         turn.event_worker = event_worker
         work = asyncio.create_task(self._complete_prompt(turn, message))
-        guard = asyncio.create_task(self._guard_completion(turn))
+        guard = asyncio.create_task(self._guard_completion(turn, work))
         try:
             done, _ = await asyncio.wait(
                 (work, turn.failure), return_when=asyncio.FIRST_COMPLETED
@@ -443,11 +445,17 @@ class OmpRpcClient:
         except Exception as cleanup:  # noqa: BLE001 -- preserve the turn error
             logger.error("OMP retirement failed after prompt error: %s", cleanup)
 
-    async def _guard_completion(self, turn: PromptRun) -> None:
+    async def _guard_completion(
+        self, turn: PromptRun, work: asyncio.Task[None]
+    ) -> None:
         """Fail completion when fresh idle evidence exhausts its budget."""
         armed_since: float | None = None
+        armed_activity_sequence = turn.last_activity_sequence
         try:
-            while self._turn is turn:
+            while self._turn is turn and not work.done():
+                if armed_activity_sequence != turn.last_activity_sequence:
+                    armed_since = None
+                    armed_activity_sequence = turn.last_activity_sequence
                 # Clear before inspection so subsequent evidence cannot be lost.
                 turn.changed.clear()
                 match turn.completion_action():
@@ -579,7 +587,6 @@ class OmpRpcClient:
                     await turn.on_event(event)
                 finally:
                     turn.events.task_done()
-                    turn.events_pending -= 1
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 -- arbitrary callback failures belong to the awaiting prompt

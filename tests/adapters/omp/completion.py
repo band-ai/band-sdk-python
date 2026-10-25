@@ -116,14 +116,19 @@ class RetirementClients:
 
 
 @dataclass(frozen=True)
-class RetirementTurn:
+class SurvivingToolTurn:
     adapter: OmpAdapter
     clients: RetirementClients
     hold: StubbornAdapterTool
     runtime: OmpRpcClient
     running: asyncio.Task[None]
     tools: FakeAgentTools
+
+
+@dataclass(frozen=True)
+class RetirementTurn(SurvivingToolTurn):
     clock: ControlledClock
 
 
+SurvivingToolContext = AbstractAsyncContextManager[SurvivingToolTurn]
 RetirementContext = AbstractAsyncContextManager[RetirementTurn]

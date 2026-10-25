@@ -70,7 +70,6 @@ class PromptRun:
         self.result_owed = True
         self.terminal_seen = False
         self.awaiting_async = False
-        self.events_pending = 0
         self.snapshot: tuple[int, OmpState] | None = None
 
     def fail(self, error: BaseException) -> None:
@@ -104,7 +103,6 @@ class PromptRun:
                     ),
                     self.last_assistant,
                 )
-        self.events_pending += 1
         self.changed.set()
         return None
 
@@ -142,7 +140,7 @@ class PromptRun:
         )
 
     def completion_action(self) -> CompletionAction:
-        if self.rejected or self.completion_evidence_complete():
+        if self.rejected:
             return CompletionAction.STOP
         waiting_for_boundary = self.result_owed and not self.boundary_reached()
         if waiting_for_boundary or self.has_pending_native_work():
@@ -153,15 +151,6 @@ class PromptRun:
 
     def boundary_reached(self) -> bool:
         return self.result.done() or self.terminal_seen or self.settled_proven()
-
-    def completion_evidence_complete(self) -> bool:
-        if self.result_owed and not self.result.done():
-            return False
-        if not self.settled_proven():
-            return False
-        return self.events_pending == 0 and all(
-            task.done() for task in self.callback_tasks
-        )
 
     def has_pending_native_work(self) -> bool:
         event_claims_pending_work = (

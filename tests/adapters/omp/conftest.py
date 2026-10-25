@@ -26,6 +26,8 @@ from tests.adapters.omp.completion import (
     RetirementContext,
     RetirementTurn,
     StubbornAdapterTool,
+    SurvivingToolContext,
+    SurvivingToolTurn,
 )
 from tests.adapters.omp.custody import owned_room
 from tests.adapters.omp.lifecyclekit import Launches
@@ -51,6 +53,7 @@ from tests.integrations.omprpc.gate import process_gate_session
 from tests.integrations.omprpc.spawn import OMP_PEER_COMMAND
 from tests.integrations.ompscenarios import PeerScenario
 from tests.paths import REPO_ROOT
+from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
 
 
@@ -240,11 +243,11 @@ async def real_adapter(tmp_path: Path) -> AsyncIterator[AdapterFactory]:
 
 
 @pytest.fixture
-def retirement_turn(
+def surviving_tool_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_startup_ready
-) -> RetirementContext:
+) -> SurvivingToolContext:
     @asynccontextmanager
-    async def open_turn() -> AsyncIterator[RetirementTurn]:
+    async def open_turn() -> AsyncIterator[SurvivingToolTurn]:
         clients = RetirementClients()
         monkeypatch.setattr("band.adapters.omp.lifecycle.OmpRpcClient", clients)
         hold = StubbornAdapterTool()
@@ -260,21 +263,45 @@ def retirement_turn(
             emit=(),
             additional_tools=[(HoldInput, hold.hold)],
         )
+        tools = FakeAgentTools()
+        try:
+            async with background(run_turn(adapter, tools)) as running:
+                try:
+                    runtime = await clients.created.get()
+                    await hold.entered.wait()
+                    await snapshots_observed(runtime, count=2)
+                    runtime.callback_exit_timeout_s = NO_CALLBACK_GRACE_S
+                    yield SurvivingToolTurn(
+                        adapter, clients, hold, runtime, running, tools
+                    )
+                finally:
+                    await hold.release()
+        finally:
+            await adapter.cleanup_all()
+
+    return open_turn()
+
+
+@pytest.fixture
+def retirement_turn(surviving_tool_turn: SurvivingToolContext) -> RetirementContext:
+    @asynccontextmanager
+    async def open_turn() -> AsyncIterator[RetirementTurn]:
         async with controlled_clock() as clock:
-            tools = FakeAgentTools()
+            resources = AsyncExitStack()
             try:
-                async with clock.background(run_turn(adapter, tools)) as running:
-                    try:
-                        runtime = await clients.created.get()
-                        await clock.run_io(hold.entered.wait())
-                        await snapshots_observed(runtime, count=2)
-                        runtime.callback_exit_timeout_s = NO_CALLBACK_GRACE_S
-                        yield RetirementTurn(
-                            adapter, clients, hold, runtime, running, tools, clock
-                        )
-                    finally:
-                        await hold.release()
+                turn = await clock.run_io(
+                    resources.enter_async_context(surviving_tool_turn)
+                )
+                yield RetirementTurn(
+                    turn.adapter,
+                    turn.clients,
+                    turn.hold,
+                    turn.runtime,
+                    turn.running,
+                    turn.tools,
+                    clock,
+                )
             finally:
-                await clock.run_io(adapter.cleanup_all())
+                await clock.run_io(resources.aclose())
 
     return open_turn()

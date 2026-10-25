@@ -194,6 +194,9 @@ Real subprocess and network readiness stay independent of a controlled
 clock. Cleanup must account for resources created during failed or cancelled
 startup and await their confirmed release.
 
+Before advancing virtual time, await unrelated native responses already in
+flight. A peer-side receipt does not prove all client response waits finished.
+
 ## Tests run on Ubuntu and Windows CI
 
 Test across OSes; don't skip one. Build host paths with `tmp_path` or

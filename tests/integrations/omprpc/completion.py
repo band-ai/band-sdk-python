@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import cast
@@ -25,7 +26,24 @@ NO_CALLBACK_GRACE_S = 0.0
 
 async def snapshots_observed(client: OmpRpcClient, count: int = 1) -> None:
     await client.request(PeerCommand.WAIT_FOR_SNAPSHOTS, count=count)
-    await client.request(PeerCommand.CHECKPOINT)
+    await snapshot_responses_observed(client)
+
+
+def pending_snapshot_responses(client: OmpRpcClient) -> list[Awaitable[object]]:
+    return [
+        request.future
+        for request in client._pending.values()
+        if request.command == OmpCommandName.GET_STATE
+    ]
+
+
+async def snapshot_responses_observed(client: OmpRpcClient) -> None:
+    while True:
+        await client.request(PeerCommand.CHECKPOINT)
+        pending = pending_snapshot_responses(client)
+        if not pending:
+            return
+        await asyncio.gather(*(asyncio.shield(response) for response in pending))
 
 
 async def snapshot_count(client: OmpRpcClient) -> int:
