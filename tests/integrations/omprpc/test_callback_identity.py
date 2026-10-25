@@ -8,6 +8,7 @@ import gc
 import pytest
 
 from tests.integrations.omprpc.callbackkit import (
+    CallbackGate,
     HeldCallbacks,
     callback_client,
     callback_results,
@@ -16,6 +17,7 @@ from tests.integrations.omprpc.callbackpeer import (
     CANCEL,
     FINISH,
     NEW_RESULT,
+    OLD_RESULT,
     REPLACE,
     CallbackKind,
 )
@@ -32,9 +34,11 @@ class TestCallbackIdentity:
     ) -> None:
         async with (
             asyncio.timeout(10),
-            callback_client(kind, scheduled) as (client, _mailbox),
+            callback_client(kind, scheduled) as client,
         ):
-            callbacks = HeldCallbacks()
+            old = CallbackGate(OLD_RESULT)
+            replacement = CallbackGate(NEW_RESULT)
+            callbacks = HeldCallbacks(old, replacement)
             running = asyncio.create_task(
                 client.prompt(
                     "first",
@@ -44,15 +48,14 @@ class TestCallbackIdentity:
                 )
             )
             try:
-                await callbacks.entered.wait()
+                await old.entered.wait()
                 await client.request(CANCEL)
-                await callbacks.cancelled.wait()
+                await old.cancelled.wait()
                 await client.request(REPLACE)
-                await callbacks.settle_old()
-                await callbacks.replacement_entered.wait()
+                await old.finish()
+                await replacement.entered.wait()
                 assert callback_results(await checkpoint_frames(client)) == []
-                callbacks.release_replacement.set()
-                await asyncio.gather(callbacks.tasks[-1])
+                await replacement.finish()
                 assert callback_results(await checkpoint_frames(client)) == [NEW_RESULT]
                 await client.request(FINISH)
                 await running
@@ -60,6 +63,7 @@ class TestCallbackIdentity:
                 gc.collect()
                 assert not recwarn
             finally:
-                await callbacks.close()
+                old.release.set()
+                replacement.release.set()
                 running.cancel()
                 await asyncio.gather(running, return_exceptions=True)

@@ -8,11 +8,17 @@ import gc
 import pytest
 
 from tests.integrations.omprpc.callbackkit import (
+    CallbackGate,
     HeldCallbacks,
     callback_client,
     callback_results,
 )
-from tests.integrations.omprpc.callbackpeer import CANCEL, FINISH, CallbackKind
+from tests.integrations.omprpc.callbackpeer import (
+    CANCEL,
+    FINISH,
+    OLD_RESULT,
+    CallbackKind,
+)
 from tests.integrations.omprpc.kit import Observer, checkpoint_frames, second_prompt
 
 
@@ -23,9 +29,10 @@ class TestCallbackCancellation:
     ) -> None:
         async with (
             asyncio.timeout(10),
-            callback_client(kind, scheduled=True) as (client, mailbox),
+            callback_client(kind, scheduled=True) as client,
         ):
-            callbacks = HeldCallbacks()
+            old = CallbackGate(OLD_RESULT)
+            callbacks = HeldCallbacks(old)
             running = asyncio.create_task(
                 client.prompt(
                     "first",
@@ -35,12 +42,10 @@ class TestCallbackCancellation:
                 )
             )
             try:
-                await mailbox.admitted.get()
-                await callbacks.entered.wait()
+                await old.entered.wait()
                 await client.request(CANCEL)
-                await callbacks.cancelled.wait()
-                assert not callbacks.tasks[0].done()
-                await callbacks.settle_old()
+                await old.cancelled.wait()
+                await old.finish()
                 assert callback_results(await checkpoint_frames(client)) == []
                 await client.request(FINISH)
                 await running
@@ -48,6 +53,6 @@ class TestCallbackCancellation:
                 gc.collect()
                 assert not recwarn
             finally:
-                await callbacks.close()
+                old.release.set()
                 running.cancel()
                 await asyncio.gather(running, return_exceptions=True)

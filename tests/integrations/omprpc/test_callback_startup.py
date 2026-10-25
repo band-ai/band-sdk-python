@@ -27,7 +27,7 @@ class TestCallbackStartup:
     ) -> None:
         async with (
             asyncio.timeout(10),
-            callback_client(kind, scheduled) as (client, _mailbox),
+            callback_client(kind, scheduled) as client,
         ):
             callbacks = ImmediateCallbacks()
             with eager_tasks():

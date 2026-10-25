@@ -57,26 +57,38 @@ class TestCancellationSettlement:
     ) -> None:
         mailbox = RoomMailbox()
         job = SettlingJob(error)
+        successor_submitted = asyncio.Event()
+
+        async def successor_job() -> None:
+            assert job.finished.is_set(), "successor overlapped cancellation cleanup"
+
+        async def submit_successor() -> None:
+            successor_submitted.set()
+            await mailbox.ask("room-1", successor_job)
+
         waiting = asyncio.create_task(mailbox.ask("room-1", job.run))
+        successor: asyncio.Task[None] | None = None
         try:
             await job.running.entered.wait()
             waiting.cancel()
             await job.settling.entered.wait()
+            successor = asyncio.create_task(submit_successor())
+            await successor_submitted.wait()
             await checkpoint()
             assert not waiting.done()
             waiting.cancel()
             await checkpoint()
             assert not waiting.done()
-            assert not job.finished.is_set()
+            assert not successor.done()
             job.settling.release.set()
             with pytest.raises(asyncio.CancelledError):
                 await waiting
-            assert job.finished.is_set()
-            job.running.release.set()
-            assert await mailbox.ask("room-1", job.run) == "completed"
+            await successor
         finally:
             job.running.release.set()
             job.settling.release.set()
-            waiting.cancel()
-            await asyncio.gather(waiting, return_exceptions=True)
+            tasks = [waiting, *([successor] if successor is not None else [])]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             await mailbox.close("room-1")
