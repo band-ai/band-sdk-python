@@ -14,6 +14,7 @@ from pydantic import JsonValue
 from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
     OmpContent,
+    OmpContentKind,
     OmpFrameType,
     OmpHostToolCall,
     OmpToolResult,
@@ -65,7 +66,11 @@ class HeldCallbacks:
 
     async def on_tool(self, call: OmpHostToolCall) -> OmpToolResult:
         return OmpToolResult(
-            content=[OmpContent(type="text", text=await self.gates.popleft().result())]
+            content=[
+                OmpContent(
+                    type=OmpContentKind.TEXT, text=await self.gates.popleft().result()
+                )
+            ]
         )
 
     async def on_ui(self, request: OmpUIRequest) -> OmpUIResponse:
@@ -80,7 +85,9 @@ class ImmediateCallbacks:
 
     async def on_tool(self, call: OmpHostToolCall) -> OmpToolResult:
         self.completed.set()
-        return OmpToolResult(content=[OmpContent(type="text", text=NEW_RESULT)])
+        return OmpToolResult(
+            content=[OmpContent(type=OmpContentKind.TEXT, text=NEW_RESULT)]
+        )
 
     async def on_ui(self, request: OmpUIRequest) -> OmpUIResponse:
         self.completed.set()
