@@ -11,6 +11,7 @@ from uuid import uuid4
 import psutil
 
 from band.integrations.codex.winspawn import session_pid_reused
+from band.integrations.omprpc.custody import kill_retained_process, process_is_alive
 from band.integrations.omprpc.errors import OmpProcessError
 
 _PROCESS_SCOPE_VALUE = "1"
@@ -81,29 +82,19 @@ class OmpProcessScope:
         if group_visible and not session_pid_reused(root):
             self.processes.update(group_members)
 
-    @staticmethod
-    def _is_alive(process: psutil.Process) -> bool:
-        try:
-            return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
-        except psutil.NoSuchProcess:
-            return False
-
     def signal(self) -> None:
         for process in self.processes:
-            try:
-                process.kill()
-            except psutil.NoSuchProcess:
-                pass
+            kill_retained_process(process)
 
     def close(self, root: asyncio.subprocess.Process, timeout: float) -> None:
         deadline = time.monotonic() + timeout
         self.capture(root)
-        alive = [process for process in self.processes if self._is_alive(process)]
+        alive = [process for process in self.processes if process_is_alive(process)]
         while alive:
             self.signal()
             psutil.wait_procs(alive, timeout=max(0.0, deadline - time.monotonic()))
             self.capture(root)
-            alive = [process for process in self.processes if self._is_alive(process)]
+            alive = [process for process in self.processes if process_is_alive(process)]
             if alive and time.monotonic() >= deadline:
                 raise OmpProcessError(
                     "OMP owned session members survived cleanup: "
