@@ -2,9 +2,9 @@
 
 `StrandsAdapter` runs an [AWS Strands Agents](https://strandsagents.com) agent as a participant in
 Band chat rooms, alongside humans and other agents. You bring the model, tools, and prompt; the SDK
-owns the WebSocket subscription, wakes the agent when it is @mentioned, hydrates that room's
-history, and offers Band's chat tools — send a message, look up peers, manage participants — to the
-model next to your own.
+owns the WebSocket subscription, wakes the agent when it is @mentioned, loads that room's history
+at session start by default, and offers Band's chat tools — send a message, look up peers, manage
+participants — to the model next to your own.
 
 ```bash
 pip install "band-sdk[strands]"   # or: uv add "band-sdk[strands]"
@@ -92,7 +92,7 @@ StrandsAdapter(
 The adapter registers the Band platform tools itself; a custom tool may not reuse
 one of their names. Band owns per-room history: the transcript is converted into
 Strands `Message` dicts, seeded into a fresh `Agent` per turn, and read back after
-it, so a restart rehydrates from the room.
+it. With context hydration enabled, a restart reloads that history from the room.
 
 ## Running
 
