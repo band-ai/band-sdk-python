@@ -20,7 +20,8 @@ from tests.adapters.omp.kit import (
     start_cleanup,
 )
 from tests.adapters.omp.lifecyclekit import SettlingStartRuntime
-from tests.adapters.omp.selectionkit import ACCEPTED_MODEL, MODEL_PROVIDER
+from tests.adapters.omp.mailboxpeer import MODEL_PROVIDER
+from tests.adapters.omp.selectionkit import ACCEPTED_MODEL
 from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.kit import OMP_PEER_COMMAND, SpawnBarrier
 

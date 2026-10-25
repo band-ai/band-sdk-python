@@ -8,10 +8,9 @@ import pytest
 
 from band.testing import FakeAgentTools
 from tests.adapters.omp.kit import run_turn
+from tests.adapters.omp.mailboxpeer import MODEL_PROVIDER, ORIGINAL_MODEL
 from tests.adapters.omp.selectionkit import (
     ACCEPTED_MODEL,
-    MODEL_PROVIDER,
-    ORIGINAL_MODEL,
     SELECTED_EFFORT,
 )
 

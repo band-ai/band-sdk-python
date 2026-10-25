@@ -10,9 +10,8 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from tests.adapters.omp.askkit import room_ask_adapter
+from tests.adapters.omp.mailboxpeer import MODEL_PROVIDER, ORIGINAL_MODEL
 from tests.adapters.omp.selectionkit import (
-    MODEL_PROVIDER,
-    ORIGINAL_MODEL,
     SELECTED_EFFORT,
     OverlappingSelections,
     RollbackRuntime,

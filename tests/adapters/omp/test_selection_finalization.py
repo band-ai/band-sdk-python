@@ -19,7 +19,8 @@ from tests.adapters.omp.kit import (
     run_turn,
 )
 from tests.adapters.omp.lifecyclekit import HeldCloseRuntime, ObservedMailbox
-from tests.adapters.omp.selectionkit import ACCEPTED_MODEL, MODEL_PROVIDER
+from tests.adapters.omp.mailboxpeer import MODEL_PROVIDER
+from tests.adapters.omp.selectionkit import ACCEPTED_MODEL
 
 __all__ = ["launches"]
 

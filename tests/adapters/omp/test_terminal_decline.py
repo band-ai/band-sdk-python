@@ -8,18 +8,18 @@ from pathlib import Path
 import pytest
 
 from band.integrations.omprpc.errors import OmpPromptError
-from band.integrations.ompwire import OmpFrameType, OmpPromptStatus
+from band.integrations.ompwire import OmpPromptStatus
 from band.runtime.tools import BandTool
 from band.testing import failure_reports
 from tests.adapters.hold import Hold
 from tests.adapters.omp.declinekit import (
     CustomDeclineInput,
     DeclineTools,
+    admitted_declines_before_stop,
     custom_decline,
     declining_adapter,
     stop_commands,
     tool_results,
-    wire_frames,
 )
 from tests.adapters.omp.declinepeer import (
     ADMIT_SECOND_DECLINE,
@@ -60,14 +60,10 @@ class TestTerminalDecline:
             assert len(stop_commands(tmp_path)) == 1
             assert len(tool_results(tmp_path)) == 1
             assert failure_reports(tools) == []
-            frames = wire_frames(tmp_path)
-            admissions = [
-                frame["id"]
-                for frame in frames[: frames.index(stop_commands(tmp_path)[0])]
-                if frame["type"] == OmpFrameType.HOST_TOOL_CALL
-                and frame["toolName"] == BandTool.NO_REPLY
+            assert admitted_declines_before_stop(tmp_path) == [
+                DECLINE_CALL,
+                SECOND_DECLINE_CALL,
             ]
-            assert admissions == [DECLINE_CALL, SECOND_DECLINE_CALL]
             assert tool_results(tmp_path)[0]["id"] == DECLINE_CALL
 
     async def test_successful_decline_stops_later_calls_and_allows_next_turn(

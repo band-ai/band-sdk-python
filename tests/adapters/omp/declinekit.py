@@ -93,6 +93,17 @@ def stop_commands(tmp_path: Path) -> list[dict[str, Any]]:
     ]
 
 
+def admitted_declines_before_stop(tmp_path: Path) -> list[str]:
+    frames = wire_frames(tmp_path)
+    stop = next(frame for frame in frames if frame["type"] == OmpCommandName.ABORT)
+    return [
+        frame["id"]
+        for frame in frames[: frames.index(stop)]
+        if frame["type"] == OmpFrameType.HOST_TOOL_CALL
+        and frame["toolName"] == BandTool.NO_REPLY
+    ]
+
+
 def wire_frames(tmp_path: Path) -> list[dict[str, Any]]:
     transcript = (tmp_path / DECLINE_TRANSCRIPT).read_text(encoding="utf-8")
     return [json.loads(line) for line in transcript.splitlines()]

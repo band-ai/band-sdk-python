@@ -10,11 +10,14 @@ from band.adapters.omp import OmpAdapter, OmpPermissionRequest
 from band.core.model_catalog import ModelSelection
 from band.integrations.ompwire import OmpCommandName
 from tests.adapters.omp.kit import PermissionThenReplyRuntime
-from tests.adapters.omp.mailboxpeer import REJECTED_MODEL, UNSUPPORTED_EFFORT
+from tests.adapters.omp.mailboxpeer import (
+    MODEL_PROVIDER,
+    ORIGINAL_MODEL,
+    REJECTED_MODEL,
+    UNSUPPORTED_EFFORT,
+)
 
-ORIGINAL_MODEL = "original"
 ACCEPTED_MODEL = "accepted"
-MODEL_PROVIDER = "openai"
 SELECTED_EFFORT = "low"
 
 

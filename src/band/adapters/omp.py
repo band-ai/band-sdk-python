@@ -544,7 +544,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     system_prompt=self._build_system_context(),
                 )
             )
-            selection = self._room_selections.get(room_id, self.model_selection)
+            selection = self._selection_for_room(room_id)
             command = self._spawn_command(workspace, selection)
             session_dir = Path(workspace) / OMP_SESSION_DIRECTORY
             session_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -688,6 +688,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             room_id, partial(self._apply_selection, room_id, selection)
         )
 
+    def _selection_for_room(self, room_id: str) -> ModelSelection:
+        return self._room_selections.get(room_id, self.model_selection)
+
     async def _apply_selection(self, room_id: str, selection: ModelSelection) -> None:
         room = self._rooms.get(room_id)
         if (
@@ -699,11 +702,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         ):
             await self._select_model(room, selection)
         self._room_selections[room_id] = _selection_after(
-            self._room_selections.get(room_id, self.model_selection), selection
+            self._selection_for_room(room_id), selection
         )
 
     async def _reconcile_selection(self, room: OmpRoom) -> None:
-        selection = self._room_selections.get(room.room_id, self.model_selection)
+        selection = self._selection_for_room(room.room_id)
         if selection != room.applied_selection:
             await self._select_model(room, selection)
 
