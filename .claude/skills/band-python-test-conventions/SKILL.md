@@ -24,7 +24,10 @@ Do this before the first line of test code:
    including the complementary pairs ([coverage](#coverage-is-branches-not-lines)).
 2. **Find what exists.** Search for a test that already covers the behavior
    and extend or parametrize it rather than duplicating it. Reuse the nearest
-   `conftest.py` fixtures, the package `kit.py` doubles and peers, and the
+   `conftest.py` fixtures, the package `kit.py` doubles and peers, the shipped
+   fakes in `band.testing` (`FakeAgentTools`), the event factories in
+   `tests/conftest.py` (`make_message_event`, ...), the waits in
+   `tests/runtime/conftest.py` (`wait_for_condition`, `Waiting`), and the
    shared modules in `tests/` (`paths.py`, `ports.py`, `identifiers.py`, ...).
 3. **Pick the boundary.** Decide which real components the test drives and
    where the single double sits ([real boundary](#drive-the-real-boundary-inject-dont-patch)).
@@ -43,7 +46,9 @@ applicable; fix what does not hold.
 - [ ] One `class Test...` per file, one claim per test, no in-test branching;
       variations use `@pytest.mark.parametrize`
       ([one concern](#one-concern-per-test-no-in-test-branching)).
-- [ ] Only external boundaries are doubled; no `patch` of a name the repo owns
+- [ ] Repo-owned behavior under test runs for real; doubles sit at external
+      boundaries, and no `patch`/`monkeypatch.setattr` targets a repo-owned
+      name except a documented nondeterminism pin
       ([real boundary](#drive-the-real-boundary-inject-dont-patch)).
 - [ ] No `time.sleep`, no grace-period `asyncio.sleep`; deadlines use
       `looptime` ([time](#time-is-a-hung-test-guard-not-proof)).
@@ -142,6 +147,8 @@ never bend an assertion to match whatever the code currently produces.
 
 Each `test_*.py` holds exactly one `class Test...` named for the behavior it
 covers — no module-level test functions and no helper classes beside it.
+The module docstring states that behavior in one line, and each test name
+reads as its claim (`test_direct_turn_reports_named_activity`).
 When a suite outgrows one file, make it a package: `conftest.py` for
 fixtures, a plain helper module (`kit.py`, a Hypothesis `lifecycle.py`) for
 shared doubles, and one test file per concern. Keep domain fixtures in the
@@ -177,10 +184,15 @@ that preserves the behavior under test. Use realistic peers or fakes at
 external boundaries; do not mock away the interaction whose correctness the
 test claims to prove.
 
-- Never mock a class or function the repo owns. When a real dependency is
-  too heavy, build an in-memory fake with working behavior (stores what it
-  is given, answers from that state) in the package `kit.py`, not a stub
-  that returns canned values.
+- Do not double repo-owned code whose behavior the test claims. Use the
+  shipped fakes (`band.testing.FakeAgentTools`) or, when a real dependency
+  is too heavy, an in-memory fake with working behavior (stores what it is
+  given, answers from that state) in the package `kit.py`, not a stub that
+  returns canned values.
+- `monkeypatch.setattr` is patching and follows the rule below;
+  `monkeypatch.setenv`/`delenv` for configuration is fine. When repo-owned
+  nondeterminism has no seam, pin it once in a documented fixture, as
+  `tests/runtime/conftest.py` pins the resync jitter.
 - A constructor seam (`create_process=`) or a public instance timeout of `0`
   ("check now / no grace") is the test hook. `unittest.mock.patch` of
   `asyncio.create_subprocess_exec`, a private `_close_process`, or a
@@ -215,11 +227,16 @@ Prefer time-agnostic tests. Prove ordering, concurrency, cancellation, and
 lifecycle behavior with events, gates, barriers, observable state transitions,
 and awaited completion (`AGENTS.md` "Test Synchronization").
 
-**A controlled clock belongs only in tests whose claim is specifically
-“this deadline expires.”** The repo's controlled clock is `looptime`
-(`@pytest.mark.looptime`), which runs the event loop on virtual time. Do not
-introduce timers or advance time merely to make work run, establish
-ordering, or prove cleanup. In a deadline-expiry test, establish the
+The repo's controlled clock is `looptime` (`@pytest.mark.looptime`, or a
+module `pytestmark`), which runs the event loop on virtual time. Run a test
+under it when the code under test owns timers (resync intervals, retries,
+heartbeats), so those timers and the suite's waits (`wait_for_condition`,
+`Waiting.until`) never cost wall time. That is the environment, not the
+proof.
+
+**Deliberately advancing the clock belongs only in tests whose claim is
+specifically “this deadline expires.”** Do not advance time merely to make
+work run, establish ordering, or prove cleanup. In a deadline-expiry test, establish the
 relevant wait before deliberately advancing the clock. Never use
 `time.sleep`, elapsed wall time, `asyncio.sleep` of a grace period, or "it
 finished within a duration" as proof. A fake that must hang until cancelled
