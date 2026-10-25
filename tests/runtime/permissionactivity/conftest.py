@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 
 import pytest
+import pytest_asyncio
 
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
@@ -17,7 +18,7 @@ def permission_platform() -> RoomActivityPlatform:
     return RoomActivityPlatform()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def held_room(
     permission_platform: RoomActivityPlatform,
 ) -> AsyncIterator[Callable[[str], tuple[ExecutionContext, HeldTurn]]]:
