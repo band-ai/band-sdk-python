@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -207,8 +208,8 @@ class ScopeActivityObserver:
     async def update(self, activity: AgentActivityDetail) -> None:
         await self.context.observe_activity(self.scope, activity=activity)
 
-    async def set_manual_wait(self, waiting: bool) -> None:
-        await self.context.observe_activity(self.scope, waiting=waiting)
+    def permission_wait(self) -> AbstractContextManager[None]:
+        return self.context.permission_wait(self.scope)
 
 
 class ExecutionContext:
@@ -1235,11 +1236,26 @@ class ExecutionContext:
         scope: TurnScope,
         *,
         activity: AgentActivityDetail | None = None,
-        waiting: bool | None = None,
     ) -> None:
         """Record a turn's activity; never starts reporting or waits on it."""
         before = self._visible_activity
-        scope.activity.apply(activity=activity, waiting=waiting)
+        scope.activity.apply(activity=activity)
+        self._refresh_activity(before)
+
+    @contextmanager
+    def permission_wait(self, scope: TurnScope) -> Iterator[None]:
+        """Observe a wait without acquiring execution or reporting ownership."""
+        before = self._visible_activity
+        owner = scope.activity.acquire_permission()
+        try:
+            self._refresh_activity(before)
+            yield
+        finally:
+            before = self._visible_activity
+            scope.activity.release_permission(owner)
+            self._refresh_activity(before)
+
+    def _refresh_activity(self, before: AgentActivityDetail | None) -> None:
         if self._visible_activity != before:
             self._working_reporter.refresh()
 

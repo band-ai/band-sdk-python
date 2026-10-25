@@ -19,6 +19,7 @@ from pydantic import JsonValue
 
 from band.integrations.codex.winspawn import Job
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient
+from band.integrations.omprpc.custody import kill_retained_process, process_is_alive
 from band.integrations.ompwire import (
     OmpCommandName,
     OmpContent,
@@ -207,13 +208,6 @@ async def sent_prompt_messages(client: OmpRpcClient) -> list[str]:
     ]
 
 
-def process_is_alive(process: psutil.Process) -> bool:
-    try:
-        return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
-    except psutil.NoSuchProcess:
-        return False
-
-
 def is_descendant(child: psutil.Process, ancestor: psutil.Process) -> bool:
     """True when ``ancestor`` is a living parent of ``child``.
 
@@ -243,8 +237,7 @@ def is_descendant(child: psutil.Process, ancestor: psutil.Process) -> bool:
 
 def kill_gate_processes(processes: list[psutil.Process]) -> None:
     for process in processes:
-        with suppress(psutil.NoSuchProcess):
-            process.kill()
+        kill_retained_process(process)
     deadline = time.monotonic() + 5
     while alive := [process.pid for process in processes if process_is_alive(process)]:
         if time.monotonic() >= deadline:

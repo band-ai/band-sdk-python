@@ -9,6 +9,7 @@ import pytest
 
 from band.integrations.omprpc import OmpProcessError
 from band.integrations.omprpc.client import PROCESS_EXIT_TIMEOUT_S
+from band.integrations.omprpc.custody import process_is_alive
 from band.integrations.omprpc.scope import OmpProcessScope
 from tests.integrations.omprpc.kit import (
     ClientFactory,
@@ -22,7 +23,6 @@ from tests.integrations.omprpc.kit import (
     descendant_liveness,
     job_member_pids,
     owned_rpc_process,
-    process_is_alive,
     refuse_containment,
     session_ids,
     unrelated_gate_child,

@@ -131,7 +131,7 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
-from band.runtime.activity import set_permission_wait
+from band.runtime.activity import permission_wait
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_effects,
@@ -1883,52 +1883,51 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # so the caller isn't left waiting for a timeout nobody will see.
         tools = self._room_tools.get(room_id)
         mention = [requester["id"]] if requester else None
-        await set_permission_wait(tools, True)
-        try:
-            if tools:
-                try:
-                    await tools.send_notice(
-                        APPROVAL_REQUESTED_TEMPLATE.format(
-                            summary=summary, token=token
-                        ),
-                        mentions=mention,
-                    )
-                except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    logger.warning(
-                        "Room %s: Failed to send approval notification", room_id
-                    )
-                    # A reply that claimed it meanwhile owns the answer; otherwise
-                    # decline without a notice, so the missing-reply guard stays.
-                    if registry.withdraw(entry):
-                        return PermissionResultDeny(
-                            message="Could not deliver approval prompt, tool use declined"
+        with permission_wait(tools):
+            try:
+                if tools:
+                    try:
+                        await tools.send_notice(
+                            APPROVAL_REQUESTED_TEMPLATE.format(
+                                summary=summary, token=token
+                            ),
+                            mentions=mention,
                         )
+                    except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+                        logger.warning(
+                            "Room %s: Failed to send approval notification", room_id
+                        )
+                        # A reply that claimed it meanwhile owns the answer; otherwise
+                        # decline without a notice, so the missing-reply guard stays.
+                        if registry.withdraw(entry):
+                            return PermissionResultDeny(
+                                message="Could not deliver approval prompt, tool use declined"
+                            )
 
-            # The request has been posted (or there was nowhere to post it) --
-            # either way, on_message must return now so Band's room loop can
-            # dispatch the reply that will resolve this wait. The turn is then
-            # judged at its real end (see _on_turn_complete).
-            if tools:
-                tools.turn.detach()
-            self._release_turn(room_id)
+                # The request has been posted (or there was nowhere to post it) --
+                # either way, on_message must return now so Band's room loop can
+                # dispatch the reply that will resolve this wait. The turn is then
+                # judged at its real end (see _on_turn_complete).
+                if tools:
+                    tools.turn.detach()
+                self._release_turn(room_id)
 
-            async with registry.answering(
-                entry, pending.future, timeout_s=self._approvals.wait_timeout_s
-            ) as decision:
-                match decision:
-                    case Timeout.TIMED_OUT:
-                        return await self._apply_approval_timeout(
-                            tools, room_id, token, mention, tool_use_id
-                        )
-                    case ApprovalReply():
-                        return await self._apply_approval_reply(
-                            tools, room_id, token, decision, tool_use_id
-                        )
-                # Forced by eviction or room teardown: no notice names this call.
-                return PermissionResultDeny(message="User declined tool use")
-        finally:
-            self._clear_pending_approval(room_id, entry)
-            await set_permission_wait(tools, bool(self._pending_approvals.get(room_id)))
+                async with registry.answering(
+                    entry, pending.future, timeout_s=self._approvals.wait_timeout_s
+                ) as decision:
+                    match decision:
+                        case Timeout.TIMED_OUT:
+                            return await self._apply_approval_timeout(
+                                tools, room_id, token, mention, tool_use_id
+                            )
+                        case ApprovalReply():
+                            return await self._apply_approval_reply(
+                                tools, room_id, token, decision, tool_use_id
+                            )
+                    # Forced by eviction or room teardown: no notice names this call.
+                    return PermissionResultDeny(message="User declined tool use")
+            finally:
+                self._clear_pending_approval(room_id, entry)
 
     async def _apply_approval_reply(
         self,

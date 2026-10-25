@@ -6,13 +6,13 @@ import asyncio
 
 import pytest
 
+from band.integrations.omprpc.custody import process_is_alive
 from tests.integrations.omprpc.kit import (
     ProcessGate,
     descendant_liveness,
     hold_after_stdin_closed,
     is_descendant,
     job_member_pids,
-    process_is_alive,
     session_ids,
     start_eof_client,
     unrelated_gate_child,
