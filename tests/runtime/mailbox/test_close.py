@@ -11,6 +11,53 @@ from tests.runtime.mailbox.kit import JobHold
 
 
 class TestClose:
+    async def test_concurrent_close_callers_share_the_drain_and_reopen(self) -> None:
+        mailbox = RoomMailbox()
+        room_id = "room-1"
+        hold = JobHold()
+        hold.hold()
+        active_finished = asyncio.Event()
+
+        async def occupied() -> None:
+            await hold.pause()
+            active_finished.set()
+
+        waiting = asyncio.create_task(mailbox.ask(room_id, occupied))
+        close_tasks: list[asyncio.Task[None]] = []
+        try:
+            await hold.entered.wait()
+
+            first_started = asyncio.Event()
+            second_started = asyncio.Event()
+
+            async def close_room(started: asyncio.Event) -> None:
+                started.set()
+                await mailbox.close(room_id)
+
+            first_close = asyncio.create_task(close_room(first_started))
+            second_close = asyncio.create_task(close_room(second_started))
+            close_tasks.extend((first_close, second_close))
+            await first_started.wait()
+            await second_started.wait()
+
+            assert not active_finished.is_set()
+            assert not first_close.done()
+            assert not second_close.done()
+
+            hold.release.set()
+            await waiting
+            await asyncio.gather(first_close, second_close)
+            assert active_finished.is_set()
+
+            async def later() -> str:
+                return "reopened"
+
+            assert await mailbox.ask(room_id, later) == "reopened"
+        finally:
+            hold.release.set()
+            await asyncio.gather(waiting, *close_tasks, return_exceptions=True)
+            await mailbox.close(room_id)
+
     async def test_close_rejects_submissions_while_draining(self) -> None:
         mailbox = RoomMailbox()
         hold = JobHold()

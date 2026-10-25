@@ -37,3 +37,36 @@ class TestCastDuringAsk:
         assert order == ["ask", "cast"]
         assert occupied_here == [True, True]
         await mailbox.close("room-1")
+
+    async def test_room_job_can_cast_follow_up_after_it_finishes(self) -> None:
+        mailbox = RoomMailbox()
+        room_id = "room-1"
+        parent_entered = asyncio.Event()
+        release_parent = asyncio.Event()
+        follow_up_finished = asyncio.Event()
+        order: list[str] = []
+
+        async def parent() -> None:
+            parent_entered.set()
+            mailbox.cast(room_id, follow_up)
+            await release_parent.wait()
+            order.append("parent-finished")
+
+        async def follow_up() -> None:
+            order.append("follow-up")
+            follow_up_finished.set()
+
+        waiting = asyncio.create_task(mailbox.ask(room_id, parent))
+        try:
+            await parent_entered.wait()
+            assert order == []
+            release_parent.set()
+
+            await waiting
+            await follow_up_finished.wait()
+
+            assert order == ["parent-finished", "follow-up"]
+        finally:
+            release_parent.set()
+            await asyncio.gather(waiting, return_exceptions=True)
+            await mailbox.close(room_id)
