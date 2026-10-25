@@ -1257,7 +1257,7 @@ class AgentTools(AgentToolsProtocol):
             yield response
             cursor = response.metadata.next_cursor
             more_pages = bool(response.metadata.has_more and cursor)
-            if more_pages:
+            if more_pages and cursor is not None:
                 if cursor in seen_cursors:
                     logger.warning(
                         "Stopped searching room history: server repeated cursor %r",
