@@ -87,9 +87,9 @@ Never assume, always verify — the one rule everything else follows from.
    - Third-party libraries and APIs: current primary docs plus the source of
      the pinned version. A capability that only exists in a newer release, or
      only sounds plausible from its name, is not verified.
-4. Read `AGENTS.md`, the linked `docs/*.md` for the area the ticket touches,
-   and the guideline skills it lists. They are the project's single sources
-   of truth: don't re-derive or contradict them.
+4. Read `AGENTS.md`, the relevant implementation and behavior tests, and the
+   guideline skills it lists. Treat current source and tests as the contract;
+   don't re-derive or contradict them.
 
 If all of this lives in one place, do it inline. Once it spans more than one
 independent area (a sibling repo, a library, a separate doc area), give each

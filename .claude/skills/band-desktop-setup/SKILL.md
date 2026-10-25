@@ -5,11 +5,11 @@ description: "Set up, upgrade, or troubleshoot Claude Desktop as a Band agent. U
 
 # Band Desktop Setup
 
-The canonical setup, operating, and verification guide is
-[docs/adapters/claude_desktop.md](../../../docs/adapters/claude_desktop.md).
-Read it before taking action. Do not duplicate its commands, configuration,
-or troubleshooting guidance here; keep this skill to the interactive setup
-workflow.
+Use the current package entry points in `pyproject.toml`, configuration in
+`src/band/integrations/desktop_app/settings.py`, and implementation under
+`src/band/integrations/desktop_app/` as the source of truth. Check command
+behavior in its current implementation; use `--help` only where that entry
+point supports it.
 
 ## Safety and scope
 
@@ -24,20 +24,23 @@ workflow.
 
 ## Workflow
 
-1. Read the canonical guide and establish the user's goal: first installation,
-   self-hosted configuration, upgrade, or diagnosis.
+1. Establish the user's goal: first installation, self-hosted configuration,
+   upgrade, or diagnosis. Confirm Desktop's supported platform from the current
+   implementation and package metadata.
 2. Inspect only the local state needed for that goal: executable paths,
    existing Desktop MCP entries, and non-secret environment names. Do not read
    or echo credentials.
-3. Apply the guide's relevant steps, preserving unrelated configuration.
-   If an action would stop another process, disable a plugin, or overwrite an
-   existing entry, get explicit approval first.
-4. Use the guide's verification sequence. For a live mention check, make clear
-   that Claude can answer without a new user turn only while its watching loop
-   is active.
+3. Apply the current package entry points and settings, preserving unrelated
+   configuration. If an action would stop another process, disable a plugin,
+   or overwrite an existing entry, get explicit approval first.
+4. Verify the installed processes, room presence, and room view using the
+   behavior covered in `tests/integrations/desktop_app/`. For a live mention
+   check, make clear that Claude answers without a new user turn only while its
+   watching loop is active. Watching holds a tool call open, so new user input
+   waits until that call yields, bounded by its configured event timeout.
 5. Report what was verified and any remaining boundary (for example, a missing
    agent key, a required Desktop restart, or an unavailable second participant).
 
-For behaviour after setup, direct the user to the guide rather than restating
-it: joining, watching, room visibility, and verification live there, and it
-points to the room view's log and the tuning settings.
+For behavior after setup, inspect the room view implementation and its settings
+before recommending changes. The room view's logs and tuning settings are owned
+by `src/band/integrations/desktop_app/logs.py` and `settings.py`.

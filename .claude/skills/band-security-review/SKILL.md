@@ -23,8 +23,8 @@ Follow the boundaries relevant to the change:
 
 | Boundary | What to establish | Starting points |
 |---|---|---|
-| Room and agent authorization | Which credential acts, which room/session it may affect, and where that authority is enforced | `src/band/runtime/tools/`, `src/band/integrations/mcp/engine.py`, `docs/rest-client.md` |
-| Approval pairing | Requests and replies match the active agent, room, session, and offered decision; cancellation or a stale reply cannot authorize another operation | `src/band/integrations/acp/permissions.py`, adapter approval handlers, `docs/acp.md` |
+| Room and agent authorization | Which credential acts, which room/session it may affect, and where that authority is enforced | `src/band/runtime/tools/`, `src/band/integrations/mcp/engine.py`, relevant `tests/platform/` and `tests/runtime/` cases |
+| Approval pairing | Requests and replies match the active agent, room, session, and offered decision; cancellation or a stale reply cannot authorize another operation | `src/band/integrations/acp/permissions.py`, adapter approval handlers, `tests/integrations/acp/` |
 | Tool exposure | Negotiated capabilities and pinned context constrain execution, not merely advertised schemas | `src/band/runtime/capabilities.py`, MCP engine and tool dispatch |
 | Credentials and external content | Provider/agent/user keys remain scoped; logs, subprocess environments, tool results, and errors do not expose broader authority | transport/auth setup, subprocess launchers, example runner environment |
 | Files and processes | Untrusted arguments, paths, symlinks, and archives cannot cross the intended boundary; cleanup affects only owned resources | `src/band/workspaces.py`, affected file tools and runtime launchers |

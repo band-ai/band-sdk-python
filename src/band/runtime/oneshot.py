@@ -364,10 +364,9 @@ class OneShotInvoker:
     async def handle_event(self, body: dict[str, Any]) -> dict[str, Any]:
         """Process one forwarded platform event from the bridge envelope.
 
-        Routing is band_sdk_core's ``evaluate_delivery_event`` — see
-        ``docs/websocket-events.md``. Non-message events return
-        ``{"status": "ignored", ...}`` without side effects; in v1 only
-        ``message_created`` drives an LLM call.
+        Routing is band_sdk_core's ``evaluate_delivery_event``. Non-message
+        events return ``{"status": "ignored", ...}`` without side effects;
+        in v1 only ``message_created`` drives an LLM call.
 
         Raises:
             OneShotEnvelopeError: the envelope fails core's validation —

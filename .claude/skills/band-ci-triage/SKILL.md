@@ -5,8 +5,8 @@ description: Investigate failing GitHub Actions checks for a PR or commit in the
 
 # CI Triage
 
-Read [the shared runtime guidance](../workflow-runtime.md) and
-`docs/ci-cd-workflows.md`. A diagnosis request is read-only; an explicit fix
+Read [the shared runtime guidance](../workflow-runtime.md), `AGENTS.md`, and
+the relevant files in `.github/workflows/`. A diagnosis request is read-only; an explicit fix
 request authorizes in-scope implementation without a second plan-approval
 pause. Reuse existing authorization for pushes, reruns, and publication.
 
@@ -54,9 +54,10 @@ Redact credentials and sensitive message contents from excerpts.
   Use the repository's isolated lane commands for concurrent runs so one
   investigation does not rewrite another's `.venv`. For non-obvious test
   failures, use [band-investigate-test-error](../band-investigate-test-error/SKILL.md).
-- For workflow startup, merge-queue, or release failures, consult the canonical
-  CI/CD guide. Do not disable required jobs, weaken assertions, increase
-  retries, or publish artifacts to manufacture a green result.
+- For workflow startup, merge-queue, or release failures, inspect the workflow
+  and query current GitHub rulesets or environment policies when relevant. Do
+  not disable required jobs, weaken assertions, increase retries, or publish
+  artifacts to manufacture a green result.
 
 ## Fix and report
 

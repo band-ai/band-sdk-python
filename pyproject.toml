@@ -562,10 +562,8 @@ extend-select = ["PLC0415"]
 ignore = ["TRY004"]
 
 [tool.ruff.lint.per-file-ignores]
-# examples/ uses a deliberate NN_topic.py numbering convention for tutorial
-# ordering, referenced by exact filename throughout README.md and
-# docs/adapters/*.md. No rename can satisfy both that convention and N999
-# (a leading digit is never a legal Python identifier).
+# examples/ uses numbered filenames for tutorial ordering. These are user-facing
+# script names, not importable Python modules, so N999 is expected here.
 "examples/**" = ["N999"]
 
 [tool.pyrefly]

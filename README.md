@@ -455,24 +455,24 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 
 ### Framework Adapters
 
-| Integration      | Install Extra | Adapter                              | Guide | Example                                       |
-| ---------------- | ------------- | ------------------------------------ | ----- | --------------------------------------------- |
-| LangGraph        | `langgraph`   | `LangGraphAdapter`                   | [docs](docs/adapters/langgraph.md) | [examples](examples/langgraph/)     |
-| Pydantic AI      | `pydantic-ai` | `PydanticAIAdapter`                  | | [examples](examples/pydantic_ai/) |
-| Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | | [examples](examples/anthropic/)     |
-| Claude Desktop   | `desktop`     | `band-room-view` + `band-mcp`        | [docs](docs/adapters/claude_desktop.md) | |
-| Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`                   | [docs](docs/adapters/claude_sdk.md) | [examples](examples/claude_sdk/)   |
-| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | | [examples](examples/copilot_sdk/) |
-| CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | | [examples](examples/crewai/)           |
-| Gemini SDK       | `gemini`      | `GeminiAdapter`                      | | [examples](examples/gemini/)           |
-| Google ADK       | `google_adk`  | `GoogleADKAdapter`                   | | [examples](examples/google_adk/)   |
-| Parlant          | `parlant`     | `ParlantAdapter`                     | | [examples](examples/parlant/)         |
-| Letta            | `letta`       | `LettaAdapter`                       | | [examples](examples/letta/)             |
-| Agno             | `agno`        | `AgnoAdapter`                        | | [examples](examples/agno/)              |
-| Strands Agents   | `strands`     | `StrandsAdapter`                     | | [examples](examples/strands/)         |
-| NOOA (NVIDIA)    | `nooa`        | `NooaAdapter`                        | [docs](docs/adapters/nooa.md) | [examples](examples/nooa/)   |
-| Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
-| OpenCode         | `opencode`    | `OpencodeAdapter`                    | [docs](docs/adapters/opencode.md) | [examples](examples/opencode/)       |
+| Integration        | Install Extra | Adapter                               | Runnable examples                     |
+| ------------------ | ------------- | ------------------------------------- | ------------------------------------- |
+| LangGraph          | `langgraph`   | `LangGraphAdapter`                    | [examples](examples/langgraph/)       |
+| Pydantic AI        | `pydantic-ai` | `PydanticAIAdapter`                   | [examples](examples/pydantic_ai/)     |
+| Anthropic SDK      | `anthropic`   | `AnthropicAdapter`                    | [examples](examples/anthropic/)       |
+| Claude Desktop     | `desktop`     | `band-room-view` + `band-mcp`         | [MCP examples](examples/band_mcp/)    |
+| Claude Agent SDK   | `claude_sdk`  | `ClaudeSDKAdapter`                    | [examples](examples/claude_sdk/)      |
+| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                   | [examples](examples/copilot_sdk/)     |
+| CrewAI             | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter`  | [examples](examples/crewai/)          |
+| Gemini SDK         | `gemini`      | `GeminiAdapter`                       | [examples](examples/gemini/)          |
+| Google ADK         | `google_adk`  | `GoogleADKAdapter`                    | [examples](examples/google_adk/)      |
+| Parlant            | `parlant`     | `ParlantAdapter`                      | [examples](examples/parlant/)         |
+| Letta              | `letta`       | `LettaAdapter`                        | [examples](examples/letta/)           |
+| Agno               | `agno`        | `AgnoAdapter`                         | [examples](examples/agno/)            |
+| Strands Agents     | `strands`     | `StrandsAdapter`                      | [examples](examples/strands/)         |
+| NOOA (NVIDIA)      | `nooa`        | `NooaAdapter`                         | [examples](examples/nooa/)            |
+| Codex              | `codex`       | `CodexAdapter`                        | [examples](examples/codex/)           |
+| OpenCode           | `opencode`    | `OpencodeAdapter`                     | [examples](examples/opencode/)        |
 
 LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.TOOL_CALLS` telemetry for tool calls/results.
 
@@ -485,7 +485,7 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 | A2A bridge   | `a2a`         | `A2AAdapter`                         | [examples](examples/a2a_bridge/)              |
 | A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`                  | [examples](examples/a2a_gateway/)             |
 | ACP          | `acp`         | `ACPClientAdapter`, `CopilotACPAdapter`, `OmpACPAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
-| OMP native RPC | `omp`       | `OmpAdapter`                         | [example](examples/omp.py), [setup](docs/acp.md#omp-native-rpc) |
+| OMP native RPC | `omp`       | `OmpAdapter`                         | [example](examples/omp.py) |
 | Slack        | `slack`       | `SlackAdapter`                       | [examples](examples/slack/) |
 
 > **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
@@ -586,7 +586,7 @@ Adapter emit support:
 
 Requesting an unsupported `emit` or `capabilities` value raises `BandConfigError` immediately at construction.
 
-Adapter-specific configuration such as Codex streaming flags, Claude SDK approval modes, or LangGraph graph factories is documented in the per-adapter guides linked in the table above. See [docs/adapters/](docs/adapters/) for full reference.
+Adapter-specific settings are defined by each `XAdapterConfig` in `src/band/adapters/`; use the runnable examples above to see them in context.
 
 ---
 
@@ -890,7 +890,7 @@ Today's versions happen to overlap on `pydantic`, but crewai's ceilings move wit
 | API introduction | [docs.band.ai/api/introduction](https://docs.band.ai/api/introduction) |
 | Contacts | [docs.band.ai/core-concepts/contacts](https://docs.band.ai/core-concepts/contacts) |
 | SDK changelog | [docs.band.ai/changelog/changelog/sdks](https://docs.band.ai/changelog/changelog/sdks) |
-| Consuming queued messages in one turn | [docs/consume-all-queued.md](docs/consume-all-queued.md) |
+| Consuming queued messages in one turn | Batch-capable adapters can use `SessionConfig(consume_all_queued=True)`; `max_queued_messages` sets the cap (default 10). |
 | Examples | [examples/](examples/) |
 
 ---
