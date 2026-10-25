@@ -1268,6 +1268,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         return response
 
     async def _emit_event(self, event: OmpEvent, turn: OmpTurn) -> None:
+        emit_tool_calls = Emit.TOOL_CALLS in self.features.emit
         match event.type:
             case OmpEventType.MESSAGE_END:
                 message = event.message
@@ -1296,7 +1297,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     event.toolName, args, preserve_native_semantics=True
                 )
                 turn.calls[event.toolCallId] = (name, arguments)
-                if Emit.TOOL_CALLS in self.features.emit:
+                if emit_tool_calls:
                     await report_tool_activity(turn.tools, name)
                     await send_event_safe(
                         turn.tools,
@@ -1308,7 +1309,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 if call is None:
                     return
                 name, _arguments = call
-                if Emit.TOOL_CALLS in self.features.emit:
+                if emit_tool_calls:
                     if turn.calls:
                         remaining_name = next(reversed(turn.calls.values()))[0]
                         await report_tool_activity(turn.tools, remaining_name)
@@ -1316,7 +1317,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         await end_tool_activity(turn.tools)
                 if not self.config.inject_band_tools and not event.isError:
                     turn.tools.turn.record(turn_effect(name))
-                if Emit.TOOL_CALLS in self.features.emit:
+                if emit_tool_calls:
                     output = (
                         "\n".join(
                             block.text
