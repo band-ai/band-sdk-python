@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import tomllib
+
 from tests.framework_conformance.venv_job_coverage import ci_jobs
 from tests.paths import REPO_ROOT
 from tests.xdistworker import CI_XDIST_FLAGS
@@ -46,6 +48,12 @@ class TestUnitJobXdist:
         assert seen == UNIT_PYTEST_STEPS
 
     def test_xdist_is_not_in_addopts(self) -> None:
-        pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        pyproject = tomllib.loads(
+            (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        addopts = pyproject["tool"]["pytest"]["ini_options"]["addopts"]
         # Local live runs and --pdb must stay single-process.
-        assert 'addopts = "-v"' in pyproject
+        xdist_options = ("-n", "--numprocesses", "--dist")
+        assert not [opt for opt in addopts.split() if opt.startswith(xdist_options)], (
+            addopts
+        )

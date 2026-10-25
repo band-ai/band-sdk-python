@@ -1,8 +1,8 @@
 """Pytest wiring for the baseline toolkit.
 
-This file holds only the pytest *glue*: the marker registration, the always-on
-E2E/Band-key gate, and the CI-lane collection hook. The fixtures themselves live
-in ``fixtures/`` (platform / agents / capture) and the lane-selection logic in
+This file holds only the pytest *glue*: the always-on E2E/Band-key gate and the
+CI-lane collection hook (markers are registered in ``pyproject.toml``). The
+fixtures themselves live in ``fixtures/`` (platform / agents / capture) and the lane-selection logic in
 ``lane_selection``; both are imported here so pytest registers the fixtures for
 the baseline subtree (``pytest_plugins`` is deprecated in a non-root conftest).
 The fixture re-exports are listed in ``__all__`` so they read as intentional.
@@ -18,11 +18,6 @@ from pathlib import Path
 import pytest
 
 from tests.e2e.baseline.agent_wiring import assert_agent_fixtures_wired
-from tests.e2e.baseline.agents import (
-    LANE_MARKER,
-    PER_ADAPTER_MARKER,
-    WITH_ADAPTERS_MARKER,
-)
 from tests.e2e.baseline.fixtures.agents import (
     adapter_id,
     agent,
@@ -121,26 +116,6 @@ def pytest_configure(config: pytest.Config) -> None:
         config.pluginmanager.register(
             ScorecardCollector(scorecard_json), name="baseline-scorecard"
         )
-    config.addinivalue_line(
-        "markers",
-        f"{MARKER}(deps): declare a baseline test's optional dependencies; the "
-        "E2E + Band-key gate is always applied. See requires.py.",
-    )
-    config.addinivalue_line(
-        "markers",
-        f"{WITH_ADAPTERS_MARKER}(request): set by @with_adapters to declare the adapters a "
-        "test runs; resolved by the agent/agents fixtures. See agents.py.",
-    )
-    config.addinivalue_line(
-        "markers",
-        f"{PER_ADAPTER_MARKER}(build): set by @per_adapter to steer per-cell construction "
-        "(prompt/features/tools/peer); resolved by the cell/agent/peer fixtures.",
-    )
-    config.addinivalue_line(
-        "markers",
-        f"{LANE_MARKER}(lane): set by @lane(Lane.X) to assign a cross-lane test to one "
-        "explicit CI lane, overriding derived home-lane scheduling. See lane_selection.",
-    )
 
 
 @pytest.hookimpl(wrapper=True)
