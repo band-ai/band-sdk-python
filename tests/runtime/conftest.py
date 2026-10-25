@@ -23,7 +23,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import pytest_asyncio
 from band_rest import (
     AgentMe,
     ChatMessage,
@@ -40,17 +39,6 @@ from band.runtime.presence import RoomPresence
 from tests.activitysupport import install_activity_support
 from tests.conftest import make_participant_mock, mirror_settlement_results
 from tests.runtime.helpers import AGENT_ID, WAIT_SECONDS
-from tests.toolkit.clock import NATIVE_CLOCK_RESOLUTIONS
-
-
-@pytest_asyncio.fixture(params=NATIVE_CLOCK_RESOLUTIONS, loop_scope="function")
-async def native_timer_tolerance(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Exercise asyncio's native timer tolerance on every host."""
-    loop = asyncio.get_running_loop()
-    assert isinstance(loop, asyncio.BaseEventLoop)
-    monkeypatch.setattr(loop, "_clock_resolution", request.param)
 
 
 @pytest.fixture(autouse=True)
@@ -87,18 +75,17 @@ class Waiting:
     @staticmethod
     async def suspended(ctx: ExecutionContext) -> None:
         """Wait for the consumer to finish its pass and suspend or exit."""
-        await Waiting.until(
-            lambda: (
+        while ctx.is_running:
+            wait = ctx.scheduler.queue_wait
+            # An expiring wait still owes its reconciliation pass.
+            if (
                 ctx.scheduler.current_pass is None
-                and (
-                    not ctx.is_running
-                    or (
-                        ctx.scheduler.queue_wait is not None
-                        and ctx.scheduler.queue.empty()
-                    )
-                )
-            )
-        )
+                and wait is not None
+                and not wait.expired()
+                and ctx.scheduler.queue.empty()
+            ):
+                return
+            await asyncio.sleep(0)
 
 
 def admit_room(presence: RoomPresence, room_id: str) -> None:

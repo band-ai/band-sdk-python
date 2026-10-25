@@ -545,13 +545,20 @@ class ObservedExecution(ExecutionContext):
         link: BandLink,
         on_execute: ExecutionHandler,
         *,
+        on_started: Callable[[], None] | None = None,
         on_deferred: Callable[[], None] | None = None,
         on_finished: Callable[[], None] | None = None,
         **options: Any,
     ) -> None:
         super().__init__(room_id, link, on_execute, **options)
+        self._on_started = on_started
         self._on_deferred = on_deferred
         self._on_finished = on_finished
+
+    def finish_startup(self) -> None:
+        super().finish_startup()
+        if self._on_started is not None:
+            self._on_started()
 
     async def execute_local(self, event: PlatformEvent) -> TurnOutcome:
         outcome = await super().execute_local(event)

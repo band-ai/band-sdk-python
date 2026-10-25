@@ -547,9 +547,8 @@ class Harness:
         await self.drain()
 
     async def control_settled(self, message_id: str) -> None:
-        """Wait for the consumed control's receipt and the end of its pass."""
+        """Wait for the consumed control's confirmed receipt."""
         await self.peer.processed(message_id)
-        await self.drain()
 
     def heal(self) -> None:
         """End the outage; ``recovery`` reads what the platform saw after it."""

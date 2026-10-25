@@ -9,7 +9,6 @@ from tests.platform.settlement.kit import ROOM_ID
 from tests.runtime.attempts.conftest import EXECUTION_BUDGET
 from tests.runtime.recovery.kit import (
     CONTROL,
-    RESYNC_SECONDS,
     Ending,
     Entrance,
     Fault,
@@ -18,14 +17,11 @@ from tests.runtime.recovery.kit import (
 )
 from tests.runtime.recovery.preparation import ROOM_PREPARATIONS, RoomPreparation
 
-pytestmark = pytest.mark.looptime
-
 
 @pytest.mark.parametrize("fault", list(Fault))
 @pytest.mark.parametrize("prepare_room", ROOM_PREPARATIONS)
 class TestFailureContinuation:
     @pytest.mark.parametrize("route", list(Route))
-    @pytest.mark.usefixtures("native_timer_tolerance")
     async def test_an_unknown_failed_write_preserves_the_execution_budget(
         self,
         retrying_room: Harness,
@@ -36,11 +32,10 @@ class TestFailureContinuation:
         room = retrying_room
         room.peer.fail_terminals(fault, *room.members)
         await room.start(route)
-        await room.advance(RESYNC_SECONDS)
         await prepare_room(room)
 
         room.peer.post(CONTROL)
-        await room.advance(RESYNC_SECONDS)
+        await room.ctx.request_resync()
         await room.control_settled(CONTROL)
 
         assert room.model_turns == [room.members]

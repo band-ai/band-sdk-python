@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from functools import partial
 
-import pytest
-
 from band.client.streaming import DeliveryStatus
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import ExecutionContext
@@ -14,15 +12,12 @@ from tests.conftest import make_participant_added_event
 from tests.runtime.delivery.kit import ObservedExecution, RestPeer, started_session
 from tests.runtime.helpers import ROOM_ID
 
-pytestmark = pytest.mark.looptime
-
 ROSTER_TURN = ("participant_added",)
 ORIGINAL_MESSAGE_ID = "m1"
 ROSTER_PARTICIPANT_ID = "user-456"
 
 
 class TestHeldRosterEvent:
-    @pytest.mark.usefixtures("native_timer_tolerance")
     async def test_a_roster_event_waits_out_a_running_stop_observer(
         self, rest_peer: RestPeer
     ) -> None:

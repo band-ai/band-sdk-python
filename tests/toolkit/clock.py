@@ -5,8 +5,6 @@ from __future__ import annotations
 from math import frexp, ldexp
 from time import get_clock_info
 
-NATIVE_CLOCK_RESOLUTIONS = (1e-9, 1e-7, 4.166666666666667e-8, 0.015625)
-
 
 def binary_clock_resolution() -> float:
     """Keep rounded timer remainders within the host's wakeup tolerance.

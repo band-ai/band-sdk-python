@@ -8,11 +8,13 @@ from types import SimpleNamespace
 import looptime
 import pytest
 
-from tests.toolkit.clock import NATIVE_CLOCK_RESOLUTIONS, binary_clock_resolution
+from tests.toolkit.clock import binary_clock_resolution
 
 
 class TestClock:
-    @pytest.mark.parametrize("native_resolution", NATIVE_CLOCK_RESOLUTIONS)
+    @pytest.mark.parametrize(
+        "native_resolution", [1e-9, 1e-7, 4.166666666666667e-8, 0.015625]
+    )
     def test_timers_and_integral_deadlines_progress(
         self, monkeypatch: pytest.MonkeyPatch, native_resolution: float
     ) -> None:

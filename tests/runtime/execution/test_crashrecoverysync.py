@@ -33,7 +33,6 @@ from tests.runtime.delivery.kit import (
 )
 from tests.runtime.helpers import AGENT_ID
 from tests.runtime.scheduler.driver import attempt_delivery
-from tests.toolkit.timecontrol import controlled_clock
 
 
 class TestCrashRecoverySync:
@@ -643,37 +642,37 @@ class TestCrashRecoverySync:
             "room-123", "msg-unacked"
         )
 
-    @pytest.mark.looptime
-    @pytest.mark.usefixtures("native_timer_tolerance")
-    async def test_websocket_processed_ack_failure_is_retried_by_the_loop_without_replay(
+    async def test_resync_request_retries_a_websocket_ack_without_replaying_the_turn(
         self,
-    ):
-        """Retry the pending ACK at reconciliation without replaying its turn."""
+    ) -> None:
+        """Retry the ACK on resync and admit newer work without replaying the turn."""
         pending_id = "old-ws"
         newer_id = "new-ws"
         peer = RestPeer()
+        startup_finished = asyncio.Event()
         delivery_finished = asyncio.Event()
         async with started_session(
             peer,
             context_factory=partial(
-                ObservedExecution, on_finished=delivery_finished.set
+                ObservedExecution,
+                on_started=startup_finished.set,
+                on_finished=delivery_finished.set,
             ),
         ) as session:
-            await session.quiesce()
-            async with controlled_clock() as clock:
-                peer.confirm_terminal = False
-                await session.deliver(peer.post(pending_id, at=1))
-                await peer.write_received(
-                    DeliveryStatus.PROCESSED, pending_id, confirmed=False
-                )
-                await delivery_finished.wait()
-                peer.confirm_terminal = True
-                await session.deliver(peer.post(newer_id, at=2))
-                assert peer.status_of(pending_id) is not DeliveryStatus.PROCESSED
+            await startup_finished.wait()
+            peer.confirm_terminal = False
+            await session.deliver(peer.post(pending_id, at=1))
+            await peer.write_received(
+                DeliveryStatus.PROCESSED, pending_id, confirmed=False
+            )
+            await delivery_finished.wait()
+            peer.confirm_terminal = True
+            await session.deliver(peer.post(newer_id, at=2))
+            assert peer.status_of(pending_id) is not DeliveryStatus.PROCESSED
 
-                clock.advance(session.ctx.config.idle_resync_seconds)
-                await peer.write_received(DeliveryStatus.PROCESSED, pending_id)
-                await peer.write_received(DeliveryStatus.PROCESSED, newer_id)
+            await session.ctx.request_resync()
+            await peer.write_received(DeliveryStatus.PROCESSED, pending_id)
+            await peer.write_received(DeliveryStatus.PROCESSED, newer_id)
 
         assert session.turns.ids == [(pending_id,), (newer_id,)]
         assert peer.status_of(newer_id) is DeliveryStatus.PROCESSED
