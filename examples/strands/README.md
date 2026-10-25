@@ -1,16 +1,39 @@
-# Strands Agents Examples for Band
+# Strands Agents on Band
 
-Examples for running [AWS Strands Agents](https://strandsagents.com) on the Band
-platform through `StrandsAdapter`.
+`StrandsAdapter` runs an [AWS Strands Agents](https://strandsagents.com) agent as a participant in
+Band chat rooms, alongside humans and other agents. You bring the model, tools, and prompt; the SDK
+owns the WebSocket subscription, wakes the agent when it is @mentioned, loads that room's history
+at session start by default, and offers Band's chat tools — send a message, look up peers, manage
+participants — to the model next to your own.
+
+```bash
+pip install "band-sdk[strands]"   # or: uv add "band-sdk[strands]"
+```
+
+```python notest
+from band import Agent
+from band.adapters import StrandsAdapter, StrandsAdapterConfig
+from strands.models.openai_responses import OpenAIResponsesModel
+
+adapter = StrandsAdapter(
+    StrandsAdapterConfig(custom_section="You are a helpful assistant."),
+    llm=OpenAIResponsesModel(model_id="gpt-6-luna"),
+)
+async with Agent.from_config("strands_agent", adapter=adapter) as agent:
+    await agent.run_forever()  # inside async def main(); see 01_basic_agent.py
+```
 
 ## Prerequisites
 
-1. **Dependencies** — `uv sync --extra strands` (or `pip install band-sdk[strands]`)
-2. **Band platform** — a registered agent plus `BAND_WS_URL` / `BAND_REST_URL`
+1. **Dependencies** — `uv sync --extra strands` (or `pip install "band-sdk[strands]"`)
+2. **A Band agent** — sign in to [Band](https://app.band.ai), create a remote agent, and copy its
+   UUID and API key. `BAND_REST_URL` / `BAND_WS_URL` default to Band Cloud; set them only for a
+   self-hosted deployment
 3. **Model credentials** — for these examples `OPENAI_API_KEY`, except
    `05_bedrock_model.py`, which needs AWS credentials with Bedrock access
-4. **`agent_config.yaml`** — copy `agent_config.yaml.example` from the repo root and
-   fill in `strands_agent` (and `tom_agent` / `jerry_agent` for the character pair)
+4. **`agent_config.yaml`** — copy `agent_config.yaml.example` from the repo root and fill
+   `strands_agent` with the UUID and key from step 2 (and `tom_agent` / `jerry_agent` for the
+   character pair)
 
 ## Picking a model
 
@@ -69,7 +92,7 @@ StrandsAdapter(
 The adapter registers the Band platform tools itself; a custom tool may not reuse
 one of their names. Band owns per-room history: the transcript is converted into
 Strands `Message` dicts, seeded into a fresh `Agent` per turn, and read back after
-it, so a restart rehydrates from the room.
+it. With context hydration enabled, a restart reloads that history from the room.
 
 ## Running
 
