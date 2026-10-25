@@ -9,7 +9,6 @@ from tests.platform.settlement.kit import ROOM_ID
 from tests.runtime.recovery.kit import (
     CONTROL,
     FOLLOWER,
-    RESYNC_SECONDS,
     TURNS,
     Ending,
     Entrance,
@@ -18,8 +17,6 @@ from tests.runtime.recovery.kit import (
     Route,
 )
 from tests.runtime.recovery.preparation import ROOM_PREPARATIONS, RoomPreparation
-
-pytestmark = pytest.mark.looptime
 
 
 @pytest.mark.parametrize(("shape", "ending"), TURNS)
@@ -31,11 +28,11 @@ class TestReplacementScheduling:
     ) -> None:
         harness.peer.fail_terminals(fault, *harness.members)
         await harness.start(Route.BACKLOG)
-        await harness.advance(RESYNC_SECONDS)
         await prepare_room(harness)
 
         harness.peer.post(CONTROL)
-        await harness.advance(RESYNC_SECONDS)
+        await harness.ctx.request_resync()
+        await harness.control_settled(CONTROL)
 
         assert harness.adapter.controls == [CONTROL]
         assert harness.adapter.turns == [harness.members]
@@ -51,7 +48,6 @@ class TestReplacementScheduling:
     ) -> None:
         harness.peer.fail_terminals(fault, *harness.members)
         await harness.start(Route.BACKLOG)
-        await harness.advance(RESYNC_SECONDS)
         await prepare_room(harness)
 
         harness.peer.post(FOLLOWER)
