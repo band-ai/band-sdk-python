@@ -413,7 +413,8 @@ include-package-data = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
-addopts = "-v"
+# Fail fast on an unregistered marker or an unknown ini key.
+addopts = "-v --strict-markers --strict-config"
 # Global safety net: catch runaway unit tests. Integration and E2E tests
 # override to 120s via pytest_collection_modifyitems in their conftest.
 timeout = 30

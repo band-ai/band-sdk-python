@@ -80,7 +80,7 @@ explicit user approval.
 | Skill | Use when |
 |---|---|
 | [band-python-conventions](.claude/skills/band-python-conventions/SKILL.md) | Python source, comments, docstrings, and error handling |
-| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing/reviewing tests; complementary branches not line counts; intent assertions; seams not patches; no wall-clock proof |
+| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing/reviewing any test (non-live unit tests included); before-writing gate and before-finishing checklist; complementary branches not line counts; intent assertions; seams not patches; non-live isolation; no wall-clock proof |
 
 | Skill | Use when |
 |---|---|
@@ -595,10 +595,10 @@ The readiness review checks the actual diff and relevant existing tests:
 - **Implementation complete:** the diff solves the cause or need at its
   authoritative boundary, is focused and maintainable, and has no known
   blocking defects or unfinished in-scope work hidden as follow-ups.
-- **Coverage meaningful:** apply the test-conventions skill's "Coverage and
-  realistic flows" guidance. Map important scenarios to assertions, include
-  relevant complex interactions and failure/recovery paths, and close material
-  in-scope gaps. Passing tests and coverage percentages alone are insufficient.
+- **Coverage meaningful:** apply the test-conventions skill's
+  [coverage guidance](.claude/skills/band-python-test-conventions/SKILL.md#coverage-is-branches-not-lines).
+  Map important scenarios to assertions, include relevant complex
+  interactions and failure/recovery paths, and close material in-scope gaps. Passing tests and coverage percentages alone are insufficient.
 - **Validation evidenced:** the applicable author checks from the Pre-Commit
   Checklist passed for the implementation being reviewed. Record the reviewed
   head, checks and outcomes, scenario coverage, and material limitations in

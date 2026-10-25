@@ -1,6 +1,6 @@
 ---
 name: band-python-test-conventions
-description: Band Python SDK test conventions and coverage assessment. Use when writing or reviewing tests, assessing whether changed behavior is adequately covered, or checking that tests validate meaningful outcomes and realistic complex flows. Also use when a test asserts internals, patches private names, waits on wall-clock grace, branches on scenario inside the test, or reports line coverage instead of complementary branches.
+description: Band Python SDK test conventions and coverage assessment. Use when writing, extending, or reviewing any test (unit, adapter, converter, conformance, runtime, or E2E), assessing whether changed behavior is adequately covered, or checking that tests validate meaningful outcomes and realistic complex flows. Also use when a test asserts internals, patches private names, sleeps, depends on run order, uses unittest.TestCase, branches on scenario inside the test, or reports line coverage instead of complementary branches.
 paths:
   - "tests/**/*.py"
   - "src/**/*.py"
@@ -10,6 +10,50 @@ paths:
 
 `band-python-conventions` still applies: single source of truth, intent-named
 helpers, and no mixed-concern files. This skill is the extra bar for tests.
+Live E2E authoring follows `band-write-e2e-test` on top of this skill.
+
+Rules marked **(non-live)** apply to tests that run in the CI unit job
+(everything outside `tests/e2e/` and `tests/integration/`). All other rules
+apply to every test.
+
+## Before writing
+
+Do this before the first line of test code:
+
+1. **Name the decisions** the change owns and each one's reachable outcomes,
+   including the complementary pairs ([coverage](#coverage-is-branches-not-lines)).
+2. **Find what exists.** Search for a test that already covers the behavior
+   and extend or parametrize it rather than duplicating it. Reuse the nearest
+   `conftest.py` fixtures, the package `kit.py` doubles and peers, and the
+   shared modules in `tests/` (`paths.py`, `ports.py`, `identifiers.py`, ...).
+3. **Pick the boundary.** Decide which real components the test drives and
+   where the single double sits ([real boundary](#drive-the-real-boundary-inject-dont-patch)).
+4. **Decide what correct looks like** before running the code.
+
+## Before finishing
+
+Re-read the test diff against this list. Report each item as held or not
+applicable; fix what does not hold.
+
+- [ ] Every claimed decision outcome maps to a named test; unexamined outcomes
+      are reported ([coverage](#coverage-is-branches-not-lines)).
+- [ ] Assertions compare the whole observable outcome with plain `assert`; no
+      `TestCase`, no `self.assert*`, no popped or filtered fields
+      ([assertions](#assertions-show-intent-not-plumbing-or-assumptions)).
+- [ ] One `class Test...` per file, one claim per test, no in-test branching;
+      variations use `@pytest.mark.parametrize`
+      ([one concern](#one-concern-per-test-no-in-test-branching)).
+- [ ] Only external boundaries are doubled; no `patch` of a name the repo owns
+      ([real boundary](#drive-the-real-boundary-inject-dont-patch)).
+- [ ] No `time.sleep`, no grace-period `asyncio.sleep`; deadlines use
+      `looptime` ([time](#time-is-a-hung-test-guard-not-proof)).
+- [ ] **(non-live)** Passes under xdist and any `pytest-randomly` order; no
+      shared mutable state, no live network, every started task awaited or
+      cancelled ([isolation](#isolation-non-live)).
+- [ ] Runs on Ubuntu and Windows without an OS skip
+      ([OS](#tests-run-on-ubuntu-and-windows-ci)).
+- [ ] Paths come from `tests/paths.py`; a bug fix has a test that fails
+      before it ([paths, bugs, skips](#paths-bugs-skips)).
 
 ## Coverage is branches, not lines
 
@@ -70,6 +114,17 @@ If writing the assertion requires re-deriving *how* the code decided
 something, the test is checking the wrong thing — assert the decision
 itself.
 
+Use plain `assert actual == expected` so pytest's rewriting shows the diff.
+Never subclass `unittest.TestCase` or call `self.assert*`; `unittest.mock`
+doubles at external boundaries remain fine.
+
+Compare the whole expected value, not a cleaned-up copy. Do not pop,
+extract, or skip unpredictable fields before comparing. When the test
+already controls the value (a fake peer, a fixture, `looptime`), make the
+expectation exact. Otherwise put `mock.ANY` on that one field inside the
+full comparison and keep every other field exact. Do not add product seams
+only to make a value predictable.
+
 Do not assert an assumption the test does not own. Drop empty-collection
 checks on a mapping test that is about session keys, tautologies such as
 Windows `(None, None)`, and "observer stayed empty" when the claim is
@@ -89,22 +144,31 @@ Each `test_*.py` holds exactly one `class Test...` named for the behavior it
 covers — no module-level test functions and no helper classes beside it.
 When a suite outgrows one file, make it a package: `conftest.py` for
 fixtures, a plain helper module (`kit.py`, a Hypothesis `lifecycle.py`) for
-shared doubles, and one test file per concern.
+shared doubles, and one test file per concern. Keep domain fixtures in the
+package's own `conftest.py`; the root `tests/conftest.py` holds only what
+the whole suite shares.
 
 A helper module in that package is not a collected test. Its module
 docstring names the role (kit, peer, lifecycle model). It does not define a
 `Test*` class. The collected test that *plays* a Hypothesis model lives in
 `test_lifecycle_model.py` (see `tests/platform/linkclose/test_lifecycle_model.py`).
 
+Set up and tear down with fixtures and context managers (`yield` fixtures,
+`async with`), not `setUp`/`tearDown` methods. Express intent with markers
+and decorators; every marker must be registered in `pyproject.toml`
+(`--strict-markers`).
+
 One test function, one claim. Parametrize `(scenario, error)` so each row's
-assertion *is* the claim. A long test that dispatches with `if scenario !=
-"aborted"` or `if os.name == "nt": return` is several tests hiding in one
-function; split them.
+assertion *is* the claim; use `@pytest.mark.parametrize` rather than
+duplicate tests or a loop over cases inside one test. A long test that
+dispatches with `if scenario != "aborted"` or `if os.name == "nt": return`
+is several tests hiding in one function; split them.
 
 Wire statuses, prompt texts, and error messages belong to one named constant
 or enum that the peer, the product, and the assertion all reference. A
 hard-coded `"complete"` / `"Approve"` in the test is a second copy of a
-closed vocabulary.
+closed vocabulary. Shared input tables (such as `tests/identifiers.py`) and
+Hypothesis strategies, not ad hoc literals, supply varied input data.
 
 ## Drive the real boundary; inject, don't patch
 
@@ -113,6 +177,10 @@ that preserves the behavior under test. Use realistic peers or fakes at
 external boundaries; do not mock away the interaction whose correctness the
 test claims to prove.
 
+- Never mock a class or function the repo owns. When a real dependency is
+  too heavy, build an in-memory fake with working behavior (stores what it
+  is given, answers from that state) in the package `kit.py`, not a stub
+  that returns canned values.
 - A constructor seam (`create_process=`) or a public instance timeout of `0`
   ("check now / no grace") is the test hook. `unittest.mock.patch` of
   `asyncio.create_subprocess_exec`, a private `_close_process`, or a
@@ -121,8 +189,25 @@ test claims to prove.
   *takes*), not a stand-in for the unit under test. A receipt-table test may
   mock the RPC client; it then does not count as coverage of the client's
   prompt path.
+- Double HTTP at the transport with `pytest-httpx` (`httpx_mock`) or
+  `httpx.MockTransport`. Its defaults fail the test on an unexpected request
+  and on a registered response that was never requested; keep them.
 - Use the baseline toolkit for needed live E2E coverage, not as a mandatory
   layer for every test.
+
+## Isolation (non-live)
+
+The CI unit job runs `pytest -n 4 --dist worksteal` with `pytest-randomly`
+shuffling order and reseeding `random`. Every test must pass alone, in any
+order, and beside any other test on another worker.
+
+- Write files under `tmp_path`; never into the repo or a fixed `/tmp` path.
+- Bind servers through `tests/ports.py` (`HeldPort`, `HeldAdjacentPorts`),
+  not a fixed port.
+- No module-level mutable state shared between tests; build it in a fixture.
+- No live network. Doubles at the transport (above) or local peers only.
+- Await or cancel every task, process, and server the test starts, including
+  on failure, before the test ends (`AGENTS.md` "Test Synchronization").
 
 ## Time is a hung-test guard, not proof
 
@@ -131,18 +216,21 @@ lifecycle behavior with events, gates, barriers, observable state transitions,
 and awaited completion (`AGENTS.md` "Test Synchronization").
 
 **A controlled clock belongs only in tests whose claim is specifically
-“this deadline expires.”** Do not introduce timers or advance time merely to
-make work run, establish ordering, or prove cleanup. In a deadline-expiry
-test, establish the relevant wait before deliberately advancing the clock.
-Never use elapsed wall time, `asyncio.sleep` of a grace period, or "it
-finished within a duration" as proof.
+“this deadline expires.”** The repo's controlled clock is `looptime`
+(`@pytest.mark.looptime`), which runs the event loop on virtual time. Do not
+introduce timers or advance time merely to make work run, establish
+ordering, or prove cleanup. In a deadline-expiry test, establish the
+relevant wait before deliberately advancing the clock. Never use
+`time.sleep`, elapsed wall time, `asyncio.sleep` of a grace period, or "it
+finished within a duration" as proof. A fake that must hang until cancelled
+awaits an `asyncio.Event` that is never set, not a long sleep.
 
 - `async with asyncio.timeout(N)` around a test is a hung-test guard. It
   must not be the mechanism that establishes the outcome.
 - To prove a timeout fail-closed path, use a public timeout of `0` when its
   contract supports "check now". When the claim requires deadline expiry,
-  use a controlled clock. Do not change validation to permit `0` or wait
-  out the production grace period.
+  use `looptime`. Do not change validation to permit `0` or wait out the
+  production grace period.
 - `timeout = 0` proves "still pending at the wait". It does not prove the
   complementary branch: work that finishes before the wait succeeds. Cover
   that with a sequence that completes, not with a longer sleep.
