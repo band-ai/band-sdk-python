@@ -17,8 +17,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from contextvars import Context
+from contextvars import Context, ContextVar
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, TypeVar
 
 from band.core.exceptions import BandError
@@ -29,7 +30,7 @@ T = TypeVar("T")
 
 
 class NestedMailboxAsk(BandError):
-    """The room worker asked itself and would wait forever."""
+    """A room job waited for work queued behind itself."""
 
 
 class MailboxClosing(BandError):
@@ -51,6 +52,11 @@ class MailboxRoom:
     closing: bool = False
 
 
+_current_job: ContextVar[MailboxJob | None] = ContextVar(
+    "room_mailbox_current_job", default=None
+)
+
+
 class RoomMailbox:
     """FIFO worker per room; closing drains work and temporarily rejects arrivals."""
 
@@ -66,7 +72,7 @@ class RoomMailbox:
         if room.worker is me:
             return True
         current = room.current
-        return current is not None and current.running is me
+        return current is not None and _current_job.get() is current
 
     def cast(self, room_id: str, run: Callable[[], Awaitable[None]]) -> None:
         """Enqueue ``run`` and return immediately, or raise while closing."""
@@ -75,15 +81,23 @@ class RoomMailbox:
     def spawn(
         self, room_id: str, run: Callable[[], Awaitable[None]]
     ) -> asyncio.Future[None]:
-        """Enqueue ``run`` and return a future, or raise while closing."""
+        """Enqueue ``run`` and return a future, or raise when it cannot run safely.
+
+        Use ``cast`` to enqueue unobserved work from the room's own job.
+        """
+        if self.occupying(room_id):
+            raise NestedMailboxAsk(
+                f"Room {room_id} mailbox cannot spawn from its own job and would wait forever"
+            )
         future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        self._submit(room_id, run, result=future)
+        job = self._submit(room_id, run, result=future)
+        future.add_done_callback(partial(self._abandon_cancelled_spawn, job))
         return future
 
     async def ask(self, room_id: str, run: Callable[[], Awaitable[T]]) -> T:
         """Enqueue ``run`` and wait for its result.
 
-        Raises ``NestedMailboxAsk`` from this room's worker and ``MailboxClosing``
+        Raises ``NestedMailboxAsk`` from this room's job and ``MailboxClosing``
         while this room's worker is draining. Cancelling the waiter cancels the
         in-flight job.
         """
@@ -113,7 +127,7 @@ class RoomMailbox:
             await room.queue.put(None)
         worker = room.worker
         if worker is not None:
-            await worker
+            await asyncio.shield(worker)
 
     def _submit(
         self,
@@ -147,6 +161,11 @@ class RoomMailbox:
         elif job.result is not None and not job.result.done():
             job.result.cancel()
 
+    @staticmethod
+    def _abandon_cancelled_spawn(job: MailboxJob, future: asyncio.Future[Any]) -> None:
+        if future.cancelled():
+            RoomMailbox._abandon(job)
+
     async def _run(self, room_id: str, room: MailboxRoom) -> None:
         try:
             while True:
@@ -172,7 +191,11 @@ class RoomMailbox:
             return
 
         async def run_job() -> Any:
-            return await job.run()
+            token = _current_job.set(job)
+            try:
+                return await job.run()
+            finally:
+                _current_job.reset(token)
 
         room.current = job
         job.running = asyncio.create_task(run_job())

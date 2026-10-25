@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.runtime.mailbox import RoomMailbox
+from band.runtime.mailbox import NestedMailboxAsk, RoomMailbox
 
 
 class TestSpawn:
@@ -42,4 +42,43 @@ class TestSpawn:
             await future
 
         assert raised.value is error
+        await mailbox.close("room-1")
+
+    async def test_future_cancellation_cancels_the_job_and_releases_the_worker(
+        self,
+    ) -> None:
+        mailbox = RoomMailbox()
+        entered = asyncio.Event()
+        cancelled = asyncio.Event()
+        release = asyncio.Event()
+
+        async def job() -> None:
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        future = mailbox.spawn("room-1", job)
+        await entered.wait()
+        future.cancel()
+
+        await cancelled.wait()
+        assert future.cancelled()
+
+        async def next_job() -> str:
+            return "next"
+
+        assert await mailbox.ask("room-1", next_job) == "next"
+        await mailbox.close("room-1")
+
+    async def test_spawn_from_its_room_job_raises(self) -> None:
+        mailbox = RoomMailbox()
+
+        async def nested() -> None:
+            await mailbox.spawn("room-1", lambda: asyncio.sleep(0))
+
+        with pytest.raises(NestedMailboxAsk, match="would wait forever"):
+            await mailbox.ask("room-1", nested)
         await mailbox.close("room-1")

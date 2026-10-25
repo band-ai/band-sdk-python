@@ -85,3 +85,47 @@ class TestClose:
         with pytest.raises(NestedMailboxAsk, match="cannot close"):
             await mailbox.ask("room-1", closing)
         await mailbox.close("room-1")
+
+    async def test_cancelling_close_does_not_cancel_the_running_job(self) -> None:
+        mailbox = RoomMailbox()
+        entered = asyncio.Event()
+        cancelled = asyncio.Event()
+        release = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def occupied() -> str:
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            finished.set()
+            return "finished"
+
+        waiting = asyncio.create_task(mailbox.ask("room-1", occupied))
+        await entered.wait()
+        closing_started = asyncio.Event()
+
+        async def close_room() -> None:
+            closing_started.set()
+            await mailbox.close("room-1")
+
+        closing = asyncio.create_task(close_room())
+        await closing_started.wait()
+
+        async def rejected() -> None:
+            raise AssertionError("a rejected job must not run")
+
+        with pytest.raises(MailboxClosing):
+            mailbox.cast("room-1", rejected)
+
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert not cancelled.is_set()
+
+        release.set()
+        assert await waiting == "finished"
+        assert finished.is_set()
+        await mailbox.close("room-1")
