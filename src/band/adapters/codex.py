@@ -101,7 +101,7 @@ from band.integrations.codex.types import (
     build_agent_failure,
     parse_plan_steps,
 )
-from band.runtime.activity import set_permission_wait
+from band.runtime.activity import permission_wait
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_to_openai_schema,
@@ -3256,91 +3256,94 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 room_id,
                 self.config.max_pending_approvals_per_room,
             )
-        try:
-            await set_permission_wait(tools, True)
-            approval_msg = APPROVAL_REQUESTED_TEMPLATE.format(
-                summary=summary, token=token
-            )
-            # Emit enriched metadata as a task event for UI rendering
-            if Emit.TASK_EVENTS in self.features.emit:
-                approval_metadata: dict[str, Any] = {
-                    "codex_event_type": "approval_request",
-                    "codex_approval_type": self._approval_type(event.method),
-                    "codex_approval_method": event.method,
-                    "codex_room_id": room_id,
-                    "codex_approval_options": [
-                        "accept",
-                        "acceptForSession",
-                        "decline",
-                    ],
-                }
-                if params.get("command"):
-                    approval_metadata["codex_command"] = params["command"]
-                if params.get("cwd"):
-                    approval_metadata["codex_cwd"] = params["cwd"]
-                if params.get("reason"):
-                    approval_metadata["codex_reason"] = params["reason"]
-                # Network context (domains, IPs) when available
-                net_ctx = params.get("networkContext") or params.get("network_context")
-                if net_ctx:
-                    approval_metadata["codex_network_context"] = net_ctx
-                await send_event_safe(
-                    tools,
-                    content=self._build_task_event_content(
-                        task_id=token,
-                        task="Codex approval request",
-                        status="pending",
-                        summary=summary,
-                    ),
-                    message_type="task",
-                    metadata=approval_metadata,
-                    log_label="approval request task event",
-                    log_level=logging.DEBUG,
-                )
+        with permission_wait(tools):
             try:
-                await tools.send_notice(approval_msg, mentions=mention)
-            except Exception:
-                logger.exception(
-                    "Failed to notify room %s about pending approval %s",
-                    room_id,
-                    token,
+                approval_msg = APPROVAL_REQUESTED_TEMPLATE.format(
+                    summary=summary, token=token
                 )
-                # A reply that claimed it meanwhile (its id is in the task
-                # event above) owns the answer; wait for it below.
-                if registry.withdraw(entry):
-                    # The room was never notified, so waiting out the full
-                    # approval_wait_timeout_s would misreport a Band delivery
-                    # hiccup as a human-decision timeout. Re-raise (rather
-                    # than returning "decline") so the caller attributes it
-                    # to "system_fallback" instead of the human sender.
-                    await tools.send_failure(
-                        AgentFailure(
-                            CODEX_PROVIDER,
-                            "Failed to notify the room about a pending approval "
-                            "request; defaulting to decline.",
-                        )
+                # Emit enriched metadata as a task event for UI rendering
+                if Emit.TASK_EVENTS in self.features.emit:
+                    approval_metadata: dict[str, Any] = {
+                        "codex_event_type": "approval_request",
+                        "codex_approval_type": self._approval_type(event.method),
+                        "codex_approval_method": event.method,
+                        "codex_room_id": room_id,
+                        "codex_approval_options": [
+                            "accept",
+                            "acceptForSession",
+                            "decline",
+                        ],
+                    }
+                    if params.get("command"):
+                        approval_metadata["codex_command"] = params["command"]
+                    if params.get("cwd"):
+                        approval_metadata["codex_cwd"] = params["cwd"]
+                    if params.get("reason"):
+                        approval_metadata["codex_reason"] = params["reason"]
+                    # Network context (domains, IPs) when available
+                    net_ctx = params.get("networkContext") or params.get(
+                        "network_context"
                     )
-                    raise
-
-            self._release_turn(room_id, tools)
-            async with registry.answering(
-                entry, pending.future, timeout_s=self.config.approval_wait_timeout_s
-            ) as decision:
-                if decision is Timeout.TIMED_OUT:
-                    decision = self.config.approval_timeout_decision
-                    try:
-                        await tools.send_notice(
-                            APPROVAL_TIMED_OUT_TEMPLATE.format(
-                                token=token, decision=decision
-                            ),
-                            mentions=mention,
+                    if net_ctx:
+                        approval_metadata["codex_network_context"] = net_ctx
+                    await send_event_safe(
+                        tools,
+                        content=self._build_task_event_content(
+                            task_id=token,
+                            task="Codex approval request",
+                            status="pending",
+                            summary=summary,
+                        ),
+                        message_type="task",
+                        metadata=approval_metadata,
+                        log_label="approval request task event",
+                        log_level=logging.DEBUG,
+                    )
+                try:
+                    await tools.send_notice(approval_msg, mentions=mention)
+                except Exception:
+                    logger.exception(
+                        "Failed to notify room %s about pending approval %s",
+                        room_id,
+                        token,
+                    )
+                    # A reply that claimed it meanwhile (its id is in the task
+                    # event above) owns the answer; wait for it below.
+                    if registry.withdraw(entry):
+                        # The room was never notified, so waiting out the full
+                        # approval_wait_timeout_s would misreport a Band delivery
+                        # hiccup as a human-decision timeout. Re-raise (rather
+                        # than returning "decline") so the caller attributes it
+                        # to "system_fallback" instead of the human sender.
+                        await tools.send_failure(
+                            AgentFailure(
+                                CODEX_PROVIDER,
+                                "Failed to notify the room about a pending approval "
+                                "request; defaulting to decline.",
+                            )
                         )
-                    except Exception:
-                        logger.exception("Failed to send approval timeout notification")
-                yield decision
-        finally:
-            self._clear_pending_approval(room_id, entry)
-            await set_permission_wait(tools, bool(self._pending_approvals.get(room_id)))
+                        raise
+
+                self._release_turn(room_id, tools)
+                async with registry.answering(
+                    entry, pending.future, timeout_s=self.config.approval_wait_timeout_s
+                ) as decision:
+                    if decision is Timeout.TIMED_OUT:
+                        decision = self.config.approval_timeout_decision
+                        try:
+                            await tools.send_notice(
+                                APPROVAL_TIMED_OUT_TEMPLATE.format(
+                                    token=token, decision=decision
+                                ),
+                                mentions=mention,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Failed to send approval timeout notification"
+                            )
+                    yield decision
+            finally:
+                self._clear_pending_approval(room_id, entry)
 
     async def _forward_raw_task_event(
         self,

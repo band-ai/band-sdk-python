@@ -27,6 +27,7 @@ from band.core.types import MessageType
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
+from band.integrations.omprpc.custody import process_is_alive
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
     OmpCommandName,
@@ -49,7 +50,6 @@ from tests.integrations.omppermissionpeer import (
     NATIVE_EVENT_ID,
     NATIVE_FAILURE_OUTPUT,
 )
-from tests.integrations.omprpc.kit import process_is_alive
 from tests.paths import REPO_ROOT
 
 

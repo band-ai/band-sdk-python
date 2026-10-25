@@ -3,7 +3,8 @@ observer a turn reports it through."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass, field
 from inspect import getattr_static
 from typing import Protocol
 
@@ -19,7 +20,7 @@ PERMISSION = AgentActivityDetail(kind="permission")
 class ActivityObserver(Protocol):
     async def update(self, activity: AgentActivityDetail) -> None: ...
 
-    async def set_manual_wait(self, waiting: bool) -> None: ...
+    def permission_wait(self) -> AbstractContextManager[None]: ...
 
 
 def tool_call_activity(name: str | None) -> AgentActivityDetail:
@@ -39,7 +40,20 @@ class TurnActivity:
     """What one turn is doing; a person's wait overrides its progress."""
 
     progress: AgentActivityDetail = REASONING
-    waiting: bool = False
+    _permission_owners: set[object] = field(default_factory=set, repr=False)
+
+    @property
+    def waiting(self) -> bool:
+        return bool(self._permission_owners)
+
+    def acquire_permission(self) -> object:
+        """Own one permission operation independently of other waits."""
+        owner = object()
+        self._permission_owners.add(owner)
+        return owner
+
+    def release_permission(self, owner: object) -> None:
+        self._permission_owners.discard(owner)
 
     @property
     def detail(self) -> AgentActivityDetail:
@@ -49,12 +63,9 @@ class TurnActivity:
         self,
         *,
         activity: AgentActivityDetail | None = None,
-        waiting: bool | None = None,
     ) -> None:
         if activity is not None:
             self.progress = names_only(activity)
-        if waiting is not None:
-            self.waiting = waiting
 
 
 def activity_observer_of(tools: object) -> ActivityObserver | None:
@@ -67,6 +78,7 @@ def activity_observer_of(tools: object) -> ActivityObserver | None:
     return getattr(tools, "_activity_observer", None)
 
 
-async def set_permission_wait(tools: object, waiting: bool) -> None:
-    if observer := activity_observer_of(tools):
-        await observer.set_manual_wait(waiting)
+def permission_wait(tools: object) -> AbstractContextManager[None]:
+    """Keep permission activity on the turn captured by these tools."""
+    observer = activity_observer_of(tools)
+    return observer.permission_wait() if observer is not None else nullcontext()

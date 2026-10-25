@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Protocol, TypeVar
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
 
-from band.runtime.activity import ActivityObserver
+from band.runtime.activity import ActivityObserver, TurnActivity
 
 
 class ObservableTools(Protocol):
@@ -29,6 +31,7 @@ class ActivityRecorder:
 
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
+        self.activity = TurnActivity()
 
     def observing(self, tools: _Tools) -> _Tools:
         """Bind this recorder as the turn observer of ``tools``."""
@@ -36,16 +39,26 @@ class ActivityRecorder:
         return tools
 
     async def update(self, activity: AgentActivityDetail) -> None:
+        self.activity.apply(activity=activity)
         self.events.append(activity.model_dump(exclude_none=True))
 
-    async def set_manual_wait(self, waiting: bool) -> None:
-        self.events.append({"waiting": waiting})
+    @contextmanager
+    def permission_wait(self) -> Iterator[None]:
+        owner = self.activity.acquire_permission()
+        try:
+            self._record_wait()
+            yield
+        finally:
+            self.activity.release_permission(owner)
+            self._record_wait()
+
+    def _record_wait(self) -> None:
+        self.events.append({"waiting": self.waiting})
 
     @property
     def waiting(self) -> bool:
-        """Whether the last reported wait says a person is being waited on."""
-        waits = [event["waiting"] for event in self.events if "waiting" in event]
-        return bool(waits) and waits[-1]
+        """Whether any permission operation is still waiting."""
+        return self.activity.waiting
 
     def assert_completed_tool(self, name: str) -> None:
         assert self.events == [shown_tool(name), SHOWN_REASONING]

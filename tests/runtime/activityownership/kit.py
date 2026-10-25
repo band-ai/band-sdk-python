@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 import httpx
@@ -11,7 +11,7 @@ import httpx
 from band.core.turn_lifecycle import TurnTask, bind_turn_task
 from band.platform.activity import API_VERSION_HEADER
 from band.platform.event import MessageEvent, PlatformEvent
-from band.runtime.activity import set_permission_wait
+from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.toolactivity import (
@@ -50,9 +50,8 @@ async def past_a_keep_alive() -> None:
 
 async def report_every_kind(tools: object) -> None:
     await report_tool_activity(tools, "Bash")
-    await set_permission_wait(tools, True)
-    await report_memory_activity(tools)
-    await set_permission_wait(tools, False)
+    with permission_wait(tools):
+        await report_memory_activity(tools)
     await end_tool_activity(tools)
 
 
@@ -99,7 +98,7 @@ class ActivityPlatform(LifecyclePlatform):
         """Wait for the platform to receive one more activity body."""
         return await self.body_at(len(self.activity_bodies))
 
-    async def shown(self, observation: Awaitable[None]) -> None:
+    async def shown(self, observation: Awaitable[None] | Callable[[], None]) -> None:
         """Make a visible change and wait until the platform has received it.
 
         Assumes looptime: under real time every change would look late. A body
@@ -110,7 +109,10 @@ class ActivityPlatform(LifecyclePlatform):
         loop = asyncio.get_running_loop()
         index = len(self.activity_bodies)
         observed_at = loop.time()
-        await observation
+        if callable(observation):
+            observation()
+        else:
+            await observation
         body = await self.body_at(index)
         if waited := loop.time() - observed_at:
             self.late_changes.append((body, waited))
