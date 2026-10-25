@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from collections import deque
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from functools import partial
+from pathlib import Path
 
 from pydantic import JsonValue
 
 from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
+    OmpCommandName,
     OmpContent,
     OmpContentKind,
     OmpFrameType,
@@ -22,6 +25,7 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 from band.runtime.mailbox import RoomMailbox
+from tests.adapters.hold import Hold
 from tests.integrations.omprpc import callbackpeer
 from tests.integrations.omprpc.callbackpeer import (
     CALLBACK_ID,
@@ -30,6 +34,16 @@ from tests.integrations.omprpc.callbackpeer import (
 )
 
 ROOM = "callback-identity"
+
+
+async def held_prompt_admission(
+    mailbox: RoomMailbox, hold: Hold, write: Callable[[], Awaitable[None]]
+) -> None:
+    async def admitted() -> None:
+        await hold.wait()
+        await write()
+
+    await mailbox.ask(ROOM, admitted)
 
 
 class CallbackGate:
@@ -96,10 +110,13 @@ class ImmediateCallbacks:
 
 @asynccontextmanager
 async def callback_client(
-    kind: CallbackKind, scheduled: bool
+    kind: CallbackKind, scheduled: bool, *, transcript: Path | None = None
 ) -> AsyncGenerator[OmpRpcClient]:
     mailbox = RoomMailbox()
-    client = OmpRpcClient((sys.executable, "-u", "-m", callbackpeer.__name__, kind))
+    command = [sys.executable, "-u", "-m", callbackpeer.__name__, kind]
+    if transcript is not None:
+        command.extend(("--transcript", str(transcript)))
+    client = OmpRpcClient(command)
     try:
         await client.start()
         if scheduled:
@@ -110,6 +127,17 @@ async def callback_client(
             await client.close()
         finally:
             await mailbox.close(ROOM)
+
+
+def received_commands(transcript: Path) -> list[OmpCommandName]:
+    frames = [
+        json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines()
+    ]
+    return [
+        OmpCommandName(frame["type"])
+        for frame in frames
+        if frame["type"] in (OmpCommandName.PROMPT, OmpCommandName.SET_MODEL)
+    ]
 
 
 def callback_results(frames: list[dict[str, JsonValue]]) -> list[str]:

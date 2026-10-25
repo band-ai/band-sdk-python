@@ -9,7 +9,7 @@ import pytest
 
 from band.runtime.tools import AgentTools
 from tests.adapters.hold import Hold
-from tests.runtime.activityownership.kit import ActivityPlatform
+from tests.adapters.lifecycle.runtime import ReplyingPlatform
 from tests.runtime.helpers import ALICE, rest_client_over
 
 
@@ -19,8 +19,8 @@ def native_startup_ready() -> None:
 
 
 @pytest.fixture
-def platform() -> ActivityPlatform:
-    return ActivityPlatform()
+def platform() -> ReplyingPlatform:
+    return ReplyingPlatform()
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def participants_request() -> Iterator[Hold]:
 
 @pytest.fixture
 async def tools(
-    platform: ActivityPlatform, participants_request: Hold
+    platform: ReplyingPlatform, participants_request: Hold
 ) -> AsyncIterator[AgentTools]:
     async def respond(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/participants"):

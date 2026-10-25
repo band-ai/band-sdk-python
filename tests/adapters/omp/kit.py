@@ -28,6 +28,7 @@ from band.core.types import Emit, MessageType
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
+from band.integrations.omprpc.client import OmpScheduler
 from band.integrations.omprpc.custody import process_is_alive
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
@@ -45,6 +46,7 @@ from band.integrations.ompwire import (
 from band.runtime.tools import ToolCallOutcome
 from band.testing import FakeAgentTools, reported_failures
 from band.testing.fake_tools import events_of_type
+from tests.framework_conformance.turnprobes.omp import admit_prompt
 from tests.integrations.acp.conftest import make_platform_message
 from tests.integrations.omppermissionpeer import (
     DENIED_PATH,
@@ -102,7 +104,24 @@ class PendingRuntime:
             return {"enabled": True}
         return {}
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _write_prompt(self, _message: str) -> None:
+        return None
+
+    async def prompt(
+        self,
+        _message,
+        *,
+        on_event,
+        on_tool,
+        on_ui,
+        schedule_admission: OmpScheduler | None = None,
+    ):
+        await admit_prompt(schedule_admission, partial(self._write_prompt, _message))
+        await self._prompt_body(
+            _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+        )
+
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         self.yielded.set()
         await self.finish.wait()
         if self.reply:
@@ -203,10 +222,9 @@ class RecordingRuntime(PendingRuntime):
             return state
         return await super().request(command, **parameters)
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _write_prompt(self, _message: str) -> None:
         self.prompt_text = _message
         self.models_at_prompt += (self.model,)
-        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
 
 
 class SelectionGateRuntime(RecordingRuntime):
@@ -266,7 +284,7 @@ class HostToolCallRuntime(RecordingRuntime):
         self.call = call
         self.tool_result: OmpToolResult | None = None
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         self.tool_result = await on_tool(self.call)
         self.prompt_text = _message
 
@@ -277,13 +295,15 @@ class UiRequestRuntime(RecordingRuntime):
         self.ui_request = ui_request
         self.response = None
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         self.response = await on_ui(self.ui_request)
-        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+        await super()._prompt_body(
+            _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+        )
 
 
 class WhitespaceMessageRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_event(
             OmpEvent(
                 type=OmpEventType.MESSAGE_END,
@@ -293,7 +313,7 @@ class WhitespaceMessageRuntime(PendingRuntime):
 
 
 class NonAssistantMessageRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_event(
             OmpEvent(
                 type=OmpEventType.MESSAGE_END,
@@ -303,7 +323,7 @@ class NonAssistantMessageRuntime(PendingRuntime):
 
 
 class ClosingThoughtAfterReplyRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_tool(
             OmpHostToolCall(
                 id="host-call",
@@ -328,14 +348,14 @@ class SameTaskCleanupRuntime(PendingRuntime):
         self.adapter: OmpAdapter | None = None
         self.cleaned_from_turn = False
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         assert self.adapter is not None
         await self.adapter.on_cleanup("room-123")
         self.cleaned_from_turn = True
 
 
 class FirstCloseFailsDeliveryRuntime(FirstCloseFailsRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         raise DeliveryFailedError(RuntimeError("delivery rejected"))
 
 
@@ -345,7 +365,7 @@ class HangAfterPromptRuntime(PendingRuntime):
         self.prompted = False
         self.hung = asyncio.Event()
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_tool(
             OmpHostToolCall(
                 id="host-call",
@@ -377,8 +397,10 @@ class LeftoverHostToolRuntime(BoomGetStateAfterReplyRuntime):
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
-        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
+        await super()._prompt_body(
+            _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+        )
 
         async def leftover_call() -> None:
             self.started.set()
@@ -420,7 +442,7 @@ class AutoEffectiveRuntime(RecordingRuntime):
 
 
 class StringMessageRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_event(
             OmpEvent(
                 type=OmpEventType.MESSAGE_END,
@@ -432,7 +454,7 @@ class StringMessageRuntime(PendingRuntime):
 
 
 class ThinkingBlockRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_event(
             OmpEvent(
                 type=OmpEventType.MESSAGE_END,
@@ -454,7 +476,7 @@ class UnencodableCallRuntime(PendingRuntime):
         super().__init__(*_args, **_kwargs)
         self.arguments = arguments
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_event(
             OmpEvent(
                 type=OmpEventType.TOOL_START,
@@ -489,7 +511,7 @@ class CustomHostToolRuntime(RecordingRuntime):
         self.arguments = {"text": "ping"} if arguments is None else arguments
         self.tool_result: OmpToolResult | None = None
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         self.tool_result = await on_tool(
             OmpHostToolCall(
                 id="call",
@@ -498,7 +520,9 @@ class CustomHostToolRuntime(RecordingRuntime):
                 arguments=self.arguments,
             )
         )
-        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+        await super()._prompt_body(
+            _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+        )
 
 
 class MismatchThinkingRuntime(RecordingRuntime):
@@ -510,12 +534,12 @@ class MismatchThinkingRuntime(RecordingRuntime):
 
 
 class CrashPromptRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         raise RuntimeError("provider crashed")
 
 
 class DeliveryCrashRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         raise DeliveryFailedError(RuntimeError("delivery rejected"))
 
 
@@ -524,7 +548,7 @@ class LiveTitleRuntime(PendingRuntime):
         super().__init__(*_args, **_kwargs)
         self.title = title
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_ui(
             OmpUIRequest(
                 id=NATIVE_EVENT_ID,
@@ -536,7 +560,7 @@ class LiveTitleRuntime(PendingRuntime):
 
 
 class PermissionThenReplyRuntime(RecordingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_ui(
             OmpUIRequest(
                 id="ui",
@@ -545,13 +569,15 @@ class PermissionThenReplyRuntime(RecordingRuntime):
                 options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
             )
         )
-        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+        await super()._prompt_body(
+            _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+        )
 
 
 class OtherTaskUiRuntime(PermissionThenReplyRuntime):
     """Dispatch UI on another task, matching OmpRpcClient._start_callback."""
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         request = OmpUIRequest(
             id="ui",
             method=OmpUIMethod.SELECT,
@@ -565,7 +591,7 @@ class OtherTaskUiRuntime(PermissionThenReplyRuntime):
             ui_task.cancel()
             await asyncio.gather(ui_task, return_exceptions=True)
             raise
-        await PendingRuntime.prompt(
+        await PendingRuntime._prompt_body(
             self, _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
         )
 
@@ -603,7 +629,7 @@ class LaterTurnReaderUiRuntime(RecordingRuntime):
             task.add_done_callback(partial(_complete_future_from_task, done))
             await done
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         self.prompts += 1
         if self.prompts >= 2:
             done = asyncio.get_running_loop().create_future()
@@ -615,7 +641,7 @@ class LaterTurnReaderUiRuntime(RecordingRuntime):
             )
             await self._jobs.put((on_ui, request, done))
             await done
-        await PendingRuntime.prompt(
+        await PendingRuntime._prompt_body(
             self, _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
         )
 
@@ -642,7 +668,7 @@ class SelectingResolver:
 
 
 class DocumentationRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_event(
             OmpEvent(
                 type=OmpEventType.TOOL_START,
@@ -670,7 +696,7 @@ class DocumentationRuntime(PendingRuntime):
 
 
 class RepeatedRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         request = OmpUIRequest(
             id=NATIVE_EVENT_ID, method=OmpUIMethod.SELECT, title="A question"
         )
@@ -812,7 +838,15 @@ async def owned_rpc_turn(
             )
             clients.append((self, peer_identity))
 
-        async def prompt(self, message, *, on_event, on_tool, on_ui):
+        async def prompt(
+            self,
+            message,
+            *,
+            on_event,
+            on_tool,
+            on_ui,
+            schedule_admission: OmpScheduler | None = None,
+        ):
             async def event(frame):
                 if frame.type in {OmpEventType.TOOL_START, OmpEventType.TOOL_END}:
                     observed.append(frame.type)
@@ -824,7 +858,13 @@ async def owned_rpc_turn(
                 observed.append(request.method)
                 return await on_ui(request)
 
-            await super().prompt(message, on_event=event, on_tool=on_tool, on_ui=ui)
+            await super().prompt(
+                message,
+                on_event=event,
+                on_tool=on_tool,
+                on_ui=ui,
+                schedule_admission=schedule_admission,
+            )
 
     def client_factory(*_args, env=None, **_kwargs):
         client = OrderingClient(
@@ -930,7 +970,7 @@ def remote(token: str) -> OmpMcpServer:
 class BandMcpReplyRuntime(PendingRuntime):
     """Replies through the Band MCP server mounted in the overlay, not a host tool."""
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         name = "mcp__band_sdk_band_send_message"
         args: dict[str, JsonValue] = {"content": "done"}
         await on_event(
@@ -1123,7 +1163,7 @@ def timeout_reports(tools) -> list[tuple[str, str | None]]:
 
 def failing_runtime(closing: asyncio.Event, finish_close: asyncio.Event):
     class FailingRuntime(PendingRuntime):
-        async def prompt(self, *_args, **_kwargs):
+        async def _prompt_body(self, *_args, **_kwargs):
             raise RuntimeError("native turn failed")
 
         async def close(self):

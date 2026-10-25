@@ -27,8 +27,10 @@ from tests.framework_conformance.stopprobes import (
     wait_until,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
+from tests.framework_conformance.turnprobes.omp import admit_prompt
 
 if TYPE_CHECKING:
+    from band.integrations.omprpc.client import OmpScheduler
     from band.integrations.ompwire import (
         OmpEvent,
         OmpHostToolCall,
@@ -71,7 +73,9 @@ class HeldOmpClient:
         on_event: Callable[[OmpEvent], Awaitable[None]],
         on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+        schedule_admission: OmpScheduler | None = None,
     ) -> None:
+        await admit_prompt(schedule_admission)
         del message, on_event, on_tool, on_ui
         self.prompting = True
         try:

@@ -13,7 +13,9 @@ from pytest import MonkeyPatch, raises
 
 from band.adapters.omp import OmpAdapter
 from band.core.model_catalog import ModelSelection
+from band.integrations.omprpc import OmpProcessError
 from band.testing import FakeAgentTools, reported_failures
+from tests.adapters.hold import Hold
 from tests.adapters.omp.kit import (
     Launches,
     PendingRuntime,
@@ -21,6 +23,7 @@ from tests.adapters.omp.kit import (
     claimed_workspace_rooms,
     run_turn,
 )
+from tests.adapters.omp.lifecyclekit import HeldWaiterMailbox
 from tests.adapters.omp.mailboxkit import (
     CallbackResolver,
     MailboxTools,
@@ -35,6 +38,8 @@ from tests.adapters.omp.mailboxpeer import (
     MODEL_PROVIDER,
     ORIGINAL_MODEL,
     PUBLIC_MODEL,
+    REJECTED_MODEL,
+    PeerCommand,
     model_reply,
 )
 from tests.adapters.omp.retirementkit import native_overlay
@@ -209,6 +214,7 @@ class NativeStep(StrEnum):
     TURN = auto()
     SELECT = auto()
     CLEANUP = auto()
+    INTERRUPT_ADMISSION = auto()
 
 
 class NativeCallbackLifecycle:
@@ -235,6 +241,8 @@ class NativeCallbackLifecycle:
                 self.selected = PUBLIC_MODEL
             case NativeStep.CLEANUP:
                 await self.cleanup()
+            case NativeStep.INTERRUPT_ADMISSION:
+                await self.interrupt_admission()
         self.assert_custody()
 
     async def turn(self) -> None:
@@ -266,6 +274,46 @@ class NativeCallbackLifecycle:
             self.selected = ORIGINAL_MODEL
         self.process = None
         self.overlay = None
+
+    async def interrupt_admission(self) -> None:
+        if self.process is None:
+            await self.turn()
+        client = room_client(self.adapter)
+        process, overlay = self.process, self.overlay
+        assert process is not None and overlay is not None
+        await client.request(PeerCommand.HOLD_MODEL_RESPONSE, modelId=REJECTED_MODEL)
+        mailbox = HeldWaiterMailbox(before_submit=True)
+        hold = Hold()
+        mailbox.waiters.extend((None, None, hold))
+        self.adapter._mailbox = mailbox
+        tools = MailboxTools()
+        turn = asyncio.create_task(run_turn(self.adapter, tools, bootstrap=False))
+        selecting: asyncio.Task[None] | None = None
+        try:
+            await hold.arrived()
+            selecting = asyncio.create_task(
+                self.adapter.apply_model_selection(
+                    ModelSelection(model=f"{MODEL_PROVIDER}/{REJECTED_MODEL}"),
+                    room_id=ROOM,
+                )
+            )
+            await client.request(PeerCommand.WAIT_MODEL_RESPONSE)
+            selecting.cancel()
+            with raises(asyncio.CancelledError):
+                await selecting
+            hold.released.set()
+            with raises(OmpProcessError):
+                await turn
+            assert tools.chat == []
+            assert reported_failures(tools)
+            self.retired.append((process, overlay))
+            self.process, self.overlay = None, None
+        finally:
+            hold.released.set()
+            tasks = [turn, *([selecting] if selecting is not None else [])]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def assert_custody(self) -> None:
         for process, overlay in self.retired:

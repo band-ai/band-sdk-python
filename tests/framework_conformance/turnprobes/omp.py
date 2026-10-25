@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 from pydantic import JsonValue
@@ -24,6 +25,23 @@ from tests.framework_conformance.turnprobes import (
     TurnScript,
     turn_input,
 )
+
+if TYPE_CHECKING:
+    from band.integrations.omprpc.client import OmpScheduler
+
+
+async def empty_prompt_write() -> None:
+    return None
+
+
+async def admit_prompt(
+    schedule_admission: OmpScheduler | None,
+    write: Callable[[], Awaitable[None]] = empty_prompt_write,
+) -> None:
+    if schedule_admission is not None:
+        await schedule_admission(write)
+    else:
+        await write()
 
 
 class ScriptedOmpClient:
@@ -64,7 +82,9 @@ class ScriptedOmpClient:
         on_event: Callable[[OmpEvent], Awaitable[None]],
         on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+        schedule_admission: OmpScheduler | None = None,
     ) -> None:
+        await admit_prompt(schedule_admission)
         del message, on_ui
         self.stop_after_tool_id = None
         for index, call in enumerate(self.script.tool_calls):

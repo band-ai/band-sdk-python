@@ -22,6 +22,14 @@ class TestRoomLifecycleModel:
         steps=[NativeStep.TURN, NativeStep.CLEANUP, NativeStep.SELECT, NativeStep.TURN]
     )
     @example(steps=[NativeStep.SELECT, NativeStep.CLEANUP, NativeStep.TURN])
+    @example(
+        steps=[
+            NativeStep.TURN,
+            NativeStep.SELECT,
+            NativeStep.INTERRUPT_ADMISSION,
+            NativeStep.TURN,
+        ]
+    )
     def test_real_callbacks_preserve_selection_and_release_native_resources(
         self, steps: list[NativeStep]
     ) -> None:

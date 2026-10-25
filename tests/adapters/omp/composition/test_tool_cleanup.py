@@ -10,6 +10,7 @@ import pytest
 from band.integrations.ompwire import OmpFrameType
 from band.runtime.tools import AgentTools
 from tests.adapters.hold import Hold
+from tests.adapters.lifecycle.runtime import ReplyingPlatform
 from tests.adapters.omp.kit import claimed_workspace_rooms, run_turn
 from tests.adapters.omp.mailboxkit import (
     mailbox_adapter,
@@ -26,7 +27,6 @@ from tests.adapters.omp.mailboxpeer import (
 )
 from tests.adapters.omp.retirementkit import native_overlay
 from tests.integrations.omprpc.kit import owned_rpc_process
-from tests.runtime.activityownership.kit import ActivityPlatform
 from tests.runtime.helpers import ALICE
 
 
@@ -35,7 +35,7 @@ class TestToolCleanup:
         self,
         tmp_path: Path,
         tools: AgentTools,
-        platform: ActivityPlatform,
+        platform: ReplyingPlatform,
         participants_request: Hold,
     ) -> None:
         transcript = tmp_path / "host-tool.jsonl"
@@ -49,7 +49,7 @@ class TestToolCleanup:
             await client.request(PeerCommand.PERMISSION, callbackId=SECOND_CALLBACK)
             await peer_frames(adapter)
             assert process.returncode is None and overlay.exists()
-            assert platform.room_messages == []
+            assert platform.replies == []
 
             await adapter.on_cleanup(tools.room_id)
             with pytest.raises(asyncio.CancelledError):
@@ -62,7 +62,7 @@ class TestToolCleanup:
                 received_callback_responses(transcript, OmpFrameType.HOST_TOOL_RESULT)
                 == []
             )
-            assert platform.room_messages == []
+            assert platform.replies == []
 
             participants_request.reached.clear()
             follow_up = AgentTools(tools.room_id, tools.rest, participants=[ALICE])
@@ -74,7 +74,7 @@ class TestToolCleanup:
             await peer_frames(adapter)
             participants_request.released.set()
             await turn
-            assert platform.room_messages == [model_reply(ORIGINAL_MODEL)]
+            assert platform.replies == [model_reply(ORIGINAL_MODEL)]
             assert received_ui_responses(transcript) == [SECOND_CALLBACK]
         finally:
             participants_request.released.set()

@@ -67,6 +67,7 @@ from band.integrations.ompwire import (
 TModel = TypeVar("TModel", bound=OmpWireModel)
 CloseProcess = Callable[[], Coroutine[Any, Any, None]]
 JoinClose = Callable[[Awaitable[None]], Awaitable[None]]
+OmpScheduler = Callable[[Callable[[], Awaitable[None]]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -137,9 +138,7 @@ class OmpRpcClient:
         self._write_lock = asyncio.Lock()
         self._prompt_lock = asyncio.Lock()
         self._write_tasks: set[asyncio.Task[None]] = set()
-        self.schedule_callback: (
-            Callable[[Callable[[], Awaitable[None]]], Awaitable[None]] | None
-        ) = None
+        self.schedule_callback: OmpScheduler | None = None
 
     async def start(self) -> None:
         """Start the supplied command and require the native RPC protocol."""
@@ -251,11 +250,19 @@ class OmpRpcClient:
         on_event: Callable[[OmpEvent], Awaitable[None]],
         on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+        schedule_admission: OmpScheduler | None = None,
     ) -> None:
-        """Deliver a turn through its correlated result and actual native settlement."""
+        """Deliver a turn through its correlated result and native settlement.
+
+        ``schedule_admission`` serializes only the initial frame write; waiting
+        for acceptance and callbacks never holds that scheduler. It must await
+        the supplied writer exactly once, or raise to reject admission.
+        """
         async with self._prompt_lock:
             self._ensure_running()
-            await self._execute_prompt(message, on_event, on_tool, on_ui)
+            await self._execute_prompt(
+                message, on_event, on_tool, on_ui, schedule_admission
+            )
 
     def stop_after_tool(self, call_id: str) -> None:
         """Stop this prompt after acknowledging the successful host tool call."""
@@ -306,6 +313,7 @@ class OmpRpcClient:
         request_id: str | None = None,
         allow_closing: bool = False,
         preceding_frame: dict[str, JsonValue] | None = None,
+        schedule_write: OmpScheduler | None = None,
     ) -> ReceivedResponse:
         if not allow_closing:
             self._ensure_running()
@@ -321,7 +329,11 @@ class OmpRpcClient:
         self._pending[request_id] = PendingRequest(command, future)
         try:
             if preceding_frame is None:
-                await self._write_frame(frame.root)
+                write = partial(self._write_frame, frame.root)
+                if schedule_write is None:
+                    await write()
+                else:
+                    await schedule_write(write)
             else:
                 await self._write_frames(preceding_frame, frame.root)
             response = await future
@@ -357,12 +369,15 @@ class OmpRpcClient:
         on_event: Callable[[OmpEvent], Awaitable[None]],
         on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+        schedule_admission: OmpScheduler | None,
     ) -> None:
         turn = PromptRun(self._next_id(), on_event, on_tool, on_ui)
         self._turn = turn
         event_worker = asyncio.create_task(self._deliver_events(turn))
         turn.event_worker = event_worker
-        work = asyncio.create_task(self._complete_prompt(turn, message))
+        work = asyncio.create_task(
+            self._complete_prompt(turn, message, schedule_admission)
+        )
         try:
             done, _ = await asyncio.wait(
                 (work, turn.failure), return_when=asyncio.FIRST_COMPLETED
@@ -392,10 +407,15 @@ class OmpRpcClient:
                 label="callback",
             )
 
-    async def _complete_prompt(self, turn: PromptRun, message: str) -> None:
+    async def _complete_prompt(
+        self, turn: PromptRun, message: str, schedule_admission: OmpScheduler | None
+    ) -> None:
         try:
             accepted = await self._request_frame(
-                OmpCommandName.PROMPT, {"message": message}, request_id=turn.id
+                OmpCommandName.PROMPT,
+                {"message": message},
+                request_id=turn.id,
+                schedule_write=schedule_admission,
             )
         except OmpRpcError:
             turn.rejected = True

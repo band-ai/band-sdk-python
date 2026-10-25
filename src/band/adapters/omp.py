@@ -99,7 +99,7 @@ from band.integrations.ompprocess import (
     omp_rpc_command_in_workspace,
     omp_runtime_env,
 )
-from band.integrations.omprpc import OmpRpcClient, OmpRpcError
+from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
     OmpCommandName,
@@ -153,6 +153,7 @@ PRIVATE_PAYLOAD_UNAVAILABLE = "[private payload unavailable]"
 OMP_PERMISSION_TOOL = "omp_permission"
 OMP_PERMISSION_CALL_ID_PREFIX = "band-permission:"
 OMP_SESSION_DIRECTORY = ".band-omp-sessions"
+MODEL_SELECTION_INTERRUPTED = "Native model selection was interrupted"
 OMP_TOOL_APPROVAL_HEADER = "Allow tool: "
 _ARGUMENTS_MARKER = "Arguments:"
 _ARGUMENTS_UNAVAILABLE = "[arguments unavailable]"
@@ -635,6 +636,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             raise
         else:
             room.applied_selection = _selection_after(room.applied_selection, selection)
+        finally:
+            await self._recover_room(room)
 
     async def _apply_native_selection(
         self, room: OmpRoom, selection: ModelSelection
@@ -709,6 +712,24 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         selection = self._selection_for_room(room.room_id)
         if selection != room.applied_selection:
             await self._select_model(room, selection)
+
+    async def _schedule_prompt(
+        self, room: OmpRoom, write: Callable[[], Awaitable[None]]
+    ) -> None:
+        await self._exclusive(room.room_id, partial(self._admit_prompt, room, write))
+
+    async def _admit_prompt(
+        self, room: OmpRoom, write: Callable[[], Awaitable[None]]
+    ) -> None:
+        self._require_prompt_authority(room)
+        await self._reconcile_selection(room)
+        self._require_prompt_authority(room)
+        await write()
+
+    @staticmethod
+    def _require_prompt_authority(room: OmpRoom) -> None:
+        if room.retiring or not room.retained.has_authority(room.retained.generation):
+            raise OmpProcessError(MODEL_SELECTION_INTERRUPTED)
 
     async def _exclusive(self, room_id: str, run: Callable[[], Awaitable[T]]) -> T:
         """Serialize provider mutations, inlining reentry from the current job."""
@@ -926,7 +947,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             Context().run(
                 room.retained.recover,
                 generation=room.retained.generation,
-                reason="Native model selection was interrupted",
+                reason=MODEL_SELECTION_INTERRUPTED,
             )
 
     async def _prompt_room(
@@ -980,9 +1001,12 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     return await self._ask_room(request, msg, tools, room_id)
                 return await self._permission(request, room_id, room.session_id, turn)
 
-            await self._exclusive(room_id, partial(self._reconcile_selection, room))
             await room.client.prompt(
-                prompt, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+                prompt,
+                on_event=on_event,
+                on_tool=on_tool,
+                on_ui=on_ui,
+                schedule_admission=partial(self._schedule_prompt, room),
             )
             await self._exclusive(room_id, partial(self._finish_turn, room, turn))
         finally:

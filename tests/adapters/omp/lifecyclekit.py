@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -72,3 +73,21 @@ class ObservedMailbox(RoomMailbox):
     async def ask(self, room_id: str, run: Callable[[], Awaitable[Result]]) -> Result:
         self.attempted.set()
         return await super().ask(room_id, run)
+
+
+class HeldWaiterMailbox(RoomMailbox):
+    """Pause selected waiters before submission or after their real jobs finish."""
+
+    def __init__(self, *, before_submit: bool = False) -> None:
+        super().__init__()
+        self.before_submit = before_submit
+        self.waiters: deque[Hold | None] = deque()
+
+    async def ask(self, room_id: str, run: Callable[[], Awaitable[Result]]) -> Result:
+        hold = self.waiters.popleft() if self.waiters else None
+        if hold is not None and self.before_submit:
+            await hold.wait()
+        result = await super().ask(room_id, run)
+        if hold is not None and not self.before_submit:
+            await hold.wait()
+        return result

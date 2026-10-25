@@ -13,6 +13,7 @@ from pydantic import JsonValue
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
 from band.integrations.omprpc import OmpRpcClient
+from band.integrations.omprpc.client import OmpScheduler
 from band.integrations.ompwire import (
     OmpCommandName,
     OmpEvent,
@@ -118,6 +119,13 @@ class ObservedAskClient(OmpRpcClient):
         on_event: Callable[[OmpEvent], Awaitable[None]],
         on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+        schedule_admission: OmpScheduler | None = None,
     ) -> None:
         self.observer.prompted = True
-        await super().prompt(message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+        await super().prompt(
+            message,
+            on_event=on_event,
+            on_tool=on_tool,
+            on_ui=on_ui,
+            schedule_admission=schedule_admission,
+        )

@@ -11,6 +11,7 @@ from band.adapters.omp import OmpPermissionRequest
 from band.core.model_catalog import ModelSelection
 from band.integrations.omp import OMP_FORM_APPROVE
 from band.runtime.tools import AgentTools
+from tests.adapters.lifecycle.runtime import ReplyingPlatform
 from tests.adapters.omp.kit import claimed_workspace_rooms, run_turn
 from tests.adapters.omp.mailboxkit import (
     mailbox_adapter,
@@ -31,13 +32,12 @@ from tests.adapters.omp.mailboxpeer import (
 )
 from tests.adapters.omp.retirementkit import native_overlay
 from tests.integrations.omprpc.kit import owned_rpc_process
-from tests.runtime.activityownership.kit import ActivityPlatform
 from tests.runtime.helpers import ALICE
 
 
 class TestModelRollback:
     async def test_cancelling_callback_rollback_recovers_the_accepted_selection(
-        self, tmp_path: Path, tools: AgentTools, platform: ActivityPlatform
+        self, tmp_path: Path, tools: AgentTools, platform: ReplyingPlatform
     ) -> None:
         async def change_model(request: OmpPermissionRequest) -> str:
             await adapter.apply_model_selection(
@@ -87,7 +87,7 @@ class TestModelRollback:
 
             follow_up = AgentTools(tools.room_id, tools.rest, participants=[ALICE])
             await run_turn(adapter, follow_up)
-            assert platform.room_messages == [
+            assert platform.replies == [
                 model_reply(ORIGINAL_MODEL),
                 model_reply(PUBLIC_MODEL),
             ]
