@@ -15,6 +15,11 @@ the workflow files cannot say for themselves.
   joins the contract by being listed in `ci-status.needs` and in that table;
   `tests/framework_conformance/test_ci_status_coverage.py` fails until it is. The same gate
   shape runs in `band-sdk-typescript`.
+- **Stacked pull requests get the same CI.** The `pull_request` branch filter in `ci.yml`
+  matches the PR's *base* branch, so it also lists the branch prefixes (`feat/**`, `fix/**`,
+  …) a stack child is based on. Without those patterns a base-off-feature-branch PR would
+  never start `ci-status`, and its required check would wait forever like an absent
+  `merge_group:` trigger does in the queue.
 - **`main` uses a merge queue**, so every workflow whose check the queue waits for needs a
   `merge_group:` trigger (`ci.yml` and `pr-title.yml`; `release-gate.yml` reports there too).
   Without it the queue waits forever for a check that never starts. `main` fast-forwards to
