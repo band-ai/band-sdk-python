@@ -31,24 +31,24 @@ class NestedMailboxAsk(BandError):
 
 
 @dataclass
-class _Job:
+class MailboxJob:
     run: Callable[[], Awaitable[Any]]
     result: asyncio.Future[Any] | None
     running: asyncio.Task[Any] | None = None
 
 
 @dataclass
-class _Room:
-    queue: asyncio.Queue[_Job | None] = field(default_factory=asyncio.Queue)
+class MailboxRoom:
+    queue: asyncio.Queue[MailboxJob | None] = field(default_factory=asyncio.Queue)
     worker: asyncio.Task[None] | None = None
-    current: _Job | None = None
+    current: MailboxJob | None = None
 
 
 class RoomMailbox:
     """FIFO worker per room: ``cast`` does not wait, ``ask`` does."""
 
     def __init__(self) -> None:
-        self._rooms: dict[str, _Room] = {}
+        self._rooms: dict[str, MailboxRoom] = {}
 
     def occupying(self, room_id: str) -> bool:
         """True on the worker or the job it is currently running."""
@@ -110,27 +110,27 @@ class RoomMailbox:
         room_id: str,
         run: Callable[[], Awaitable[Any]],
         result: asyncio.Future[Any] | None,
-    ) -> _Job:
+    ) -> MailboxJob:
         room = self._rooms.get(room_id)
         if room is None:
-            room = _Room()
+            room = MailboxRoom()
             self._rooms[room_id] = room
         if room.worker is None or room.worker.done():
             room.worker = asyncio.create_task(
                 self._run(room_id, room), name=f"room-mailbox:{room_id}"
             )
-        job = _Job(run, result)
+        job = MailboxJob(run, result)
         room.queue.put_nowait(job)
         return job
 
     @staticmethod
-    def _abandon(job: _Job) -> None:
+    def _abandon(job: MailboxJob) -> None:
         if job.running is not None and not job.running.done():
             job.running.cancel()
         elif job.result is not None and not job.result.done():
             job.result.cancel()
 
-    async def _run(self, room_id: str, room: _Room) -> None:
+    async def _run(self, room_id: str, room: MailboxRoom) -> None:
         try:
             while True:
                 job = await room.queue.get()
@@ -152,9 +152,10 @@ class RoomMailbox:
                     self._run(room_id, room), name=f"room-mailbox:{room_id}"
                 )
 
-    async def _execute(self, room_id: str, room: _Room, job: _Job) -> None:
+    async def _execute(self, room_id: str, room: MailboxRoom, job: MailboxJob) -> None:
         if job.result is not None and job.result.cancelled():
             return
+
         async def run_job() -> Any:
             return await job.run()
 
