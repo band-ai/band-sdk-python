@@ -117,8 +117,10 @@ that replied, declined via `band_no_reply`, did real work, was settled by the
 adapter, or already reported a failure completes; anything else is reported
 once and marked FAILED. Adapters never judge turns themselves. Post an
 adapter's own messages with `send_notice` (never `send_message`, which counts as
-the reply) and relay a model's final text only through `relay_reply`. See
-[docs/turn-outcome.md](docs/turn-outcome.md).
+the reply) and relay a model's final text only through `relay_reply`. The
+implementation and conformance contract are in
+`src/band/core/simple_adapter.py`, `src/band/core/turn.py`, and
+`tests/framework_conformance/test_turn_outcome.py`.
 
 ## Adapter Constructor Shape
 
@@ -150,20 +152,35 @@ The SDK uses a Fern-generated REST client with a property-based namespace API
 (`link.rest.agent_api_<resource>.method(...)`). **Never pass `None`** for an
 optional parameter — the Fern client sends `null`, which fails backend
 validation; build a `kwargs` dict and omit the key instead
-(`tests/platform/test_rest_client.py` pins that wire behavior). See
-[docs/rest-client.md](docs/rest-client.md) for the `band-client-rest`
-version-pin workaround discipline.
+(`tests/platform/test_rest_client.py` pins that wire behavior). Keep the
+`band-client-rest` dependency pin in `pyproject.toml` aligned with the released
+client: verify a needed capability in that exact version, and remove a
+workaround only when the pin and its boundary test confirm the upstream fix.
+
+## Room Retention
+
+Do not enable provider idle retention until that provider's background activity,
+safe resume, and cleanup paths are qualified. Unknown activity and an empty SDK
+task set do not prove a native provider is idle. `RoomRetentionConfig` and its
+guards live in `src/band/core/retention/`; behavior is covered by
+`tests/core/retention/` and `tests/adapters/test_retention_config.py`.
 
 ## WebSocket Channels & Events
 
 The SDK subscribes to Phoenix Channels in
 `src/band/client/streaming/client.py` and hydrates each event's payload into a
-typed, rule-free `WirePayload` projection without re-validating. See
-[docs/websocket-events.md](docs/websocket-events.md) for which rules and
-delivery-lifecycle decisions live in `band-sdk-core` instead.
+typed, rule-free `WirePayload` projection without re-validating. The projection
+is in `src/band/platform/event.py`; shared delivery rules and lifecycle
+decisions live in `band-sdk-core`, while transport behavior is covered by
+`tests/websocket/`.
 CI's isolated-wheel smoke (`.github/scripts/wheel-smoke.py`) finds every
 `band_sdk_core` name the installed `band` package refers to and fails if the
 pinned wheel lacks one, so a new core symbol needs no manual CI step.
+
+WebSocket credentials are sent in the `x-api-key` handshake header, never the
+query; optional agent identity and non-default conflict policy are query
+parameters. Preserve credential redaction. The transport and regression
+coverage are in `src/band/client/streaming/` and `tests/websocket/`.
 
 ## Contact Event Handling
 
@@ -194,16 +211,16 @@ confined to an explicit AST-enforced allowlist
 
 `OpencodeAdapter` maps each Band room to a session on a running `opencode
 serve`. Band tools are never gated behind approval, unlike other tool
-calls — see [docs/adapters/opencode.md](docs/adapters/opencode.md) for this
-and four more invariants that are easy to break.
+calls. The remaining adapter behavior and regression coverage live in
+`src/band/adapters/opencode/` and `tests/adapters/opencode/`.
 
 ## ACP (Agent Client Protocol) Integration
 
 ACP enables editors (Zed, Cursor, JetBrains, Neovim) to talk to AI agents via
 JSON-RPC over stdio; the SDK provides both server (`ACPServer` +
-`BandACPServerAdapter`) and client (`ACPClientAdapter`) sides. See
-[docs/acp.md](docs/acp.md) for the full session lifecycle, live-emission
-ordering, and permission-pairing rules.
+`BandACPServerAdapter`) and client (`ACPClientAdapter`) sides. Session
+lifecycle, live-emission ordering, and permission pairing are implemented in
+`src/band/integrations/acp/` and covered by `tests/integrations/acp/`.
 
 ## Code Structure
 
@@ -411,18 +428,14 @@ files have failure modes plain examples don't. Follow these:
 - **Keep `main()` thin.** Extract persistence (config/ledger writes) and the
   user-facing summary into small named helpers — easier to read and to test.
 
-## Documentation Testing (markdown snippets)
+## Markdown Snippet Testing
 
-Tracked `.md` files (except `examples/`) run in CI as tests via `pytest-markdown-docs`
-— so `python` snippets in the docs must stay correct and runnable, not rot:
+Tracked Markdown outside `examples/` runs through `pytest-markdown-docs` in CI.
+Runnable Python fences execute as checks:
 
 ```bash
-uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
-uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest --markdown-docs docs/adapters/nooa.md --no-cov
+uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
 ```
-
-NOOA's runnable documentation requires its legacy environment; the two commands
-above cover the complete tracked documentation suite.
 
 Fence tags: plain ` ```python ` **executes** (top-level `assert`s are the
 checks); ` ```python notest ` is collected out — reserve it for pseudo-code,
@@ -435,8 +448,8 @@ breaks the doc.
 **Gotcha — snippets under `tests/e2e/**` skip in CI**, silently, since that
 tree's conftest skips every collected item unless `E2E_TESTS_ENABLED=true`
 and CI's markdown-docs step never sets it — worse than honest `notest`. Keep
-E2E-doc snippets `notest`; put a runnable check of E2E-adjacent symbols in a
-doc outside `tests/e2e/**` instead, where it actually executes.
+snippets there `notest`; put a runnable check of E2E-adjacent symbols in
+Markdown outside `tests/e2e/**` instead, where it actually executes.
 
 ## External Research & Code Reuse
 
@@ -476,6 +489,10 @@ take precedence; report checks not run instead of implying they passed.
 | Localized Python source or tests | Run relevant lint, format, type checks, and the affected behavioral tests. Broaden when shared callers or regressions warrant it. |
 | Shared runtime/protocol behavior, dependencies, packaging, or broad refactors | Run the full gate below in the appropriate dependency environments, plus boundary-specific checks such as conformance, wheel smoke, or live E2E where needed. |
 | CI workflows | Run actionlint and affected workflow guards; validate server-side behavior when local checks cannot exercise it. Avoid publishing during a probe. |
+
+GitHub rulesets and environment policies are server-side state. Inspect their
+current configuration when changing workflows that depend on them; actionlint
+does not prove GitHub accepted or started a workflow or permitted a release.
 
 Mixed changes use the union of applicable checks. Existing required CI checks
 remain required for merging; selecting local checks does not bypass them.

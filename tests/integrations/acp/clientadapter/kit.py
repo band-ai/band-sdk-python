@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -55,9 +56,13 @@ def scripted_conn(sessions: dict[str, str]) -> AsyncMock:
     """A connection whose ``new_session`` names each room's session from
     ``sessions``, keyed by the room id its workspace ends in."""
     conn = make_acp_connection()
+    sessions_by_workspace = {
+        os.path.normcase(room_id): session_id
+        for room_id, session_id in sessions.items()
+    }
     conn.new_session = AsyncMock(
         side_effect=lambda *, cwd, mcp_servers: NewSessionResponse(
-            session_id=sessions[Path(cwd).name]
+            session_id=sessions_by_workspace[os.path.normcase(Path(cwd).name)]
         )
     )
     return conn

@@ -16,7 +16,11 @@ from tests.runtime.scheduler.kit import (
 class TestControlIngress:
     async def test_declined_control_falls_back_once_and_completes(self) -> None:
         adapter = IngressAdapter()
-        async with declining_room(adapter, started=True) as (peer, _, _):
+        async with declining_room(adapter, started=True, batching=False) as (
+            peer,
+            _,
+            _,
+        ):
             original = await adapter.fallbacks.get()
             assert original.id == "expired"
             assert peer.events_posted == 1
@@ -36,7 +40,11 @@ class TestControlIngress:
         self, recognized: bool
     ) -> None:
         adapter = IngressAdapter(recognized=recognized, refuse=True)
-        async with declining_room(adapter, started=True) as (peer, ctx, _):
+        async with declining_room(adapter, started=True, batching=False) as (
+            peer,
+            ctx,
+            _,
+        ):
             original = await adapter.fallbacks.get()
             await ctx.on_event(peer.post(adapter.probe_id))
             adapter.release_fallback.set()
@@ -62,7 +70,11 @@ class TestControlIngress:
         self,
     ) -> None:
         adapter = LateDecliningAdapter()
-        async with declining_room(adapter, started=True) as (peer, ctx, _):
+        async with declining_room(adapter, started=True, batching=False) as (
+            peer,
+            ctx,
+            _,
+        ):
             try:
                 await adapter.entered.wait()
                 ctx.stop_room()

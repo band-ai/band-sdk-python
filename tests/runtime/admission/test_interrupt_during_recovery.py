@@ -75,7 +75,9 @@ class TestInterruptDuringRecovery:
         self, case: Case, platform: Platform, model: Model
     ) -> None:
         model.gate = True
-        async with started_room(case, platform=platform, model=model) as room:
+        async with started_room(
+            case, platform=platform, model=model, max_queued_messages=1
+        ) as room:
             await room.quiesce()
             platform.post(*QUEUED)
             await room.recover()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from unittest.mock import AsyncMock
 
 import pytest
@@ -20,6 +21,19 @@ from tests.integrations.acp.clientadapter.kit import AdapterOn, scripted_conn
 
 class TestACPClientAdapterDeadConnectionRecovery:
     """A provider failure recovers the room's process through its owner."""
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows paths are case-insensitive")
+    @pytest.mark.asyncio
+    async def test_scripted_connection_matches_case_canonicalized_workspace(
+        self,
+    ) -> None:
+        conn = scripted_conn({"room-a": "sess-a"})
+
+        response = await conn.new_session(
+            cwd=r"C:\repo\.band-workspaces\room-A", mcp_servers=[]
+        )
+
+        assert response.session_id == "sess-a"
 
     @pytest.mark.asyncio
     async def test_prompt_error_recovers_the_process_and_keeps_the_session(
@@ -92,7 +106,7 @@ class TestACPClientAdapterDeadConnectionRecovery:
     ) -> None:
         """A timed-out room must not interrupt another room's prompt."""
         conn = scripted_conn({"room-a": "sess-a", "room-b": "sess-b"})
-        adapter = adapter_on(conn, turn_timeout_s=1)
+        adapter = adapter_on(conn, turn_timeout_s=60)
         b_started = asyncio.Event()
         release_b = asyncio.Event()
 

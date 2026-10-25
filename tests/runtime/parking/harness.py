@@ -251,8 +251,13 @@ OFF_PROCESSED = Cell(mode=Mode.OFF, terminal=DeliveryStatus.PROCESSED)
 # Off-mode failure has retry continuations and a separate acceptance contract.
 OFF_FAILED = Cell(mode=Mode.OFF, terminal=DeliveryStatus.FAILED)
 
-CELLS = (OFF_PROCESSED,)
-
+CELLS = (
+    OFF_PROCESSED,
+    Cell(mode=Mode.SINGLETON, terminal=DeliveryStatus.PROCESSED),
+    Cell(mode=Mode.BATCH, terminal=DeliveryStatus.PROCESSED),
+    Cell(mode=Mode.SINGLETON, terminal=DeliveryStatus.FAILED),
+    Cell(mode=Mode.BATCH, terminal=DeliveryStatus.FAILED),
+)
 
 TERMINALS = (DeliveryStatus.PROCESSED, DeliveryStatus.FAILED)
 
@@ -537,6 +542,7 @@ async def harness_over(
             on_message_control=controls.handle if controls else None,
             is_message_control=controls.recognizes if controls else None,
             session_config=SessionConfig(
+                consume_all_queued=cell.mode.batching,
                 max_message_retries=cell.mode.retries,
                 enable_context_hydration=False,
                 enable_working_state=False,

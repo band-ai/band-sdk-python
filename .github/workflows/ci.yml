@@ -132,10 +132,10 @@ jobs:
       # Linux-only: doc snippets are OS-independent, and this step relies on
       # git ls-files globbing that we don't need to re-run per platform.
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-      # NOOA snippets run in test-strands-nooa; examples/ READMEs are illustrative.
+      # examples/ READMEs are illustrative; other tracked Markdown is checked.
       run: |
         # shellcheck disable=SC2046  # word-splitting the ls-files output is the point
-        uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
+        uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
 
 
   test-crewai:
@@ -268,10 +268,6 @@ jobs:
         BAND_ALLOW_MISSING_FRAMEWORKS: "1"
         BAND_TEST_EXTRA: "dev-strands-nooa"
       run: uv run --all-packages pytest tests/framework_conformance/test_strands_nooa_job_coverage.py
-
-    - name: Run NOOA markdown examples
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-      run: uv run --all-packages pytest --markdown-docs docs/adapters/nooa.md --no-cov
 
     - name: Pyrefly check (Strands and NOOA sources)
       run: |

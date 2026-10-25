@@ -38,8 +38,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Messages one turn consumes. Batching is deliberately unavailable, so every
-# turn runs a single original.
+# Messages one turn consumes unless the room batches its queue.
 SINGLETON_TURN_SIZE = 1
 
 
@@ -117,7 +116,13 @@ class Scheduler:
         self.owner = owner
         self.queue = owner.queue
         self.pending = RetainedEvents()
-        self.sync_complete = False
+        # A batching room reads its backlog in pages, in arrival order, from
+        # its first pass; it never probes one row at a time.
+        self.batching = owner.config.consume_all_queued
+        self.turn_size = (
+            owner.config.max_queued_messages if self.batching else SINGLETON_TURN_SIZE
+        )
+        self.sync_complete = self.batching
         self.first_ws_id: str | None = None
         self.deferred_id: str | None = None
         self.scan_cursor: str | None = None
@@ -433,6 +438,37 @@ class Scheduler:
         ]
         return [self.classify(candidate) for candidate in merge(rest, retained)]
 
+    def batch_candidates(
+        self,
+        messages: Iterable[PlatformMessage],
+        segment: list[MessageEvent],
+        *,
+        bounded: bool,
+    ) -> list[Candidate]:
+        """Merge REST rows with retained originals in arrival order.
+
+        Respect the first local-event boundary when ``bounded`` is true.
+        """
+        retained = {message_id(event) for event in segment}
+        later = {
+            message_id(event)
+            for event in self.pending
+            if is_ordinary(event) and message_id(event) not in retained
+        }
+        limit = MessageKey.of_event(segment[-1]) if bounded and segment else None
+        rest = [
+            Candidate.listed(row)
+            for row in messages
+            if row.id not in later
+            and (
+                limit is None
+                or row.id in retained
+                or MessageKey.of_message(row) <= limit
+            )
+        ]
+        merged = merge(rest, [Candidate.retained(event) for event in segment])
+        return [self.classify(candidate) for candidate in merged]
+
     def classify(self, candidate: Candidate) -> Candidate:
         match self.owner.delivery.eligibility(candidate, remember_completion=False):
             case "runnable":
@@ -464,13 +500,17 @@ class Scheduler:
             return None if is_ordinary(event) else event
         return None
 
-    def local_segment(self) -> list[MessageEvent]:
+    def local_segment(self) -> tuple[list[MessageEvent], bool]:
+        """Collect retained originals up to the first local event.
+
+        Return whether that event bounds the segment.
+        """
         segment: list[MessageEvent] = []
         for event in self.pending:
             if not is_ordinary(event):
-                break
+                return segment, True
             segment.append(event)
-        return segment
+        return segment, False
 
     def local_predecessor(self, identity: str) -> PlatformEvent | None:
         """Keep a known original behind the local boundary it arrived after."""
@@ -521,6 +561,7 @@ class Scheduler:
         # A deferred head already holds its place ahead of any backlog read.
         if local is not None and (
             not recovery
+            or self.batching
             or (self.deferred_id is not None and delivery_id(local) == self.deferred_id)
         ):
             return (await self.dispatch_local(local)).scheduling
@@ -541,10 +582,10 @@ class Scheduler:
         self, active: DiscoveryPass, recovery: bool
     ) -> PageRead | ResyncOutcome:
         """The platform rows this step selects from, or the outcome ending it early."""
-        if not recovery:
+        if not recovery and not self.batching:
             return PageRead([], exhausted=True)
         revision = self.owner.control_revision
-        if self.next_fallback:
+        if self.batching or self.next_fallback:
             page = await self.owner.link.get_actionable_page(
                 self.owner.room_id, cursor=self.scan_cursor
             )
@@ -572,8 +613,10 @@ class Scheduler:
         self, active: DiscoveryPass, read: PageRead
     ) -> ResyncOutcome:
         """Select the next turn from the page and the retained originals, and run it."""
-        segment = self.local_segment()
-        if not read.rows and self.sync_complete:
+        segment, bounded = self.local_segment()
+        if self.batching:
+            candidates = self.batch_candidates(read.rows, segment, bounded=bounded)
+        elif not read.rows and self.sync_complete:
             candidates = [self.classify(Candidate.retained(event)) for event in segment]
         else:
             candidates = self.candidates(read.rows)
@@ -584,7 +627,7 @@ class Scheduler:
         selection = select_prefix(
             candidates,
             listed={row.id for row in read.rows},
-            cap=SINGLETON_TURN_SIZE,
+            cap=self.turn_size,
             page_reaches=frontier,
             exhausted=read.exhausted,
             resumed=active.resumed_retries,
@@ -614,7 +657,7 @@ class Scheduler:
         self, active: DiscoveryPass, members: tuple[Candidate, ...]
     ) -> ResyncOutcome:
         result = (await self.dispatch(members)).scheduling
-        if result is ResyncOutcome.PROGRESS:
+        if result is ResyncOutcome.PROGRESS and not self.batching:
             self.next_fallback = False
             self.scan_cursor = None
             if any(c.message_id == self.first_ws_id for c in members):
@@ -726,6 +769,8 @@ class Scheduler:
         outcome = await self.owner.execute_local(event)
         if outcome is TurnOutcome.ADVANCED:
             self.pending.remove(lambda item: item is event)
+            # Earlier pages may hold originals this local boundary excluded.
+            self.scan_cursor = None
         elif not isinstance(event, MessageEvent):
             # A roster event the room could not begin waits for the next wake.
             return DispatchResult(ResyncOutcome.RETRY, outcome)

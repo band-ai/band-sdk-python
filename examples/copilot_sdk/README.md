@@ -94,7 +94,7 @@ adapter = CopilotSDKAdapter(config, ask_user=handler)  # ask someone outside it
 
 ### `ask_user="room"` — ask the room (recommended)
 
-The question posts into the room (mentioning whoever triggered the turn),
+The question posts into the room (mentioning the turn's senders),
 the turn ends, and the answer arrives as the next room message — picked up
 by the same persisted Copilot session, which still holds the pending
 question in its history. `06_ask_user.py` demonstrates it.

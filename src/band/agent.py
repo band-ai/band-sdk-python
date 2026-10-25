@@ -20,6 +20,8 @@ from band.core.exceptions import (
 )
 from band.core.handoff import context_delivery
 from band.core.protocols import (
+    BatchFrameworkAdapter,
+    BatchPreprocessor,
     ControlRecognizer,
     FrameworkAdapter,
     MessageProjector,
@@ -152,6 +154,24 @@ class Agent:
         # Tracks shutdown_timeout from run() for use in __aexit__
         # Uses sentinel to distinguish "not set" from "explicitly set to None"
         self._shutdown_timeout: _ShutdownTimeout = _TIMEOUT_NOT_SET
+
+    def _batch_hosts(self) -> tuple[BatchFrameworkAdapter, BatchPreprocessor]:
+        """Validate batching support and return the compatible hosts."""
+        adapter, preprocessor = self._adapter, self._preprocessor
+        if not (
+            isinstance(adapter, BatchFrameworkAdapter) and adapter.supports_batch_input
+        ):
+            raise BandConfigError(
+                f"{type(adapter).__name__} does not support batch input; "
+                "consume_all_queued needs an adapter declaring supports_batch_input"
+            )
+        if not isinstance(preprocessor, BatchPreprocessor):
+            raise BandConfigError(
+                f"{type(preprocessor).__name__} must implement process_batch and "
+                "a read-only message projection; consume_all_queued needs the same "
+                "projection for control recognition and input construction"
+            )
+        return adapter, preprocessor
 
     def _clear_pending_stop(self) -> None:
         self._stop_requested = False
@@ -320,6 +340,8 @@ class Agent:
             raise CleanupIncompleteError(
                 "Agent cleanup is incomplete; call stop() to retry it"
             )
+        if self._runtime.session_config.consume_all_queued:
+            self._batch_hosts()
 
         owns_resources = accept_adapter(self._adapter, self)
         if owns_resources:
@@ -356,6 +378,7 @@ class Agent:
                 self._cleanup_pending.add(CleanupPhase.RUNTIME)
                 await self._runtime.start(
                     on_execute=self._on_execute,
+                    on_execute_batch=self._on_execute_batch,
                     is_message_control=self._is_control,
                     on_message_control=self._on_control,
                     on_cleanup=self._adapter.on_cleanup,
@@ -599,6 +622,19 @@ class Agent:
             return
 
         await self._commit_unless_refused(inp, self._adapter.on_event(inp))
+
+    async def _on_execute_batch(
+        self, ctx: ExecutionContext, events: tuple[MessageEvent, ...]
+    ) -> None:
+        """Run one turn over several originals through the batch entry points."""
+        adapter, preprocessor = self._batch_hosts()
+        inp = await preprocessor.process_batch(
+            ctx=ctx, events=events, agent_id=self._runtime.agent_id
+        )
+        if inp is None:
+            return
+
+        await self._commit_unless_refused(inp, adapter.on_messages(inp))
 
     @staticmethod
     async def _commit_unless_refused(inp: AgentInput, turn: Awaitable[None]) -> None:

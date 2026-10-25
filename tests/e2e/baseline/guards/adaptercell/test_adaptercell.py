@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from tests.e2e.baseline.guards.adaptercell.kit import _cell
+from tests.e2e.baseline.guards.adaptercell.kit import (
+    _cell,
+)
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 
 

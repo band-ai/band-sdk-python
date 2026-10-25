@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Protocol
 from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import ControlMode
+from band.core.exceptions import BandConfigError
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.control import ControlDeduplicator, apply_control, control_targets
@@ -23,6 +24,7 @@ from band.runtime.execution import (
     Execution,
     ExecutionContext,
     ExecutionHandler,
+    require_batch_execution_handler,
 )
 from band.runtime.presence import RoomPresence
 from band.runtime.rooms import RoomExecutions, request_resync
@@ -133,12 +135,21 @@ class AgentRuntime:
                 originals
             is_message_control: Optional read-only recognition of a delivery
                 the adapter would handle as a control
+
+        Raises:
+            BandConfigError: ``consume_all_queued`` with a custom execution
+                factory or without an ``on_execute_batch`` callback.
         """
         self.link = link
         self.agent_id = agent_id
         self._on_execute = on_execute
         self._execution_factory = execution_factory
         self._session_config = session_config or SessionConfig()
+        if self._session_config.consume_all_queued and execution_factory is not None:
+            raise BandConfigError(
+                "consume_all_queued cannot be used with a custom execution_factory"
+            )
+        require_batch_execution_handler(self._session_config, on_execute_batch)
         self._on_execute_batch = on_execute_batch
         self._on_session_cleanup = on_session_cleanup
         self._on_control = on_control

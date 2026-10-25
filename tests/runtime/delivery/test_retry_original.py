@@ -54,6 +54,17 @@ class TestRetryOriginal:
         )
         assert rest_peer.status_of("m1") is DeliveryStatus.FAILED
 
+    async def test_a_failed_batch_never_replays_its_ws_only_original(
+        self, rest_peer: RestPeer
+    ) -> None:
+        async with started_session(rest_peer, fail_on=frozenset({"m1"})) as session:
+            await session.deliver(rest_peer.post("m1", listed=False))
+            await session.until(lambda: rest_peer.events_posted == 1)
+            await session.deliver(ReconnectedEvent())
+            await session.resync()
+
+        assert session.progress == ([("m1",)], ["m1"])
+
     async def test_failed_priority_controls_use_the_same_immediate_retry_policy(
         self, rest_peer: RestPeer
     ) -> None:

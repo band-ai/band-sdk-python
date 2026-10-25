@@ -84,6 +84,9 @@ class AgentHooks(TypedDict):
     """The callbacks an Agent hands its runtime for message delivery."""
 
     on_execute: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]]
+    on_execute_batch: Callable[
+        [ExecutionContext, tuple[MessageEvent, ...]], Awaitable[None]
+    ]
     on_message_control: Callable[[ExecutionContext, PlatformEvent], Awaitable[bool]]
     is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
 
@@ -97,6 +100,7 @@ def agent_hooks(
     )
     return AgentHooks(
         on_execute=agent._on_execute,
+        on_execute_batch=agent._on_execute_batch,
         on_message_control=agent._on_control,
         is_message_control=agent._is_control,
     )
