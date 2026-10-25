@@ -100,22 +100,40 @@ class TestClose:
         mailbox = RoomMailbox()
         hold = JobHold()
         hold.hold()
+        queued_entered = asyncio.Event()
+        release_queued = asyncio.Event()
         drained = asyncio.Event()
 
         async def occupied() -> None:
             await hold.pause()
 
         async def queued() -> None:
+            queued_entered.set()
+            await release_queued.wait()
             drained.set()
 
         waiting = asyncio.create_task(mailbox.ask("room-1", occupied))
-        await hold.entered.wait()
-        mailbox.cast("room-1", queued)
-        closing = asyncio.create_task(mailbox.close("room-1"))
-        hold.release.set()
-        await waiting
-        await drained.wait()
-        await closing
+        close_tasks: list[asyncio.Task[None]] = []
+        try:
+            await hold.entered.wait()
+            mailbox.cast("room-1", queued)
+            closing = asyncio.create_task(mailbox.close("room-1"))
+            close_tasks.append(closing)
+            hold.release.set()
+            await waiting
+            await queued_entered.wait()
+
+            assert not drained.is_set()
+            assert not closing.done()
+
+            release_queued.set()
+            await drained.wait()
+            await closing
+        finally:
+            hold.release.set()
+            release_queued.set()
+            await asyncio.gather(waiting, *close_tasks, return_exceptions=True)
+            await mailbox.close("room-1")
 
         async def later() -> str:
             return "ok"
