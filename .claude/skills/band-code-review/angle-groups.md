@@ -45,7 +45,10 @@ and consequences differ.
 Test code belongs here alone. Read the whole `band-python-test-conventions`
 skill, not only "Coverage is branches, not lines". Apply A–C more strictly
 than on production code (SSoT, intent-named helpers, no mixed-concern files,
-no magic wire strings). Each of the following is an `issue:`, not a nit:
+no magic wire strings). Every unmet item of the skill's "Before finishing"
+checklist is an `issue:`, not a nit, including non-live isolation (order or
+shared-state dependence, live network, unawaited tasks) and `TestCase` or
+`self.assert*`. In particular:
 
 - Coverage of complementary branches, not line counts. Map each changed
   `match`/`if`/timeout/OS decision to the test that proves each reachable
