@@ -711,26 +711,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         """Serialize provider mutations, inlining reentry from the current job."""
         if self._mailbox.occupying(room_id):
             return await run()
-        started = asyncio.Event()
-        finished = asyncio.Event()
-
-        async def job() -> T:
-            started.set()
-            try:
-                return await run()
-            finally:
-                finished.set()
-
-        try:
-            return await self._mailbox.ask(room_id, job)
-        except asyncio.CancelledError:
-            # The RPC owner must retain its job through repeated cancellation.
-            while started.is_set() and not finished.is_set():
-                try:
-                    await finished.wait()
-                except asyncio.CancelledError:
-                    continue
-            raise
+        return await self._mailbox.ask(room_id, run)
 
     def _build_system_context(self) -> str:
         prompt = render_system_prompt(

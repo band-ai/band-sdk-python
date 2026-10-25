@@ -9,7 +9,7 @@ from functools import partial
 from hypothesis import strategies as st
 
 from band.runtime.mailbox import RoomMailbox
-from tests.runtime.mailbox.kit import JobHold
+from tests.runtime.mailbox.kit import JobHold, SettlingJob, checkpoint
 
 ROOM_ID = "lifecycle-room"
 SEQUENCE_GUARD_S = 5.0
@@ -20,6 +20,7 @@ class Step(StrEnum):
     SPAWN = auto()
     ASK = auto()
     CANCEL_QUEUED_ASK = auto()
+    CANCEL_RUNNING_ASK = auto()
     CLOSE = auto()
     REOPEN = auto()
 
@@ -47,6 +48,8 @@ class MailboxLifecycle:
                 await self.ask_next()
             case Step.CANCEL_QUEUED_ASK:
                 await self.cancel_queued_ask()
+            case Step.CANCEL_RUNNING_ASK:
+                await self.cancel_running_ask()
             case Step.CLOSE:
                 await self.close_and_check()
             case Step.REOPEN:
@@ -120,6 +123,31 @@ class MailboxLifecycle:
         for future in self.spawned:
             await future
         assert self.completed == self.expected
+
+    async def cancel_running_ask(self) -> None:
+        job = SettlingJob(None)
+        waiting = asyncio.create_task(self.mailbox.ask(ROOM_ID, job.run))
+        try:
+            await job.running.entered.wait()
+            waiting.cancel()
+            await job.settling.entered.wait()
+            waiting.cancel()
+            await checkpoint()
+            assert not waiting.done()
+            assert not job.finished.is_set()
+            job.settling.release.set()
+            try:
+                await waiting
+            except asyncio.CancelledError:
+                pass
+            else:
+                raise AssertionError("running ask should preserve cancellation")
+            assert job.finished.is_set()
+        finally:
+            job.running.release.set()
+            job.settling.release.set()
+            waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
 
     async def record_completion(self, label: str) -> None:
         self.completed.append(label)

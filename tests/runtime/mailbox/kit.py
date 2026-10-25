@@ -20,3 +20,35 @@ class JobHold:
     async def pause(self) -> None:
         self.entered.set()
         await self.release.wait()
+
+
+class SettlingJob:
+    """Delay cancellation cleanup and optionally suppress or replace its error."""
+
+    def __init__(self, error: BaseException | None) -> None:
+        self.running = JobHold()
+        self.running.hold()
+        self.settling = JobHold()
+        self.settling.hold()
+        self.finished = asyncio.Event()
+        self.error = error
+
+    async def run(self) -> str:
+        try:
+            await self.running.pause()
+        except asyncio.CancelledError:
+            try:
+                await self.settling.pause()
+                if self.error is not None:
+                    raise self.error
+                return "cancellation suppressed"
+            finally:
+                self.finished.set()
+        return "completed"
+
+
+async def checkpoint() -> None:
+    """Let already scheduled task wakeups run before resuming the test."""
+    reached = asyncio.Event()
+    asyncio.get_running_loop().call_soon(reached.set)
+    await reached.wait()
