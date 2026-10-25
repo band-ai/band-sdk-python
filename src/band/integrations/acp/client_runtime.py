@@ -9,6 +9,7 @@ from contextlib import AbstractAsyncContextManager, contextmanager, suppress
 from typing import Any, cast
 
 from acp import spawn_agent_process
+from acp.interfaces import Client
 from acp.schema import (
     ClientCapabilities,
 )
@@ -145,7 +146,7 @@ class ACPRuntime(ACPSessionOperations):
     def _spawn_context(
         self,
     ) -> AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]]:
-        self._client = self._client_factory()  # type: ignore[abstract]  # ACP client protocol defines optional hooks as abstract
+        self._client = self._client_factory()
         spawn_kwargs: dict[str, Any] = {}
         if self._pass_builtin_transport_options:
             spawn_kwargs["transport_kwargs"] = {"limit": ACP_STDIO_LIMIT_BYTES}
@@ -154,7 +155,8 @@ class ACPRuntime(ACPSessionOperations):
         return cast(
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]],
             self._spawn_process(
-                self._client,
+                # ACP marks callbacks required in its Protocol; the router checks them dynamically.
+                cast(Client, self._client),
                 # TCP transports carry no command; stdio carries executable and args.
                 *self._command,
                 env=self._env,
