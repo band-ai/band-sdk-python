@@ -11,6 +11,7 @@ from pydantic import JsonValue
 
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from band.integrations.ompprocess import OMP_MCP_RECEIPT, omp_mcp_ready_command
+from band.integrations.omprpc.prompt import OmpCallbackKind
 from band.integrations.ompwire import (
     OmpCommandName,
     OmpEventType,
@@ -197,7 +198,7 @@ class MailboxPeer(Peer):
                         "method": "cancel",
                         "targetId": callback_id,
                     }
-                    if extra.get("kind") == "ui"
+                    if extra.get("kind") == OmpCallbackKind.UI
                     else {
                         "type": OmpFrameType.HOST_TOOL_CANCEL,
                         "id": "cancel-host",

@@ -6,7 +6,8 @@ import asyncio
 from collections.abc import Awaitable
 from pathlib import Path
 
-from tests.adapters.omp.kit import checkpoint, run_turn
+from band.integrations.omprpc.prompt import OmpCallbackKind
+from tests.adapters.omp.kit import checkpoint, run_turn, start_cleanup
 from tests.adapters.omp.mailboxkit import MailboxTools, mailbox_adapter, room_client
 from tests.adapters.omp.mailboxpeer import FIRST_CALLBACK, PeerCommand
 from tests.adapters.omp.retirementkit import (
@@ -34,7 +35,7 @@ class TestCallbackRetirement:
             client = room_client(adapter)
             process = owned_rpc_process(client)
             overlay = native_overlay(client)
-            cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
+            cleanup = await start_cleanup(adapter)
             assert not turn.done() and not cleanup.done()
             assert overlay.exists() and process.returncode is None
             resolver.settling.released.set()
@@ -85,7 +86,9 @@ class TestCallbackRetirement:
             )
             await resolver.entered.wait()
             await client.request(
-                PeerCommand.CANCEL_CALLBACK, targetId=FIRST_CALLBACK, kind="ui"
+                PeerCommand.CANCEL_CALLBACK,
+                targetId=FIRST_CALLBACK,
+                kind=OmpCallbackKind.UI,
             )
             await resolver.settling.arrived()
             cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
