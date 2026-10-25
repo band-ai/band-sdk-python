@@ -2,7 +2,10 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # `main` plus the branch prefixes a stacked pull request can be based on:
+    # the filter matches the PR's BASE branch, so without these a stack child
+    # never starts the required `ci-status` check and can never merge.
+    branches: [main, "feat/**", "fix/**", "refactor/**", "docs/**", "chore/**"]
     types: [opened, synchronize, reopened, ready_for_review]
   # Run on the merge queue's temporary branch so the required ci-status reports
   # against the queued merge result. Without this the queue would wait forever.
