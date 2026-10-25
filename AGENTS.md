@@ -248,11 +248,12 @@ within a duration to establish correctness. Hold an operation at the relevant
 boundary, assert the behavior while it is blocked, then release it and await
 confirmed completion.
 
-Test timeout, expiry, and deadline behavior with a controlled clock. Keep real
-subprocess and network readiness independent of that clock. Real-time timeouts
-may guard against a hung test, but must not drive the scenario or serve as proof
-of the behavior under test. Cleanup must account for resources created during
-failed or cancelled startup and await their confirmed release.
+Test timeout, expiry, and deadline behavior with a controlled clock
+(`looptime`). Keep real subprocess and network readiness independent of that
+clock. Real-time timeouts may guard against a hung test, but must not drive the
+scenario or serve as proof of the behavior under test. Cleanup must account for
+resources created during failed or cancelled startup and await their confirmed
+release.
 
 ## Testing Structure
 
@@ -463,10 +464,9 @@ install` it and exercise the real call in this repo's venv.
 
 For Python changes, before selecting checks, re-read your own diff once against
 the `band-python-conventions` skill — including code you just wrote this session,
-not only code you started from. Test diffs also re-read
-`band-python-test-conventions` (complementary branches, intent assertions,
-seams not patches, no wall-clock proof). The two rules that get skipped under
-time pressure:
+not only code you started from. Test diffs also walk the
+[test conventions' "Before finishing" checklist](.claude/skills/band-python-test-conventions/SKILL.md#before-finishing).
+The two rules that get skipped under time pressure:
 
 - **Single source of truth**: a literal, magic string, or multi-line block
   re-typed in more than one place (a second copy you just wrote counts) instead
