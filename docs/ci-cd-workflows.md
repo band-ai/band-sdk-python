@@ -41,6 +41,15 @@ the workflow files cannot say for themselves.
   PRs retain only the newest validated Windows interpreter; the matrix guard
   checks this against the version grid.
 
+## Core consumer coverage reporting
+
+`python-core-coverage.yml` runs every Sunday at 20:33 UTC, with manual dispatch
+available for diagnosis. It has no PR, push, or merge-queue trigger. It reuses the
+existing weekly digest and the nightly integrations roster for GitHub mentions;
+email delivery follows each recipient's GitHub notification settings. Manual
+reports mention only the triggering actor. The pinned Core build, coverage
+measurement, and artifacts remain in the same workflow.
+
 ## Unit pytest parallelism
 
 - **Unit jobs run pytest-xdist worksteal inside the existing OS × Python
