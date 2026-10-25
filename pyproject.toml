@@ -597,6 +597,11 @@ ignore-missing-imports = [
 # .claude/worktrees/ (git worktree paths contain a hidden directory).
 disable-project-excludes-heuristics = true
 
+[tool.pyrefly.errors]
+untyped-function-decorator = "error"
+untyped-class-decorator = "error"
+unknown-attribute-type = "error"
+
 [tool.commitizen]
 name = "cz_conventional_commits"
 version = "0.1.2"
