@@ -5,7 +5,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Literal,
+    Protocol,
+    TypeVar,
+    runtime_checkable,
+)
 
 from band_sdk_core import AgentFailure
 
@@ -551,7 +559,7 @@ class BatchFrameworkAdapter(FrameworkAdapter, Protocol):
     configuration error rather than a silent fallback.
     """
 
-    supports_batch_input: bool
+    supports_batch_input: ClassVar[bool]
 
     async def on_messages(self, inp: AgentInput) -> None:
         """Process the turn's ``inp.messages``, oldest first, as one turn."""

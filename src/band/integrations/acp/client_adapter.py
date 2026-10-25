@@ -208,14 +208,6 @@ class ACPMcpServerResolutionError(ValueError):
     """The room's resolved MCP servers cannot be used by its ACP agent."""
 
 
-# Prefixes the change-triggered roster/contacts updates injected into a
-# prompt, so the model reads them as platform state, not as the requester
-# speaking. Shared with tests as the single spelling of that convention.
-#
-# Matches the "[System]: " spelling used by codex/opencode/anthropic/etc.
-# (12+ adapters each hardcode their own copy); it has already drifted once
-# (the Parlant adapter uses "[System Update]: " for the identical concept).
-
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
 DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
 # One acquisition launches the agent and runs initialize/authenticate, and a

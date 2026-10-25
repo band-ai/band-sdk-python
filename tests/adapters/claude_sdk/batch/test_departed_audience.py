@@ -16,8 +16,10 @@ from tests.adapters.claude_sdk.batch.kit import (
 )
 from tests.adapters.claude_sdk.fakecli import EndTurn
 from tests.adapters.claude_sdk.helpers import WRITE_NOTE, with_approvals
+from tests.adapters.hold import Hold
 from tests.core.automaticdelivery.kit import AGENT, MembershipPeer
 from tests.runtime.helpers import rest_client_over
+from tests.toolkit.tasks import background
 
 
 class TestDepartedAudience:
@@ -70,11 +72,17 @@ class TestDepartedAudience:
     ) -> None:
         room = await claude_room(with_approvals(mode))
         peer = MembershipPeer([AGENT])
-        room.claude.script([WRITE_NOTE, EndTurn()])
+        completion = Hold()
+        room.claude.script([WRITE_NOTE, completion, EndTurn()])
         async with rest_client_over(peer.answer) as rest:
             tools = AgentTools(room.room_id, rest)
-            await room.send_batch(*alice_helper_alice(room), tools=tools)
-            await room.settled()
+            async with background(
+                room.send_batch(*alice_helper_alice(room), tools=tools)
+            ) as sending:
+                async with completion:
+                    assert not tools.turn.complete
+                await sending
+                await room.settled()
 
         assert peer.posts == []
         assert tools.turn.complete

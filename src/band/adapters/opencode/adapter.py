@@ -67,7 +67,7 @@ from band.integrations.opencode import (
 )
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import SENDER_METADATA_INSTRUCTION, format_current_inputs
-from band.runtime.prompts import render_system_prompt
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
 
 logger = logging.getLogger(__name__)
@@ -1388,9 +1388,9 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             )
             lines.extend(replay_messages)
         if participants_msg:
-            lines.append(f"[System]: {participants_msg}")
+            lines.append(f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
         if contacts_msg:
-            lines.append(f"[System]: {contacts_msg}")
+            lines.append(f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
 
         lines.append(format_current_inputs(messages))
         return [{"type": "text", "text": "\n".join(lines)}]

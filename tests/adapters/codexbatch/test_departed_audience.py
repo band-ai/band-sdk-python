@@ -9,7 +9,7 @@ from band.core.protocols import FailureMetadataKey
 from band.core.types import AgentInput, HistoryProvider
 from band.runtime.tools import BandTool
 from band.runtime.tools.agent import AgentTools
-from tests.adapters.codex.kit import approval_tokens_from_chat
+from tests.adapters.codex.kit import answer_to, approval_tokens_from_chat
 from tests.adapters.codexbatch.kit import (
     HELPER,
     ROOM_ID,
@@ -20,6 +20,7 @@ from tests.adapters.codexbatch.kit import (
 from tests.adapters.codexturns import tool_call_request, turn_completed
 from tests.core.automaticdelivery.kit import AGENT, MembershipPeer
 from tests.runtime.helpers import rest_client_over
+from tests.toolkit.tasks import background
 
 
 def batch_input(room: CodexBatchRoom, tools: AgentTools) -> AgentInput:
@@ -89,14 +90,20 @@ class TestDepartedAudience:
     ) -> None:
         room = await codex_room(
             approval_request(10),
-            turn_completed(),
             approval_mode=mode,
             approval_text_notifications=True,
         )
         peer = MembershipPeer([AGENT])
         async with rest_client_over(peer.answer) as rest:
             tools = AgentTools(ROOM_ID, rest)
-            await room.adapter.on_messages(batch_input(room, tools))
+            async with background(
+                room.adapter.on_messages(batch_input(room, tools))
+            ) as sending:
+                assert await answer_to(room.client, 10) == {"decision": decision}
+                assert not tools.turn.complete
+                room.client.emit(turn_completed())
+                await sending
+                await room.settled()
 
         assert room.decisions == [(10, decision)]
         assert peer.posts == []

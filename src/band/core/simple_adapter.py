@@ -82,7 +82,8 @@ class SimpleAdapter(ABC, Generic[H]):
     Simple base class for framework adapters.
 
     Generic over H (history type) for full type safety.
-    Users extend this and override on_message().
+    Subclass this and override on_message() for singleton-only adapters.
+    Batch-capable adapters subclass BatchInputAdapter and implement on_turn().
 
     Subclasses should declare SUPPORTED_EMIT and SUPPORTED_CAPABILITIES
     as class-level sets to document what they actually implement.

@@ -35,7 +35,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs
-from band.runtime.prompts import render_system_prompt
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
     BandTool,
     image_block_placeholder,
@@ -223,7 +223,7 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
             self._message_history[room_id].append(
                 {
                     "role": "user",
-                    "content": f"[System]: {participants_msg}",
+                    "content": f"{SYSTEM_UPDATE_PREFIX}{participants_msg}",
                 }
             )
             logger.info("Room %s: Participants updated", room_id)
@@ -233,7 +233,7 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
             self._message_history[room_id].append(
                 {
                     "role": "user",
-                    "content": f"[System]: {contacts_msg}",
+                    "content": f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}",
                 }
             )
             logger.info("Room %s: Contacts broadcast received", room_id)

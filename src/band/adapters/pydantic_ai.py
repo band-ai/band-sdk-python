@@ -78,7 +78,7 @@ from band.runtime.custom_tools import (
     invoke_validated_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs
-from band.runtime.prompts import render_system_prompt
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
     BandTool,
     image_block_placeholder,
@@ -556,7 +556,11 @@ class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
         if participants_msg:
             self._message_history[room_id].append(
                 ModelRequest(
-                    parts=[UserPromptPart(content=f"[System]: {participants_msg}")]
+                    parts=[
+                        UserPromptPart(
+                            content=f"{SYSTEM_UPDATE_PREFIX}{participants_msg}"
+                        )
+                    ]
                 )
             )
             logger.debug("Room %s: Injected participant update into history", room_id)
@@ -565,7 +569,9 @@ class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
         if contacts_msg:
             self._message_history[room_id].append(
                 ModelRequest(
-                    parts=[UserPromptPart(content=f"[System]: {contacts_msg}")]
+                    parts=[
+                        UserPromptPart(content=f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
+                    ]
                 )
             )
             logger.debug("Room %s: Injected contacts broadcast into history", room_id)

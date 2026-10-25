@@ -174,7 +174,7 @@ class TurnState:
 
     # Mentions for anything this turn posts to the room on its own: each
     # distinct sender of the originals it answers, captured at admission.
-    audience: list[dict[str, str]]
+    audience: tuple[str, ...]
     # Reasoning blocks keyed by reasoning_id: the CLI re-emits a block's
     # ``assistant.reasoning`` event several times per turn (same id), so keying
     # by id posts each block once, not 2-3x. Last write wins.
@@ -498,11 +498,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
 
                 # The session's ask_user handler reads this slot; safe because the
                 # turn lock serializes turns per room.
-                turn = TurnState(
-                    audience=[
-                        {"id": sender_id} for sender_id in distinct_sender_ids(messages)
-                    ]
-                )
+                turn = TurnState(audience=distinct_sender_ids(messages))
                 self._turn_state[room_id] = turn
                 try:
                     final_text = await self._run_turn(live, prompt, turn)
@@ -528,9 +524,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 if not tools.turn.replied and (
                     has_visible_content(final_text or "") or not tools.turn.complete
                 ):
-                    mentions = await automatic_mentions(
-                        tools, tuple(sender["id"] for sender in turn.audience)
-                    )
+                    mentions = await automatic_mentions(tools, turn.audience)
                     if self._room_tools.get(room_id) is not tools:
                         raise asyncio.CancelledError
                     await finish_automatic_reply(tools, final_text, mentions)
@@ -711,9 +705,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         # The question is the turn's reply, so a "waiting for your answer"
         # wrap-up is not relayed on top of it.
         try:
-            mentions = await automatic_mentions(
-                room_tools, tuple(sender["id"] for sender in turn.audience)
-            )
+            mentions = await automatic_mentions(room_tools, turn.audience)
             if self._turn_state.get(room_id) is not turn:
                 return room_inactive_answer()
             if not mentions:

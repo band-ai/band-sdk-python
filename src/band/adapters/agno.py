@@ -32,7 +32,7 @@ from band.core.types import (
 )
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.formatters import format_current_inputs
-from band.runtime.prompts import render_system_prompt
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
     decode_image_blocks,
     get_band_tool_category,
@@ -439,10 +439,14 @@ class AgnoAdapter(BatchInputAdapter[AgnoMessages]):
 
         if participants_msg:
             run_input.append(
-                Message(role="user", content=f"[System]: {participants_msg}")
+                Message(
+                    role="user", content=f"{SYSTEM_UPDATE_PREFIX}{participants_msg}"
+                )
             )
         if contacts_msg:
-            run_input.append(Message(role="user", content=f"[System]: {contacts_msg}"))
+            run_input.append(
+                Message(role="user", content=f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
+            )
         run_input.append(Message(role="user", content=format_current_inputs(messages)))
         return run_input
 

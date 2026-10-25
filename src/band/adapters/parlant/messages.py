@@ -10,14 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 from band.core.types import PlatformMessage
 from band.runtime.formatters import format_current_inputs, mention_label
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX
 
 if TYPE_CHECKING:
     from parlant.core.application import Application
     from parlant.core.sessions import SessionId
-
-# Prefixes the change-triggered roster/contacts updates injected into a turn,
-# so the model reads them as platform state, not as the requester speaking.
-SYSTEM_UPDATE_PREFIX = "[System Update]: "
 
 # A mention token is ``@`` plus a whitespace-free label. ``.``, ``/``, and ``-``
 # continue it (``alexander`` must not consume ``alexander.zaikman/tom``, and

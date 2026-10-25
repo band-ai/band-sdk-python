@@ -31,7 +31,7 @@ from band.core.types import (
 )
 from band.integrations.langgraph import langchain_tools
 from band.runtime.formatters import format_current_inputs
-from band.runtime.prompts import render_system_prompt
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
     BandTool,
     image_block_placeholder,
@@ -376,10 +376,12 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
             # message at the start; additional system messages scattered through
             # the conversation cause errors and kill provider cache savings.
             if participants_msg:
-                graph_messages.append(("user", f"[System]: {participants_msg}"))
+                graph_messages.append(
+                    ("user", f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
+                )
 
             if contacts_msg:
-                graph_messages.append(("user", f"[System]: {contacts_msg}"))
+                graph_messages.append(("user", f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}"))
 
             graph_messages.append(("user", format_current_inputs(messages)))
 

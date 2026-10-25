@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class DeliveryFailedError(Exception):
-    """Wraps a ``send_message`` failure so it is never mistaken for a
-    provider failure by a shared except block."""
+    """Keep Band audience resolution and posting failures separate from providers."""
 
     def __init__(self, cause: BaseException) -> None:
         super().__init__(str(cause))
@@ -101,11 +100,15 @@ async def finish_automatic_reply(
     text: str | None,
     mentions: list[dict[str, str]],
 ) -> None:
-    """Finish a successful provider operation after its owner checks authority."""
+    """Finish successful work after authority checks, preserving missing-reply judgment.
+
+    Present recipients without visible text still require the normal turn verdict.
+    """
     if tools.turn.replied:
         return
     if not mentions:
         if not tools.turn.complete:
+            logger.debug("Settling completed provider work after its audience departed")
             tools.turn.settle()
         return
     if text is not None and has_visible_content(text):

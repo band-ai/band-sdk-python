@@ -43,7 +43,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs
-from band.runtime.prompts import render_system_prompt
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
     BandTool,
     image_block_placeholder,
@@ -619,12 +619,12 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
 
             # Inject participants update
             if participants_msg:
-                parts.append(f"[System]: {participants_msg}")
+                parts.append(f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
                 logger.info("Room %s: Participants updated", room_id)
 
             # Inject contacts update
             if contacts_msg:
-                parts.append(f"[System]: {contacts_msg}")
+                parts.append(f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
                 logger.info("Room %s: Contacts broadcast received", room_id)
 
             # Add the turn's current inputs

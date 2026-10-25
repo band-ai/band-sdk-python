@@ -33,17 +33,17 @@ class TestControlClassifier:
     @pytest.mark.parametrize(
         ("adapter", "content", "expected"),
         [
-            ("claude", "/approve a-1", True),
+            ("claude", COMMANDS["claude"], True),
             ("claude", "@bob /decline a-1", True),
             ("claude", "/status", True),
             ("claude", "list the files", False),
             ("claude", "please /approve it", False),
-            ("codex", "/approve req-1", True),
+            ("codex", COMMANDS["codex"], True),
             ("codex", "@bob /decline req-1", True),
             ("codex", "/model gpt-5", True),
             ("codex", "run the tests", False),
             ("codex", "please /approve it", False),
-            ("cursor", "@[[alice]] /cursor select abc allow-1", True),
+            ("cursor", COMMANDS["cursor"], True),
             ("cursor", "hello", False),
         ],
     )
