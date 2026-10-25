@@ -56,6 +56,11 @@ ROOM_INACTIVE_ANSWER = (
     "delivered. Proceed without the user's input.)"
 )
 
+NO_RECIPIENTS_ANSWER = (
+    "(Your question was not delivered because none of this turn's senders "
+    "remain in the chat room. No answer or approval was received. End this turn.)"
+)
+
 DELIVERY_FAILED_ANSWER = (
     "(The question could not be delivered to the chat room: {error}. "
     "Proceed without the user's input, or try again later.)"
@@ -97,6 +102,11 @@ def delivery_failed_answer(error: BaseException) -> UserInputResponse:
 def room_inactive_answer() -> UserInputResponse:
     """The answer for a dispatch whose room/turn is already gone."""
     return freeform_answer(ROOM_INACTIVE_ANSWER)
+
+
+def no_recipients_answer() -> UserInputResponse:
+    """Describe a question skipped because its originating audience left."""
+    return freeform_answer(NO_RECIPIENTS_ANSWER)
 
 
 def render_room_question(request: Mapping[str, Any]) -> str:

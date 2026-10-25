@@ -7,6 +7,8 @@ from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, events_of_type, failure_reports
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_event, deliver_message
+from tests.adapters.hold import Hold
+from tests.adapters.opencode.approvals.kit import DECLINED
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
     agent_input,
@@ -15,8 +17,11 @@ from tests.adapters.opencode.helpers import (
     event_session_idle,
     event_text_part,
     make_platform_message,
+    room_turn,
     tools_protocol,
+    turn_finished,
 )
+from tests.toolkit.tasks import background
 
 
 class TestReplyDelivery:
@@ -41,28 +46,25 @@ class TestReplyDelivery:
 
         assert [provider for provider, _ in failure_reports(tools)] == ["opencode"]
 
-    async def test_manual_relay_releases_turn_when_mentionless_send_rejected(
+    async def test_undeliverable_manual_prompt_declines_and_releases_turn(
         self, make_adapter, tools
     ) -> None:
-        """A sender-less turn yields no mentions, which the platform rejects.
-        The manual approval relay must still release the turn (best-effort
-        post) rather than stranding on_message until the turn timeout."""
+        """A prompt nobody can receive is declined rather than left waiting."""
+        completion = Hold()
         fake_client = FakeOpencodeClient(
             prompt_event_sequences=[
                 [event_permission("sess-1", "perm-loop", permission="doom_loop")]
             ],
-            reply_permission_events={"perm-loop": [event_session_idle("sess-1")]},
+            reply_permission_events={
+                "perm-loop": [completion.wait, event_session_idle("sess-1")]
+            },
         )
-        adapter = OpencodeAdapter(
-            config=OpencodeAdapterConfig(approval_mode="manual"),
-            client_factory=lambda _config: fake_client,
+        adapter = make_adapter(
+            fake_client, config=OpencodeAdapterConfig(approval_mode="manual")
         )
-        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
-        # No hang: on_message returns once the relay releases the turn wait,
-        # even though the mention-less room post was rejected.
-        await asyncio.wait_for(
+        async with background(
             deliver_message(
                 adapter,
                 make_platform_message(sender_id="", sender_name=""),
@@ -72,14 +74,21 @@ class TestReplyDelivery:
                 contacts_msg=None,
                 is_session_bootstrap=True,
                 room_id="room-1",
-            ),
-            timeout=5,
-        )
-
-        # Relay was attempted and dropped (nothing recorded), and manual mode
-        # did not auto-reply the pending permission.
+            )
+        ) as sending:
+            try:
+                await completion.arrived()
+                turn = await room_turn(adapter)
+                assert not tools.turn.complete
+            finally:
+                completion.released.set()
+            await sending
+            await turn_finished(turn)
         assert tools.messages_sent == []
-        assert fake_client.permission_replies == []
+        assert fake_client.permission_replies == [
+            {**DECLINED, "permission_id": "perm-loop"}
+        ]
+        assert [provider for provider, _ in failure_reports(tools)] == ["opencode"]
         await adapter.on_cleanup("room-1")
 
     async def test_turn_completes_when_fallback_reply_send_rejected(

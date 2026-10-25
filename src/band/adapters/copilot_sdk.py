@@ -52,6 +52,7 @@ from band.integrations.copilot_sdk.room_ask_user import (
     ASK_USER_ROOM,
     ROOM_ASK_USER_GUIDANCE,
     delivery_failed_answer,
+    no_recipients_answer,
     question_delivered_answer,
     render_room_question,
     room_inactive_answer,
@@ -716,7 +717,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             if self._turn_state.get(room_id) is not turn:
                 return room_inactive_answer()
             if not mentions:
-                return room_inactive_answer()
+                return no_recipients_answer()
             await deliver_reply(room_tools, rendered, mentions=mentions)
         except DeliveryFailedError as exc:
             logger.warning(
