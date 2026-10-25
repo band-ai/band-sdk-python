@@ -45,15 +45,16 @@ class TestStartupSelection:
         mailbox = ObservedMailbox()
         adapter._mailbox = mailbox
         first = asyncio.create_task(run_turn(adapter, FakeAgentTools()))
-        await runtime.entered.wait()
-        mailbox.attempted.clear()
-        selecting = asyncio.create_task(
-            adapter.apply_model_selection(
-                ModelSelection(model=f"{MODEL_PROVIDER}/{ACCEPTED_MODEL}"),
-                room_id="room-123",
-            )
-        )
+        selecting: asyncio.Task[None] | None = None
         try:
+            await runtime.entered.wait()
+            mailbox.attempted.clear()
+            selecting = asyncio.create_task(
+                adapter.apply_model_selection(
+                    ModelSelection(model=f"{MODEL_PROVIDER}/{ACCEPTED_MODEL}"),
+                    room_id="room-123",
+                )
+            )
             await mailbox.attempted.wait()
             await checkpoint()
             runtime.held_command = None
@@ -64,7 +65,11 @@ class TestStartupSelection:
             assert runtime.models_at_prompt[-1] == (MODEL_PROVIDER, ACCEPTED_MODEL)
         finally:
             runtime.release.set()
-            await asyncio.gather(first, selecting, return_exceptions=True)
+            tasks = [first, *([selecting] if selecting is not None else [])]
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             await adapter.cleanup_all()
 
     async def test_accepted_selection_survives_cancelled_startup(
