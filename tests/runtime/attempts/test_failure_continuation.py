@@ -25,6 +25,7 @@ pytestmark = pytest.mark.looptime
 @pytest.mark.parametrize("prepare_room", ROOM_PREPARATIONS)
 class TestFailureContinuation:
     @pytest.mark.parametrize("route", list(Route))
+    @pytest.mark.usefixtures("native_timer_tolerance")
     async def test_an_unknown_failed_write_preserves_the_execution_budget(
         self,
         retrying_room: Harness,
@@ -40,6 +41,7 @@ class TestFailureContinuation:
 
         room.peer.post(CONTROL)
         await room.advance(RESYNC_SECONDS)
+        await room.control_settled(CONTROL)
 
         assert room.model_turns == [room.members]
         assert room.adapter.controls == [CONTROL]

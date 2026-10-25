@@ -22,8 +22,10 @@ from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import DeliveryStatus, MessageCreatedPayload, MessageMetadata
 from band.platform.event import MessageEvent, PlatformEvent
+from band.platform.link import BandLink
 from band.platform.message_lifecycle import ACTIONABLE_PAGE_SIZE
 from band.runtime.cycle import TurnScope
+from band.runtime.delivery import TurnOutcome
 from band.runtime.execution import Execution, ExecutionContext, ExecutionHandler
 from band.runtime.messages import PlatformMessage
 from band.runtime.runtime import AgentRuntime
@@ -217,6 +219,7 @@ class RestPeer:
         # The room swallows the guard's error, so a test reads it from here.
         self.runaway = False
         self._served: dict[int, asyncio.Event] = {}
+        self._written: dict[tuple[str, DeliveryStatus, bool], asyncio.Event] = {}
 
     def post(
         self,
@@ -329,6 +332,19 @@ class RestPeer:
     def _served_event(self, count: int) -> asyncio.Event:
         return self._served.setdefault(count, asyncio.Event())
 
+    async def write_received(
+        self, action: DeliveryStatus, message_id: str, *, confirmed: bool = True
+    ) -> None:
+        """Wait for the first lifecycle write with this outcome."""
+        await self._write_event(action, message_id, confirmed).wait()
+
+    def _write_event(
+        self, action: DeliveryStatus, message_id: str, confirmed: bool
+    ) -> asyncio.Event:
+        return self._written.setdefault(
+            (message_id, action, confirmed), asyncio.Event()
+        )
+
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if request.method == "GET" and path.endswith("/messages"):
@@ -416,10 +432,11 @@ class RestPeer:
             Write(message_id, action, asyncio.get_running_loop().time(), confirmed)
         )
         self.journal.append(write(action, message_id, confirmed=confirmed))
-        if failure is not None:
-            return _replying(failure)
         if confirmed:
             self.rows[message_id].statuses[AGENT_ID] = action
+        self._write_event(action, message_id, confirmed).set()
+        if failure is not None:
+            return _replying(failure)
         return httpx.Response(
             200,
             json={
@@ -519,6 +536,35 @@ class Session(Observer):
         return [instant - self.started_at for instant in instants]
 
 
+class ObservedExecution(ExecutionContext):
+    """Notify when real delivery boundaries finish or defer work."""
+
+    def __init__(
+        self,
+        room_id: str,
+        link: BandLink,
+        on_execute: ExecutionHandler,
+        *,
+        on_deferred: Callable[[], None] | None = None,
+        on_finished: Callable[[], None] | None = None,
+        **options: Any,
+    ) -> None:
+        super().__init__(room_id, link, on_execute, **options)
+        self._on_deferred = on_deferred
+        self._on_finished = on_finished
+
+    async def execute_local(self, event: PlatformEvent) -> TurnOutcome:
+        outcome = await super().execute_local(event)
+        if outcome is TurnOutcome.RETRY_LATER and self._on_deferred is not None:
+            self._on_deferred()
+        return outcome
+
+    def finish_delivery(self, scope: TurnScope) -> None:
+        super().finish_delivery(scope)
+        if self._on_finished is not None:
+            self._on_finished()
+
+
 class Ending(Enum):
     """How a gated turn is brought to its end."""
 
@@ -558,6 +604,7 @@ async def started_session(
     controls: frozenset[str] = frozenset(),
     claims: ClaimRegistry | None = None,
     on_platform_stop: PlatformStopHook | None = None,
+    context_factory: Callable[..., ExecutionContext] = ExecutionContext,
 ) -> AsyncIterator[Session]:
     """A room execution started over the peer through the real client."""
     turns = JournaledTurns(
@@ -565,7 +612,7 @@ async def started_session(
     )
     scripted = JournaledControls(recognized=set(controls), journal=peer.journal)
     async with rest_client_over(peer.answer) as rest:
-        ctx = ExecutionContext(
+        ctx = context_factory(
             ROOM_ID,
             link_over(rest),
             turns.single,

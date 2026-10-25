@@ -26,6 +26,7 @@ pytestmark = pytest.mark.looptime
 @pytest.mark.parametrize("fault", list(Fault))
 @pytest.mark.parametrize("prepare_room", ROOM_PREPARATIONS)
 class TestReplacementScheduling:
+    @pytest.mark.usefixtures("native_timer_tolerance")
     async def test_rest_controls_remain_discoverable_during_an_outage(
         self, harness: Harness, fault: Fault, prepare_room: RoomPreparation
     ) -> None:
@@ -36,6 +37,7 @@ class TestReplacementScheduling:
 
         harness.peer.post(CONTROL)
         await harness.advance(RESYNC_SECONDS)
+        await harness.control_settled(CONTROL)
 
         assert harness.adapter.controls == [CONTROL]
         assert harness.adapter.turns == [harness.members]
