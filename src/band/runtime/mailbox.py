@@ -173,7 +173,7 @@ class RoomMailbox:
                 if job is None:
                     return
                 try:
-                    await self._execute(room_id, room, job)
+                    await self._execute(room, job)
                 finally:
                     room.queue.task_done()
                 if room.queue.empty():
@@ -186,7 +186,7 @@ class RoomMailbox:
             elif room.worker is None:
                 self._start_worker(room_id, room)
 
-    async def _execute(self, room_id: str, room: MailboxRoom, job: MailboxJob) -> None:
+    async def _execute(self, room: MailboxRoom, job: MailboxJob) -> None:
         if job.result is not None and job.result.cancelled():
             return
 

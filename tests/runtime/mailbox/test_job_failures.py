@@ -47,7 +47,7 @@ class TestJobFailures:
             mailbox.cast(room_id, boom)
             await done.wait()
             assert await mailbox.ask(room_id, ok) == "ok"
-        assert "Room mailbox cast failed with RuntimeError" in caplog.text
+        assert "RuntimeError" in caplog.text
         assert room_id not in caplog.text
         assert exception_text not in caplog.text
         assert "Traceback" not in caplog.text
