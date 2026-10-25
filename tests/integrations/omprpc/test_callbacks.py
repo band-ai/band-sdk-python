@@ -14,19 +14,15 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from tests.integrations.omppeer import (
-    HOST_CANCELLED_ID,
-    UI_APPROVE,
-    UI_CANCELLED_ID,
-    UI_DENY,
-)
-from tests.integrations.omprpc.kit import (
-    ClientFactory,
-    Observer,
-    checkpoint_frames,
-    owned_rpc_process,
-    second_prompt,
-)
+from tests.integrations.ompframes import UI_APPROVE, UI_DENY
+from tests.integrations.omppeers.base import COMPLETE
+from tests.integrations.omppeers.callbacks import HOST_CANCELLED_ID, UI_CANCELLED_ID
+from tests.integrations.omprpc.callbacks import cancel_ui, echo_tool
+from tests.integrations.omprpc.events import EventRecorder, follow_up_texts
+from tests.integrations.omprpc.processes import owned_rpc_process
+from tests.integrations.omprpc.spawn import ClientFactory
+from tests.integrations.omprpc.wirelog import checkpoint_frames
+from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 
 
 class TestHostToolAndUICallbacks:
@@ -34,8 +30,8 @@ class TestHostToolAndUICallbacks:
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("callbacks")
-        observer = Observer()
+        client = await client_factory(PeerScenario.PARALLEL_CALLBACKS)
+        observer = EventRecorder()
         first_started = asyncio.Event()
         release_first = asyncio.Event()
         calls: list[OmpHostToolCall] = []
@@ -48,7 +44,7 @@ class TestHostToolAndUICallbacks:
                 await release_first.wait()
             else:
                 await first_started.wait()
-                await client.request("checkpoint")
+                await client.request(PeerCommand.CHECKPOINT)
                 release_first.set()
             return OmpToolResult(
                 content=[
@@ -91,13 +87,13 @@ class TestHostToolAndUICallbacks:
             "id": "approval-1",
             "value": UI_APPROVE,
         }
-        await second_prompt(client)
+        assert await follow_up_texts(client) == [COMPLETE]
 
     async def test_confirmed_ui_reply_reaches_the_peer(
         self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory("callbacks")
-        observer = Observer()
+        client = await client_factory(PeerScenario.PARALLEL_CALLBACKS)
+        observer = EventRecorder()
 
         async def on_ui(_request: OmpUIRequest) -> OmpUIResponse:
             return OmpUIResponse(confirmed=True)
@@ -106,7 +102,7 @@ class TestHostToolAndUICallbacks:
             await client.prompt(
                 "first",
                 on_event=observer.on_event,
-                on_tool=observer.on_tool,
+                on_tool=echo_tool,
                 on_ui=on_ui,
             )
         frames = await checkpoint_frames(client)
@@ -118,14 +114,21 @@ class TestHostToolAndUICallbacks:
         }
 
     @pytest.mark.parametrize(
-        ("kind", "target"),
-        [("host", HOST_CANCELLED_ID), ("ui", UI_CANCELLED_ID)],
+        ("scenario", "cancel_command", "target"),
+        [
+            (PeerScenario.HOST_CANCEL, PeerCommand.CANCEL_HOST, HOST_CANCELLED_ID),
+            (PeerScenario.UI_CANCEL, PeerCommand.CANCEL_UI, UI_CANCELLED_ID),
+        ],
     )
     async def test_native_cancel_targets_the_callback_and_keeps_the_next_turn_usable(
-        self, client_factory: ClientFactory, kind: str, target: str
+        self,
+        client_factory: ClientFactory,
+        scenario: PeerScenario,
+        cancel_command: PeerCommand,
+        target: str,
     ) -> None:
-        client = await client_factory(f"{kind}-cancel")
-        observer = Observer()
+        client = await client_factory(scenario)
+        observer = EventRecorder()
         started = asyncio.Event()
         cancelled = asyncio.Event()
         forever = asyncio.Event()
@@ -154,12 +157,12 @@ class TestHostToolAndUICallbacks:
         try:
             async with asyncio.timeout(5):
                 await started.wait()
-                await client.request(f"cancel-{kind}")
+                await client.request(cancel_command)
                 await cancelled.wait()
                 await running
             frames = await checkpoint_frames(client)
             assert not any(frame.get("id") == target for frame in frames)
-            await second_prompt(client)
+            assert await follow_up_texts(client) == [COMPLETE]
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
@@ -168,13 +171,13 @@ class TestHostToolAndUICallbacks:
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("ui-error")
+        client = await client_factory(PeerScenario.UI_ERROR)
         process = owned_rpc_process(client)
 
         async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
             raise ValueError("Unoffered permission choice")
 
-        observer = Observer()
+        observer = EventRecorder()
         async with asyncio.timeout(6):
             with pytest.raises(ValueError, match="Unoffered permission choice"):
                 await client.prompt(
@@ -185,15 +188,15 @@ class TestHostToolAndUICallbacks:
                 )
         assert process.returncode is not None
         await client.start()
-        await second_prompt(client)
+        assert await follow_up_texts(client) == [COMPLETE]
 
     async def test_tool_callback_exception_propagates_unchanged_and_reaps_the_process(
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("callbacks")
+        client = await client_factory(PeerScenario.PARALLEL_CALLBACKS)
         process = owned_rpc_process(client)
-        observer = Observer()
+        observer = EventRecorder()
         sentinel = ValueError("Band delivery failed")
 
         async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
@@ -205,9 +208,9 @@ class TestHostToolAndUICallbacks:
                     "first",
                     on_event=observer.on_event,
                     on_tool=on_tool,
-                    on_ui=observer.on_ui,
+                    on_ui=cancel_ui,
                 )
         assert failed.value is sentinel
         assert process.returncode is not None
         await client.start()
-        await second_prompt(client)
+        assert await follow_up_texts(client) == [COMPLETE]

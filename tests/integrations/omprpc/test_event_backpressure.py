@@ -18,13 +18,13 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from tests.integrations.omppeer import COMPLETE, UI_APPROVE, burst_message_id
-from tests.integrations.omprpc.kit import (
-    ClientFactory,
-    Observer,
-    owned_rpc_process,
-    second_prompt,
-)
+from tests.integrations.ompframes import UI_APPROVE
+from tests.integrations.omppeers.base import COMPLETE
+from tests.integrations.omppeers.callbacks import burst_message_id
+from tests.integrations.omprpc.events import EventRecorder, follow_up_texts
+from tests.integrations.omprpc.processes import owned_rpc_process
+from tests.integrations.omprpc.spawn import ClientFactory
+from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 
 
 @asynccontextmanager
@@ -33,7 +33,7 @@ async def held_event_prompt(
 ) -> AsyncIterator[
     tuple[asyncio.Task[None], asyncio.subprocess.Process, asyncio.Event]
 ]:
-    observer = Observer()
+    observer = EventRecorder()
     entered = asyncio.Event()
     release = asyncio.Event()
     stopped = asyncio.Event()
@@ -73,7 +73,7 @@ async def overflow_reaps_and_restarts(
     caplog.clear()
     with caplog.at_level(logging.ERROR, logger="band.integrations.omprpc.client"):
         burst = asyncio.create_task(
-            client.request("event-burst", count=EVENT_BACKLOG_LIMIT + 1)
+            client.request(PeerCommand.EVENT_BURST, count=EVENT_BACKLOG_LIMIT + 1)
         )
         try:
             with pytest.raises(OmpProcessError, match=BACKLOG_EXCEEDED):
@@ -90,7 +90,7 @@ async def overflow_reaps_and_restarts(
     assert stopped.is_set()
     assert process.returncode is not None
     await client.start()
-    await second_prompt(client)
+    assert await follow_up_texts(client) == [COMPLETE]
     assert owned_rpc_process(client) is not process
 
 
@@ -98,9 +98,9 @@ class TestEventBackpressure:
     async def test_full_backlog_keeps_reentrant_control_live_and_preserves_event_order(
         self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory("event-backpressure")
+        client = await client_factory(PeerScenario.EVENT_BACKPRESSURE)
         process = owned_rpc_process(client)
-        observer = Observer()
+        observer = EventRecorder()
         entered = asyncio.Event()
         release = asyncio.Event()
         delivered = asyncio.Event()
@@ -117,7 +117,7 @@ class TestEventBackpressure:
                 delivered.set()
 
         async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
-            await client.request("checkpoint")
+            await client.request(PeerCommand.CHECKPOINT)
             return OmpUIResponse(value=UI_APPROVE)
 
         running = asyncio.create_task(
@@ -131,15 +131,17 @@ class TestEventBackpressure:
         try:
             async with asyncio.timeout(8):
                 await entered.wait()
-                await client.request("event-burst", count=EVENT_BACKLOG_LIMIT)
-                assert await client.request("event-ui") == {"value": UI_APPROVE}
+                await client.request(PeerCommand.EVENT_BURST, count=EVENT_BACKLOG_LIMIT)
+                assert await client.request(PeerCommand.EVENT_UI) == {
+                    "value": UI_APPROVE
+                }
                 assert observer.events == []
                 assert not running.done()
                 assert process.returncode is None
 
                 release.set()
                 await delivered.wait()
-                await client.request("event-result")
+                await client.request(PeerCommand.EVENT_RESULT)
                 await running
 
             assert observer.outline == [
@@ -150,7 +152,7 @@ class TestEventBackpressure:
             ]
             assert observer.update_ids == burst_ids
             assert observer.assistant_texts == [COMPLETE]
-            await second_prompt(client)
+            assert await follow_up_texts(client) == [COMPLETE]
             assert owned_rpc_process(client) is process
             assert process.returncode is None
         finally:
@@ -161,7 +163,7 @@ class TestEventBackpressure:
     async def test_overload_before_result_fails_closed_and_restarts(
         self, client_factory: ClientFactory, caplog: pytest.LogCaptureFixture
     ) -> None:
-        client = await client_factory("event-backpressure")
+        client = await client_factory(PeerScenario.EVENT_BACKPRESSURE)
         async with (
             asyncio.timeout(8),
             held_event_prompt(client) as (
@@ -175,7 +177,7 @@ class TestEventBackpressure:
     async def test_overload_after_settlement_fails_closed_and_restarts(
         self, client_factory: ClientFactory, caplog: pytest.LogCaptureFixture
     ) -> None:
-        client = await client_factory("event-backpressure")
+        client = await client_factory(PeerScenario.EVENT_BACKPRESSURE)
         async with (
             asyncio.timeout(8),
             held_event_prompt(client) as (
@@ -184,5 +186,5 @@ class TestEventBackpressure:
                 stopped,
             ),
         ):
-            await client.request("event-result")
+            await client.request(PeerCommand.EVENT_RESULT)
             await overflow_reaps_and_restarts(client, running, process, stopped, caplog)

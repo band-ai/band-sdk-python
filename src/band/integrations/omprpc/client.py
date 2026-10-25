@@ -35,7 +35,7 @@ from band.integrations.omprpc.frames import (
     payload_json,
     ui_response_frame,
 )
-from band.integrations.omprpc.prompt import OmpCallbackKind, PromptRun, idle_flags
+from band.integrations.omprpc.prompt import CompletionAction, OmpCallbackKind, PromptRun
 from band.integrations.omprpc.scope import OmpProcessScope
 from band.integrations.ompwire import (
     OMP_FRAME_BYTES,
@@ -444,73 +444,66 @@ class OmpRpcClient:
             logger.error("OMP retirement failed after prompt error: %s", cleanup)
 
     async def _guard_completion(self, turn: PromptRun) -> None:
-        """Arm the completion budget only on positively proven idle evidence.
-
-        Any newer activity or busy evidence invalidates and stops an armed
-        timer; re-arming requires a new eligible observation. The guard never
-        synthesizes a result or marks work complete: on expiry it fails the
-        turn with the typed uncertain-outcome error, which unwinds through the
-        same retirement path as any transport failure.
-        """
+        """Fail completion when fresh idle evidence exhausts its budget."""
         armed_since: float | None = None
         try:
-            while True:
-                # Clear before evaluating so any change observed afterwards
-                # is visible to the next wait; evaluation then always sees
-                # the freshest state at the moment the wait is armed.
+            while self._turn is turn:
+                # Clear before inspection so subsequent evidence cannot be lost.
                 turn.changed.clear()
-                if self._turn is not turn or turn.rejected:
-                    return
-                if turn.completion_evidence_complete():
-                    return
-                if turn.result_owed and not turn.boundary_reached():
-                    armed_since = None
-                    await turn.changed.wait()
-                    continue
-                if turn.busy_proven():
-                    armed_since = None
-                    await turn.changed.wait()
-                    continue
-                stale = (
-                    turn.snapshot is None
-                    or turn.snapshot[0] <= turn.last_activity_sequence
-                    or turn.snapshot[0] < turn.settled_sequence
-                )
-                if stale:
-                    received = await self._request_frame(
-                        OmpCommandName.GET_STATE, {}, completion=True
-                    )
-                    turn.record_snapshot(
-                        received.sequence,
-                        self._parse_response(
-                            received.frame,
-                            OmpState,
-                            "Invalid OMP completion protocol data",
-                        ),
-                    )
-                    continue
-                now = asyncio.get_running_loop().time()
-                if armed_since is None:
-                    armed_since = now
-                    continue
-                remaining = self.completion_timeout_s - (now - armed_since)
-                if remaining <= 0:
-                    turn.fail(
-                        OmpCompletionTimeout(
-                            "OMP completion stayed idle without its result,"
-                            " settlement, or final drain; the turn outcome is"
-                            " uncertain"
+                match turn.completion_action():
+                    case CompletionAction.STOP:
+                        return
+                    case CompletionAction.WAIT_FOR_ACTIVITY:
+                        armed_since = None
+                        await turn.changed.wait()
+                    case CompletionAction.REFRESH_SNAPSHOT:
+                        await self._refresh_completion_snapshot(
+                            turn, "Invalid OMP completion protocol data"
                         )
-                    )
-                    return
-                try:
-                    await asyncio.wait_for(turn.changed.wait(), remaining)
-                except TimeoutError:
-                    pass
+                    case CompletionAction.WATCH_IDLE_BUDGET:
+                        armed_since = await self._watch_idle_completion_budget(
+                            turn, armed_since
+                        )
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 -- belongs to the awaiting prompt
             turn.fail(error)
+
+    async def _refresh_completion_snapshot(
+        self, turn: PromptRun, invalid_state_message: str
+    ) -> None:
+        snapshot = await self._request_frame(
+            OmpCommandName.GET_STATE, {}, completion=True
+        )
+        state = self._parse_response(snapshot.frame, OmpState, invalid_state_message)
+        turn.record_snapshot(snapshot.sequence, state)
+
+    async def _watch_idle_completion_budget(
+        self, turn: PromptRun, armed_since: float | None
+    ) -> float:
+        now = asyncio.get_running_loop().time()
+        if armed_since is None:
+            return now
+        remaining = self.completion_timeout_s - (now - armed_since)
+        if remaining <= 0:
+            raise OmpCompletionTimeout(
+                "OMP completion stayed idle without its result,"
+                " settlement, or final drain; the turn outcome is uncertain"
+            )
+        await self._wait_for_evidence_or_deadline(turn, remaining)
+        return armed_since
+
+    async def _wait_for_evidence_or_deadline(
+        self, turn: PromptRun, timeout_s: float
+    ) -> None:
+        changed = asyncio.create_task(turn.changed.wait())
+        try:
+            done, _ = await asyncio.wait({changed}, timeout=timeout_s)
+            if changed in done:
+                await changed
+        finally:
+            changed.cancel()
+            await asyncio.gather(changed, return_exceptions=True)
 
     async def _complete_prompt(self, turn: PromptRun, message: str) -> None:
         try:
@@ -568,29 +561,10 @@ class OmpRpcClient:
 
     async def _wait_for_settlement(self, turn: PromptRun) -> None:
         while True:
-            snapshot = await self._request_frame(
-                OmpCommandName.GET_STATE, {}, completion=True
+            await self._refresh_completion_snapshot(
+                turn, "Invalid OMP settlement protocol data"
             )
-            state = self._parse_response(
-                snapshot.frame, OmpState, "Invalid OMP settlement protocol data"
-            )
-            turn.record_snapshot(snapshot.sequence, state)
-            # A snapshot proving settlement AND positive idleness, newer than
-            # every observed event, proves native completion. isSettled alone
-            # must not end a turn: background work can outlive the answer, so
-            # the success path demands the same positive-idle conjunction the
-            # completion guard requires before arming. A session_settled frame
-            # postdating the snapshot and all activity proves it too; an old
-            # one cannot overrule a newer busy snapshot, so each wake
-            # re-snapshots.
-            if (
-                state.isSettled
-                and idle_flags(state)
-                and snapshot.sequence >= turn.last_activity_sequence
-            ) or (
-                turn.settled_sequence > snapshot.sequence
-                and turn.settled_sequence > turn.last_activity_sequence
-            ):
+            if turn.settlement_confirmed():
                 return
             turn.changed.clear()
             await turn.changed.wait()

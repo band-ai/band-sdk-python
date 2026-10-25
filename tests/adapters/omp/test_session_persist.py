@@ -6,23 +6,22 @@ from pathlib import Path
 
 import pytest
 
-from band.adapters.omp import OMP_SESSION_DIRECTORY, OmpAdapter, OmpAdapterConfig
+from band.adapters.omp import OMP_SESSION_DIRECTORY, OmpAdapterConfig
 from band.converters.omp import OmpHistoryConverter, OmpMetadataKey
 from band.core.types import MessageType
 from band.testing import FakeAgentTools
 from band.testing.fake_tools import events_of_type
-from tests.adapters.omp.kit import RecordingRuntime, native_session_file, run_turn
+from tests.adapters.omp.runtime import AdapterFactory
+from tests.adapters.omp.sessions import native_session_file
+from tests.adapters.omp.turns import run_turn
 
 
 class TestSessionPersist:
     @pytest.mark.asyncio
     async def test_successful_turn_without_session_file_keeps_resume(
-        self, monkeypatch, tmp_path: Path
+        self, tmp_path: Path, real_adapter: AdapterFactory
     ):
-        runtime = RecordingRuntime()
-        runtime.finish.set()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        adapter = real_adapter(config=OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         prior = [
             {
                 "message_type": MessageType.TASK,
@@ -33,35 +32,28 @@ class TestSessionPersist:
             }
         ]
         tools = FakeAgentTools()
-        try:
-            await run_turn(adapter, tools)
-            posted = events_of_type(tools, MessageType.TASK)
-            assert posted
-            assert OmpMetadataKey.SESSION not in posted[-1]["metadata"]
-            state = OmpHistoryConverter().convert([*prior, *posted])
-            assert (
-                state.room_to_session["room-123"]
-                == f"/workspace/{OMP_SESSION_DIRECTORY}/saved.jsonl"
-            )
-        finally:
-            await adapter.cleanup_all()
+        await run_turn(adapter, tools)
+        posted = events_of_type(tools, MessageType.TASK)
+        assert posted
+        assert OmpMetadataKey.SESSION not in posted[-1]["metadata"]
+        state = OmpHistoryConverter().convert([*prior, *posted])
+        assert (
+            state.room_to_session["room-123"]
+            == f"/workspace/{OMP_SESSION_DIRECTORY}/saved.jsonl"
+        )
 
     @pytest.mark.asyncio
     async def test_successful_turn_posts_session_file(
-        self, monkeypatch, tmp_path: Path
+        self, tmp_path: Path, real_adapter: AdapterFactory
     ):
-        runtime = RecordingRuntime()
-        runtime.finish.set()
-        runtime.session_file = str(native_session_file(tmp_path))
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        session_file = str(native_session_file(tmp_path))
+        adapter = real_adapter(
+            session_file=session_file,
+            config=OmpAdapterConfig(cwd=str(tmp_path)),
+            emit=(),
+        )
         tools = FakeAgentTools()
-        try:
-            await run_turn(adapter, tools)
-            posted = events_of_type(tools, MessageType.TASK)
-            assert posted
-            assert (
-                posted[-1]["metadata"][OmpMetadataKey.SESSION] == runtime.session_file
-            )
-        finally:
-            await adapter.cleanup_all()
+        await run_turn(adapter, tools)
+        posted = events_of_type(tools, MessageType.TASK)
+        assert posted
+        assert posted[-1]["metadata"][OmpMetadataKey.SESSION] == session_file

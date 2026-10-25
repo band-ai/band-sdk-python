@@ -20,7 +20,7 @@ from tests.adapters.omp.declinekit import (
     tool_results,
 )
 from tests.adapters.omp.declinepeer import DECLINE_CALL, REPLY_TEXT, DeclineScenario
-from tests.adapters.omp.kit import run_turn
+from tests.adapters.omp.turns import run_turn
 
 
 class TestTerminalDecline:

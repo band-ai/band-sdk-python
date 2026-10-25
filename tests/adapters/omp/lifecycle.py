@@ -13,7 +13,9 @@ from pytest import MonkeyPatch, raises
 
 from band.adapters.omp import OmpAdapter
 from band.testing import FakeAgentTools, reported_failures
-from tests.adapters.omp.kit import Launches, PendingRuntime, SignallingLock, run_turn
+from tests.adapters.omp.lifecyclekit import Launches, SignallingLock
+from tests.adapters.omp.runtime import PendingRuntime
+from tests.adapters.omp.turns import run_turn
 
 ROOM = "room-123"
 
@@ -168,7 +170,7 @@ async def play(steps: list[Step]) -> None:
         MonkeyPatch.context() as patch,
     ):
         launches = Launches()
-        patch.setattr("band.adapters.omp.OmpRpcClient", launches)
+        patch.setattr("band.adapters.omp.lifecycle.OmpRpcClient", launches)
         model = RoomLifecycle(Path(directory), launches)
         try:
             async with asyncio.timeout(15):

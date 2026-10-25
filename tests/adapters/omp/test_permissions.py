@@ -1,18 +1,18 @@
-"""Native OMP approval choices and resolver boundaries."""
+"""Native approval choices cannot exceed the offered options."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
 from band.adapters.omp import OMP_PERMISSION_TOOL, OmpAdapter, OmpAdapterConfig
+from band.adapters.omp.turnstate import OmpTurn
 from band.core.types import Emit
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from band.integrations.ompwire import OmpUIMethod, OmpUIRequest
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import UiRequestRuntime, run_turn, tool_call_records
+from tests.adapters.omp.records import tool_call_records
 
 
 class TestPermissions:
@@ -37,65 +37,54 @@ class TestPermissions:
         ],
         ids=["default-approve", "unrelated-options", "non-select"],
     )
-    @pytest.mark.asyncio
     async def test_permission_defaults_match_offered_native_choices(
         self,
-        monkeypatch,
         tmp_path: Path,
-        method,
-        options,
-        expected_value,
-        expected_cancelled,
-        records_permission,
-    ):
-        runtime = UiRequestRuntime(
-            OmpUIRequest(
-                id="approval",
-                method=method,
-                title="Approve tool?",
-                options=options,
-            )
-        )
-        runtime.finish.set()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+        method: str,
+        options: list[str],
+        expected_value: str | None,
+        expected_cancelled: bool,
+        records_permission: bool,
+    ) -> None:
         adapter = OmpAdapter(
             OmpAdapterConfig(cwd=str(tmp_path)), emit={Emit.TOOL_CALLS}
         )
         tools = FakeAgentTools()
-        try:
-            await run_turn(adapter, tools)
-            assert runtime.response is not None
-            assert runtime.response.value == expected_value
-            assert runtime.response.cancelled is expected_cancelled
-            names = [call["name"] for call in tool_call_records(tools)]
-            assert (OMP_PERMISSION_TOOL in names) is records_permission
-        finally:
-            await adapter.cleanup_all()
+        response = await adapter._permission(
+            OmpUIRequest(
+                id="approval", method=method, title="Approve tool?", options=options
+            ),
+            "room",
+            "session",
+            OmpTurn(tools=tools),
+        )
+        assert response.value == expected_value
+        assert response.cancelled is expected_cancelled
+        assert (
+            OMP_PERMISSION_TOOL in [call["name"] for call in tool_call_records(tools)]
+        ) is records_permission
 
-    @pytest.mark.asyncio
     async def test_permission_resolver_cannot_invent_an_unoffered_choice(
-        self, monkeypatch, tmp_path: Path
-    ):
-        runtime = UiRequestRuntime(
+        self, tmp_path: Path
+    ) -> None:
+        async def choose_unoffered(_request) -> str:
+            return "Allow always"
+
+        adapter = OmpAdapter(
+            OmpAdapterConfig(cwd=str(tmp_path)),
+            resolve_permission=choose_unoffered,
+            emit={Emit.TOOL_CALLS},
+        )
+        response = await adapter._permission(
             OmpUIRequest(
                 id="approval",
                 method=OmpUIMethod.SELECT,
                 title="Approve tool?",
                 options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
-            )
+            ),
+            "room",
+            "session",
+            OmpTurn(tools=FakeAgentTools()),
         )
-        runtime.finish.set()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
-        adapter = OmpAdapter(
-            OmpAdapterConfig(cwd=str(tmp_path)),
-            resolve_permission=AsyncMock(return_value="Allow always"),
-            emit={Emit.TOOL_CALLS},
-        )
-        tools = FakeAgentTools()
-        try:
-            await run_turn(adapter, tools)
-            assert runtime.response is not None
-            assert runtime.response.cancelled
-            assert runtime.response.value is None
-        finally:
-            await adapter.cleanup_all()
+        assert response.cancelled
+        assert response.value is None

@@ -33,7 +33,7 @@ ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
         Counter(finish_automatic_reply=1, deliver_reply=1),
         "the model's final text, and its ask_user question as the turn's reply",
     ),
-    "adapters/omp.py": (
+    "adapters/omp/callbacks.py": (
         Counter(deliver_reply=1),
         "the model's native ask questions as the turn's reply",
     ),

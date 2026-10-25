@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.integrations.omprpc.kit import ProcessGate
+from tests.integrations.omprpc.gate import ProcessGate
 from tests.integrations.omprpc.lifecycle import Step, play
 
 

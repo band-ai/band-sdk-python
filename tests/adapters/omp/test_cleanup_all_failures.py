@@ -10,10 +10,13 @@ from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.integrations.omp import OMP_CWD_FLAG
 from band.integrations.ompprocess import OMP_SESSION_DIR_FLAG
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import BoomCloseRuntime, occupied_room_ids, run_turn
+from tests.adapters.omp.custody import occupied_room_ids
+from tests.adapters.omp.lifecyclekit import BoomCloseRuntime
+from tests.adapters.omp.turns import run_turn
 
 
 class TestCleanupAllFailures:
+    @pytest.mark.usefixtures("native_startup_ready")
     @pytest.mark.asyncio
     async def test_cleanup_all_raises_every_close_error(
         self, monkeypatch, tmp_path: Path
@@ -33,7 +36,7 @@ class TestCleanupAllFailures:
             runtimes[label] = runtime
             return runtime
 
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", spawn)
+        monkeypatch.setattr("band.adapters.omp.lifecycle.OmpRpcClient", spawn)
         adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         await run_turn(adapter, FakeAgentTools(), room_id="room-a")
         await run_turn(adapter, FakeAgentTools(), room_id="room-b")

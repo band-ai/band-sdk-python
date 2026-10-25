@@ -29,6 +29,13 @@ class OmpCallbackKind(StrEnum):
     UI = "ui"
 
 
+class CompletionAction(StrEnum):
+    STOP = "stop"
+    WAIT_FOR_ACTIVITY = "wait_for_activity"
+    REFRESH_SNAPSHOT = "refresh_snapshot"
+    WATCH_IDLE_BUDGET = "watch_idle_budget"
+
+
 class PromptRun:
     def __init__(
         self,
@@ -108,16 +115,41 @@ class PromptRun:
     def settled_proven(self) -> bool:
         if self.settled_sequence > self.last_activity_sequence:
             return True
+        return self.snapshot_proves_settlement()
+
+    def snapshot_proves_settlement(self) -> bool:
         if self.snapshot is None:
             return False
         sequence, state = self.snapshot
-        # A sticky event claim is superseded by a newer snapshot that is both
-        # settled and positively idle; it gates guard arming, not snapshot proof.
         return (
             state.isSettled
-            and idle_flags(state)
+            and state_is_idle(state)
             and sequence >= self.last_activity_sequence
         )
+
+    def settlement_confirmed(self) -> bool:
+        if self.snapshot is None:
+            return False
+        return self.snapshot_proves_settlement() or self.settled_sequence > max(
+            self.snapshot[0], self.last_activity_sequence
+        )
+
+    def snapshot_is_stale(self) -> bool:
+        return (
+            self.snapshot is None
+            or self.snapshot[0] <= self.last_activity_sequence
+            or self.snapshot[0] < self.settled_sequence
+        )
+
+    def completion_action(self) -> CompletionAction:
+        if self.rejected or self.completion_evidence_complete():
+            return CompletionAction.STOP
+        waiting_for_boundary = self.result_owed and not self.boundary_reached()
+        if waiting_for_boundary or self.has_pending_native_work():
+            return CompletionAction.WAIT_FOR_ACTIVITY
+        if self.snapshot_is_stale():
+            return CompletionAction.REFRESH_SNAPSHOT
+        return CompletionAction.WATCH_IDLE_BUDGET
 
     def boundary_reached(self) -> bool:
         return self.result.done() or self.terminal_seen or self.settled_proven()
@@ -131,22 +163,21 @@ class PromptRun:
             task.done() for task in self.callback_tasks
         )
 
-    def busy_proven(self) -> bool:
-        if self.snapshot is not None:
-            sequence, state = self.snapshot
-            if sequence > max(self.last_activity_sequence, self.settled_sequence):
-                if not idle_flags(state):
-                    return True
-                if state.isSettled:
-                    return False
-        # Settlement invalidates older busy claims. A fresh snapshot must still
-        # prove idle before the guard can arm its completion budget.
-        return (
+    def has_pending_native_work(self) -> bool:
+        event_claims_pending_work = (
             self.awaiting_async and self.settled_sequence <= self.last_activity_sequence
         )
+        if self.snapshot is None:
+            return event_claims_pending_work
+        sequence, state = self.snapshot
+        if sequence <= max(self.last_activity_sequence, self.settled_sequence):
+            return event_claims_pending_work
+        if not state_is_idle(state):
+            return True
+        return event_claims_pending_work and not state.isSettled
 
 
-def idle_flags(state: OmpState) -> bool:
+def state_is_idle(state: OmpState) -> bool:
     """Positive idle proof for a snapshot: no busy signal remains set."""
     return bool(
         not state.isStreaming

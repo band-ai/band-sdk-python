@@ -9,17 +9,19 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.integrations.omprpc import OmpCompletionTimeout, OmpProcessError
+from band.integrations.omprpc.custody import process_is_alive
 from band.testing import FakeAgentTools, reported_failures
-from tests.adapters.omp.kit import RefreshClients, run_turn
+from tests.adapters.omp.completion import RefreshClients
+from tests.adapters.omp.turns import run_turn
 from tests.baseline.tools import BaselineTools
-from tests.integrations.omppeer import COMPLETE, REFRESH_LOSS_SCENARIO
-from tests.integrations.omprpc.kit import (
+from tests.integrations.omppeers.base import COMPLETE
+from tests.integrations.omprpc.completion import (
     COMPLETION_BUDGET_S,
-    OMP_PEER_COMMAND,
-    peer_process,
-    process_is_alive,
     state_requests_observed,
 )
+from tests.integrations.omprpc.processes import peer_process
+from tests.integrations.omprpc.spawn import OMP_PEER_COMMAND
+from tests.integrations.ompscenarios import PeerScenario
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
 
@@ -38,7 +40,7 @@ class TestPostPromptRefresh:
                     command=(
                         *OMP_PEER_COMMAND,
                         "--scenario",
-                        REFRESH_LOSS_SCENARIO,
+                        PeerScenario.REFRESH_STATE_SILENT,
                     ),
                     turn_timeout_s=TURN_DEADLINE_S,
                 ),

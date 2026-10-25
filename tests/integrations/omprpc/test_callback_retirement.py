@@ -13,18 +13,13 @@ from band.integrations.ompwire import (
     OmpHostToolCall,
     OmpToolResult,
 )
-from tests.integrations.omppeer import (
-    LATE_CALLBACK_ID,
-    SETTLED_CALLBACK_ID,
-    SETTLED_CALLBACK_SCENARIO,
-)
+from tests.integrations.omppeers.callbacks import LATE_CALLBACK_ID, SETTLED_CALLBACK_ID
 from tests.integrations.omprpc.cancellation import HeldCleanup
-from tests.integrations.omprpc.kit import (
-    ClientFactory,
-    Observer,
-    checkpoint_frames,
-    owned_rpc_process,
-)
+from tests.integrations.omprpc.events import EventRecorder
+from tests.integrations.omprpc.processes import owned_rpc_process
+from tests.integrations.omprpc.spawn import ClientFactory
+from tests.integrations.omprpc.wirelog import checkpoint_frames
+from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
 
@@ -40,11 +35,13 @@ class TestCallbackRetirement:
         self, client_factory: ClientFactory, retire_second_on_first: bool
     ) -> None:
         async with controlled_clock() as clock:
-            client = await clock.run_io(client_factory(SETTLED_CALLBACK_SCENARIO))
+            client = await clock.run_io(
+                client_factory(PeerScenario.SETTLED_DURING_CALLBACK)
+            )
             grace = 1.0
             client.callback_exit_timeout_s = grace
             process = owned_rpc_process(client)
-            observer = Observer()
+            observer = EventRecorder()
             cleanup = HeldCleanup(client)
             joining: asyncio.Task[None] | None = None
             first_started, first_retired, second_started = (
@@ -89,7 +86,7 @@ class TestCallbackRetirement:
                     assert any(
                         frame["type"] == OmpCommandName.GET_STATE for frame in frames
                     )
-                    await client.request("release")
+                    await client.request(PeerCommand.RELEASE_PROMPT)
                     await second_started.wait()
                     if retire_second_on_first:
                         clock.advance(grace)

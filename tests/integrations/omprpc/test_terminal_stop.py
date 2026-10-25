@@ -15,7 +15,9 @@ from tests.adapters.omp.declinepeer import (
     STOP_CHECKPOINT,
     DeclineScenario,
 )
-from tests.integrations.omprpc.kit import Observer, owned_rpc_process, second_prompt
+from tests.integrations.omppeers.base import COMPLETE
+from tests.integrations.omprpc.events import EventRecorder, follow_up_texts
+from tests.integrations.omprpc.processes import owned_rpc_process
 from tests.paths import REPO_ROOT
 
 
@@ -33,7 +35,7 @@ class TestTerminalStop:
             ),
             env={"PYTHONPATH": str(REPO_ROOT)},
         )
-        observer = Observer()
+        observer = EventRecorder()
 
         async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
             client.stop_after_tool(call.id)
@@ -64,7 +66,7 @@ class TestTerminalStop:
             assert all(task.done() for task in prompt_tasks)
 
             await client.start()
-            await second_prompt(client)
+            assert await follow_up_texts(client) == [COMPLETE]
         finally:
             prompt.cancel()
             await asyncio.gather(prompt, return_exceptions=True)

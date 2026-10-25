@@ -3,9 +3,38 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
+import threading
+from collections.abc import AsyncIterator, Awaitable
+from contextlib import asynccontextmanager
 
 from band.integrations.omprpc import OmpRpcClient
+
+
+@asynccontextmanager
+async def hold_after_stdin_closed(
+    client: OmpRpcClient,
+) -> AsyncIterator[asyncio.Task[None]]:
+    entered = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def hold() -> None:
+        loop.call_soon_threadsafe(entered.set)
+        if not release.wait(timeout=10):
+            raise TimeoutError("Test did not release after_stdin_closed")
+
+    client.after_stdin_closed = hold
+    closing = asyncio.create_task(client.close())
+    try:
+        async with asyncio.timeout(10):
+            await entered.wait()
+        yield closing
+        if not closing.done():
+            release.set()
+            await closing
+    finally:
+        release.set()
+        await asyncio.gather(closing, return_exceptions=True)
 
 
 class HeldCleanup:

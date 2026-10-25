@@ -11,23 +11,25 @@ from band.integrations.omprpc import OmpProcessError
 from band.integrations.omprpc.client import PROCESS_EXIT_TIMEOUT_S
 from band.integrations.omprpc.custody import process_is_alive
 from band.integrations.omprpc.scope import OmpProcessScope
-from tests.integrations.omprpc.kit import (
-    ClientFactory,
+from tests.integrations.omprpc.gate import ProcessGate, unrelated_gate_child
+from tests.integrations.omprpc.pidkit import (
     DeferredSessionSignal,
-    ProcessGate,
     RecycledEnvironment,
     RecycledGroup,
-    connect_descendant_tree,
+    refuse_containment,
+)
+from tests.integrations.omprpc.processes import (
     crash_rpc_root,
     descendant_client,
     descendant_liveness,
+    descendant_tree,
     job_member_pids,
     owned_rpc_process,
-    refuse_containment,
     session_ids,
-    unrelated_gate_child,
     wait_for_descendants,
 )
+from tests.integrations.omprpc.spawn import ClientFactory
+from tests.integrations.ompscenarios import PeerScenario
 from tests.ostable import skip_unless_os
 
 
@@ -41,7 +43,7 @@ class TestProcessTreeCleanup:
         accepted_on: tuple[str, ...],
     ) -> None:
         skip_unless_os(accepted_on)
-        client = await client_factory("basic")
+        client = await client_factory(PeerScenario.STANDARD_TURN)
         root = owned_rpc_process(client)
         await client.close()
         assert root.returncode is not None
@@ -242,38 +244,33 @@ class TestProcessTreeCleanup:
         process_gate: ProcessGate,
         stdio: str,
     ) -> None:
-        tree = await connect_descendant_tree(
-            process_gate, scenario="no-ready-descendants", stdio=stdio
-        )
-        async with unrelated_gate_child(process_gate) as unrelated:
-            try:
-                root_process = await asyncio.to_thread(psutil.Process, tree.root.pid)
-                closing = tree.starting
-                assert closing.cancel()
-                await tree.cleanup.wait_for_join(closing)
-                for _ in range(3):
-                    await tree.cleanup.cancel_and_wait_for_rejoin(closing)
-                    assert tree.root.returncode is None
-                    assert await asyncio.to_thread(process_is_alive, root_process)
-                    assert await descendant_liveness(tree.descendants) == [True, True]
-                    assert await asyncio.to_thread(process_is_alive, unrelated.process)
-                    assert not tree.cleanup.finished.is_set()
-
-                tree.cleanup.release.set()
-                async with asyncio.timeout(10):
-                    with pytest.raises(asyncio.CancelledError):
-                        await closing
-                    await tree.root.wait()
-                assert tree.cleanup.finished.is_set()
-                assert tree.root.returncode is not None
-                assert await descendant_liveness(tree.descendants) == [False, False]
+        async with (
+            descendant_tree(
+                process_gate, scenario=PeerScenario.NO_READY_DESCENDANTS, stdio=stdio
+            ) as tree,
+            unrelated_gate_child(process_gate) as unrelated,
+        ):
+            root_process = await asyncio.to_thread(psutil.Process, tree.root.pid)
+            closing = tree.starting
+            assert closing.cancel()
+            await tree.cleanup.wait_for_join(closing)
+            for _ in range(3):
+                await tree.cleanup.cancel_and_wait_for_rejoin(closing)
+                assert tree.root.returncode is None
+                assert await asyncio.to_thread(process_is_alive, root_process)
+                assert await descendant_liveness(tree.descendants) == [True, True]
                 assert await asyncio.to_thread(process_is_alive, unrelated.process)
-                await tree.client.close()
-            finally:
-                tree.cleanup.release.set()
-                tree.starting.cancel()
-                await asyncio.gather(tree.starting, return_exceptions=True)
-                await tree.client.close()
+                assert not tree.cleanup.finished.is_set()
+            tree.cleanup.release.set()
+            async with asyncio.timeout(10):
+                with pytest.raises(asyncio.CancelledError):
+                    await closing
+                await tree.root.wait()
+            assert tree.cleanup.finished.is_set()
+            assert tree.root.returncode is not None
+            assert await descendant_liveness(tree.descendants) == [False, False]
+            assert await asyncio.to_thread(process_is_alive, unrelated.process)
+            await tree.client.close()
 
     @pytest.mark.parametrize("stdio", ["inherit", "discard"])
     async def test_cancelled_close_cleanup_reaps_descendants_but_not_unrelated_processes(
@@ -281,11 +278,13 @@ class TestProcessTreeCleanup:
         process_gate: ProcessGate,
         stdio: str,
     ) -> None:
-        tree = await connect_descendant_tree(
-            process_gate, scenario="descendants", stdio=stdio
-        )
         closing: asyncio.Task[None] | None = None
-        async with unrelated_gate_child(process_gate) as unrelated:
+        async with (
+            descendant_tree(
+                process_gate, scenario=PeerScenario.DESCENDANTS, stdio=stdio
+            ) as tree,
+            unrelated_gate_child(process_gate) as unrelated,
+        ):
             try:
                 async with asyncio.timeout(5):
                     await tree.starting

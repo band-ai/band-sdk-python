@@ -258,7 +258,7 @@ failed or cancelled startup and await their confirmed release.
 
 ```
 tests/
-├── adapters/       # Unit tests per adapter (mocked)
+├── adapters/       # Adapter unit and behavioral tests
 ├── converters/     # Unit tests per converter
 ├── core/           # Core logic tests
 ├── runtime/        # Runtime tests
@@ -283,6 +283,31 @@ outgrows one file, make it a package: `conftest.py` for its fixtures, a plain
 helper module (e.g. `kit.py`) for shared doubles and helpers, and one test file
 per concern. Apply this to every test file you add, and split a file you
 touch that breaks it.
+
+### Test helper design
+
+- Do not use autouse fixtures to replace product clients or bypass startup
+  validation. Scope deliberate failure doubles to the tests that need them.
+- Keep fixtures in `conftest.py`; use them for resource setup and confirmed
+  cleanup, including failed or cancelled startup.
+- Keep scenario actions and outcome assertions visible in tests. Helpers must
+  not branch on scenario names to choose test actions or expected outcomes.
+- Do not create a runtime subclass for each input, event, or response. Drive
+  simple cases with real data and explicit callbacks.
+- Do not copy the subject's reader, scheduler, callback context, retry, or
+  cleanup logic into a fake. Exercise those real components together.
+- Keep doubles at external boundaries. Reject unsupported commands and
+  selections; never return success by default. Share closed vocabularies through
+  enums or constants.
+- Assert observable decisions, delivery, state, and cleanup. Reasserting fake
+  setup flags or recording a call does not prove the claimed behavior.
+- Treat growing helper machinery as a design problem. Remove unnecessary
+  simulation and duplicated setup before splitting files. Each remaining
+  helper module must own one concern; `kit.py` is not a catch-all.
+
+Apply these rules to helper and peer diffs as strictly as to collected tests.
+The [test conventions](.claude/skills/band-python-test-conventions/SKILL.md)
+define boundary selection, peer contracts, and the review gate.
 
 Before writing a new E2E test or helper, read `tests/e2e/baseline/README.md`
 — it documents the reusable baseline toolkit (provisioning, user ops, reply
@@ -465,8 +490,7 @@ For Python changes, before selecting checks, re-read your own diff once against
 the `band-python-conventions` skill — including code you just wrote this session,
 not only code you started from. Test diffs also re-read
 `band-python-test-conventions` (complementary branches, intent assertions,
-seams not patches, no wall-clock proof). The two rules that get skipped under
-time pressure:
+seams not patches, no wall-clock proof). Check these design rules explicitly:
 
 - **Single source of truth**: a literal, magic string, or multi-line block
   re-typed in more than one place (a second copy you just wrote counts) instead
@@ -475,9 +499,12 @@ time pressure:
   small, intent-named helper — e.g. `[e for e in tools.events_sent if
   e["message_type"] == "x"]` repeated at each call site instead of one
   `events_of_type(tools, "x")`.
+- **Test helpers**: inspect helpers and peers with their consuming tests. Reject
+  hidden scenario logic, copied subject behavior, unsupported-operation success,
+  and fixture setup that reasserts its own assumptions. Reduce unnecessary
+  machinery before splitting files.
 
-Ruff/pyrefly/pytest catch correctness and style; they do not catch either of
-these, so this step is the only gate for them.
+Passing lint, types, and tests does not satisfy these design checks.
 
 Choose validation for the behavior the diff can affect. Explicit user limits
 take precedence; report checks not run instead of implying they passed.

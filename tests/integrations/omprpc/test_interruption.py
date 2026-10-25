@@ -14,32 +14,32 @@ from band.integrations.ompwire import (
     OmpHostToolCall,
     OmpToolResult,
 )
-from tests.integrations.omppeer import STDIN_BACKPRESSURE
+from tests.integrations.omppeers.base import COMPLETE
+from tests.integrations.omprpc.admission import queue_prompt
 from tests.integrations.omprpc.backpressure import (
     PRESSURE_WRITE_COUNT,
     BackpressureSpawn,
 )
 from tests.integrations.omprpc.cancellation import HeldCleanup
-from tests.integrations.omprpc.kit import (
-    OMP_PEER_COMMAND,
-    ClientFactory,
-    Observer,
-    owned_rpc_process,
-    prompt_task,
-    queue_prompt,
-    second_prompt,
-    sent_prompt_messages,
+from tests.integrations.omprpc.events import (
+    EventRecorder,
+    follow_up_texts,
+    record_prompt,
 )
+from tests.integrations.omprpc.processes import owned_rpc_process
+from tests.integrations.omprpc.spawn import OMP_PEER_COMMAND, ClientFactory
+from tests.integrations.omprpc.wirelog import sent_prompt_messages
+from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 
 
 class TestInterruptionAndReaping:
     async def test_cancelling_a_queued_prompt_preserves_the_active_and_next_prompt(
         self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory("yield")
+        client = await client_factory(PeerScenario.YIELD_TO_BACKGROUND)
         process = owned_rpc_process(client)
-        observer = Observer()
-        active = prompt_task(client, observer)
+        observer = EventRecorder()
+        active = asyncio.create_task(record_prompt(client, observer))
         queued: asyncio.Task[None] | None = None
         try:
             await observer.wait_for(OmpEventType.AGENT_END)
@@ -51,10 +51,10 @@ class TestInterruptionAndReaping:
             assert not active.done()
             assert process.returncode is None
             assert await sent_prompt_messages(client) == ["first"]
-            await client.request("release")
+            await client.request(PeerCommand.RELEASE_PROMPT)
             async with asyncio.timeout(5):
                 await active
-            await second_prompt(client)
+            assert await follow_up_texts(client) == [COMPLETE]
             assert owned_rpc_process(client) is process
             assert process.returncode is None
             assert await sent_prompt_messages(client) == ["first", "second"]
@@ -64,14 +64,21 @@ class TestInterruptionAndReaping:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    @pytest.mark.parametrize("scenario", ["yield", "no-result", "stubborn"])
+    @pytest.mark.parametrize(
+        "scenario",
+        [
+            PeerScenario.YIELD_TO_BACKGROUND,
+            PeerScenario.NO_RESULT,
+            PeerScenario.STUBBORN,
+        ],
+    )
     async def test_cancelled_prompt_aborts_reaps_and_can_restart(
-        self, client_factory: ClientFactory, scenario: str
+        self, client_factory: ClientFactory, scenario: PeerScenario
     ) -> None:
         client = await client_factory(scenario)
         process = owned_rpc_process(client)
-        observer = Observer()
-        running = prompt_task(client, observer)
+        observer = EventRecorder()
+        running = asyncio.create_task(record_prompt(client, observer))
         try:
             await observer.wait_for(OmpEventType.AGENT_END)
             running.cancel()
@@ -81,20 +88,27 @@ class TestInterruptionAndReaping:
             assert process.returncode is not None
             async with asyncio.timeout(5):
                 await client.start()
-                await second_prompt(client)
+                assert await follow_up_texts(client) == [COMPLETE]
             assert owned_rpc_process(client) is not process
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
 
-    @pytest.mark.parametrize("scenario", ["yield", "no-result", "stubborn"])
+    @pytest.mark.parametrize(
+        "scenario",
+        [
+            PeerScenario.YIELD_TO_BACKGROUND,
+            PeerScenario.NO_RESULT,
+            PeerScenario.STUBBORN,
+        ],
+    )
     async def test_timed_out_prompt_aborts_reaps_and_can_restart(
-        self, client_factory: ClientFactory, scenario: str
+        self, client_factory: ClientFactory, scenario: PeerScenario
     ) -> None:
         client = await client_factory(scenario)
         process = owned_rpc_process(client)
-        observer = Observer()
-        running = prompt_task(client, observer)
+        observer = EventRecorder()
+        running = asyncio.create_task(record_prompt(client, observer))
         try:
             await observer.wait_for(OmpEventType.AGENT_END)
             async with asyncio.timeout(6):
@@ -106,7 +120,7 @@ class TestInterruptionAndReaping:
             assert process.returncode is not None
             async with asyncio.timeout(5):
                 await client.start()
-                await second_prompt(client)
+                assert await follow_up_texts(client) == [COMPLETE]
             assert owned_rpc_process(client) is not process
         finally:
             running.cancel()
@@ -116,7 +130,7 @@ class TestInterruptionAndReaping:
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("stubborn")
+        client = await client_factory(PeerScenario.STUBBORN)
         process = owned_rpc_process(client)
         cleanup = HeldCleanup(client)
         closing = asyncio.create_task(client.close())
@@ -145,9 +159,9 @@ class TestInterruptionAndReaping:
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("host-cancel")
+        client = await client_factory(PeerScenario.HOST_CANCEL)
         process = owned_rpc_process(client)
-        observer = Observer()
+        observer = EventRecorder()
         started = asyncio.Event()
         cancelled = asyncio.Event()
         forever = asyncio.Event()
@@ -183,14 +197,14 @@ class TestInterruptionAndReaping:
     async def test_close_finishes_while_a_stdin_drain_is_held(self) -> None:
         spawn = BackpressureSpawn()
         client = OmpRpcClient(
-            (*OMP_PEER_COMMAND, "--scenario", STDIN_BACKPRESSURE),
+            (*OMP_PEER_COMMAND, "--scenario", PeerScenario.STDIN_BACKPRESSURE),
             create_process=spawn.create,
         )
         writes: list[asyncio.Task[dict[str, JsonValue]]] = []
         try:
             await client.start()
             process = owned_rpc_process(client)
-            await client.request("hold")
+            await client.request(PeerCommand.HOLD)
             payload = "x" * (OMP_FRAME_BYTES // 2)
             writes = [
                 asyncio.create_task(client.request("pressure", data=payload))

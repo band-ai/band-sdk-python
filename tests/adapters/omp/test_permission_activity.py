@@ -7,17 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from band.adapters.omp import OmpTurn
+from band.adapters.omp.turnstate import OmpTurn
 from band.core.types import Emit
 from band.integrations.omp import OMP_FORM_APPROVE
 from band.integrations.ompwire import OmpUIRequest
 from band.testing.activity import ActivityRecorder
 from band.testing.fake_tools import FakeAgentTools
-from tests.adapters.omp.activitykit import concurrent_permissions
-from tests.adapters.omp.kit import (
+from tests.adapters.omp.activitykit import (
     EMIT_OFF,
     EMIT_ON,
     GatedPermissionResolver,
+    concurrent_permissions,
     make_adapter,
     permission_request,
 )

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
+from pathlib import Path
 from typing import cast
 
 from pydantic import JsonValue
@@ -16,7 +18,8 @@ from band.integrations.ompwire import (
     OmpFrameType,
     OmpUIMethod,
 )
-from tests.integrations.omppeer import Frame, Peer, send
+from tests.integrations.ompframes import Frame, send
+from tests.integrations.omppeers.startup import StartupPeer
 
 ASK_REQUEST_ID = "ask-1"
 ASK_QUESTION_IDS = ("storage", "targets")
@@ -36,7 +39,11 @@ PREVIEW_CHOICES = (
 )
 
 
-class AskPeer(Peer):
+class AskPeer(StartupPeer):
+    def __init__(self, scenario: str, plugin: Path | None = None) -> None:
+        super().__init__(plugin)
+        self.ask_scenario = scenario
+
     def ask(self, request_id: str = ASK_REQUEST_ID) -> None:
         questions: list[JsonValue] = [
             {
@@ -60,7 +67,7 @@ class AskPeer(Peer):
                 "multi": True,
             },
         ]
-        if self.scenario == PREVIEW_ONLY:
+        if self.ask_scenario == PREVIEW_ONLY:
             questions = [
                 {
                     "id": "patch",
@@ -82,17 +89,17 @@ class AskPeer(Peer):
             }
         )
 
-    def prompt(self, frame: Frame) -> None:
+    def run_prompt(self, frame: Frame) -> None:
         self.prompt_id = frame.id
         self.prompt_count += 1
         self.settled = False
         self.held = frame
         send({"type": OmpEventType.AGENT_START})
-        if self.scenario in {"ask-on-abort", "tool-on-abort"}:
+        if self.ask_scenario in {"ask-on-abort", "tool-on-abort"}:
             self.respond(frame)
             self.held = None
-            self.end("waiting", pending=True)
-            self.result(settled=False)
+            self.emit_assistant_turn("waiting", pending=True)
+            self.send_prompt_result(settled=False)
             return
         if self.prompt_count == 1:
             self.ask()
@@ -121,7 +128,7 @@ class AskPeer(Peer):
             )
         match frame.type:
             case OmpCommandName.SET_ASK_DIALOG:
-                enabled = self.scenario != REFUSED_DIALOG
+                enabled = self.ask_scenario != REFUSED_DIALOG
                 self.respond(frame, {"enabled": enabled})
                 return
             case OmpFrameType.UI_RESPONSE | OmpFrameType.HOST_TOOL_RESULT:
@@ -136,12 +143,12 @@ class AskPeer(Peer):
             return
         self.respond(self.held)
         self.held = None
-        self.end("")
-        self.result(settled=True)
-        self.settle()
+        self.emit_assistant_turn("")
+        self.send_prompt_result(settled=True)
+        self.settle_session()
 
     def _send_shutdown_callback(self) -> None:
-        match self.scenario:
+        match self.ask_scenario:
             case "ask-on-abort":
                 self.ask("late-ask")
             case "tool-on-abort":
@@ -157,7 +164,11 @@ class AskPeer(Peer):
 
 
 def main() -> None:
-    peer = AskPeer(sys.argv[1])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("scenario")
+    parser.add_argument("--plugin-dir", type=Path)
+    args, _native_options = parser.parse_known_args()
+    peer = AskPeer(args.scenario, args.plugin_dir)
     send(
         {
             "type": OmpFrameType.READY,

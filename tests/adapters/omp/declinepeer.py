@@ -20,7 +20,8 @@ from band.integrations.ompwire import (
     OmpPromptStatus,
 )
 from band.runtime.tools import BandTool
-from tests.integrations.omppeer import FOLLOW_UP_PROMPT, Frame, Peer, send
+from tests.integrations.ompframes import Frame, send
+from tests.integrations.omppeers.base import FOLLOW_UP_PROMPT, RpcPeer
 
 DECLINE_CALL = "decline"
 SECOND_DECLINE_CALL = "decline-concurrent"
@@ -40,9 +41,9 @@ class DeclineScenario(StrEnum):
     HELD_STOP = "held-stop"
 
 
-class DeclinePeer(Peer):
+class DeclinePeer(RpcPeer):
     def __init__(self) -> None:
-        super().__init__("terminal-decline")
+        super().__init__()
         self.scenario_name = DeclineScenario(sys.argv[1])
         self.ledger = Path(sys.argv[2])
         self.plugin = (
@@ -87,7 +88,7 @@ class DeclinePeer(Peer):
         self.prompt_id = frame.id
         self.settled = False
         if frame.message == FOLLOW_UP_PROMPT:
-            self.finish(frame)
+            self.complete_prompt(frame)
             return
         self.respond(frame)
         if self.plugin is not None and frame.message == (
@@ -96,8 +97,8 @@ class DeclinePeer(Peer):
             (self.plugin / OMP_MCP_RECEIPT).write_text(
                 json.dumps({"systemPromptReady": True, "servers": []})
             )
-            self.result(settled=True)
-            self.settle()
+            self.send_prompt_result(settled=True)
+            self.settle_session()
             return
         self.prompt_count += 1
         send({"type": OmpEventType.AGENT_START})
@@ -117,9 +118,9 @@ class DeclinePeer(Peer):
             self.call(name, {}, SECOND_DECLINE_CALL)
 
     def finish_aborted(self, status: OmpPromptStatus) -> None:
-        self.end("", stop=status)
-        self.result(settled=True, status=status)
-        self.settle()
+        self.emit_assistant_turn("", stop=status)
+        self.send_prompt_result(settled=True, status=status)
+        self.settle_session()
 
     def handle(self, frame: Frame) -> None:
         with self.ledger.open("a", encoding="utf-8") as handle:
@@ -143,9 +144,9 @@ class DeclinePeer(Peer):
                 if frame.id in {DECLINE_CALL, SECOND_DECLINE_CALL}:
                     self.reply()
                 else:
-                    self.end("")
-                    self.result(settled=True)
-                    self.settle()
+                    self.emit_assistant_turn("")
+                    self.send_prompt_result(settled=True)
+                    self.settle_session()
             case OmpCommandName.ABORT if not self.settled:
                 status = (
                     OmpPromptStatus.ERROR
