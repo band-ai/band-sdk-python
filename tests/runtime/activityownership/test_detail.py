@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from contextlib import ExitStack
+from functools import partial
 
 import pytest
 
 from band.core.turn_lifecycle import TurnTask, bind_turn_task
 from band.platform.event import PlatformEvent
-from band.runtime.activity import set_permission_wait
+from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
 from band.runtime.toolactivity import (
     end_tool_activity,
@@ -41,10 +43,13 @@ class TestOwnedDetail:
             tools = AgentTools.from_context(ctx)
             await activity_platform.shown(report_tool_activity(tools, "Bash"))
             await activity_platform.shown(end_tool_activity(tools))
-            await activity_platform.shown(set_permission_wait(tools, True))
-            # Hidden behind the wait: the room keeps seeing permission.
-            await report_tool_activity(tools, "Edit")
-            await activity_platform.shown(set_permission_wait(tools, False))
+            with ExitStack() as waits:
+                await activity_platform.shown(
+                    partial(waits.enter_context, permission_wait(tools))
+                )
+                # Hidden behind the wait: the room keeps seeing permission.
+                await report_tool_activity(tools, "Edit")
+                await activity_platform.shown(waits.close)
             await activity_platform.shown(report_memory_activity(tools))
             await tools.send_message("Done", mentions=["alice"])
 
@@ -81,12 +86,15 @@ class TestOwnedDetail:
         ctx = execution(handler)
         await deliver_event(ctx, make_message_event())
         owner = captured[0]
-        await activity_platform.shown(set_permission_wait(owner, True))
-        # The keep-alive repeats PERMISSION while the wait holds.
-        await activity_platform.next_body()
-        # Hidden behind the wait: the room keeps seeing permission.
-        await report_tool_activity(owner, "Edit")
-        await activity_platform.shown(set_permission_wait(owner, False))
+        with ExitStack() as waits:
+            await activity_platform.shown(
+                partial(waits.enter_context, permission_wait(owner))
+            )
+            # The keep-alive repeats PERMISSION while the wait holds.
+            await activity_platform.next_body()
+            # Hidden behind the wait: the room keeps seeing permission.
+            await report_tool_activity(owner, "Edit")
+            await activity_platform.shown(waits.close)
         release.set()
         await workers[0].task
         await activity_platform.next_body()
@@ -108,18 +116,21 @@ class TestOwnedDetail:
         activity_platform: ActivityPlatform,
     ) -> None:
         turns: list[ExecutionContext] = []
+        with ExitStack() as waits:
 
-        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
-            turns.append(ctx)
-            if len(turns) > 1:
-                return
-            tools = AgentTools.from_context(ctx)
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
-            await activity_platform.shown(set_permission_wait(tools, True))
+            async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+                turns.append(ctx)
+                if len(turns) > 1:
+                    return
+                tools = AgentTools.from_context(ctx)
+                await activity_platform.shown(report_tool_activity(tools, "Bash"))
+                await activity_platform.shown(
+                    partial(waits.enter_context, permission_wait(tools))
+                )
 
-        ctx = execution(handler)
-        await deliver_event(ctx, make_message_event(msg_id="first"))
-        await deliver_event(ctx, make_message_event(msg_id="second"))
+            ctx = execution(handler)
+            await deliver_event(ctx, make_message_event(msg_id="first"))
+            await deliver_event(ctx, make_message_event(msg_id="second"))
         assert activity_platform.activity_bodies == [
             REASONING_BODY,
             tool_body("Bash"),

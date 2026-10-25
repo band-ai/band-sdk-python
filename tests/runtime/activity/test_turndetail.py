@@ -33,8 +33,8 @@ class TestTurnActivity:
     def test_a_person_wait_overrides_progress_without_losing_it(self) -> None:
         activity = TurnActivity()
         activity.apply(activity=AgentActivityDetail(kind="tool_call", name="Read"))
-        activity.apply(waiting=True)
+        owner = activity.acquire_permission()
         activity.apply(activity=AgentActivityDetail(kind="memory"))
         assert activity.detail == AgentActivityDetail(kind="permission")
-        activity.apply(waiting=False)
+        activity.release_permission(owner)
         assert activity.detail == AgentActivityDetail(kind="memory")

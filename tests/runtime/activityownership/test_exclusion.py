@@ -5,7 +5,7 @@ from collections.abc import Callable
 import pytest
 
 from band.platform.event import PlatformEvent
-from band.runtime.activity import set_permission_wait
+from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
 from band.runtime.toolactivity import (
     end_tool_activity,
@@ -38,9 +38,9 @@ class TestExcludedReporting:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
             await report_tool_activity(tools, "Bash")
-            await set_permission_wait(tools, True)
-            await report_memory_activity(tools)
-            await end_tool_activity(tools)
+            with permission_wait(tools):
+                await report_memory_activity(tools)
+                await end_tool_activity(tools)
 
         ctx = execution(handler, **settings)
         await deliver_event(ctx, make_message_event())

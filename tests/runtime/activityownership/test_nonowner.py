@@ -7,7 +7,7 @@ import pytest
 
 from band.core.turn_lifecycle import TurnTask, bind_turn_task
 from band.platform.event import PlatformEvent
-from band.runtime.activity import set_permission_wait
+from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
 from band.runtime.toolactivity import report_tool_activity
 from band.runtime.tools.agent import AgentTools
@@ -34,8 +34,8 @@ class TestNonOwnerObservations:
             tools = AgentTools.from_context(ctx)
             if workers:
                 await report_tool_activity(tools, "unrelated")
-                await set_permission_wait(tools, True)
-                return
+                with permission_wait(tools):
+                    return
             await activity_platform.shown(report_tool_activity(tools, "Bash"))
             workers.append(bind_turn_task(tools, asyncio.create_task(release.wait())))
 

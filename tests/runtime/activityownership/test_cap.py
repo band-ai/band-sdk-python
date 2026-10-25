@@ -6,7 +6,7 @@ from collections.abc import Callable
 import pytest
 
 from band.platform.event import PlatformEvent
-from band.runtime.activity import set_permission_wait
+from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
 from band.runtime.toolactivity import report_tool_activity
 from band.runtime.tools.agent import AgentTools
@@ -30,9 +30,8 @@ class TestDetailCap:
             tools = AgentTools.from_context(ctx)
             await activity_platform.shown(report_tool_activity(tools, "Bash"))
             await asyncio.sleep(LONG_TOOL_SECONDS)
-            await report_tool_activity(tools, "Edit")
-            await set_permission_wait(tools, True)
-            await set_permission_wait(tools, False)
+            with permission_wait(tools):
+                await report_tool_activity(tools, "Edit")
 
         ctx = execution(handler, max_working_state_seconds=CAP_SECONDS)
         await deliver_event(ctx, make_message_event())
