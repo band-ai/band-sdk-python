@@ -240,11 +240,6 @@ class AutomaticThinkingRuntime(PendingRuntime):
         return await super().request(command, **parameters)
 
 
-class BoomCloseRuntime(PendingRuntime):
-    async def close(self):
-        raise OSError("process still alive")
-
-
 class FirstCloseFailsRuntime(RecordingRuntime):
     """Fail the first close so custody stays with this process, then succeed."""
 
@@ -339,7 +334,7 @@ class SameTaskCleanupRuntime(PendingRuntime):
         self.cleaned_from_turn = True
 
 
-class BoomCloseDeliveryRuntime(BoomCloseRuntime):
+class FirstCloseFailsDeliveryRuntime(FirstCloseFailsRuntime):
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         raise DeliveryFailedError(RuntimeError("delivery rejected"))
 

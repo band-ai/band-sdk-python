@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -55,6 +56,7 @@ def mailbox_adapter(
     *,
     callback_turn: int = 1,
     callback_count: int = 1,
+    transcript: Path | None = None,
 ) -> OmpAdapter:
     return OmpAdapter(
         OmpAdapterConfig(
@@ -65,6 +67,7 @@ def mailbox_adapter(
                 "tests.adapters.omp.mailboxpeer",
                 str(callback_turn),
                 str(callback_count),
+                str(transcript) if transcript is not None else "",
             ),
             env={"PYTHONPATH": str(REPO_ROOT)},
             cwd=str(tmp_path),
@@ -83,6 +86,14 @@ async def peer_frames(
     adapter: OmpAdapter, room_id: str = "room-123"
 ) -> list[dict[str, JsonValue]]:
     return await checkpoint_frames(room_client(adapter, room_id))
+
+
+def received_ui_responses(transcript: Path) -> list[str]:
+    """Read permission responses received by a particular native connection."""
+    frames = [json.loads(line) for line in transcript.read_text().splitlines()]
+    return [
+        frame["id"] for frame in frames if frame["type"] == OmpFrameType.UI_RESPONSE
+    ]
 
 
 def selection_order(frames: list[dict[str, JsonValue]]) -> list[str]:

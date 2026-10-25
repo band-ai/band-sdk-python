@@ -10,14 +10,13 @@ from pathlib import Path
 from band.adapters.omp import OmpAdapter, OmpPermissionRequest
 from band.integrations.omp import OMP_FORM_APPROVE
 from band.integrations.omprpc import OmpRpcClient
-from band.integrations.ompwire import OmpFrameType
 from tests.adapters.hold import Hold
 from tests.adapters.omp.kit import claimed_workspace_rooms, run_turn
 from tests.adapters.omp.mailboxkit import (
     AdmissionMailbox,
     MailboxTools,
     mailbox_adapter,
-    peer_frames,
+    received_ui_responses,
     room_client,
 )
 from tests.adapters.omp.mailboxpeer import FIRST_CALLBACK, SECOND_CALLBACK, PeerCommand
@@ -37,9 +36,9 @@ class SettlingPermission:
         self.trace: list[CallbackExit] = []
 
     async def __call__(self, request: OmpPermissionRequest) -> str:
+        self.calls.append(request.title)
         if self.finished.is_set():
             return OMP_FORM_APPROVE
-        self.calls.append(request.title)
         self.entered.set()
         try:
             if self.cleanup_inside:
@@ -64,7 +63,8 @@ def native_overlay(client: OmpRpcClient) -> Path:
 
 async def exercise_callback_retirement(tmp_path: Path) -> None:
     resolver = SettlingPermission()
-    adapter = mailbox_adapter(tmp_path, resolver)
+    transcript = tmp_path / "retired-native.jsonl"
+    adapter = mailbox_adapter(tmp_path, resolver, transcript=transcript)
     resolver.adapter = adapter
     mailbox = AdmissionMailbox()
     adapter._mailbox = mailbox
@@ -91,18 +91,14 @@ async def exercise_callback_retirement(tmp_path: Path) -> None:
         assert process.returncode is not None and not overlay.exists()
         assert claimed_workspace_rooms(adapter) == ()
         assert old_tools.chat == []
+        assert resolver.calls == [FIRST_CALLBACK]
+        assert SECOND_CALLBACK not in received_ui_responses(transcript)
 
         follow_up = MailboxTools()
         # Each replacement peer starts its callback sequence afresh.
         await run_turn(adapter, follow_up)
         assert room_client(adapter) is not client
         assert follow_up.chat and old_tools.chat == []
-        frames = await peer_frames(adapter)
-        assert not any(
-            frame["type"] == OmpFrameType.UI_RESPONSE
-            and frame.get("id") == SECOND_CALLBACK
-            for frame in frames
-        )
     finally:
         resolver.settling.released.set()
         await asyncio.gather(turn, cleanup, return_exceptions=True)

@@ -198,6 +198,9 @@ def main() -> None:
     announce_ready("mailbox")
     peer = MailboxPeer()
     for line in sys.stdin:
+        if sys.argv[3]:
+            with Path(sys.argv[3]).open("a", encoding="utf-8") as transcript:
+                transcript.write(line)
         peer.handle(Frame.model_validate_json(line, strict=True))
 
 
