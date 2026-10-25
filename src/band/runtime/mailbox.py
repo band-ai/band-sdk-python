@@ -6,10 +6,12 @@ select, cleanup) that must not become fake platform events. Callers enqueue;
 each worker starts with an empty context so its jobs cannot inherit the first
 submitter's task context.
 
-``ask`` from the room's own worker raises. Occupancy ("this prompt is active")
-is not the worker ("one mutation now"): a prompt waiter lives outside the
-mailbox so host-tool and UI jobs can run. Cancelling ``ask`` cancels the
-in-flight job so a hung start cannot pin the worker.
+Mailbox jobs cannot wait on more work from the same mailbox, preventing
+cross-room wait cycles. Use ``cast`` for follow-up work that does not wait.
+Occupancy ("this prompt is active") is not the worker ("one mutation now"): a
+prompt waiter lives outside the mailbox so host-tool and UI jobs can run.
+Cancelling ``ask`` cancels the in-flight job so a hung start cannot pin the
+worker.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ T = TypeVar("T")
 
 
 class NestedMailboxAsk(BandError):
-    """A room job waited for work queued behind itself."""
+    """A mailbox job tried a nested operation that may wait on its mailbox."""
 
 
 class MailboxClosing(BandError):
@@ -39,6 +41,7 @@ class MailboxClosing(BandError):
 
 @dataclass
 class MailboxJob:
+    mailbox_identity: object
     run: Callable[[], Awaitable[Any]]
     result: asyncio.Future[Any] | None
     running: asyncio.Task[Any] | None = None
@@ -58,9 +61,10 @@ _current_job: ContextVar[MailboxJob | None] = ContextVar(
 
 
 class RoomMailbox:
-    """FIFO worker per room; closing drains work and temporarily rejects arrivals."""
+    """Serialize FIFO jobs per room and reject nested operations that can wait."""
 
     def __init__(self) -> None:
+        self._identity = object()
         self._rooms: dict[str, MailboxRoom] = {}
 
     def occupying(self, room_id: str) -> bool:
@@ -83,12 +87,10 @@ class RoomMailbox:
     ) -> asyncio.Future[None]:
         """Enqueue ``run`` and return a future, or raise when it cannot run safely.
 
-        Use ``cast`` to enqueue unobserved work from the room's own job.
+        Raises from a job in this mailbox because the future could be awaited.
+        Use ``cast`` for follow-up work that does not wait.
         """
-        if self.occupying(room_id):
-            raise NestedMailboxAsk(
-                f"Room {room_id} mailbox cannot spawn from its own job and would wait forever"
-            )
+        self._reject_nested_wait(room_id)
         future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         job = self._submit(room_id, run, result=future)
         future.add_done_callback(partial(self._abandon_cancelled_spawn, job))
@@ -97,14 +99,11 @@ class RoomMailbox:
     async def ask(self, room_id: str, run: Callable[[], Awaitable[T]]) -> T:
         """Enqueue ``run`` and wait for its result.
 
-        Raises ``NestedMailboxAsk`` from this room's job and ``MailboxClosing``
-        while this room's worker is draining. Cancelling the waiter cancels the
-        in-flight job.
+        Raises ``NestedMailboxAsk`` from a job in this mailbox to prevent
+        cross-room wait cycles, and ``MailboxClosing`` while this room's worker
+        is draining. Cancelling the waiter cancels the in-flight job.
         """
-        if self.occupying(room_id):
-            raise NestedMailboxAsk(
-                f"Room {room_id} mailbox asked itself and would wait forever"
-            )
+        self._reject_nested_wait(room_id)
         future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
         job = self._submit(room_id, run, result=future)
         try:
@@ -114,11 +113,11 @@ class RoomMailbox:
             raise
 
     async def close(self, room_id: str) -> None:
-        """Drain queued jobs and stop the worker; later submissions start anew."""
-        if self.occupying(room_id):
-            raise NestedMailboxAsk(
-                f"Room {room_id} mailbox cannot close from its own worker"
-            )
+        """Drain queued jobs and stop the worker; later submissions start anew.
+
+        Raises ``NestedMailboxAsk`` from a job in this mailbox.
+        """
+        self._reject_nested_wait(room_id)
         room = self._rooms.get(room_id)
         if room is None:
             return
@@ -142,9 +141,17 @@ class RoomMailbox:
             room = MailboxRoom()
             self._rooms[room_id] = room
         self._start_worker(room_id, room)
-        job = MailboxJob(run, result)
+        job = MailboxJob(self._identity, run, result)
         room.queue.put_nowait(job)
         return job
+
+    def _reject_nested_wait(self, room_id: str) -> None:
+        job = _current_job.get()
+        is_this_mailbox_job = job is not None and job.mailbox_identity is self._identity
+        if is_this_mailbox_job or self.occupying(room_id):
+            raise NestedMailboxAsk(
+                "Mailbox jobs cannot start nested operations that may wait"
+            )
 
     def _start_worker(self, room_id: str, room: MailboxRoom) -> None:
         if room.worker is None or room.worker.done():

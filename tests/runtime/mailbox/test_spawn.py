@@ -122,6 +122,23 @@ class TestSpawn:
         async def nested() -> None:
             await mailbox.spawn("room-1", lambda: asyncio.sleep(0))
 
-        with pytest.raises(NestedMailboxAsk, match="would wait forever"):
+        with pytest.raises(NestedMailboxAsk):
             await mailbox.ask("room-1", nested)
         await mailbox.close("room-1")
+
+    async def test_spawn_from_one_room_job_cannot_target_another_room(self) -> None:
+        mailbox = RoomMailbox()
+        nested_entered = asyncio.Event()
+
+        async def nested() -> None:
+            nested_entered.set()
+
+        async def from_a() -> None:
+            mailbox.spawn("room-b", nested)
+
+        try:
+            with pytest.raises(NestedMailboxAsk):
+                await mailbox.ask("room-a", from_a)
+            assert not nested_entered.is_set()
+        finally:
+            await asyncio.gather(mailbox.close("room-a"), mailbox.close("room-b"))

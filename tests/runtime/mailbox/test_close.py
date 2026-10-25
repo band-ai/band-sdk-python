@@ -147,9 +147,37 @@ class TestClose:
         async def closing() -> None:
             await mailbox.close("room-1")
 
-        with pytest.raises(NestedMailboxAsk, match="cannot close"):
+        with pytest.raises(NestedMailboxAsk):
             await mailbox.ask("room-1", closing)
         await mailbox.close("room-1")
+
+    async def test_close_from_one_room_job_cannot_close_another_room(self) -> None:
+        mailbox = RoomMailbox()
+        hold = JobHold()
+        hold.hold()
+
+        async def occupied() -> None:
+            await hold.pause()
+
+        waiting = asyncio.create_task(mailbox.ask("room-b", occupied))
+        close_attempted = asyncio.Event()
+
+        async def close_other_room() -> None:
+            close_attempted.set()
+            await mailbox.close("room-b")
+
+        closing = asyncio.create_task(mailbox.ask("room-a", close_other_room))
+        try:
+            await hold.entered.wait()
+            await close_attempted.wait()
+            hold.release.set()
+
+            with pytest.raises(NestedMailboxAsk):
+                await closing
+        finally:
+            hold.release.set()
+            await asyncio.gather(waiting, closing, return_exceptions=True)
+            await asyncio.gather(mailbox.close("room-a"), mailbox.close("room-b"))
 
     async def test_cancelling_close_does_not_cancel_the_running_job(self) -> None:
         mailbox = RoomMailbox()
