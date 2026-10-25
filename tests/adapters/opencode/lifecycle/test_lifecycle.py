@@ -16,6 +16,7 @@ from band.core.types import (
 from band.integrations.opencode import OpencodePermissionRequest
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
@@ -33,7 +34,9 @@ from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 
 
 class TestLifecycle:
-    async def test_watch_task_drains_the_turn_that_started_it(self) -> None:
+    async def test_watch_task_drains_the_turn_that_started_it(
+        self,
+    ) -> None:
         """Regression: the turn's future and usage dict are snapshotted before
         the prompt await. When the turn completes while prompt_async's POST is
         still open and a racing message begins the next turn, the resumed
@@ -44,7 +47,7 @@ class TestLifecycle:
             client_factory=lambda _config: fake_client,
             emit=Emit.USAGE,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await adapter.on_started("OpenCode Agent", "A coding agent")
 
         room_state = await adapter._get_or_create_room_state("room-1")
@@ -57,6 +60,7 @@ class TestLifecycle:
             room_state.turn.usage_by_message["msg-1"] = TurnUsage(
                 input_tokens=100, output_tokens=20
             )
+            tools.turn.settle()
             adapter._finish_turn(room_state)
             # ...and a racing message begins (and finishes) the next turn
             # before the first on_message resumes.
@@ -65,7 +69,7 @@ class TestLifecycle:
                 session_id="sess-1",
                 client=fake_client,
                 tools=tools_protocol(tools),
-                sender_id="user-2",
+                sender_ids=("user-2",),
             )
             adapter._finish_turn(room_state)
             await orig_prompt(*args, **kwargs)
@@ -103,7 +107,7 @@ class TestLifecycle:
             client_factory=lambda _config: FakeOpencodeClient(),
             emit=Emit.USAGE,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         room_state = await adapter._get_or_create_room_state("room-1")
         room_state.tools = tools_protocol(tools)
 
@@ -112,7 +116,7 @@ class TestLifecycle:
             session_id="sess-1",
             client=FakeOpencodeClient(),
             tools=tools_protocol(tools),
-            sender_id="user-1",
+            sender_ids=("user-1",),
         )
         first_turn.usage_by_message["msg-1"] = TurnUsage(
             input_tokens=100, output_tokens=20
@@ -123,7 +127,7 @@ class TestLifecycle:
             session_id="sess-1",
             client=FakeOpencodeClient(),
             tools=tools_protocol(tools),
-            sender_id="user-2",
+            sender_ids=("user-2",),
         )
         assert next_turn.usage_by_message == {}
 
@@ -155,7 +159,7 @@ class TestLifecycle:
             session_id="sess-a",
             client=client_a,
             tools=tools_protocol(tools),
-            sender_id="user-1",
+            sender_ids=("user-1",),
         )
         await turn_a.approvals.on_permission_asked(
             OpencodePermissionRequest(id="perm-1", permission="bash")
@@ -167,7 +171,7 @@ class TestLifecycle:
             session_id="sess-b",
             client=client_b,
             tools=tools_protocol(tools),
-            sender_id="user-2",
+            sender_ids=("user-2",),
         )
 
         assert await turn_a.approvals.try_handle_reply("approve perm-1", "user-1")
@@ -190,7 +194,7 @@ class TestLifecycle:
             session_id="sess-a",
             client=client_a,
             tools=tools_protocol(tools),
-            sender_id="user-1",
+            sender_ids=("user-1",),
         )
         await turn_a.approvals.on_permission_asked(
             OpencodePermissionRequest(id="perm-1", permission="bash")
@@ -202,7 +206,7 @@ class TestLifecycle:
             session_id="sess-b",
             client=client_b,
             tools=tools_protocol(tools),
-            sender_id="user-2",
+            sender_ids=("user-2",),
         )
 
         assert await turn_a.approvals.abandon()
@@ -268,7 +272,7 @@ class TestLifecycle:
         adapter = OpencodeAdapter(
             client_factory=lambda _config: clients.pop(0),
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         with backends_created_by(fake_backend):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -386,8 +390,8 @@ class TestLifecycle:
 
         fake_client = InterleavedClient()
         adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-        tools_r1 = FakeAgentTools()
-        tools_r2 = FakeAgentTools()
+        tools_r1 = FakeAgentTools(participants=ROOM_MEMBERS)
+        tools_r2 = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
 
@@ -431,7 +435,9 @@ class TestLifecycle:
         assert fake_client.closed
         assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
 
-    async def test_concurrent_room_start_waits_for_mcp_registration(self) -> None:
+    async def test_concurrent_room_start_waits_for_mcp_registration(
+        self,
+    ) -> None:
         """Every room start waits for the shared client's MCP startup barrier."""
 
         class SlowRegistrationClient(FakeOpencodeClient):

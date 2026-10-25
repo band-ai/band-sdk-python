@@ -9,6 +9,7 @@ test double.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -24,6 +25,7 @@ from band.adapters.copilot_sdk import (
 from band.converters.copilot_sdk import CopilotSDKSessionState
 from band.core.types import PlatformMessage
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.framework_conformance.turnprobes import turn_input
 
 requires_copilot_sdk = pytest.mark.skipif(
@@ -33,6 +35,21 @@ requires_copilot_sdk = pytest.mark.skipif(
 
 if _COPILOT_SDK_AVAILABLE:
     from copilot.generated.session_events import SessionErrorData, SessionIdleData
+
+
+class ObservedCopilotAdapter(CopilotSDKAdapter):
+    """Expose turn entry while preserving the real room-lock acquisition."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.turn_entries: asyncio.Queue[tuple[str, ...]] = asyncio.Queue()
+
+    async def on_turn(
+        self, messages: Sequence[PlatformMessage], *args: Any, **kwargs: Any
+    ) -> None:
+        # No suspension separates this signal from the real turn's room lock.
+        self.turn_entries.put_nowait(tuple(message.id for message in messages))
+        await super().on_turn(messages, *args, **kwargs)
 
 
 def make_platform_message(
@@ -52,6 +69,9 @@ def make_platform_message(
 
 
 class ToolSchemaFakeTools(FakeAgentTools):
+    def __init__(self) -> None:
+        super().__init__(participants=ROOM_MEMBERS)
+
     def get_openai_tool_schemas(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
             {

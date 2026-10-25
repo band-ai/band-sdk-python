@@ -6,6 +6,7 @@ from band.adapters.opencode import OpencodeAdapter
 from band.core.types import Capability, Emit
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
@@ -50,7 +51,7 @@ class TestToolReports:
             client_factory=lambda _config: fake_client,
             emit=Emit.TOOL_CALLS,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await deliver_message(
@@ -155,7 +156,7 @@ class TestToolReports:
             client_factory=lambda _config: fake_client,
             emit=Emit.TOOL_CALLS,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await deliver_message(
@@ -254,7 +255,7 @@ class TestToolReports:
                 event_session_idle("sess-1"),
             ]
         ]
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await run_single_turn(adapter, tools)
 

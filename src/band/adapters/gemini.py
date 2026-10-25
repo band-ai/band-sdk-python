@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any, ClassVar, cast
 
 import httpx
@@ -34,7 +35,7 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
 from band.core.exceptions import ProviderRunError
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
     Capability,
@@ -51,6 +52,7 @@ from band.runtime.custom_tools import (
     format_validation_error,
     get_custom_tool_name,
 )
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     decode_image_blocks,
@@ -146,7 +148,7 @@ class GeminiAdapterConfig(BaseAdapterConfig):
     max_history_messages: PositiveInt = 200
 
 
-class GeminiAdapter(SimpleAdapter[GeminiMessages]):
+class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
     """
     Gemini SDK adapter using SimpleAdapter pattern.
 
@@ -212,9 +214,9 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         )
         logger.info("Gemini adapter started for agent: %s", agent_name)
 
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: GeminiMessages,
         participants_msg: str | None,
@@ -223,7 +225,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Handle incoming message with explicit function-calling loop."""
+        """Handle one turn over its original messages with one function-calling loop."""
         if is_session_bootstrap:
             if history:
                 self._message_history[room_id] = list(history)
@@ -249,7 +251,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         if contacts_msg:
             user_parts.append(types.Part.from_text(text=f"[System]: {contacts_msg}"))
             logger.info("Room %s: Contacts broadcast received", room_id)
-        user_parts.append(types.Part.from_text(text=msg.format_for_llm()))
+        user_parts.append(types.Part.from_text(text=format_current_inputs(messages)))
         self._message_history[room_id].append(
             types.Content(role="user", parts=user_parts)
         )

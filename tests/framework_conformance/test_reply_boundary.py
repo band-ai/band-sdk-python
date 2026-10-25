@@ -19,25 +19,45 @@ from tests.paths import SRC_ROOT
 #: The model's tool implementations, where every reply call is the model's.
 TOOLS_DIR = SRC_ROOT / "runtime" / "tools"
 
-REPLY_CALLS = frozenset({"send_message", "deliver_reply", "relay_reply"})
+REPLY_CALLS = frozenset(
+    {"send_message", "deliver_reply", "relay_reply", "finish_automatic_reply"}
+)
 
 #: Reply calls per file outside ``TOOLS_DIR``, and why each carries the model's words.
 ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
     "core/delivery.py": (
-        Counter(send_message=1, deliver_reply=1),
-        "deliver_reply posts the reply; relay_reply delegates to it",
+        Counter(send_message=1, deliver_reply=2),
+        "deliver_reply posts the reply; relay and automatic completion delegate to it",
     ),
     "adapters/copilot_sdk.py": (
-        Counter(relay_reply=1, deliver_reply=1),
+        Counter(finish_automatic_reply=1, deliver_reply=1),
         "the model's final text, and its ask_user question as the turn's reply",
     ),
     "adapters/omp.py": (
         Counter(deliver_reply=1),
         "the model's native ask questions as the turn's reply",
     ),
-    "adapters/letta.py": (Counter(relay_reply=1), "the model's final text"),
-    "adapters/opencode/adapter.py": (Counter(relay_reply=1), "the model's final text"),
-    "adapters/parlant/responses.py": (Counter(relay_reply=1), "the engine's message"),
+    "adapters/letta.py": (Counter(finish_automatic_reply=1), "the model's final text"),
+    "adapters/opencode/adapter.py": (
+        Counter(finish_automatic_reply=1),
+        "the model's final text",
+    ),
+    "adapters/parlant/responses.py": (
+        Counter(relay_reply=1, finish_automatic_reply=1),
+        "the engine's preamble and final message",
+    ),
+    "adapters/claude_sdk.py": (
+        Counter(finish_automatic_reply=1),
+        "silent completion only; no text is supplied",
+    ),
+    "adapters/codex.py": (
+        Counter(finish_automatic_reply=1),
+        "silent completion only; no text is supplied",
+    ),
+    "adapters/cursor_acp.py": (
+        Counter(finish_automatic_reply=1),
+        "silent completion only; no text is supplied",
+    ),
     "integrations/crewai/catalog.py": (Counter(send_message=1), "the crew's tool"),
     "integrations/parlant/bandtools/chat.py": (
         Counter(send_message=1),
@@ -73,17 +93,20 @@ def reply_calls(source: str) -> Counter[str]:
     return Counter(name for name in names if name in REPLY_CALLS)
 
 
-def test_every_reply_call_carries_the_model_words() -> None:
-    found = {
-        path.relative_to(SRC_ROOT).as_posix(): calls
-        for path in SRC_ROOT.rglob("*.py")
-        if TOOLS_DIR not in path.parents
-        and (calls := reply_calls(path.read_text("utf-8")))
-    }
+class TestReplyBoundary:
+    def test_every_reply_call_carries_the_model_words(self) -> None:
+        found = {
+            path.relative_to(SRC_ROOT).as_posix(): calls
+            for path in SRC_ROOT.rglob("*.py")
+            if TOOLS_DIR not in path.parents
+            and (calls := reply_calls(path.read_text("utf-8")))
+        }
 
-    assert found == {path: calls for path, (calls, _) in ALLOWED_REPLY_CALLS.items()}, (
-        "A reply call changed outside the model's reply paths. Post an adapter's "
-        "own message with tools.send_notice (and tools.turn.settle() when it ends "
-        "the turn); relay the model's words through relay_reply and record why "
-        "in ALLOWED_REPLY_CALLS."
-    )
+        assert found == {
+            path: calls for path, (calls, _) in ALLOWED_REPLY_CALLS.items()
+        }, (
+            "A reply call changed outside the model's reply paths. Post an adapter's "
+            "own message with tools.send_notice (and tools.turn.settle() when it ends "
+            "the turn); relay the model's words through relay_reply and record why "
+            "in ALLOWED_REPLY_CALLS."
+        )

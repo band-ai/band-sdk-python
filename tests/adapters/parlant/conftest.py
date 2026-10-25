@@ -24,6 +24,7 @@ from tests.adapters.parlant.helpers import (
     BAND_DESCRIPTION,
     BAND_NAME,
     MESSAGE_KIND,
+    SENDER_ID,
     SENDER_NAME,
     SESSION_ID,
     RecordingBackgroundTasks,
@@ -42,7 +43,7 @@ def sample_message() -> PlatformMessage:
         id="msg-123",
         room_id="room-123",
         content="Hello, agent!",
-        sender_id="user-456",
+        sender_id=SENDER_ID,
         sender_type="User",
         sender_name=SENDER_NAME,
         message_type="text",
@@ -54,7 +55,31 @@ def sample_message() -> PlatformMessage:
 @pytest.fixture
 def mock_tools() -> FakeAgentTools:
     """The room's tools, recording what the adapter posted."""
-    return FakeAgentTools()
+    return FakeAgentTools(
+        participants=[
+            {
+                "id": SENDER_ID,
+                "name": SENDER_NAME,
+                "type": "User",
+                "role": "member",
+                "status": "active",
+            },
+            {
+                "id": "alice",
+                "name": "Alice",
+                "type": "User",
+                "role": "member",
+                "status": "active",
+            },
+            {
+                "id": "helper",
+                "name": "Helper",
+                "type": "Agent",
+                "role": "member",
+                "status": "active",
+            },
+        ]
+    )
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ from band.integrations.mcp import BandMCPTransport
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
@@ -34,7 +35,9 @@ class TestSetup:
     ) -> None:
         """Requesting the fixture is the assertion — see its docstring."""
 
-    async def test_startup_fails_loudly_when_server_unreachable(self) -> None:
+    async def test_startup_fails_loudly_when_server_unreachable(
+        self,
+    ) -> None:
         """The default (real-server) path must fail at startup naming the fix."""
 
         adapter = OpencodeAdapter()
@@ -64,7 +67,9 @@ class TestSetup:
         assert first._mcp_server_name == restarted._mcp_server_name
         assert first._mcp_server_name != other._mcp_server_name
 
-    async def test_mcp_registration_uses_band_agent_id_before_startup(self) -> None:
+    async def test_mcp_registration_uses_band_agent_id_before_startup(
+        self,
+    ) -> None:
         class IdentityTools(FakeAgentTools):
             @property
             def agent_id(self) -> str:
@@ -119,7 +124,7 @@ class TestSetup:
             additional_tools=[(EchoInput, echo_tool)],
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         with backends_created_by(fake_backend) as starts:
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -162,7 +167,9 @@ class TestSetup:
             (f"{registered}_*", True),
         ]
 
-    async def test_registers_shared_mcp_backend_on_startup(self) -> None:
+    async def test_registers_shared_mcp_backend_on_startup(
+        self,
+    ) -> None:
         fake_backend = FakeBandMCPBackend()
         fake_client = FakeOpencodeClient(
             prompt_event_sequences=[
@@ -176,7 +183,7 @@ class TestSetup:
         adapter = OpencodeAdapter(
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         with backends_created_by(fake_backend):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -210,7 +217,9 @@ class TestSetup:
         assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
         assert fake_backend.stop_calls == 1
 
-    async def test_mcp_registration_retries_until_connected(self) -> None:
+    async def test_mcp_registration_retries_until_connected(
+        self,
+    ) -> None:
         """A transient non-connected registration result must not be treated as
         success -- the next message retries instead of leaving Band tools
         unregistered for the rest of the process -- while a connected one is kept."""
@@ -219,7 +228,7 @@ class TestSetup:
             prompt_event_sequences=[[event_session_idle("sess-1")]] * 3,
         )
         adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         registrations_after_each_message = []
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -388,7 +397,7 @@ class TestSetup:
             await deliver_message(
                 bare_adapter,
                 make_platform_message(),
-                tools_protocol(FakeAgentTools()),
+                tools_protocol(FakeAgentTools(participants=ROOM_MEMBERS)),
                 OpencodeSessionState(),
                 participants_msg=None,
                 contacts_msg=None,
@@ -405,7 +414,7 @@ class TestSetup:
             await deliver_message(
                 full_adapter,
                 make_platform_message(),
-                tools_protocol(FakeAgentTools()),
+                tools_protocol(FakeAgentTools(participants=ROOM_MEMBERS)),
                 OpencodeSessionState(),
                 participants_msg=None,
                 contacts_msg=None,
@@ -423,7 +432,9 @@ class TestSetup:
         assert MEMORY_TOOL_NAMES <= full_tool_names
         assert CONTACT_TOOL_NAMES <= full_tool_names
 
-    def test_own_band_tools_recognized_before_mcp_registration(self) -> None:
+    def test_own_band_tools_recognized_before_mcp_registration(
+        self,
+    ) -> None:
         """The auto-approve check for the adapter's own band tools must not wait on
         MCP registration: a second room's first turn can hit a band-tool permission
         ask while the first room is still registering. The names are derived at
@@ -447,9 +458,9 @@ class TestSetup:
     async def test_turn_system_prompt_carries_room_context(
         self, make_adapter, tools
     ) -> None:
-        """The per-turn system prompt must name the current chat_id (band MCP
-        tool schemas require a chat_id argument, so an untold model cannot
-        call any platform tool) and the requester."""
+        """The per-turn system prompt must name the current chat_id: band MCP
+        tool schemas require a chat_id argument, so an untold model cannot call
+        any platform tool. Senders are named per input, never as one requester."""
         fake_client = idle_client()
         adapter = make_adapter(fake_client)
 
@@ -457,5 +468,4 @@ class TestSetup:
 
         system = fake_client.prompt_calls[0]["system"]
         assert "Current chat_id: room-1" in system
-        assert "Current requester name: Alice" in system
-        assert "Current requester id: user-1" in system
+        assert "Current requester" not in system

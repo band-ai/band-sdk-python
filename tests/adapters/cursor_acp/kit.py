@@ -31,6 +31,18 @@ from tests.integrations.acp.acp_toolkit.harness import (
     accepted_work_finished,
     pending_decisions,
 )
+from tests.testing.support import seeded_participant
+
+
+def room_participants() -> list[dict[str, Any]]:
+    """Seed the finite participants used by the Cursor room scenarios."""
+    return [
+        seeded_participant("user-1", handle="@alice", name="Alice"),
+        seeded_participant("user-2", handle="@bob", name="Bob"),
+        seeded_participant("requester", handle="@requester"),
+        seeded_participant("owner", handle="@owner"),
+        seeded_participant("intruder", handle="@intruder"),
+    ]
 
 
 class DecisionTools(FakeAgentTools):
@@ -43,7 +55,7 @@ class DecisionTools(FakeAgentTools):
     """
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(participants=room_participants())
         self.prompt_sent = asyncio.Event()
 
     async def send_notice(
@@ -75,13 +87,13 @@ def cursor_turn(
     adapter: CursorACPAdapter,
     room_id: str,
     tools: AgentToolsProtocol,
-    requester_id: str | None,
+    sender_id: str,
     session_id: str | None = None,
 ) -> CursorTurn:
     return CursorTurn(
         room=adapter._room(room_id),
         tools=tools,
-        requester_id=requester_id,
+        audience=(sender_id,),
         release=asyncio.get_running_loop().create_future(),
         session_id=session_id,
     )
@@ -123,7 +135,7 @@ class CursorRoom:
 
     async def send(self, content: str) -> FakeAgentTools:
         """Deliver ``content``; return the tools its turn posted through."""
-        tools = FakeAgentTools(room_id="room-1")
+        tools = FakeAgentTools(room_id="room-1", participants=room_participants())
         bootstrap, self._bootstrapped = not self._bootstrapped, True
         await self.adapter.on_event(
             AgentInput(

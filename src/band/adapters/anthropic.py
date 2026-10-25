@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Sequence
 from typing import Any, ClassVar, cast
 
 from anthropic import APIStatusError, AsyncAnthropic
@@ -17,7 +18,7 @@ from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessag
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import (
     Capability,
     Emit,
@@ -25,6 +26,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    ids_of,
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -32,7 +34,8 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     find_custom_tool,
 )
-from band.runtime.prompts import render_system_prompt
+from band.runtime.formatters import format_current_inputs
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
     BandTool,
     image_block_placeholder,
@@ -104,7 +107,7 @@ class AnthropicAdapterConfig(BaseAdapterConfig):
     max_tokens: PositiveInt = 4096
 
 
-class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
+class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
     """
     Anthropic SDK adapter using SimpleAdapter pattern.
 
@@ -174,10 +177,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         )
         logger.info("Anthropic adapter started for agent: %s", agent_name)
 
-    # --- Adapted from BandAnthropicAgent._handle_message ---
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: AnthropicMessages,  # Already converted by SimpleAdapter
         participants_msg: str | None,
@@ -187,7 +189,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         room_id: str,
     ) -> None:
         """
-        Handle incoming message.
+        Handle one turn over its original messages, in one tool loop.
 
         KEY DESIGN:
         - System prompt sent ONLY on first API call (part of messages param)
@@ -196,7 +198,8 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         - Contact changes injected when broadcast
         - Tool loop runs until no more tool_use blocks
         """
-        logger.debug("Handling message %s in room %s", msg.id, room_id)
+        message_ids = ids_of(messages)
+        logger.debug("Handling messages %s in room %s", message_ids, room_id)
 
         # Initialize history for this room on first message
         # Note: history is already converted by SimpleAdapter via history_converter
@@ -220,7 +223,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             self._message_history[room_id].append(
                 {
                     "role": "user",
-                    "content": f"[System]: {participants_msg}",
+                    "content": f"{SYSTEM_UPDATE_PREFIX}{participants_msg}",
                 }
             )
             logger.info("Room %s: Participants updated", room_id)
@@ -230,17 +233,15 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             self._message_history[room_id].append(
                 {
                     "role": "user",
-                    "content": f"[System]: {contacts_msg}",
+                    "content": f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}",
                 }
             )
             logger.info("Room %s: Contacts broadcast received", room_id)
 
-        # Add current message
-        user_message = msg.format_for_llm()
         self._message_history[room_id].append(
             {
                 "role": "user",
-                "content": user_message,
+                "content": format_current_inputs(messages),
             }
         )
 
@@ -344,7 +345,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 )
                 # Skipped only after a successful decline whose siblings also
                 # succeeded. A follow-up that never returns leaves the message
-                # in processing until on_message returns.
+                # in processing until the input handler returns.
                 if declined:
                     logger.info(
                         "Room %s: %s settled the turn after request %s; "
@@ -359,8 +360,8 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             await self.emit_usage(tools, turn_usage)
 
         logger.debug(
-            "Message %s processed successfully (history now has %s messages)",
-            msg.id,
+            "Messages %s processed successfully (history now has %s messages)",
+            message_ids,
             len(self._message_history[room_id]),
         )
 

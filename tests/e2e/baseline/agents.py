@@ -197,6 +197,7 @@ def adapter_params(
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
     runs_tool_loop: bool | None = None,
+    batch_input: bool | None = None,
     lane: Lane | None = None,
     peer: Adapter | None = None,
 ) -> list[ParameterSet]:
@@ -205,7 +206,8 @@ def adapter_params(
 
     No args = the full matrix; ``include`` / ``exclude`` slice by id; ``supports`` /
     ``without`` by capability (complementary); ``runs_tool_loop=True`` keeps the
-    custom-tool-capable adapters; ``lane`` keeps only a single home lane's adapters.
+    custom-tool-capable adapters; ``batch_input=True`` keeps the adapters whose class
+    declares ``supports_batch_input``; ``lane`` keeps only a single home lane's adapters.
     Each param carries **one** ``@requires`` mark — the deduped union of the cell's own
     requirements and, when a ``peer`` framework rides along, the peer's. It must be a
     *single* mark: the gate reads it with ``get_closest_marker`` (first mark only), so a
@@ -226,6 +228,7 @@ def adapter_params(
             supports=supports,
             without=without,
             runs_tool_loop=runs_tool_loop,
+            batch_input=batch_input,
             lane=lane,
         )
     ]
@@ -237,6 +240,7 @@ def per_adapter(
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
     runs_tool_loop: bool | None = None,
+    batch_input: bool | None = None,
     lane: Lane | None = None,
     peer: Adapter | None = None,
     prompt: str | None = None,
@@ -246,7 +250,7 @@ def per_adapter(
     """Fan a test across the adapter matrix — one invocation per selected adapter.
 
     Positional ``*adapters`` is the include set; ``exclude`` / ``supports`` / ``without`` /
-    ``runs_tool_loop`` / ``lane`` narrow it (all compose; ``lane`` keeps one home lane's
+    ``runs_tool_loop`` / ``batch_input`` / ``lane`` narrow it (all compose; ``lane`` keeps one home lane's
     adapters). Bare ``@per_adapter()`` is the full matrix, explicitly. Steer per-cell
     construction with ``prompt`` / ``features`` / ``tools`` — the ``cell`` / ``agent`` /
     ``peer`` fixtures carry these as defaults::
@@ -289,6 +293,7 @@ def per_adapter(
         supports=supports,
         without=without,
         runs_tool_loop=runs_tool_loop,
+        batch_input=batch_input,
         lane=lane,
         peer=peer,
     )
@@ -299,7 +304,8 @@ def per_adapter(
             "@per_adapter selected no adapters "
             f"(include={sorted(map(str, include)) if include else None}, "
             f"exclude={sorted(map(str, exclude_ids)) or None}, supports={supports}, "
-            f"without={without}, runs_tool_loop={runs_tool_loop}, lane={lane}); widen "
+            f"without={without}, runs_tool_loop={runs_tool_loop}, "
+            f"batch_input={batch_input}, lane={lane}); widen "
             "the filter or fix the registry drift"
         )
     build = PerAdapter(

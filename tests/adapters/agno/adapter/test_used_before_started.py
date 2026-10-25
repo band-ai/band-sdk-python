@@ -15,5 +15,5 @@ class TestUsedBeforeStarted:
 
         with pytest.raises(RuntimeError, match="before on_started"):
             await adapter._run_agent(
-                [], FakeAgentTools(), room_id="room-1", msg_id="m1"
+                [], FakeAgentTools(), room_id="room-1", msg_ids="m1"
             )

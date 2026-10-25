@@ -8,6 +8,7 @@ from band.integrations.opencode.types import (
     OpencodeSessionState,
 )
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.approvals.kit import (
     ALICE_PARTICIPANT,
@@ -136,7 +137,7 @@ class TestPermissionReplies:
     ) -> None:
         """A named stale approval command is feedback, not a new model prompt."""
         client = FakeOpencodeClient()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
 
         await approvals.on_permission_asked(asks.permission("req-current"))

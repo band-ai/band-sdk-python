@@ -10,6 +10,7 @@ from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
 from band.converters.letta import LettaSessionState
 from band.core.protocols import TurnResultAlreadyReported
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.lettakit import (
     make_assistant_message,
     make_letta_response,
@@ -43,7 +44,7 @@ class TestColdBootSeeding:
         history = LettaSessionState(
             replay_messages=["[Alice]: The secret word is kumquat.", "[Bot]: Noted!"]
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await adapter.on_message(
             make_platform_message(content="what was the secret word?"),
             tools,
@@ -82,7 +83,7 @@ class TestColdBootSeeding:
 
         await adapter.on_message(
             make_platform_message(),
-            FakeAgentTools(),
+            FakeAgentTools(participants=ROOM_MEMBERS),
             LettaSessionState(),
             None,
             None,
@@ -106,7 +107,7 @@ class TestColdBootSeeding:
         history = LettaSessionState(
             replay_messages=["[Alice]: The secret word is kumquat."]
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         with pytest.raises(TurnResultAlreadyReported):
             await adapter.on_message(
                 make_platform_message(content="what was the secret word?"),
@@ -139,7 +140,7 @@ class TestColdBootSeeding:
 
         await adapter.on_message(
             make_platform_message(room_id="room-1"),
-            FakeAgentTools(),
+            FakeAgentTools(participants=ROOM_MEMBERS),
             LettaSessionState(),
             None,
             None,
@@ -161,7 +162,7 @@ class TestColdBootSeeding:
         )
 
         history = LettaSessionState(replay_messages=["[Alice]: earlier message"])
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         for _ in range(2):
             await adapter.on_message(
                 make_platform_message(),
@@ -195,7 +196,7 @@ class TestColdBootSeeding:
             agent_id="live-agent",
             replay_messages=["[Alice]: earlier message"],
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await adapter.on_message(
             make_platform_message(),
             tools,

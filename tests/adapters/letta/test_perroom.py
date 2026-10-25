@@ -17,6 +17,7 @@ from band.core.protocols import (
 )
 from band.core.types import Capability, Emit
 from band.testing import FakeAgentTools, reported_failures
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.letta.kit import REPLY_SETTLING_CALLS, sent_contents
 from tests.adapters.lettakit import (
     make_assistant_message,
@@ -56,7 +57,7 @@ class TestLettaAdapterOnMessagePerRoom:
             make_assistant_message("Hello!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState()
 
@@ -108,7 +109,7 @@ class TestLettaAdapterOnMessagePerRoom:
             make_assistant_message("I'll help you!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState()
 
@@ -140,7 +141,7 @@ class TestLettaAdapterOnMessagePerRoom:
             make_assistant_message("I'll help you!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         async def _raise(*args: Any, **kwargs: Any) -> None:
             raise RuntimeError("platform rejected the message")
@@ -175,7 +176,7 @@ class TestLettaAdapterOnMessagePerRoom:
             tool_calls=[(reply_tool, arguments)],
             final_text="Done!",
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_message(
             make_platform_message(),
@@ -204,7 +205,7 @@ class TestLettaAdapterOnMessagePerRoom:
 
         mock_client.agents.messages.create.side_effect = slow_response
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState()
 
@@ -242,7 +243,7 @@ class TestLettaAdapterOnMessagePerRoom:
             make_assistant_message("I'll help you!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         real_send_message = tools.send_message
 
         async def _slow_send_message(*args: Any, **kwargs: Any) -> Any:
@@ -294,7 +295,7 @@ class TestLettaAdapterOnMessagePerRoom:
             make_tool_return_message("band_lookup_peers", '{"peers": []}'),
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         tools.send_event_error = TimeoutError("event POST hiccup")
         msg = make_platform_message()
         history = LettaSessionState()
@@ -328,7 +329,7 @@ class TestLettaAdapterOnMessagePerRoom:
             "letta connection reset"
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState()
 
@@ -360,7 +361,7 @@ class TestLettaAdapterOnMessagePerRoom:
             make_assistant_message("Got it.")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState()
 
@@ -391,7 +392,7 @@ class TestLettaAdapterOnMessagePerRoom:
             make_assistant_message("Resumed!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState(agent_id="history-agent")
 
@@ -414,7 +415,7 @@ class TestLettaAdapterOnMessagePerRoom:
         adapter = LettaAdapter()
         # _client is None
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState()
 

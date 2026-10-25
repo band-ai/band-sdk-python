@@ -68,6 +68,7 @@ from band.core.types import (
 )
 from band.runtime.activity import ActivityObserver
 from band.runtime.context_serialization import context_item_to_dict
+from band.runtime.participants import validate_participants_snapshot
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
@@ -559,6 +560,10 @@ class FakeAgentTools:
 
     async def get_participants(self) -> list[ChatParticipant]:
         return [ChatParticipant.model_validate(p) for p in self._participants]
+
+    async def get_participants_snapshot(self) -> list[ChatParticipant]:
+        """Read the seeded roster without inventing sender membership."""
+        return validate_participants_snapshot(await self.get_participants())
 
     async def lookup_peers(
         self, page: int = 1, page_size: int = 50

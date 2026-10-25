@@ -12,9 +12,9 @@ from band.integrations.acp.client_adapter import (
     ACPClientAdapterConfig,
 )
 from band.integrations.mcp import BandMCPTransport
+from band.runtime.formatters import SENDER_METADATA_INSTRUCTION
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS
 from tests.integrations.acp.clientadapter.kit import CODEX
-from tests.integrations.acp.serverkit import make_platform_message
 from tests.mcpbackends import backends_created_by
 from tests.mcpclient import endpoint_path
 
@@ -109,21 +109,15 @@ class TestACPClientAdapterLocalMcpConfig:
         adapter = ACPClientAdapter(CODEX)
         adapter.agent_name = "ACP Bridge"
         adapter.agent_description = "Bridge to ACP agents"
-        msg = make_platform_message(
-            "Hello",
-            room_id="room-123",
-            sender_id="user-123",
-            sender_name="Pat",
-        )
-
-        system_context = adapter._build_system_context("room-123", msg)
+        system_context = adapter._build_system_context("room-123")
 
         assert "Band tools" in system_context
         assert COMMUNICATION_INSTRUCTIONS in system_context
         assert "reply exactly once" not in system_context
         assert "Never both" not in system_context
         assert "chat_id" not in system_context
-        assert "Current requester name: Pat" in system_context
+        assert "requester" not in system_context
+        assert SENDER_METADATA_INSTRUCTION in system_context
         assert "Use each MCP tool's schema" in system_context
 
     def test_build_system_context_defers_to_external_mcp_tool_schema(self) -> None:
@@ -133,9 +127,7 @@ class TestACPClientAdapterLocalMcpConfig:
         )
         adapter.agent_name = "ACP Bridge"
         adapter.agent_description = "Bridge to ACP agents"
-        msg = make_platform_message("Hello", room_id="room-123")
-
-        system_context = adapter._build_system_context("room-123", msg)
+        system_context = adapter._build_system_context("room-123")
 
         assert "Use each MCP tool's schema" in system_context
         assert "Current chat_id: room-123" in system_context

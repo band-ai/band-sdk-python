@@ -5,7 +5,9 @@ import pytest
 from tests.integrations.acp.acp_toolkit import (
     acp_adapter,
 )
-from tests.integrations.acp.clientbehavior.kit import codex_mcp_call
+from tests.integrations.acp.clientbehavior.kit import (
+    codex_mcp_call,
+)
 
 
 class TestToolIdentity:

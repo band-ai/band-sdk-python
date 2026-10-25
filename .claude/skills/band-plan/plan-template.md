@@ -63,9 +63,11 @@ Test rules:
 - A missing helper, fixture, constructor seam, or local peer is its own
   step, before the step that uses it — never `unittest.mock.patch` of a
   private name, stdlib spawn, or timeout constant, and never an empty mock
-  in place of a real boundary. Timeouts are proven with a public `0` ("check
-  now") plus the complementary "finished before wait" sequence, not by
-  sleeping the grace period.
+  in place of a real boundary. Apply the test conventions' controlled-clock
+  boundary: plan gates and awaited completion for time-agnostic claims;
+  reserve clock advancement for deadline expiry. Use a public `0` ("check
+  now") only when supported, plus the complementary "finished before wait"
+  sequence; never sleep the grace period.
 
 Scope rules:
 

@@ -12,7 +12,7 @@ import asyncio
 import inspect
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from time import monotonic
 from typing import Any, ClassVar, get_origin, get_type_hints
@@ -60,7 +60,7 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import (
     Capability,
     Emit,
@@ -68,6 +68,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    ids_of,
 )
 from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
 from band.runtime.custom_tools import (
@@ -76,7 +77,8 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
     invoke_validated_custom_tool,
 )
-from band.runtime.prompts import render_system_prompt
+from band.runtime.formatters import format_current_inputs
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
     BandTool,
     image_block_placeholder,
@@ -343,7 +345,7 @@ class PydanticAIAdapterConfig(BaseAdapterConfig):
     custom_section: str | None = None
 
 
-class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
+class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
     """
     Pydantic AI adapter using SimpleAdapter pattern.
 
@@ -518,10 +520,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         return agent
 
-    # --- Adapted from BandPydanticAgent._handle_message ---
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: PydanticAIMessages,  # Already converted by SimpleAdapter
         participants_msg: str | None,
@@ -530,7 +531,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Handle incoming platform message."""
+        """Run one agent turn over one or more original messages."""
         if self._agent is None:
             # Safety: create agent if not yet created (should be done in on_started)
             self._agent = self._create_agent()
@@ -555,7 +556,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         if participants_msg:
             self._message_history[room_id].append(
                 ModelRequest(
-                    parts=[UserPromptPart(content=f"[System]: {participants_msg}")]
+                    parts=[
+                        UserPromptPart(
+                            content=f"{SYSTEM_UPDATE_PREFIX}{participants_msg}"
+                        )
+                    ]
                 )
             )
             logger.debug("Room %s: Injected participant update into history", room_id)
@@ -564,13 +569,14 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         if contacts_msg:
             self._message_history[room_id].append(
                 ModelRequest(
-                    parts=[UserPromptPart(content=f"[System]: {contacts_msg}")]
+                    parts=[
+                        UserPromptPart(content=f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
+                    ]
                 )
             )
             logger.debug("Room %s: Injected contacts broadcast into history", room_id)
 
-        # Build user message with sender prefix
-        user_message = msg.format_for_llm()
+        user_message = format_current_inputs(messages)
 
         logger.debug(
             "Room %s: Running Pydantic AI agent (history: %s msgs)",
@@ -609,7 +615,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # failed run captured.
         capture_cm = capture_run_messages()
         captured = capture_cm.__enter__()
-        trace_token = _native_turn.set((room_id, msg.id, monotonic()))
+        message_ids = ", ".join(ids_of(messages))
+        trace_token = _native_turn.set((room_id, message_ids, monotonic()))
         event_count = 0
         try:
             _log_native_progress("run_started")
@@ -784,11 +791,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             _native_turn.reset(trace_token)
             if native_output_type is not None and not tools.turn.complete:
                 logger.warning(
-                    "Room %s message %s: native run ended without a turn outcome "
+                    "Room %s messages %s: native run ended without a turn outcome "
                     "(output_type=%s, output_chars=%s, tool_calls=%s, "
                     "tool_results=%s, failed_tool_results=%s)",
                     room_id,
-                    msg.id,
+                    message_ids,
                     native_output_type,
                     native_output_chars,
                     tool_call_count,

@@ -21,7 +21,9 @@ from tests.integrations.acp.acp_toolkit import (
     fake_agent_config,
     started_acp_adapter,
 )
-from tests.integrations.acp.clientbehavior.kit import rehydration_history
+from tests.integrations.acp.clientbehavior.kit import (
+    rehydration_history,
+)
 
 
 class TestTransportContract:

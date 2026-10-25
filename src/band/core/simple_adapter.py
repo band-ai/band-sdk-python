@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable, Sequence
+from contextlib import asynccontextmanager
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from typing_extensions import Unpack
@@ -81,7 +82,8 @@ class SimpleAdapter(ABC, Generic[H]):
     Simple base class for framework adapters.
 
     Generic over H (history type) for full type safety.
-    Users extend this and override on_message().
+    Subclass this and override on_message() for singleton-only adapters.
+    Batch-capable adapters subclass BatchInputAdapter and implement on_turn().
 
     Subclasses should declare SUPPORTED_EMIT and SUPPORTED_CAPABILITIES
     as class-level sets to document what they actually implement.
@@ -111,15 +113,9 @@ class SimpleAdapter(ABC, Generic[H]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
-
-    def is_control_message(self, msg: PlatformMessage) -> bool:
-        """Recognize control input without side effects.
-
-        Recognition may inspect pending requests; handling still decides
-        authorization and consumption. Override for read-only discovery;
-        the default does not recognize controls.
-        """
-        return False
+    # Whether ``on_messages`` runs one turn over several originals; only
+    # ``BatchInputAdapter`` sets it, and a host never hands a batch elsewhere.
+    supports_batch_input: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -435,6 +431,23 @@ class SimpleAdapter(ABC, Generic[H]):
         """Consume an active-turn control without starting or rebinding work."""
         return False
 
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        """Recognize control input without side effects.
+
+        Recognition may inspect pending requests; handling still decides
+        authorization and consumption. Override for read-only discovery;
+        the default does not recognize controls.
+        """
+        return False
+
+    def convert_history(self, inp: AgentInput) -> H:
+        """``inp``'s history in the adapter's own type: converted when a
+        converter is set, otherwise the raw ``HistoryProvider``."""
+        with context_handoff():
+            if self.history_converter:
+                return cast("H", inp.history.convert(self.history_converter))
+            return cast("H", inp.history)
+
     async def on_event(self, inp: AgentInput) -> None:
         """Implements FrameworkAdapter.on_event().
 
@@ -444,16 +457,10 @@ class SimpleAdapter(ABC, Generic[H]):
         ``band.logging_config``'s log filter.
         """
         with trace_context_scope():
-            with context_handoff():
-                if self.history_converter:
-                    converted_history: Any = inp.history.convert(self.history_converter)
-                else:
-                    converted_history = inp.history
-
             await self.run_judged_turn(
                 msg=inp.msg,
                 tools=inp.tools,
-                history=cast("H", converted_history),
+                history=self.convert_history(inp),
                 participants_msg=inp.participants_msg,
                 contacts_msg=inp.contacts_msg,
                 is_session_bootstrap=inp.is_session_bootstrap,
@@ -471,21 +478,14 @@ class SimpleAdapter(ABC, Generic[H]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Run one turn through ``on_message`` and judge it.
+        """Run one singleton turn through ``on_message`` and judge it.
 
-        The entry point for every turn, including those a wrapper like the
-        Slack adapter receives outside ``on_event``. A turn that ended without
-        completing is reported once, then raised as ``TurnResultAlreadyReported``
-        so the runtime marks it FAILED without a second report. A detached turn
-        is judged at its real end instead.
+        The entry point for every singleton turn, including those a wrapper
+        like the Slack adapter receives outside ``on_event``.
         """
-        turn = tools.turn
-        turn.judged = self.judges_turns and not is_contact_hub_turn(
-            sender_type=msg.sender_type, sender_id=msg.sender_id
-        )
-        # Positional, as ``on_message`` declares them: an override may rename
-        # its positional parameters.
-        try:
+        async with self.judged_turn(messages=(msg,), tools=tools, room_id=room_id):
+            # Positional, as ``on_message`` declares them: an override may
+            # rename its positional parameters.
             await self.on_message(
                 msg,
                 tools,
@@ -495,6 +495,29 @@ class SimpleAdapter(ABC, Generic[H]):
                 is_session_bootstrap=is_session_bootstrap,
                 room_id=room_id,
             )
+
+    @asynccontextmanager
+    async def judged_turn(
+        self,
+        *,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        room_id: str,
+    ) -> AsyncIterator[None]:
+        """Judge the turn run inside the block by core's turn-outcome rule.
+
+        The one judge for a singleton and a batch alike. A turn that ended
+        without completing is reported once, then raised as
+        ``TurnResultAlreadyReported`` so the runtime marks it FAILED without a
+        second report. A detached turn is judged at its real end instead.
+        """
+        turn = tools.turn
+        turn.judged = self.judges_turns and not any(
+            is_contact_hub_turn(sender_type=m.sender_type, sender_id=m.sender_id)
+            for m in messages
+        )
+        try:
+            yield
         except InputNotAccepted:
             turn.judged = False
             raise
@@ -504,3 +527,65 @@ class SimpleAdapter(ABC, Generic[H]):
             and await report_unsettled_turn(tools, room_id=room_id)
         ):
             raise TurnResultAlreadyReported("turn ended without a reply")
+
+
+class BatchInputAdapter(SimpleAdapter[H]):
+    """An adapter whose one model turn runs over one or more original messages.
+
+    ``on_turn`` is its single model-input builder: a singleton is a turn of
+    one, so a singleton and a batch share one tool loop and are judged by
+    ``judged_turn`` alike.
+    """
+
+    supports_batch_input: ClassVar[bool] = True
+
+    async def on_message(
+        self,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: H,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_messages(self, inp: AgentInput) -> None:
+        """Run one judged turn over ``inp.messages`` through ``on_turn``."""
+        with trace_context_scope():
+            async with self.judged_turn(
+                messages=inp.messages, tools=inp.tools, room_id=inp.room_id
+            ):
+                await self.on_turn(
+                    inp.messages,
+                    inp.tools,
+                    self.convert_history(inp),
+                    inp.participants_msg,
+                    inp.contacts_msg,
+                    is_session_bootstrap=inp.is_session_bootstrap,
+                    room_id=inp.room_id,
+                )
+
+    @abstractmethod
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: H,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        """The model turn over one or more original messages, oldest first."""

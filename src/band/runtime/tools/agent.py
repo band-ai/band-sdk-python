@@ -63,7 +63,11 @@ from band.runtime.activity import ActivityObserver
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
-from band.runtime.participants import log_roster_call, participant_snapshot
+from band.runtime.participants import (
+    log_roster_call,
+    participant_snapshot,
+    validate_participants_snapshot,
+)
 from band.runtime.toolactivity import reports_tool_activity, tool_activity
 from band.runtime.tools.registry import (
     TOOL_DEFINITIONS,
@@ -819,15 +823,12 @@ class AgentTools(AgentToolsProtocol):
             list[dict] by execute_tool_call() at the adapter boundary.
         """
         logger.debug("Getting participants for room %s", self.room_id)
-        response = await self.rest.agent_api_participants.list_agent_chat_participants(
-            chat_id=self.room_id,
-            request_options=DEFAULT_REQUEST_OPTIONS,
-        )
+        participants = await self._request_participants()
 
         # Treat ``data is None`` as a transient/unexpected response and preserve
         # the existing cache — every room the agent is in should at minimum
         # contain the agent itself, so ``None`` is not a legitimate "empty room".
-        if response.data is None:
+        if participants is None:
             logger.warning(
                 "list_agent_chat_participants returned None for room %s; "
                 "preserving cached participants",
@@ -839,7 +840,7 @@ class AgentTools(AgentToolsProtocol):
         # the LLM just discovered in this turn, even if they joined after
         # AgentTools was constructed. Without this, the LLM can call
         # get_participants, see a new participant, then fail to @mention them.
-        refreshed = [participant_snapshot(p.model_dump()) for p in response.data]
+        refreshed = [participant_snapshot(p.model_dump()) for p in participants]
 
         # Sync back to ExecutionContext so the refresh survives turn
         # boundaries. Without this, a new AgentTools built via from_context()
@@ -855,7 +856,21 @@ class AgentTools(AgentToolsProtocol):
             )
 
         self._participants = refreshed
+        return participants
+
+    async def _request_participants(self) -> list[ChatParticipant] | None:
+        response = await self.rest.agent_api_participants.list_agent_chat_participants(
+            chat_id=self.room_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
         return response.data
+
+    async def get_participants_snapshot(self) -> list[ChatParticipant]:
+        """Read authoritative membership without updating tools or context caches."""
+        self._check_post_scope()
+        participants = await self._request_participants()
+        self._check_post_scope()
+        return validate_participants_snapshot(participants)
 
     # --- Contact management tools ---
 

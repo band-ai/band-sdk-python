@@ -29,7 +29,7 @@ from tests.framework_conformance.stopprobes import (
     wait_until,
     waiting_on_stop,
 )
-from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
+from tests.framework_conformance.turnprobes import ALICE, ROOM_ID, turn_input
 
 
 class FirstTurnHangs:
@@ -63,7 +63,9 @@ async def started() -> tuple[CopilotSDKAdapter, FakeCopilotClient, FirstTurnHang
 async def stop_running_turn(
     adapter: CopilotSDKAdapter, hang: FirstTurnHangs, mode: ControlMode
 ) -> None:
-    turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
+    turn = asyncio.create_task(
+        adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
+    )
     await wait_until(hang.entered.is_set)
     await end_turn(adapter, turn, ROOM_ID, mode)
 
@@ -102,8 +104,12 @@ async def end_running_turn(mode: ControlMode) -> list[str]:
 async def next_message_waits_for_the_abort() -> list[str]:
     """The next message waits for the abort, then runs on the same session."""
     adapter, client, hang = await started()
-    session = await stop_holding(adapter, client, hang, FakeAgentTools(), hold_abort)
-    next_turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
+    session = await stop_holding(
+        adapter, client, hang, FakeAgentTools(participants=[ALICE]), hold_abort
+    )
+    next_turn = asyncio.create_task(
+        adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
+    )
     # The turn blocks inside the context manager that owns the wait, where
     # ``waiting_on_stop`` cannot see it; a turn that ignored the abort would
     # prompt the session within these loop turns.
@@ -119,9 +125,11 @@ async def next_message_waits_for_the_aborted_idle() -> list[str]:
     reply."""
     adapter, client, hang = await started()
     session = await stop_holding(
-        adapter, client, hang, FakeAgentTools(), hold_aborted_idle
+        adapter, client, hang, FakeAgentTools(participants=[ALICE]), hold_aborted_idle
     )
-    next_turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
+    next_turn = asyncio.create_task(
+        adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
+    )
     # As in ``next_message_waits_for_the_abort``, the wait is out of
     # ``waiting_on_stop``'s sight: a turn that ignored the idle would prompt the
     # session within these loop turns.
@@ -167,7 +175,9 @@ async def late_tool_call_during_held_abort() -> list[str]:
 async def cleanup_waits_for_the_abort() -> list[str]:
     """Leaving the room waits for the abort before it disconnects the session."""
     adapter, client, hang = await started()
-    session = await stop_holding(adapter, client, hang, FakeAgentTools(), hold_abort)
+    session = await stop_holding(
+        adapter, client, hang, FakeAgentTools(participants=[ALICE]), hold_abort
+    )
     cleanup = asyncio.create_task(adapter.on_cleanup(ROOM_ID))
     await wait_until(lambda: waiting_on_stop(cleanup) or cleanup.done())
     session.abort_released.set()
@@ -178,7 +188,9 @@ async def cleanup_waits_for_the_abort() -> list[str]:
 async def shutdown_right_after_stop() -> list[str]:
     """Shutdown waits for the room's abort before it disconnects the session."""
     adapter, client, hang = await started()
-    session = await stop_holding(adapter, client, hang, FakeAgentTools(), hold_abort)
+    session = await stop_holding(
+        adapter, client, hang, FakeAgentTools(participants=[ALICE]), hold_abort
+    )
     shutdown = asyncio.create_task(adapter.cleanup_all())
     await wait_until(lambda: waiting_on_stop(shutdown) or shutdown.done())
     session.abort_released.set()

@@ -188,6 +188,7 @@ jobs:
         uv run --all-packages pytest \
           -n 4 --dist worksteal \
           tests/adapters/test_crewai_flow_phase3.py \
+          tests/adapters/crewai/test_batch_history.py \
           tests/adapters/crewaiworker/test_native_settlement.py \
           tests/adapters/crewaiworker/test_flow_admission.py \
           tests/adapters/crewaiworker/test_parallel_settlement.py \

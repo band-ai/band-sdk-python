@@ -48,6 +48,7 @@ from band.adapters.opencode.approvals.wording import (
     which_question_command_hint,
 )
 from band.adapters.opencode.config import OpencodeAdapterConfig
+from band.core.delivery import automatic_mentions
 from band.integrations.opencode import (
     ApprovalReply,
     OpencodeClientProtocol,
@@ -165,15 +166,14 @@ class RoomApprovals:
         )
         self._human.park()
         pattern_text = ", ".join(pending.patterns) if pending.patterns else "n/a"
-        await self._notify_room(
+        await self._notify_originators(
             APPROVAL_REQUESTED_TEMPLATE.format(
                 permission=pending.permission,
                 patterns=pattern_text,
                 request_id=pending.request_id,
             ),
-            self._ports.turn_mentions(),
+            pending,
         )
-        self._ports.release_turn_wait()
 
     async def on_question_asked(self, request: OpencodeQuestionRequest) -> None:
         if not (request_id := request.id):
@@ -220,11 +220,10 @@ class RoomApprovals:
             entry, self._config.question_wait_timeout_s, self._expire_question
         )
         self._human.park()
-        await self._notify_room(
+        await self._notify_originators(
             format_question_prompt(pending.questions, request_id),
-            self._ports.turn_mentions(),
+            pending,
         )
-        self._ports.release_turn_wait()
 
     def recognizes_reply(self, content: str) -> bool:
         """Recognize a reply without claiming an ask or posting."""
@@ -330,6 +329,48 @@ class RoomApprovals:
                 QUESTION_ANSWERED_TEMPLATE.format(request_id=question.request_id),
                 mentions,
             )
+
+    async def _notify_originators(
+        self, text: str, pending: PendingPermission | PendingQuestion
+    ) -> None:
+        tools = self._ports.tools()
+        sender_ids = tuple(mention["id"] for mention in self._ports.turn_mentions())
+        try:
+            if tools is None:
+                return
+            mentions = await automatic_mentions(tools, sender_ids)
+            if self._ports.tools() is not tools:
+                return
+            if not self._awaiting_prompt(pending):
+                return
+            if not mentions:
+                await self._reject_undeliverable(pending)
+                return
+            await tools.send_notice(text, mentions=mentions)
+        except Exception:
+            logger.exception(
+                "Failed to post approval message to room %s", self._ports.room_id
+            )
+            if self._ports.tools() is tools:
+                await self._reject_undeliverable(pending)
+        finally:
+            self._ports.release_turn_wait()
+
+    def _awaiting_prompt(self, pending: PendingPermission | PendingQuestion) -> bool:
+        return any(
+            entry.payload is pending
+            for registry in (self._asks.permissions, self._asks.questions)
+            for entry in registry.unclaimed()
+        )
+
+    async def _reject_undeliverable(
+        self, pending: PendingPermission | PendingQuestion
+    ) -> None:
+        match pending:
+            case PendingPermission():
+                await self._reply_permission(pending, "reject")
+            case PendingQuestion():
+                await self._reject_question(pending)
 
     async def _notify_room(self, text: str, mentions: list[dict[str, str]]) -> None:
         """Post an adapter notice best-effort.
