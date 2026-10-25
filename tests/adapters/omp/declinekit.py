@@ -16,6 +16,7 @@ from band.integrations.ompwire import OmpCommandName, OmpFrameType
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import BandTool, ToolCallOutcome
 from band.testing import FakeAgentTools
+from tests.adapters.hold import Hold
 from tests.adapters.omp.declinepeer import DECLINE_TRANSCRIPT, DeclineScenario
 from tests.paths import REPO_ROOT
 
@@ -27,13 +28,18 @@ def custom_decline() -> str:
 
 
 class DeclineTools(FakeAgentTools):
-    def __init__(self, *, fail_decline: bool = False) -> None:
+    def __init__(
+        self, *, fail_decline: bool = False, decline_hold: Hold | None = None
+    ) -> None:
         super().__init__()
         self.fail_decline = fail_decline
+        self.decline_hold = decline_hold
 
     async def execute_tool_call_structured(
         self, tool_name: str, arguments: dict[str, Any]
     ) -> ToolCallOutcome:
+        if tool_name == BandTool.NO_REPLY and self.decline_hold is not None:
+            await self.decline_hold.wait()
         if tool_name == BandTool.NO_REPLY and self.fail_decline:
             return ToolCallOutcome(value="Decline rejected", ok=False)
         outcome = await super().execute_tool_call_structured(tool_name, arguments)

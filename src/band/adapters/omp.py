@@ -722,8 +722,12 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         try:
             return await self._mailbox.ask(room_id, job)
         except asyncio.CancelledError:
-            if started.is_set():
-                await finished.wait()
+            # The RPC owner must retain its job through repeated cancellation.
+            while started.is_set() and not finished.is_set():
+                try:
+                    await finished.wait()
+                except asyncio.CancelledError:
+                    continue
             raise
 
     def _build_system_context(self) -> str:

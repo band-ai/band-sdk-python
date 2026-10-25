@@ -35,7 +35,7 @@ from band.integrations.omprpc.frames import (
     payload_json,
     ui_response_frame,
 )
-from band.integrations.omprpc.prompt import OmpCallbackKind, PromptRun
+from band.integrations.omprpc.prompt import OmpCallbackKind, PromptCallback, PromptRun
 from band.integrations.omprpc.scope import OmpProcessScope
 from band.integrations.ompwire import (
     OMP_FRAME_BYTES,
@@ -654,15 +654,19 @@ class OmpRpcClient:
         turn: PromptRun,
         kind: OmpCallbackKind,
         request_id: str,
-        callback: Callable[[], Awaitable[None]],
+        callback: Callable[[object], Awaitable[None]],
     ) -> None:
         if self._closing or turn.failure.done() or turn.stop_after_tool_id is not None:
             return
         key = (kind, request_id)
         if key in turn.callbacks:
             raise OmpProtocolError("OMP callback request id was reused")
-        task = asyncio.create_task(self._run_callback(callback))
-        turn.callbacks[key] = task
+        identity = object()
+        active = PromptCallback(identity)
+        turn.callbacks[key] = active
+        # An eager task may validate the identity before create_task returns.
+        task = asyncio.create_task(self._run_callback(partial(callback, identity)))
+        active.task = task
         turn.callback_tasks.add(task)
         task.add_done_callback(lambda done: self._callback_finished(turn, key, done))
 
@@ -673,35 +677,41 @@ class OmpRpcClient:
         await self.schedule_callback(run)
 
     def _callback_still_active(
-        self, turn: PromptRun, kind: OmpCallbackKind, request_id: str
+        self, turn: PromptRun, kind: OmpCallbackKind, request_id: str, identity: object
     ) -> bool:
-        return not self._closing and (kind, request_id) in turn.callbacks
+        active = turn.callbacks.get((kind, request_id))
+        return not self._closing and active is not None and active.identity is identity
 
     @staticmethod
     def _cancel_callback(
         turn: PromptRun, kind: OmpCallbackKind, request_id: str
     ) -> None:
-        task = turn.callbacks.pop((kind, request_id), None)
-        if task is not None:
-            task.cancel()
+        callback = turn.callbacks.pop((kind, request_id), None)
+        if callback is not None and callback.task is not None:
+            callback.task.cancel()
 
     @staticmethod
     def _callback_finished(
         turn: PromptRun, key: tuple[OmpCallbackKind, str], task: asyncio.Task[None]
     ) -> None:
-        if turn.callbacks.get(key) is task:
+        active = turn.callbacks.get(key)
+        if active is not None and active.task is task:
             turn.callbacks.pop(key)
         turn.callback_tasks.discard(task)
         if not task.cancelled() and (error := task.exception()) is not None:
             turn.fail(error)
 
-    async def _handle_tool(self, turn: PromptRun, call: OmpHostToolCall) -> None:
+    async def _handle_tool(
+        self, turn: PromptRun, call: OmpHostToolCall, identity: object
+    ) -> None:
         if turn.stop_after_tool_id is not None:
             return
         result = await turn.on_tool(call)
         if turn.stop_after_tool_id not in (None, call.id):
             return
-        if not self._callback_still_active(turn, OmpCallbackKind.TOOL, call.id):
+        if not self._callback_still_active(
+            turn, OmpCallbackKind.TOOL, call.id, identity
+        ):
             return
         frame = OmpHostToolResult.from_tool(call.id, result).model_dump(mode="json")
         if turn.stop_after_tool_id == call.id:
@@ -720,11 +730,15 @@ class OmpRpcClient:
             return
         turn.stopped = True
 
-    async def _handle_ui(self, turn: PromptRun, request: OmpUIRequest) -> None:
+    async def _handle_ui(
+        self, turn: PromptRun, request: OmpUIRequest, identity: object
+    ) -> None:
         if turn.stop_after_tool_id is not None:
             return
         response = await turn.on_ui(request)
-        if not self._callback_still_active(turn, OmpCallbackKind.UI, request.id):
+        if not self._callback_still_active(
+            turn, OmpCallbackKind.UI, request.id, identity
+        ):
             return
         await self._write_frame(ui_response_frame(request.id, response))
 

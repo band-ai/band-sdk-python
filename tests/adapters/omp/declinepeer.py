@@ -25,6 +25,7 @@ from tests.integrations.omppeer import FOLLOW_UP_PROMPT, Frame, Peer, send
 DECLINE_CALL = "decline"
 SECOND_DECLINE_CALL = "decline-concurrent"
 STOP_CHECKPOINT = "stop-checkpoint"
+ADMIT_SECOND_DECLINE = "admit-second-decline"
 DECLINE_TRANSCRIPT = "frames.jsonl"
 REPLY_CALL = "reply"
 REPLY_TEXT = "Acknowledged."
@@ -66,15 +67,16 @@ class DeclinePeer(Peer):
                 "args": arguments,
             }
         )
-        send(
-            {
-                "type": OmpFrameType.HOST_TOOL_CALL,
-                "id": call_id,
-                "toolCallId": call_id,
-                "toolName": name,
-                "arguments": arguments,
-            }
-        )
+        request: dict[str, JsonValue] = {
+            "type": OmpFrameType.HOST_TOOL_CALL,
+            "id": call_id,
+            "toolCallId": call_id,
+            "toolName": name,
+            "arguments": arguments,
+        }
+        with self.ledger.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(request) + "\n")
+        send(request)
 
     def reply(self) -> None:
         self.call(
@@ -113,8 +115,6 @@ class DeclinePeer(Peer):
             else BandTool.NO_REPLY
         )
         self.call(name, {}, DECLINE_CALL)
-        if self.scenario_name == DeclineScenario.CONCURRENT:
-            self.call(name, {}, SECOND_DECLINE_CALL)
 
     def finish_aborted(self, status: OmpPromptStatus) -> None:
         self.end("", stop=status)
@@ -125,6 +125,9 @@ class DeclinePeer(Peer):
         with self.ledger.open("a", encoding="utf-8") as handle:
             handle.write(frame.model_dump_json(exclude_unset=True) + "\n")
         match frame.type:
+            case command if command == ADMIT_SECOND_DECLINE:
+                self.call(BandTool.NO_REPLY, {}, SECOND_DECLINE_CALL)
+                self.respond(frame)
             case OmpCommandName.GET_AVAILABLE_COMMANDS:
                 self.respond(
                     frame,

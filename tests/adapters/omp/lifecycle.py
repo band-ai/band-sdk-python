@@ -12,8 +12,33 @@ from unittest.mock import AsyncMock
 from pytest import MonkeyPatch, raises
 
 from band.adapters.omp import OmpAdapter
+from band.core.model_catalog import ModelSelection
 from band.testing import FakeAgentTools, reported_failures
-from tests.adapters.omp.kit import Launches, PendingRuntime, SignallingLock, run_turn
+from tests.adapters.omp.kit import (
+    Launches,
+    PendingRuntime,
+    SignallingLock,
+    claimed_workspace_rooms,
+    run_turn,
+)
+from tests.adapters.omp.mailboxkit import (
+    CallbackResolver,
+    MailboxTools,
+    mailbox_adapter,
+    peer_frames,
+    room_client,
+    selection_order,
+)
+from tests.adapters.omp.mailboxpeer import (
+    CALLBACK_MODEL,
+    FIRST_CALLBACK,
+    MODEL_PROVIDER,
+    ORIGINAL_MODEL,
+    PUBLIC_MODEL,
+    model_reply,
+)
+from tests.adapters.omp.retirementkit import native_overlay
+from tests.integrations.omprpc.kit import owned_rpc_process
 
 ROOM = "room-123"
 
@@ -176,5 +201,91 @@ async def play(steps: list[Step]) -> None:
                     await model.take(step)
                 await model.cleanup()
                 model.assert_custody()
+        finally:
+            await model.adapter.cleanup_all()
+
+
+class NativeStep(StrEnum):
+    TURN = auto()
+    SELECT = auto()
+    CLEANUP = auto()
+
+
+class NativeCallbackLifecycle:
+    """Compose native callback reentry, retained choices, and physical cleanup."""
+
+    def __init__(self, workspace: Path) -> None:
+        self.resolver = CallbackResolver()
+        self.adapter = mailbox_adapter(workspace, self.resolver)
+        self.resolver.adapter = self.adapter
+        self.selected = ORIGINAL_MODEL
+        self.process: asyncio.subprocess.Process | None = None
+        self.overlay: Path | None = None
+        self.retired: list[tuple[asyncio.subprocess.Process, Path]] = []
+
+    async def take(self, step: NativeStep) -> None:
+        match step:
+            case NativeStep.TURN:
+                await self.turn()
+            case NativeStep.SELECT:
+                await self.adapter.apply_model_selection(
+                    ModelSelection(model=f"{MODEL_PROVIDER}/{PUBLIC_MODEL}"),
+                    room_id=ROOM,
+                )
+                self.selected = PUBLIC_MODEL
+            case NativeStep.CLEANUP:
+                await self.cleanup()
+        self.assert_custody()
+
+    async def turn(self) -> None:
+        previous = self.process
+        initial_model = self.selected
+        tools = MailboxTools()
+        await run_turn(self.adapter, tools, bootstrap=previous is None)
+        client = room_client(self.adapter)
+        process = owned_rpc_process(client)
+        if previous is None:
+            self.selected = CALLBACK_MODEL
+            assert selection_order(await peer_frames(self.adapter)) == [
+                initial_model,
+                CALLBACK_MODEL,
+                FIRST_CALLBACK,
+            ]
+        else:
+            assert process is previous
+        self.process = process
+        self.overlay = native_overlay(client)
+        assert tools.chat == [model_reply(self.selected)]
+        assert not reported_failures(tools)
+
+    async def cleanup(self) -> None:
+        await self.adapter.cleanup_all()
+        if self.process is not None:
+            assert self.overlay is not None
+            self.retired.append((self.process, self.overlay))
+            self.selected = ORIGINAL_MODEL
+        self.process = None
+        self.overlay = None
+
+    def assert_custody(self) -> None:
+        for process, overlay in self.retired:
+            assert process.returncode is not None
+            assert not overlay.exists()
+        if self.process is None:
+            assert claimed_workspace_rooms(self.adapter) == ()
+            return
+        assert self.process.returncode is None
+        assert self.overlay is not None and self.overlay.exists()
+        assert claimed_workspace_rooms(self.adapter) == (ROOM,)
+
+
+async def play_native(steps: list[NativeStep]) -> None:
+    with TemporaryDirectory(prefix="band-omp-native-model-") as directory:
+        model = NativeCallbackLifecycle(Path(directory))
+        try:
+            for step in steps:
+                await model.take(step)
+            await model.cleanup()
+            model.assert_custody()
         finally:
             await model.adapter.cleanup_all()

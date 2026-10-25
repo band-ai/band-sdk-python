@@ -76,7 +76,7 @@ class RoomMailbox:
         if room.worker is me:
             return True
         current = room.current
-        return current is not None and _current_job.get() is current
+        return current is not None and current.running is me
 
     def cast(self, room_id: str, run: Callable[[], Awaitable[None]]) -> None:
         """Enqueue ``run`` and return immediately, or raise while closing."""
@@ -198,6 +198,8 @@ class RoomMailbox:
             return
 
         async def run_job() -> Any:
+            # An eager task can enter the job before create_task returns.
+            job.running = asyncio.current_task()
             token = _current_job.set(job)
             try:
                 return await job.run()

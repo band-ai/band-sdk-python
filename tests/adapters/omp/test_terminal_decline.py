@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from band.integrations.omprpc.errors import OmpPromptError
-from band.integrations.ompwire import OmpPromptStatus
+from band.integrations.ompwire import OmpFrameType, OmpPromptStatus
 from band.runtime.tools import BandTool
 from band.testing import failure_reports
+from tests.adapters.hold import Hold
 from tests.adapters.omp.declinekit import (
     CustomDeclineInput,
     DeclineTools,
@@ -17,16 +19,40 @@ from tests.adapters.omp.declinekit import (
     declining_adapter,
     stop_commands,
     tool_results,
+    wire_frames,
 )
-from tests.adapters.omp.declinepeer import DECLINE_CALL, REPLY_TEXT, DeclineScenario
+from tests.adapters.omp.declinepeer import (
+    ADMIT_SECOND_DECLINE,
+    DECLINE_CALL,
+    REPLY_TEXT,
+    SECOND_DECLINE_CALL,
+    DeclineScenario,
+)
 from tests.adapters.omp.kit import run_turn
+from tests.adapters.omp.mailboxkit import AdmissionMailbox, room_client
 
 
 class TestTerminalDecline:
     async def test_queued_declines_share_one_owned_stop(self, tmp_path: Path) -> None:
-        tools = DeclineTools()
+        hold = Hold()
+        tools = DeclineTools(decline_hold=hold)
         async with declining_adapter(tmp_path, DeclineScenario.CONCURRENT) as adapter:
-            await run_turn(adapter, tools)
+            mailbox = AdmissionMailbox()
+            adapter._mailbox = mailbox
+            turn = asyncio.create_task(run_turn(adapter, tools))
+            try:
+                await hold.arrived()
+                mailbox.discard_admissions()
+                await room_client(adapter).request(ADMIT_SECOND_DECLINE)
+                assert await mailbox.admitted.get() == "room-123"
+                assert tools.tool_calls == []
+                assert stop_commands(tmp_path) == []
+                hold.released.set()
+                await turn
+            finally:
+                hold.released.set()
+                turn.cancel()
+                await asyncio.gather(turn, return_exceptions=True)
 
             assert [call["tool_name"] for call in tools.tool_calls] == [
                 BandTool.NO_REPLY
@@ -34,6 +60,15 @@ class TestTerminalDecline:
             assert len(stop_commands(tmp_path)) == 1
             assert len(tool_results(tmp_path)) == 1
             assert failure_reports(tools) == []
+            frames = wire_frames(tmp_path)
+            admissions = [
+                frame["id"]
+                for frame in frames[: frames.index(stop_commands(tmp_path)[0])]
+                if frame["type"] == OmpFrameType.HOST_TOOL_CALL
+                and frame["toolName"] == BandTool.NO_REPLY
+            ]
+            assert admissions == [DECLINE_CALL, SECOND_DECLINE_CALL]
+            assert tool_results(tmp_path)[0]["id"] == DECLINE_CALL
 
     async def test_successful_decline_stops_later_calls_and_allows_next_turn(
         self, tmp_path: Path
