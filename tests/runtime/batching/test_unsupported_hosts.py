@@ -16,6 +16,15 @@ BATCHING = SessionConfig(consume_all_queued=True)
 
 
 class TestUnsupportedHosts:
+    def test_an_agent_runtime_without_a_batch_callback_is_refused(self) -> None:
+        with pytest.raises(BandConfigError):
+            AgentRuntime(
+                link=MagicMock(),
+                agent_id=AGENT_ID,
+                on_execute=AsyncMock(),
+                session_config=BATCHING,
+            )
+
     async def test_a_custom_execution_factory_is_refused(self) -> None:
         with pytest.raises(BandConfigError, match="execution_factory"):
             AgentRuntime(

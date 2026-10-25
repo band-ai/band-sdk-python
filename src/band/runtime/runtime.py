@@ -24,6 +24,7 @@ from band.runtime.execution import (
     Execution,
     ExecutionContext,
     ExecutionHandler,
+    require_batch_execution_handler,
 )
 from band.runtime.presence import RoomPresence
 from band.runtime.rooms import RoomExecutions, request_resync
@@ -137,7 +138,7 @@ class AgentRuntime:
 
         Raises:
             BandConfigError: ``consume_all_queued`` with a custom execution
-                factory, whose batch support cannot be validated.
+                factory or without an ``on_execute_batch`` callback.
         """
         self.link = link
         self.agent_id = agent_id
@@ -148,6 +149,7 @@ class AgentRuntime:
             raise BandConfigError(
                 "consume_all_queued cannot be used with a custom execution_factory"
             )
+        require_batch_execution_handler(self._session_config, on_execute_batch)
         self._on_execute_batch = on_execute_batch
         self._on_session_cleanup = on_session_cleanup
         self._on_control = on_control

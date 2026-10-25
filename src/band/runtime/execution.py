@@ -201,6 +201,18 @@ BatchExecutionHandler = Callable[
 ]
 
 
+def require_batch_execution_handler(
+    config: SessionConfig,
+    on_execute_batch: BatchExecutionHandler | None,
+) -> None:
+    """Require a batch handler when queue batching is enabled."""
+    if config.consume_all_queued and on_execute_batch is None:
+        raise BandConfigError(
+            "consume_all_queued needs a host that runs a turn over several "
+            "originals (on_execute_batch)"
+        )
+
+
 @dataclass(frozen=True)
 class ScopeActivityObserver:
     context: ExecutionContext
@@ -275,11 +287,7 @@ class ExecutionContext:
             BandConfigError: ``config.consume_all_queued`` without a batch host.
         """
         self.config = config or SessionConfig()
-        if self.config.consume_all_queued and on_execute_batch is None:
-            raise BandConfigError(
-                "consume_all_queued needs a host that runs a turn over several "
-                "originals (on_execute_batch)"
-            )
+        require_batch_execution_handler(self.config, on_execute_batch)
         self.room_id = room_id
         self.link = link
         self._on_execute = on_execute
