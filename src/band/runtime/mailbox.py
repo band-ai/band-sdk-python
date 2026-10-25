@@ -205,7 +205,7 @@ class RoomMailbox:
             if job.result is not None and not job.result.done():
                 job.result.set_exception(error)
             elif job.result is None:
-                logger.exception("Room mailbox %s cast failed", room_id)
+                logger.error("Room mailbox cast failed with %s", type(error).__name__)
             worker = asyncio.current_task()
             if (
                 isinstance(error, asyncio.CancelledError)

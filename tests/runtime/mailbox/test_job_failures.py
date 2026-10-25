@@ -30,11 +30,13 @@ class TestJobFailures:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         mailbox = RoomMailbox()
+        room_id = "room-1"
+        exception_text = "sensitive cast details"
         done = asyncio.Event()
 
         async def boom() -> None:
             try:
-                raise RuntimeError("cast failed")
+                raise RuntimeError(exception_text)
             finally:
                 done.set()
 
@@ -42,8 +44,11 @@ class TestJobFailures:
             return "ok"
 
         with caplog.at_level(logging.ERROR, logger="band.runtime.mailbox"):
-            mailbox.cast("room-1", boom)
+            mailbox.cast(room_id, boom)
             await done.wait()
-            assert await mailbox.ask("room-1", ok) == "ok"
-        assert "cast failed" in caplog.text
-        await mailbox.close("room-1")
+            assert await mailbox.ask(room_id, ok) == "ok"
+        assert "Room mailbox cast failed with RuntimeError" in caplog.text
+        assert room_id not in caplog.text
+        assert exception_text not in caplog.text
+        assert "Traceback" not in caplog.text
+        await mailbox.close(room_id)
