@@ -113,7 +113,7 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from band.runtime.activity import set_permission_wait
+from band.runtime.activity import permission_wait
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
@@ -381,7 +381,6 @@ class OmpTurn:
     calls: dict[str, tuple[str, dict[str, JsonValue]]] = field(default_factory=dict)
     closing_text: list[str] = field(default_factory=list)
     closed: bool = False
-    pending_permission_waits: int = 0
 
 
 class OmpAdapter(SimpleAdapter[OmpSessionState]):
@@ -1221,9 +1220,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         options = tuple(request.options or ())
         choice = None
         if self._resolve_permission is not None:
-            turn.pending_permission_waits += 1
-            try:
-                await set_permission_wait(tools, True)
+            with permission_wait(tools):
                 choice = await self._resolve_permission(
                     OmpPermissionRequest(
                         room_id=room_id,
@@ -1232,9 +1229,6 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         options=options,
                     )
                 )
-            finally:
-                turn.pending_permission_waits -= 1
-                await set_permission_wait(tools, bool(turn.pending_permission_waits))
         elif options == (OMP_FORM_APPROVE, OMP_FORM_DENY):
             choice = OMP_FORM_APPROVE
         response = (

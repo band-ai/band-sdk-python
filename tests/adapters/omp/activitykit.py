@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from band_rest.types.agent_activity_detail import AgentActivityDetail
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig, OmpTurn, PermissionResolver
 from band.converters.omp import OmpSessionState
@@ -22,7 +21,6 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from band.runtime.activity import TurnActivity
 from band.runtime.tools import AgentTools
 from band.testing.activity import ActivityRecorder
 from band.testing.fake_tools import FakeAgentTools
@@ -35,22 +33,6 @@ from tests.adapters.omp.kit import (
     permission_request,
 )
 from tests.integrations.acp.conftest import make_platform_message
-
-
-class TurnActivityRecorder(ActivityRecorder):
-    """Observe visible detail through the real turn activity reducer."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.activity = TurnActivity()
-
-    async def update(self, activity: AgentActivityDetail) -> None:
-        self.activity.apply(activity=activity)
-        await super().update(activity)
-
-    async def set_manual_wait(self, waiting: bool) -> None:
-        self.activity.apply(waiting=waiting)
-        await super().set_manual_wait(waiting)
 
 
 class ActivityRuntime(RecordingRuntime):
@@ -79,7 +61,7 @@ class ActivityRuntime(RecordingRuntime):
 @dataclass
 class ActivityTurn:
     runtime: ActivityRuntime
-    recorder: TurnActivityRecorder
+    recorder: ActivityRecorder
     tools: AgentTools
     running: asyncio.Task[None]
 
@@ -99,7 +81,7 @@ async def activity_turn(
 ) -> AsyncIterator[ActivityTurn]:
     runtime = ActivityRuntime()
     monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
-    recorder = TurnActivityRecorder()
+    recorder = ActivityRecorder()
     tools = recorder.observing(AgentTools("room", rest_client))
     adapter = OmpAdapter(
         OmpAdapterConfig(cwd=str(tmp_path)),
