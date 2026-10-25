@@ -4,16 +4,16 @@ is on; permission and memory activity name no content and report either way."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import ExitStack
+from functools import partial
 
 import pytest
 
-from band.core.activity import sync_activity_tool_names
-from band.core.types import Emit
+from band.core.types import AgentInput, Emit, HistoryProvider
 from band.platform.event import PlatformEvent
-from band.runtime.activity import set_permission_wait, tool_call_activity
+from band.runtime.activity import permission_wait, tool_call_activity
 from band.runtime.execution import ExecutionContext
 from band.runtime.toolactivity import (
-    end_tool_activity,
     report_memory_activity,
     report_tool_activity,
 )
@@ -21,10 +21,14 @@ from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import (
     MEMORY_BODY,
     PERMISSION_BODY,
-    REASONING_BODY,
 )
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform, deliver_event
+from tests.runtime.activityownership.kit import (
+    ACTIVITY_TOOL_NAME,
+    ActivityPlatform,
+    ActivityToolAdapter,
+    deliver_event,
+)
 
 
 def tool_names(platform: ActivityPlatform) -> list[str]:
@@ -37,39 +41,64 @@ def tool_names(platform: ActivityPlatform) -> list[str]:
 
 @pytest.mark.looptime
 class TestActivityToolNameGate:
-    async def test_tool_names_report_while_tool_calls_are_emitted(
+    @pytest.mark.parametrize(
+        ("emit", "expected_names"),
+        (((), []), ((Emit.TOOL_CALLS,), [ACTIVITY_TOOL_NAME])),
+    )
+    async def test_direct_turn_entry_gates_activity_names(
         self,
         execution: Callable[..., ExecutionContext],
         activity_platform: ActivityPlatform,
+        emit: tuple[Emit, ...],
+        expected_names: list[str],
     ) -> None:
+        adapter = ActivityToolAdapter(activity_platform, emit=emit)
+
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
-            sync_activity_tool_names(tools, frozenset({Emit.TOOL_CALLS}))
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
-            await activity_platform.shown(end_tool_activity(tools))
+            await adapter.run_judged_turn(
+                msg=make_message_event().payload,
+                tools=tools,
+                history=HistoryProvider(raw=[]),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id=ctx.room_id,
+            )
 
         ctx = execution(handler)
         await deliver_event(ctx, make_message_event())
-        assert tool_names(activity_platform) == ["Bash"]
+        assert tool_names(activity_platform) == expected_names
+        assert MEMORY_BODY in activity_platform.activity_bodies
 
-    async def test_tool_names_are_dropped_when_tool_calls_are_not_emitted(
+    async def test_batch_turn_entry_gates_activity_names(
         self,
         execution: Callable[..., ExecutionContext],
         activity_platform: ActivityPlatform,
     ) -> None:
+        adapter = ActivityToolAdapter(activity_platform, emit=())
+
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
-            sync_activity_tool_names(tools, frozenset({Emit.THOUGHTS}))
-            # Hidden, a tool reads as the reasoning already shown: nothing new
-            # reaches the wire until the next visible step.
-            await report_tool_activity(tools, "Bash")
-            await activity_platform.shown(report_memory_activity(tools))
-            await end_tool_activity(tools)
+            first = make_message_event(msg_id="first").payload
+            second = make_message_event(msg_id="second").payload
+            await adapter.on_messages(
+                AgentInput(
+                    msg=first,
+                    messages=(first, second),
+                    tools=tools,
+                    history=HistoryProvider(raw=[]),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=False,
+                    room_id=ctx.room_id,
+                )
+            )
 
         ctx = execution(handler)
         await deliver_event(ctx, make_message_event())
         assert tool_names(activity_platform) == []
-        assert activity_platform.activity_bodies[:2] == [REASONING_BODY, MEMORY_BODY]
+        assert MEMORY_BODY in activity_platform.activity_bodies
 
     async def test_permission_and_memory_survive_the_name_gate(
         self,
@@ -79,9 +108,12 @@ class TestActivityToolNameGate:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
             ctx.set_activity_tool_names(False)
-            await activity_platform.shown(set_permission_wait(tools, True))
-            await activity_platform.shown(set_permission_wait(tools, False))
-            await activity_platform.shown(report_memory_activity(tools))
+            with ExitStack() as waits:
+                await activity_platform.shown(
+                    partial(waits.enter_context, permission_wait(tools))
+                )
+                await report_memory_activity(tools)
+                await activity_platform.shown(waits.close)
 
         ctx = execution(handler)
         await deliver_event(ctx, make_message_event())
@@ -102,7 +134,7 @@ class TestActivityToolNameGate:
             observer = ctx.activity_observer(ctx.current_scope)
             assert observer is not None
             ctx.set_activity_tool_names(False)
-            await observer.update(tool_call_activity("Bash"))
+            await observer.update(tool_call_activity(ACTIVITY_TOOL_NAME))
             await activity_platform.shown(report_memory_activity(tools))
 
         ctx = execution(handler)

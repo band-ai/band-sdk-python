@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Literal
 
 import httpx
 
+from band.core.protocols import AgentToolsProtocol
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn_lifecycle import TurnTask, bind_turn_task
+from band.core.types import Emit, HistoryProvider, PlatformMessage
 from band.platform.activity import API_VERSION_HEADER
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.activity import permission_wait
@@ -24,6 +27,7 @@ from tests.activitysupport import SUPPORTED_VERSION
 from tests.runtime.helpers import ALICE, LifecyclePlatform, is_message_post, page
 
 CONTROL_MESSAGE_ID = "approve"
+ACTIVITY_TOOL_NAME = "Bash"
 
 
 def recognizes_control(ctx: ExecutionContext, event: MessageEvent) -> bool:
@@ -116,6 +120,37 @@ class ActivityPlatform(LifecyclePlatform):
         body = await self.body_at(index)
         if waited := loop.time() - observed_at:
             self.late_changes.append((body, waited))
+
+
+class ActivityToolAdapter(BatchInputAdapter[HistoryProvider]):
+    """Report one tool activity from the shared adapter turn entry."""
+
+    SUPPORTED_EMIT = frozenset({Emit.TOOL_CALLS})
+
+    def __init__(self, activity_platform: ActivityPlatform, *, emit: tuple[Emit, ...]):
+        super().__init__(emit=emit)
+        self._activity_platform = activity_platform
+
+    @property
+    def judges_turns(self) -> bool:
+        return False
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: HistoryProvider,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        await self._activity_platform.shown(report_memory_activity(tools))
+        await self._activity_platform.shown(
+            report_tool_activity(tools, ACTIVITY_TOOL_NAME)
+        )
+        tools.turn.settle()
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         tail = request.url.path.rsplit("/", 1)[-1]
