@@ -11,7 +11,7 @@ from acp import RequestError
 
 from band.core.exceptions import InputNotAccepted
 from band.runtime.formatters import InputField
-from tests.adapters.waiting import spin
+from tests.adapters.waiting import until
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
     AcpSession,
@@ -25,6 +25,7 @@ from tests.integrations.acp.roomownership.kit import (
     inline,
 )
 from tests.runtime.currentrecords import current_records
+from tests.toolkit.tasks import background
 
 # One person writing twice around another.
 BATCH = tuple(
@@ -95,15 +96,25 @@ class TestBatchTurns:
         agent = FakeACPAgent()
         running = holds_prompt(agent, 1)
 
-        async with inline(agent) as session:
-            first = asyncio.create_task(session.send("first"))
-            await running.received.wait()
-            batch = asyncio.create_task(session.send_batch(*BATCH))
-            await spin()
-            prompts_while_running = len(agent.prompts)
-
-            running.release.set()
-            await asyncio.gather(first, batch)
+        async with (
+            inline(agent) as session,
+            background(session.send("first")) as first,
+        ):
+            try:
+                await running.received.wait()
+                async with background(session.send_batch(*BATCH)) as batch:
+                    try:
+                        await until(
+                            lambda: session.room().session_waiters == 2 or batch.done(),
+                            failure="the batch never queued behind the running prompt",
+                        )
+                        assert not batch.done()
+                        prompts_while_running = len(agent.prompts)
+                    finally:
+                        running.release.set()
+                    await asyncio.gather(first, batch)
+            finally:
+                running.release.set()
 
         assert prompts_while_running == 1
         assert senders_shown(agent) == ["alice", "bob", "alice"]

@@ -790,7 +790,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             invocation.arguments if isinstance(invocation.arguments, dict) else {}
         )
         # Resolve at call time: sessions outlive any single message, and a
-        # fresh AgentToolsProtocol arrives with every on_message. Captured
+        # fresh AgentToolsProtocol arrives with every turn. Captured
         # before any await, so a call orphaned by a turn timeout records its
         # effect on its own turn's ledger, never a LATER turn's.
         room_tools = self._room_tools.get(room_id)

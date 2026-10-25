@@ -707,15 +707,13 @@ class ClaudeSDKAdapter(
         # and the room's map is dropped in on_cleanup.
         self._pending_tool_names: dict[str, dict[str, str]] = {}
 
-        # A turn runs as a detached task so a manual approval mid-turn can
-        # release on_message early (see _run_turn) -- Band's runtime processes
-        # one room-message cycle at a time, so on_message must return before
-        # the room can be dispatched the reply that resolves the approval.
+        # A detached turn releases the input handler during manual approval
+        # so the room can dispatch the reply that resolves it.
         # {room_id: the current turn's release future}
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         # {room_id: the owner of the current turn's background worker}, so
-        # on_message can refuse to start a second concurrent turn on the same
-        # client. The TurnTask cancels it for STOP and interrupts; leaving the
+        # the input handler refuses a concurrent turn on the same client.
+        # The TurnTask cancels it for STOP and interrupts; leaving the
         # room cancels it through the RetainedRoom, which fences admission first.
         self._turn_tasks: dict[str, TurnTask] = {}
         self._backend_turns = BackendTurns[str](
@@ -927,7 +925,7 @@ class ClaudeSDKAdapter(
 
         # Run the turn as a detached task and only await its *release* --
         # not its completion. A manual approval mid-turn resolves the release
-        # early (see _resolve_manual_approval / _release_turn) so on_message
+        # early (see _resolve_manual_approval / _release_turn) so the input handler
         # can return and Band's strictly-sequential per-room message loop can
         # dispatch the reply that will eventually resolve the approval. When
         # nothing needs a human, the turn finishes before release fires.
@@ -960,7 +958,7 @@ class ClaudeSDKAdapter(
             )
             if turn_task.done():
                 # The turn finished before release fired (the common, no-approval
-                # case) -- await it so a failure propagates through on_message.
+                # case) -- await it so a failure propagates through the input handler.
                 await turn_task
         except asyncio.CancelledError:
             await self._cancel_turn(room_id)
@@ -1152,7 +1150,7 @@ class ClaudeSDKAdapter(
         """Resolve the current turn's release future, if still pending.
 
         Idempotent: a turn with several gated tool calls only needs the
-        first manual approval to release on_message, and the turn's own
+        first manual approval to release the input handler, and the turn's own
         completion (see _run_turn's finally) must release it too when
         nothing ever blocked on a human.
         """
@@ -1946,6 +1944,7 @@ class ClaudeSDKAdapter(
         with permission_wait(tools):
             try:
                 if tools:
+                    notified = False
                     try:
                         recipients = await automatic_mentions(tools, mentions)
                         if (
@@ -1962,25 +1961,21 @@ class ClaudeSDKAdapter(
                                 ),
                                 mentions=recipients,
                             )
-                        elif registry.withdraw(entry):
-                            return PermissionResultDeny(
-                                message="Could not deliver approval prompt, tool use declined"
-                            )
-                    except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+                            notified = True
+                    except Exception:
                         logger.warning(
-                            "Room %s: Failed to send approval notification", room_id
+                            "Room %s: Failed to send approval notification",
+                            room_id,
+                            exc_info=True,
                         )
-                        # A reply that claimed it meanwhile owns the answer; otherwise
-                        # decline without a notice, so the missing-reply guard stays.
-                        if registry.withdraw(entry):
-                            return PermissionResultDeny(
-                                message="Could not deliver approval prompt, tool use declined"
-                            )
+                    # A reply that claimed it meanwhile owns the answer.
+                    if not notified and registry.withdraw(entry):
+                        return PermissionResultDeny(
+                            message="Could not deliver approval prompt, tool use declined"
+                        )
 
-                # The request has been posted (or there was nowhere to post it) --
-                # either way, on_message must return now so Band's room loop can
-                # dispatch the reply that will resolve this wait. The turn is then
-                # judged at its real end (see _on_turn_complete).
+                # Release the input handler so the room can dispatch a reply;
+                # the detached turn is judged at its actual completion.
                 if tools:
                     tools.turn.detach()
                 self._release_turn(room_id)

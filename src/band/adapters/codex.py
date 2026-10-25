@@ -485,6 +485,11 @@ class TurnResult:
     turn_error: str = ""
 
 
+def _audience_sender_ids(audience: Sequence[dict[str, str]]) -> list[str]:
+    """Project the current turn audience onto sender IDs."""
+    return [person["id"] for person in audience]
+
+
 def _event_params(event: RpcEvent) -> dict[str, Any]:
     return event.params if isinstance(event.params, dict) else {}
 
@@ -976,9 +981,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._max_task_titles: int = _MAX_TASK_TITLES
         # Keep each registry's minting state across room disposal and restart.
         self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
-        # A turn runs as a detached task so a manual approval can release
-        # on_message: Band dispatches one message per room at a time, so the
-        # reply that resolves the approval arrives only after on_message returns.
+        # A detached turn releases the input handler during manual approval
+        # so the room can dispatch the reply that resolves it.
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         self._turn_tasks: dict[str, TurnTask] = {}
         self._backend_turns = BackendTurns[CodexTurn](
@@ -1262,7 +1266,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             if self._turn_release.get(room_id) is release:
                 del self._turn_release[room_id]
         if turn.done():
-            # No human was asked: the turn's outcome is on_message's own.
+            # No human was asked: the turn's outcome is the input handler's own.
             await turn
 
     async def _run_turn(
@@ -1529,8 +1533,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
 
     def _release_turn(self, room_id: str, tools: AgentToolsProtocol) -> None:
-        """Let on_message return while the room's turn waits on a human; the
-        turn is then judged at its real end, not when on_message returns."""
+        """Release the input handler while the turn waits for a human reply."""
         release = self._turn_release.get(room_id)
         if release is not None and not release.done():
             tools.turn.detach()
@@ -1881,7 +1884,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             # sibling `except TurnResultAlreadyReported` above -- Python never
             # matches an exception raised inside one except against a sibling
             # of the same try. Call the same failed-turn telemetry directly
-            # (as on_message's CodexJsonRpcError branch already does) so a
+            # (as the input handler's CodexJsonRpcError branch already does) so a
             # timeout still gets the "Codex turn"/lifecycle failed-status
             # events every other TurnResultAlreadyReported path emits.
             await self._emit_failed_turn_outcome(
@@ -2765,7 +2768,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             room = self._room_clients.get(room_id)
             try:
                 mentions = await automatic_mentions(
-                    tools, [person["id"] for person in audience]
+                    tools, _audience_sender_ids(audience)
                 )
                 if (
                     self._room_clients.get(room_id) is room
@@ -2937,7 +2940,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     )
             if not tools.turn.complete:
                 mentions = await automatic_mentions(
-                    tools, [person["id"] for person in audience]
+                    tools, _audience_sender_ids(audience)
                 )
                 if self._room_clients.get(room_id) is not room or self._room_closing(
                     room_id
@@ -2954,9 +2957,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
         else:
             outcome_text = f"I couldn't complete this request ({turn_status})."
-        mentions = await automatic_mentions(
-            tools, [person["id"] for person in audience]
-        )
+        mentions = await automatic_mentions(tools, _audience_sender_ids(audience))
         if self._room_clients.get(room_id) is not room or self._room_closing(room_id):
             return
         if mentions:
@@ -3326,7 +3327,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     if params.get("reason"):
                         approval_metadata["codex_reason"] = params["reason"]
                     # Network context (domains, IPs) when available
-                    net_ctx = params.get("networkContext") or params.get("network_context")
+                    net_ctx = params.get("networkContext") or params.get(
+                        "network_context"
+                    )
                     if net_ctx:
                         approval_metadata["codex_network_context"] = net_ctx
                     await send_event_safe(
@@ -3344,7 +3347,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     )
                 try:
                     mentions = await automatic_mentions(
-                        tools, [person["id"] for person in audience]
+                        tools, _audience_sender_ids(audience)
                     )
                     if (
                         self._room_clients.get(room_id) is room
@@ -3387,7 +3390,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         decision = self.config.approval_timeout_decision
                         try:
                             mentions = await automatic_mentions(
-                                tools, [person["id"] for person in audience]
+                                tools, _audience_sender_ids(audience)
                             )
                             if (
                                 self._room_clients.get(room_id) is room
@@ -3401,7 +3404,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                                     mentions=mentions,
                                 )
                         except Exception:
-                            logger.exception("Failed to send approval timeout notification")
+                            logger.exception(
+                                "Failed to send approval timeout notification"
+                            )
                     yield decision
             finally:
                 self._clear_pending_approval(room_id, entry)

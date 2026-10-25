@@ -79,4 +79,3 @@ class TestDepartedAudience:
         assert peer.posts == []
         assert tools.turn.complete
         assert not tools.turn.replied
-        assert room.adapter._notified_declines == {}

@@ -345,7 +345,7 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                 )
                 # Skipped only after a successful decline whose siblings also
                 # succeeded. A follow-up that never returns leaves the message
-                # in processing until on_message returns.
+                # in processing until the input handler returns.
                 if declined:
                     logger.info(
                         "Room %s: %s settled the turn after request %s; "

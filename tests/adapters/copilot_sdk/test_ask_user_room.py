@@ -23,11 +23,11 @@ from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
+    ObservedCopilotAdapter,
     make_started_adapter,
     requires_copilot_sdk,
     run_message,
 )
-from tests.adapters.waiting import spin
 from tests.framework_conformance.batchprobes import (
     ALICE_FIRST,
     BATCH,
@@ -36,6 +36,7 @@ from tests.framework_conformance.batchprobes import (
     delivery_input,
     posted_messages,
 )
+from tests.toolkit.tasks import background
 
 pytestmark = requires_copilot_sdk
 
@@ -165,16 +166,29 @@ class TestAskUserRoom:
             await ask_mid_turn(QUESTION, answers)(session)
 
         client = FakeCopilotClient(turn_events=[ask_once_released])
-        adapter = await make_started_adapter(client, ask_user=ASK_USER_ROOM)
+        adapter = ObservedCopilotAdapter(
+            client_factory=lambda: client, ask_user=ASK_USER_ROOM
+        )
+        await adapter.on_started("Copilot Agent", "A helpful test agent")
         running = await delivery_input(BATCH)
         queued = await delivery_input([HELPER])
 
-        running_turn = asyncio.create_task(deliver(adapter, running))
-        await parked.wait()
-        queued_turn = asyncio.create_task(deliver(adapter, queued))
-        await spin()
-        released.set()
-        await asyncio.gather(running_turn, queued_turn)
+        async with background(deliver(adapter, running)) as running_turn:
+            try:
+                await parked.wait()
+                assert await adapter.turn_entries.get() == tuple(
+                    m.id for m in running.messages
+                )
+                async with background(deliver(adapter, queued)) as queued_turn:
+                    try:
+                        assert await adapter.turn_entries.get() == tuple(
+                            m.id for m in queued.messages
+                        )
+                    finally:
+                        released.set()
+                    await asyncio.gather(running_turn, queued_turn)
+            finally:
+                released.set()
 
         assert [
             (post["content"], post["mentions"]) for post in posted_messages(running)

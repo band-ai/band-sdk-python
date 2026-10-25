@@ -555,7 +555,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 await turn_task
         # NOTE: the turn timeout is owned solely by _watch_turn_completion (via
         # asyncio.wait_for), which aborts the session and emits the error event.
-        # Nothing awaited here re-raises asyncio.TimeoutError, so on_message has no
+        # Nothing awaited here re-raises asyncio.TimeoutError, so the input handler has no
         # timeout handler of its own.
         except asyncio.CancelledError:
             # The runtime interrupts a turn by cancelling this coroutine, but the
@@ -862,7 +862,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 # Idle is a terminal path: a permission/question still parked
                 # on a human can never be answered on this turn once the
                 # session has gone idle, and a later _begin_turn would make
-                # it unreachable from on_message.
+                # it unreachable from the input handler.
                 if room_state.turn is not None:
                     await room_state.turn.approvals.abandon()
                 self._finish_turn(room_state)
@@ -1058,9 +1058,9 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 )
                 await self._report_delivery_failure(turn)
         finally:
-            # Release the on_message waiter even if delivering the reply or
+            # Release the input handler waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
-            # @mention, which the platform rejects) — otherwise on_message
+            # @mention, which the platform rejects) — otherwise the input handler
             # waits on turn_release_future forever.
             self._release_turn_wait_for(turn)
             self._clear_turn_state(
@@ -1218,7 +1218,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
 
         created_at = datetime.now(UTC).isoformat()
         # Best-effort bookkeeping: a transient post failure must not abort the
-        # turn before the model runs (the outer on_message handler would catch
+        # turn before the model runs (the input handler would catch
         # it and drop the user's message). Leave persisted_session_id unset on
         # failure so the next turn retries the event.
         try:
