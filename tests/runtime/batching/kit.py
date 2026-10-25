@@ -255,6 +255,14 @@ class Turns:
     refused: list[tuple[str, ...]] = field(default_factory=list)
     # The payload of every message the host was offered, as the room delivered it.
     offered: list[MessageCreatedPayload] = field(default_factory=list)
+    _entries: dict[tuple[str, ...], asyncio.Event] = field(default_factory=dict)
+
+    async def entered(self, *message_ids: str) -> None:
+        """Wait for the first accepted invocation over these inputs."""
+        await self._entry_event(message_ids).wait()
+
+    def _entry_event(self, message_ids: tuple[str, ...]) -> asyncio.Event:
+        return self._entries.setdefault(message_ids, asyncio.Event())
 
     @property
     def order(self) -> list[str]:
@@ -277,6 +285,7 @@ class Turns:
             self.refused.append(ids)
             raise InputNotAccepted("busy")
         self.ids.append(ids)
+        self._entry_event(ids).set()
         if self.gate:
             await self.release.wait()
         if self.fail_on.intersection(ids):
