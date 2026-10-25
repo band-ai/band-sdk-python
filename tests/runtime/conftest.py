@@ -75,18 +75,19 @@ class Waiting:
     @staticmethod
     async def suspended(ctx: ExecutionContext) -> None:
         """Wait for the consumer to finish its pass and suspend or exit."""
-        await Waiting.until(
-            lambda: (
-                ctx.scheduler.current_pass is None
-                and (
-                    not ctx.is_running
-                    or (
-                        ctx.scheduler.queue_wait is not None
-                        and ctx.scheduler.queue.empty()
-                    )
+        while True:
+            wait = ctx.scheduler.queue_wait
+            # An expiring wait still owes its reconciliation pass.
+            if ctx.scheduler.current_pass is None and (
+                not ctx.is_running
+                or (
+                    wait is not None
+                    and not wait.expired()
+                    and ctx.scheduler.queue.empty()
                 )
-            )
-        )
+            ):
+                return
+            await asyncio.sleep(0)
 
 
 def admit_room(presence: RoomPresence, room_id: str) -> None:

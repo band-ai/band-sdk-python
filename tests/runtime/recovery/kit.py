@@ -195,6 +195,7 @@ class RoomPeer(SettlementPeer):
         self.rejected: list[str] = []
         self.replies: list[dict[str, Any]] = []
         self.events: list[dict[str, Any]] = []
+        self._processed: dict[str, asyncio.Event] = {}
         for path, endpoint in (
             ("/messages", self.list_rows),
             ("/messages/next", self.next_row),
@@ -255,6 +256,13 @@ class RoomPeer(SettlementPeer):
             for write in self.writes
         )
 
+    async def processed(self, message_id: str) -> None:
+        """Wait for a confirmed processed response for this delivery."""
+        await self._processed_event(message_id).wait()
+
+    def _processed_event(self, message_id: str) -> asyncio.Event:
+        return self._processed.setdefault(message_id, asyncio.Event())
+
     @property
     def reports(self) -> list[str]:
         """Failure reports the runtime posted to the room, as their text."""
@@ -299,6 +307,8 @@ class RoomPeer(SettlementPeer):
                 raise httpx.ReadError("the response was lost")
             case _:
                 row.status = action
+                if action is DeliveryStatus.PROCESSED:
+                    self._processed_event(message_id).set()
                 return self.reply_with(accepted(action))
 
     def reopen(self, row: Row) -> None:
@@ -535,6 +545,10 @@ class Harness:
     async def advance(self, seconds: float) -> None:
         await asyncio.sleep(seconds)
         await self.drain()
+
+    async def control_settled(self, message_id: str) -> None:
+        """Wait for the consumed control's confirmed receipt."""
+        await self.peer.processed(message_id)
 
     def heal(self) -> None:
         """End the outage; ``recovery`` reads what the platform saw after it."""

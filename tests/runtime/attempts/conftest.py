@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-import pytest
+import pytest_asyncio
 
 from band.runtime.sessionconfig import SessionConfig
 from tests.runtime.recovery.kit import (
@@ -17,7 +17,7 @@ from tests.runtime.recovery.kit import (
 EXECUTION_BUDGET = 3
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def retrying_room() -> AsyncIterator[Harness]:
     peer = RoomPeer()
     adapter = ScriptedAdapter()
