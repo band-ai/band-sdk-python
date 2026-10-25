@@ -55,13 +55,16 @@ class TestCursorDecisionAudience:
         self,
     ) -> None:
         provider = busy_provider("approval")
+        decision_timeout_s = 1.0
         async with controlled_clock() as clock:
             resources = AsyncExitStack()
             try:
                 session = await clock.run_io(
                     resources.enter_async_context(
                         cursor_session(
-                            provider.agent, decision_timeout_s=1, turn_timeout_s=10
+                            provider.agent,
+                            decision_timeout_s=decision_timeout_s,
+                            turn_timeout_s=10,
                         )
                     )
                 )
@@ -71,7 +74,7 @@ class TestCursorDecisionAudience:
                 _, listing = await command(session, LIST_DECISIONS, sender_id="carol")
                 assert mentioned(tools) == [ALICE_AND_BOB]
 
-                await clock.elapse(1)
+                await clock.elapse(decision_timeout_s)
                 await tools.until_said("timed out")
                 await terminated(session, turn)
 

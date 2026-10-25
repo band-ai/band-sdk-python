@@ -56,13 +56,16 @@ class TestCursorTurnCleanup:
     @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_a_timeout_cleanup_run_by_a_child_frees_the_room(self) -> None:
         provider = busy_provider("prompt")
+        turn_timeout_s = 2.0
         async with controlled_clock() as clock:
             resources = AsyncExitStack()
             try:
                 session = await clock.run_io(
                     resources.enter_async_context(
                         cursor_session(
-                            provider.agent, turn_timeout_s=2, decision_timeout_s=1
+                            provider.agent,
+                            turn_timeout_s=turn_timeout_s,
+                            decision_timeout_s=1,
                         )
                     )
                 )
@@ -71,7 +74,7 @@ class TestCursorTurnCleanup:
                 )
                 assert not sending.done()
 
-                await clock.elapse(2)
+                await clock.elapse(turn_timeout_s)
                 with pytest.raises(ACPTurnTimeoutError):
                     await sending
                 assert cancels_sent(provider.agent) == [provider.agent.session_ids()[0]]
