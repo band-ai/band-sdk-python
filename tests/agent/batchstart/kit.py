@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
 
+from band.client.streaming import DeliveryStatus
 from band.core.exceptions import InputNotAccepted
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import BatchInputAdapter
@@ -149,3 +150,21 @@ class Platform:
 
     server: FakePhoenixServer
     peer: AgentPeer
+
+
+async def wait_for_processed_messages(
+    peer: AgentPeer, message_ids: Iterable[str]
+) -> None:
+    """Wait until every expected room message is processed."""
+    expected_ids = set(message_ids)
+    if not expected_ids:
+        raise ValueError("At least one message ID is required")
+
+    def expected_messages_are_processed() -> bool:
+        statuses = peer.room(ROOM_ID).status
+        return expected_ids <= statuses.keys() and all(
+            statuses[message_id] == DeliveryStatus.PROCESSED
+            for message_id in expected_ids
+        )
+
+    await peer.observations.until(expected_messages_are_processed)

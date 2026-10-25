@@ -12,6 +12,7 @@ from tests.agent.batchstart.kit import (
     ProjectedControlAdapter,
     ProjectingPreprocessor,
     Turn,
+    wait_for_processed_messages,
 )
 from tests.scenarios.peer import AGENT_ID
 
@@ -21,8 +22,10 @@ class TestProjectedControls:
         self, platform: Platform
     ) -> None:
         peer, adapter = platform.peer, ProjectedControlAdapter()
-        for content in ("first", "second", CONTROL_CONTENT, "third"):
-            peer.post(ROOM_ID, content)
+        message_ids = [
+            peer.post(ROOM_ID, content)["id"]
+            for content in ("first", "second", CONTROL_CONTENT, "third")
+        ]
         agent = Agent.create(
             adapter,
             agent_id=AGENT_ID,
@@ -34,11 +37,7 @@ class TestProjectedControls:
         )
 
         async with agent:
-            await peer.observations.until(
-                lambda: all(
-                    s == "processed" for s in peer.room(ROOM_ID).status.values()
-                )
-            )
+            await wait_for_processed_messages(peer, message_ids)
 
         assert adapter.turns == [Turn(("m1", "m2", "m4"), bootstrap=True)]
         assert adapter.controls == [f"{PROJECTED_PREFIX}{CONTROL_CONTENT}"]

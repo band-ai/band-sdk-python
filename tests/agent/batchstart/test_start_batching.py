@@ -16,6 +16,7 @@ from tests.agent.batchstart.kit import (
     ProjectingPreprocessor,
     QueuedAdapter,
     Turn,
+    wait_for_processed_messages,
 )
 from tests.scenarios.peer import AGENT_ID
 
@@ -25,8 +26,10 @@ class TestStartBatching:
         self, platform: Platform
     ) -> None:
         peer, adapter = platform.peer, BareBatchAdapter()
-        for content in ("first", "second", "third"):
-            peer.post(ROOM_ID, content)
+        message_ids = [
+            peer.post(ROOM_ID, content)["id"]
+            for content in ("first", "second", "third")
+        ]
         agent = Agent.create(
             adapter,
             agent_id=AGENT_ID,
@@ -37,11 +40,7 @@ class TestStartBatching:
         )
 
         async with agent:
-            await peer.observations.until(
-                lambda: all(
-                    s == "processed" for s in peer.room(ROOM_ID).status.values()
-                )
-            )
+            await wait_for_processed_messages(peer, message_ids)
 
         assert adapter.turns == [("m1", "m2", "m3")]
 
