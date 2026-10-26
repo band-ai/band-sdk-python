@@ -31,9 +31,10 @@ For each branch, first run
 An open or merged PR stops that part and links it. Then run
 `git -C <fern> worktree prune` and remove with `git -C <fern> worktree remove`
 any worktree `git -C <fern> worktree list` still shows on the branch. If git
-refuses because it holds changes, or the local branch has commits that are not
-on the remote, show them and ask before discarding them (`--force`): they may
-be the maintainer's hand edits. Then create the worktree with
+refuses because it holds changes, show them and ask before `--force`. Before
+resetting the branch, `git -C <fern> log --oneline <branch> --not --remotes`
+(when the local branch exists) lists commits on no remote: show them and ask
+first. Either may be the maintainer's hand edits. Then create the worktree with
 `git -C <fern> worktree add -B <branch> <worktree> origin/dev` (resetting a stale
 local branch). Push with
 `git -C <worktree> push --force-with-lease origin <branch>`: the branch tracks
@@ -89,13 +90,15 @@ closed PR may keep its branch or have it deleted.
    and into `<tmp>/open.json` with the same and `--state open`. Run
    `uv run --script "$S/docsrange.py" <tag> <tmp>/merged.json <tmp>/open.json`. It prints `baseline` and
    `supersede`, or refuses when this release's or a newer one's docs are
-   already merged (a review as of `<tag>` would repeat or roll them back):
-   then stop and say so. Build the
+   already merged (a review as of `<tag>` would repeat or roll them back), or
+   when an open docs PR for a newer release already covers `<tag>`. Stop and
+   say so, linking that PR: it must merge or be closed before `<tag>` gets a
+   review of its own. Build the
    review input with
    `uv run --script "$S/collectprs.py" <tag> --since <baseline> > <tmp>/review-prs.json`.
 7. Check out the released source: `git worktree add --detach <tmp>/sdk <tag>`
    (first `git worktree remove --force <tmp>/sdk` if an earlier run left it; it
-   is a read-only checkout, removed again at the end).
+   is a read-only checkout, removed again after step 9 or 10).
    Then the branch check and Fern worktree on the docs branch.
 8. Nominate at most `MAX_REVIEWED_PAGES = 10` pages anywhere under
    `fern/docs/pages/integrations/sdks/` (including `tutorials/`). Start from
@@ -112,7 +115,8 @@ closed PR may keep its branch or have it deleted.
      hidden or Enterprise-gated in `docs-structure-summary.md` (step 3's
      sources).
    - Describe changes as of `<tag>`. Write no new pages.
-9. If nothing is stale, open no docs PR and say so. Otherwise write the PR
+9. If nothing is stale, open no docs PR, say so, and remove `<tmp>/sdk`.
+   Otherwise write the PR
    body to `<tmp>/docs-pr-body.md`: Summary; Pages reviewed (reason and source PRs for each); Claims (each
    changed fact with a link to
    `https://github.com/band-ai/band-sdk-python/blob/<tag>/<path>#L<line>`);
@@ -123,7 +127,7 @@ closed PR may keep its branch or have it deleted.
 10. Show the diff. After approval: commit, push as above,
     `gh pr create --repo thenvoi/fern --base dev --head <branch> --title "docs: Python SDK <tag>" --body-file <tmp>/docs-pr-body.md`,
     and, on confirmation, close each superseded PR with the comment
-    `Superseded by #M`.
+    `Superseded by #M`. Finally `git worktree remove --force <tmp>/sdk`.
 
 A person approves and merges both PRs in Fern; promotion from `dev` stays
 manual.
