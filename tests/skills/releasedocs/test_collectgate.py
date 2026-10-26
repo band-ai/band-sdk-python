@@ -98,3 +98,9 @@ class TestReleaseGate:
             "proceed=true\nhas_changes=false\n"
             f"reason={collectprs.StopReason.NO_CHANGES}\n"
         )
+
+    def test_non_release_tag_is_refused_before_collecting(
+        self, collectprs: ModuleType, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        assert collectprs.main(["v6.13.0"]) == 2
+        assert "is not a band-sdk-vX.Y.Z tag" in caplog.text

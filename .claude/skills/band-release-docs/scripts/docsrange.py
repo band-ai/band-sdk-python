@@ -69,6 +69,8 @@ def docs_range(
     newer = sorted(
         release for pr in merged if (release := pr.release) and release >= version
     )
+    if version in newer:
+        raise ValueError(f"docs for {tag} are already merged")
     if newer:
         raise ValueError(
             f"docs for {tag_name(newer[-1])} are already merged; "
@@ -98,10 +100,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     args = parser.parse_args(argv)
 
-    merged = DOCS_PRS.validate_json(args.merged.read_bytes())
-    open_prs = DOCS_PRS.validate_json(args.open.read_bytes())
     try:
         release_version(args.tag)
+        merged = DOCS_PRS.validate_json(args.merged.read_bytes())
+        open_prs = DOCS_PRS.validate_json(args.open.read_bytes())
         earlier = earlier_sdk_tags(args.repo, args.tag).values()
         found = docs_range(args.tag, list(earlier), merged, open_prs)
     except (RuntimeError, ValueError) as exc:

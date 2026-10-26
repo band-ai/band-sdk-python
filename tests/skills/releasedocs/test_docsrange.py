@@ -91,16 +91,35 @@ class TestDocsRange:
             docsrange, "band-sdk-v6.10.0", [10, 11]
         )
 
+    def test_supersede_starts_above_the_documented_baseline(
+        self, docsrange: ModuleType
+    ) -> None:
+        merged = prs(docsrange, (1, "docs/python-sdk-band-sdk-v6.11.0"))
+        open_prs = prs(
+            docsrange,
+            (10, "docs/python-sdk-band-sdk-v6.11.0"),
+            (11, "docs/python-sdk-band-sdk-v6.12.0"),
+        )
+        assert docsrange.docs_range(TAG, EARLIER, merged, open_prs) == expected(
+            docsrange, "band-sdk-v6.11.0", [11]
+        )
+
     @pytest.mark.parametrize(
-        "branch",
-        ["docs/python-sdk-band-sdk-v6.13.0", "docs/python-sdk-band-sdk-v6.14.0"],
+        ("branch", "error"),
+        [
+            (
+                "docs/python-sdk-band-sdk-v6.13.0",
+                "docs for band-sdk-v6.13.0 are already",
+            ),
+            ("docs/python-sdk-band-sdk-v6.14.0", "would roll their pages back"),
+        ],
         ids=["this-release", "newer-release"],
     )
-    def test_review_older_than_merged_docs_is_refused(
-        self, docsrange: ModuleType, branch: str
+    def test_documented_release_is_not_reviewed_again(
+        self, docsrange: ModuleType, branch: str, error: str
     ) -> None:
         merged = prs(docsrange, (1, "docs/python-sdk-band-sdk-v6.12.0"), (2, branch))
-        with pytest.raises(ValueError, match="already merged"):
+        with pytest.raises(ValueError, match=error):
             docsrange.docs_range(TAG, EARLIER, merged, [])
 
     @pytest.mark.parametrize(
@@ -168,3 +187,14 @@ class TestDocsRange:
         argv = [tag, str(listing), str(listing), "--repo", str(repo.root)]
         assert docsrange.main(argv) == 1
         assert error in caplog.text
+
+    def test_command_logs_a_malformed_listing(
+        self,
+        docsrange: ModuleType,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        listing = tmp_path / "prs.json"
+        listing.write_text('[{"number": 1}]', encoding="utf-8")
+        assert docsrange.main([TAG, str(listing), str(listing)]) == 1
+        assert "headRefName" in caplog.text

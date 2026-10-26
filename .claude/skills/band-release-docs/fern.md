@@ -28,15 +28,16 @@ Changelog: `changelog/python-sdk-<tag>`. Docs: `docs/python-sdk-<tag>`.
 
 For each branch, first run
 `gh pr list --repo thenvoi/fern --head <branch> --state all --json number,state,url`.
-An open or merged PR stops that part and links it. A closed PR keeps its branch
-on the remote, so also run `git -C <fern> fetch origin <branch>`; the lease
-below compares against that ref. Then run `git -C <fern> worktree prune`,
-remove any worktree `git -C <fern> worktree list` still shows on the branch
-(an earlier run's), and create the worktree with
+An open or merged PR stops that part and links it. Then run
+`git -C <fern> worktree prune`, remove with `git -C <fern> worktree remove --force`
+any worktree `git -C <fern> worktree list` still shows on the branch (an
+earlier run's, regenerated anyway), and create the worktree with
 `git -C <fern> worktree add -B <branch> <worktree> origin/dev` (resetting a stale
 local branch). Push with
 `git -C <worktree> push --force-with-lease origin <branch>`: the branch tracks
-`origin/dev`, so a bare push would target `dev`.
+`origin/dev`, so a bare push would target `dev`. The lease compares against the
+remote branches as last fetched, which is why step 2 fetches with `--prune`: a
+closed PR may keep its branch or have it deleted.
 
 ## Changelog
 
@@ -45,12 +46,14 @@ local branch). Push with
    No bundle means the release had no user-facing changes or its run failed:
    stop, say so, and link
    `https://github.com/band-ai/band-sdk-python/actions/workflows/release-announce.yml`.
-2. `git -C <fern> fetch origin dev`, then the branch check and worktree above.
-   Then list the open changelog PRs with
-   `gh pr list --repo thenvoi/fern --state open --search 'head:changelog/' --json number,url,files`.
-   If one changes `fern/changelog/sdks/<release_date>.md` (`release_date` is in
-   `release-notes.json`), stop and link it: both PRs would write that date file,
-   so it merges first and this command runs again.
+2. `git -C <fern> fetch --prune origin`, then the branch check and worktree
+   above. Then list Fern's open PRs with
+   `gh pr list --repo thenvoi/fern --state open --limit 200 --json number,url,headRefName,files`.
+   If one other than this release's own branch (or its `-rehearsal` twin)
+   changes `fern/changelog/sdks/<release_date>.md` (`release_date` is in
+   `<bundle>/release-notes.json`), stop and link it: both PRs would write that
+   date file, so it merges first and this command runs again. Any branch name
+   counts; other SDKs and hand fixes use `docs/...` branches.
 3. Holdbacks: compare each item in `<bundle>/release-notes.json` (numbered from 0)
    against `<fern>/.changelog/held-items.yml` entries whose surfaces include
    `sdks`, and against features marked hidden or Enterprise-gated in
@@ -64,9 +67,9 @@ local branch). Push with
    nothing, when the date file:
    - already holds this release's subtitle: it is filed in Fern `dev`, perhaps
      under another branch name. Stop and link the date file.
-   - holds a newer release of this SDK: blocks go newest first. Stop and show
-     both; with `--out <tmp>/entry` instead of `--merge-into`, the maintainer
-     can place the block below the newer one by hand.
+   - holds a newer release of this SDK: blocks go newest first, and this
+     command only files a block on top. Stop and show both releases; the
+     maintainer files this one by hand.
    - has entries without `## <SDK> <version>` subtitles (filed before Fern's
      rule 0): stop and show the file. Add those subtitles only with the
      maintainer's approval, in a separate commit, then run this step again.
@@ -81,8 +84,9 @@ local branch). Push with
    `gh pr list --repo thenvoi/fern --state merged --search 'head:docs/python-sdk-band-sdk-v' --json number,headRefName`
    and into `<tmp>/open.json` with the same and `--state open`. Run
    `uv run --script "$S/docsrange.py" <tag> <tmp>/merged.json <tmp>/open.json`. It prints `baseline` and
-   `supersede`, or refuses when a newer release's docs are already merged (a
-   review as of `<tag>` would roll them back): then stop and say so. Build the
+   `supersede`, or refuses when this release's or a newer one's docs are
+   already merged (a review as of `<tag>` would repeat or roll them back):
+   then stop and say so. Build the
    review input with
    `uv run --script "$S/collectprs.py" <tag> --since <baseline> > <tmp>/review-prs.json`.
 7. Check out the released source: `git worktree add --detach <tmp>/sdk <tag>`.
@@ -103,7 +107,7 @@ local branch). Push with
      sources).
    - Describe changes as of `<tag>`. Write no new pages.
 9. If nothing is stale, open no docs PR and say so. Otherwise write the PR
-   body: Summary; Pages reviewed (reason and source PRs for each); Claims (each
+   body to `<tmp>/docs-pr-body.md`: Summary; Pages reviewed (reason and source PRs for each); Claims (each
    changed fact with a link to
    `https://github.com/band-ai/band-sdk-python/blob/<tag>/<path>#L<line>`);
    Also stale (drift predating the range, with the same links); Pages missing
@@ -111,7 +115,7 @@ local branch). Push with
    page under `tutorials/` documents, where one page may cover several); and
    `Supersedes #N` for each PR in `supersede`.
 10. Show the diff. After approval: commit, push as above,
-    `gh pr create --repo thenvoi/fern --base dev --head <branch> --title "docs: Python SDK <tag>" --body-file <body>`,
+    `gh pr create --repo thenvoi/fern --base dev --head <branch> --title "docs: Python SDK <tag>" --body-file <tmp>/docs-pr-body.md`,
     and, on confirmation, close each superseded PR with the comment
     `Superseded by #M`.
 
