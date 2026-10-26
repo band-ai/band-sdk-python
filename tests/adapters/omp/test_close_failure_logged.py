@@ -10,20 +10,21 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import (
-    FirstCloseFailsDeliveryRuntime,
-    FirstCloseFailsRuntime,
-    run_turn,
-)
+from tests.adapters.omp.failures import FirstCloseFailsDeliveryRuntime
+from tests.adapters.omp.lifecyclekit import FirstCloseFailsRuntime
+from tests.adapters.omp.turns import run_turn
 
 
 class TestCloseFailureLogged:
+    @pytest.mark.usefixtures("native_startup_ready")
     @pytest.mark.asyncio
     async def test_delivery_failure_logs_a_raising_close(
         self, monkeypatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ):
         runtime = FirstCloseFailsDeliveryRuntime()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+        monkeypatch.setattr(
+            "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **kw: runtime
+        )
         adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         try:
             with (
@@ -35,12 +36,15 @@ class TestCloseFailureLogged:
         finally:
             await adapter.cleanup_all()
 
+    @pytest.mark.usefixtures("native_startup_ready")
     @pytest.mark.asyncio
     async def test_cancelled_turn_logs_a_raising_close(
         self, monkeypatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ):
         runtime = FirstCloseFailsRuntime()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+        monkeypatch.setattr(
+            "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **kw: runtime
+        )
         adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         tools = FakeAgentTools()
         turn = asyncio.create_task(run_turn(adapter, tools))

@@ -11,7 +11,7 @@ from band.adapters.omp import OmpAdapter, OmpPermissionRequest
 from band.integrations.omp import OMP_FORM_APPROVE
 from band.integrations.omprpc import OmpRpcClient
 from tests.adapters.hold import Hold
-from tests.adapters.omp.kit import claimed_workspace_rooms, run_turn
+from tests.adapters.omp.custody import claimed_workspace_rooms
 from tests.adapters.omp.mailboxkit import (
     AdmissionMailbox,
     MailboxTools,
@@ -26,7 +26,8 @@ from tests.adapters.omp.mailboxpeer import (
     PeerCommand,
     model_reply,
 )
-from tests.integrations.omprpc.kit import owned_rpc_process
+from tests.adapters.omp.turns import run_turn
+from tests.integrations.omprpc.processes import owned_rpc_process
 
 
 class SettlingPermission:

@@ -7,11 +7,17 @@ from typing import Any
 
 import pytest
 
-from band.adapters.omp import OmpTurn
+from band.adapters.omp.turnstate import OmpTurn
 from band.core.types import Emit
 from band.testing.activity import SHOWN_REASONING, ActivityRecorder, shown_tool
 from band.testing.fake_tools import FakeAgentTools
-from tests.adapters.omp.kit import EMIT_OFF, EMIT_ON, make_adapter, tool_end, tool_start
+from tests.adapters.omp.activitykit import (
+    EMIT_OFF,
+    EMIT_ON,
+    make_adapter,
+    tool_end,
+    tool_start,
+)
 
 
 class TestOmpToolActivity:

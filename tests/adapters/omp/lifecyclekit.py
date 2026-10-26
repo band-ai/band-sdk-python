@@ -3,13 +3,139 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections import deque
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
+from pathlib import Path
+from typing import Literal, TypeVar
 
+from band.adapters.omp import (
+    OmpAdapter,
+)
+from band.integrations.omprpc import OmpProcessError
 from band.runtime.mailbox import RoomMailbox
 from tests.adapters.hold import Hold
-from tests.adapters.omp.kit import RecordingRuntime
+from tests.adapters.omp.models import RecordingRuntime
+from tests.adapters.omp.runtime import PendingRuntime
+
+
+class StartupGate:
+    """Hold native startup readiness until the test releases it."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, *_args: object, **_kwargs: object) -> None:
+        self.entered.set()
+        await self.release.wait()
+
+
+class HungStartRuntime(PendingRuntime):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.started = asyncio.Event()
+
+    async def start(self):
+        self.started.set()
+        await asyncio.Event().wait()
+
+
+class BoomCloseRuntime(PendingRuntime):
+    async def close(self):
+        raise OSError("process still alive")
+
+
+class FirstCloseFailsRuntime(RecordingRuntime):
+    """Fail the first close so custody stays with this process, then succeed."""
+
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self._close_failed = False
+        self.reject_requests = False
+
+    async def request(self, command, **parameters):
+        if self.reject_requests:
+            raise OmpProcessError("client is closing")
+        return await super().request(command, **parameters)
+
+    async def close(self):
+        if not self._close_failed:
+            self._close_failed = True
+            raise OSError("process still alive")
+        await super().close()
+
+
+class SameTaskCleanupRuntime(PendingRuntime):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.adapter: OmpAdapter | None = None
+        self.cleaned_from_turn = False
+
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
+        assert self.adapter is not None
+        await self.adapter.on_cleanup("room-123")
+        self.cleaned_from_turn = True
+
+
+class Launches:
+    """Record native runtime instances and the startup overlays they own."""
+
+    def __init__(self) -> None:
+        self.runtimes: list[RecordingRuntime] = []
+        self.servers: list[dict[str, object]] = []
+        self.plugins: list[Path] = []
+        self.commands: list[list[str]] = []
+        self.envs: list[dict[str, str] | None] = []
+        self.spawned = asyncio.Event()
+        self.fail_first_close = False
+        self.runtime_factory: Callable[[], RecordingRuntime] = RecordingRuntime
+
+    def __call__(
+        self, command: list[str], env=None, **_kwargs: object
+    ) -> RecordingRuntime:
+        plugin = command[command.index("--plugin-dir") + 1]
+        overlay = json.loads((Path(plugin) / ".mcp.json").read_text(encoding="utf-8"))
+        self.servers.append(overlay["mcpServers"])
+        self.plugins.append(Path(plugin))
+        self.commands.append(list(command))
+        self.envs.append(None if env is None else dict(env))
+        runtime = (
+            FirstCloseFailsRuntime()
+            if self.fail_first_close
+            else self.runtime_factory()
+        )
+        self.fail_first_close = False
+        runtime.finish.set()
+        self.runtimes.append(runtime)
+        self.spawned.set()
+        return runtime
+
+
+class SignallingLock(asyncio.Lock):
+    """A room lock that reports when a second turn starts waiting for it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.contended = asyncio.Event()
+
+    async def acquire(self) -> Literal[True]:
+        if self.locked():
+            self.contended.set()
+        return await super().acquire()
+
+
+def failing_runtime(closing: asyncio.Event, finish_close: asyncio.Event):
+    class FailingRuntime(PendingRuntime):
+        async def _prompt_body(self, *_args, **_kwargs):
+            raise RuntimeError("native turn failed")
+
+        async def close(self):
+            closing.set()
+            await finish_close.wait()
+            self.closed = True
+
+    return FailingRuntime()
 
 
 class SettlingStartRuntime(RecordingRuntime):

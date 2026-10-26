@@ -8,19 +8,15 @@ from band.adapters.omp import OmpAdapter
 from band.core.model_catalog import ModelSelection
 from band.integrations.ompwire import OmpCommandName
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import (
-    FirstCloseFailsRuntime,
-    Launches,
+from tests.adapters.omp.custody import (
     claimed_workspace_rooms,
-    launches,
     occupied_room_ids,
-    requests_named,
     retained_selection,
     room_runtime,
-    run_turn,
 )
-
-__all__ = ["launches"]
+from tests.adapters.omp.lifecyclekit import FirstCloseFailsRuntime, Launches
+from tests.adapters.omp.models import requests_named
+from tests.adapters.omp.turns import run_turn
 
 
 class TestCloseCustody:

@@ -171,6 +171,11 @@ duplicate tests or a loop over cases inside one test. A long test that
 dispatches with `if scenario != "aborted"` or `if os.name == "nt": return`
 is several tests hiding in one function; split them.
 
+Use a compound flow when the interaction between its phases is the claim
+(for example, cancellation → retirement → a clean follow-up). Keep those phases
+visible in the test. Split independent invariants; extract resource lifecycle,
+not scenario actions and assertions, to shorten setup.
+
 Wire statuses, prompt texts, and error messages belong to one named constant
 or enum that the peer, the product, and the assertion all reference. A
 hard-coded `"complete"` / `"Approve"` in the test is a second copy of a
@@ -201,11 +206,49 @@ test claims to prove.
   *takes*), not a stand-in for the unit under test. A receipt-table test may
   mock the RPC client; it then does not count as coverage of the client's
   prompt path.
+- Do not use autouse fixtures to replace product clients or bypass startup
+  validation. Confine deliberate failure doubles to the tests that need them.
 - Double HTTP at the transport with `pytest-httpx` (`httpx_mock`) or
   `httpx.MockTransport`. Its defaults fail the test on an unexpected request
   and on a registered response that was never requested; keep them.
 - Use the baseline toolkit for needed live E2E coverage, not as a mandatory
   layer for every test.
+
+## Test helpers and peers
+
+- Put fixtures in `conftest.py`. Use fixtures or context managers for resource
+  acquisition and confirmed cleanup, including failed or cancelled startup.
+  Do not import fixtures through helper modules or collected test files.
+- Keep scenario actions and outcome assertions visible in tests. Helpers may
+  share mechanics and named assertions; they must not choose a scenario's
+  expected outcome or hide its sequence.
+- Do not create a runtime subclass for each payload, event, callback, or
+  expected response. Drive simple inputs and callbacks explicitly in the test.
+  Retain stateful doubles only for external behavior the test needs.
+- Test mapping and validation at their owning function with real inputs. Test
+  protocol, task context, ordering, and lifecycle with the real interacting
+  components and a focused external peer where needed.
+- Never reproduce the subject's reader, scheduler, callback-context propagation,
+  retry, or cleanup implementation in a fake. Do not replace a running subject's
+  methods to coordinate a test; use explicit gates or an observation seam.
+- Keep each helper module focused on one concern. Share only necessary framing,
+  correlation, and resource mechanics. Do not build an omnibus scenario
+  simulator or move one unchanged into several files.
+- Use one enum or constant definition for closed script, command, and status
+  vocabularies. Reject unsupported commands and selections. No catch-all empty
+  response, success, or silent no-op for an unsupported operation.
+- Ground ordinary peer traces, including ordering, in current upstream source
+  or contracts. Name inconsistent, missing, and stale frames as fault injection;
+  they establish client behavior, not provider behavior.
+- Assert observable decisions, delivery, state, and cleanup. Do not reassert
+  fake setup flags or claim that a recorded call proves the resulting behavior.
+
+**Review gate:** inspect changed helpers and peers with their consuming tests.
+Remove duplicated setup and unnecessary simulation before extracting modules.
+Reject any abstraction that hides the scenario, copies the subject, or requires
+more machinery without removing repeated mechanics. Preserve meaningful
+scenarios and verify that plausible regressions fail; passing counts and smaller
+individual files do not establish a better test design.
 
 ## Isolation (non-live)
 
@@ -255,6 +298,9 @@ awaits an `asyncio.Event` that is never set, not a long sleep.
 Real subprocess and network readiness stay independent of a controlled
 clock. Cleanup must account for resources created during failed or cancelled
 startup and await their confirmed release.
+
+Before advancing virtual time, await unrelated native responses already in
+flight. A peer-side receipt does not prove all client response waits finished.
 
 ## Tests run on Ubuntu and Windows CI
 

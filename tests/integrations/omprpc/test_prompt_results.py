@@ -14,19 +14,16 @@ from band.integrations.ompwire import (
     OmpEventType,
     OmpState,
 )
-from tests.integrations.omppeer import (
-    ADMITTED_PROMPT_ERROR,
-    COMPLETE,
-    LATE_PROMPT_ERROR,
+from tests.integrations.omppeers.base import COMPLETE
+from tests.integrations.omprpc.events import (
+    EventRecorder,
+    follow_up_texts,
+    record_prompt,
 )
-from tests.integrations.omprpc.kit import (
-    ClientFactory,
-    Observer,
-    checkpoint_frames,
-    owned_rpc_process,
-    prompt_task,
-    second_prompt,
-)
+from tests.integrations.omprpc.processes import owned_rpc_process
+from tests.integrations.omprpc.spawn import ClientFactory
+from tests.integrations.omprpc.wirelog import checkpoint_frames
+from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 
 
 class TestPromptNarrationAndResults:
@@ -34,10 +31,10 @@ class TestPromptNarrationAndResults:
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("basic")
-        observer = Observer()
+        client = await client_factory(PeerScenario.STANDARD_TURN)
+        observer = EventRecorder()
         async with asyncio.timeout(5):
-            await prompt_task(client, observer)
+            await record_prompt(client, observer)
         assert observer.outline == [
             OmpEventType.AGENT_START,
             OmpEventType.TOOL_START,
@@ -86,34 +83,34 @@ class TestPromptNarrationAndResults:
         )
         assert state.model is not None
         assert (state.model.provider, state.model.id) == ("test-provider", "test-model")
-        await second_prompt(client)
+        assert await follow_up_texts(client) == [COMPLETE]
 
     async def test_rejected_prompt_does_not_wait_for_a_result_that_is_not_owed(
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("rejected")
+        client = await client_factory(PeerScenario.REJECTED_PROMPT)
         async with asyncio.timeout(5):
             with pytest.raises(OmpRpcError, match="Prompt rejected") as rejected:
-                await prompt_task(client, Observer())
+                await record_prompt(client, EventRecorder())
         assert (rejected.value.command, rejected.value.code) == ("prompt", "rejected")
-        await second_prompt(client)
+        assert await follow_up_texts(client) == [COMPLETE]
 
     async def test_command_error_after_admission_keeps_the_process_usable(
         self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory(LATE_PROMPT_ERROR)
+        client = await client_factory(PeerScenario.LATE_PROMPT_ERROR)
         process = owned_rpc_process(client)
-        observer = Observer()
-        running = prompt_task(client, observer)
+        observer = EventRecorder()
+        running = asyncio.create_task(record_prompt(client, observer))
         try:
             await observer.wait_for(OmpEventType.AGENT_END)
-            await client.request("release")
+            await client.request(PeerCommand.RELEASE_PROMPT)
             with pytest.raises(OmpRpcError) as failed:
                 await running
             assert failed.value.command == OmpCommandName.PROMPT
             assert process.returncode is None
-            await second_prompt(client)
+            assert await follow_up_texts(client) == [COMPLETE]
             assert owned_rpc_process(client) is process
         finally:
             running.cancel()
@@ -122,14 +119,16 @@ class TestPromptNarrationAndResults:
     async def test_a_late_response_for_the_wrong_command_retires_the_transport(
         self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory(LATE_PROMPT_ERROR)
+        client = await client_factory(PeerScenario.LATE_PROMPT_ERROR)
         process = owned_rpc_process(client)
-        observer = Observer()
-        running = prompt_task(client, observer)
+        observer = EventRecorder()
+        running = asyncio.create_task(record_prompt(client, observer))
         try:
             await observer.wait_for(OmpEventType.AGENT_END)
             with pytest.raises(OmpProtocolError):
-                await client.request("release", failed_command=OmpCommandName.GET_STATE)
+                await client.request(
+                    PeerCommand.RELEASE_PROMPT, failed_command=OmpCommandName.GET_STATE
+                )
             with pytest.raises(OmpProtocolError):
                 await running
             assert process.returncode is not None
@@ -141,43 +140,43 @@ class TestPromptNarrationAndResults:
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory(ADMITTED_PROMPT_ERROR)
+        client = await client_factory(PeerScenario.ADMITTED_PROMPT_ERROR)
         process = owned_rpc_process(client)
         async with asyncio.timeout(5):
             with pytest.raises(OmpRpcError) as late:
-                await prompt_task(client, Observer())
+                await record_prompt(client, EventRecorder())
         assert (late.value.command, late.value.code) == (
             OmpCommandName.PROMPT,
             "post_admit",
         )
         assert process.returncode is None
-        await second_prompt(client)
+        assert await follow_up_texts(client) == [COMPLETE]
 
     @pytest.mark.parametrize(
         ("scenario", "match"),
         [
-            ("initial-error", "Initial provider failed"),
-            ("initial-aborted", "OMP prompt aborted"),
+            (PeerScenario.INITIAL_ERROR, "Initial provider failed"),
+            (PeerScenario.INITIAL_ABORTED, "OMP prompt aborted"),
         ],
     )
     async def test_failed_initial_result_is_reported(
-        self, client_factory: ClientFactory, scenario: str, match: str
+        self, client_factory: ClientFactory, scenario: PeerScenario, match: str
     ) -> None:
         client = await client_factory(scenario)
         process = owned_rpc_process(client)
         async with asyncio.timeout(5):
             with pytest.raises(OmpPromptError, match=match):
-                await prompt_task(client, Observer())
+                await record_prompt(client, EventRecorder())
         assert process.returncode is None
-        await second_prompt(client)
+        assert await follow_up_texts(client) == [COMPLETE]
 
     async def test_narration_failure_does_not_leave_the_turn_or_process_waiting(
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("basic")
+        client = await client_factory(PeerScenario.STANDARD_TURN)
         process = owned_rpc_process(client)
-        observer = Observer()
+        observer = EventRecorder()
 
         async def on_event(event: OmpEvent) -> None:
             raise ValueError("Narration failed")
@@ -196,10 +195,10 @@ class TestPromptNarrationAndResults:
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("large-image")
-        observer = Observer()
+        client = await client_factory(PeerScenario.LARGE_IMAGE)
+        observer = EventRecorder()
         async with asyncio.timeout(5):
-            await prompt_task(client, observer)
+            await record_prompt(client, observer)
         message = next(
             event.message
             for event in observer.events

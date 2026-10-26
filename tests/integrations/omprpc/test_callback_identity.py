@@ -7,6 +7,7 @@ import gc
 
 import pytest
 
+from tests.integrations.omppeers.base import COMPLETE
 from tests.integrations.omprpc.callbackkit import (
     CallbackGate,
     HeldCallbacks,
@@ -21,7 +22,8 @@ from tests.integrations.omprpc.callbackpeer import (
     REPLACE,
     CallbackKind,
 )
-from tests.integrations.omprpc.kit import Observer, checkpoint_frames, second_prompt
+from tests.integrations.omprpc.events import EventRecorder, follow_up_texts
+from tests.integrations.omprpc.wirelog import checkpoint_frames
 
 
 class TestCallbackIdentity:
@@ -42,7 +44,7 @@ class TestCallbackIdentity:
             running = asyncio.create_task(
                 client.prompt(
                     "first",
-                    on_event=Observer().on_event,
+                    on_event=EventRecorder().on_event,
                     on_tool=callbacks.on_tool,
                     on_ui=callbacks.on_ui,
                 )
@@ -59,7 +61,7 @@ class TestCallbackIdentity:
                 assert callback_results(await checkpoint_frames(client)) == [NEW_RESULT]
                 await client.request(FINISH)
                 await running
-                await second_prompt(client)
+                assert await follow_up_texts(client) == [COMPLETE]
                 gc.collect()
                 assert not recwarn
             finally:

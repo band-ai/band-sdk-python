@@ -8,7 +8,8 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.testing import FakeAgentTools, reported_failures
-from tests.adapters.omp.kit import FirstCloseFailsRuntime, run_turn
+from tests.adapters.omp.lifecyclekit import FirstCloseFailsRuntime
+from tests.adapters.omp.turns import run_turn
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
 
@@ -16,6 +17,7 @@ TURN_TIMEOUT_S = 1.0
 
 
 class TestCloseReportsFailure:
+    @pytest.mark.usefixtures("native_startup_ready")
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)
     @pytest.mark.looptime(resolution=binary_clock_resolution())
@@ -23,7 +25,9 @@ class TestCloseReportsFailure:
         self, monkeypatch, tmp_path: Path
     ):
         runtime = FirstCloseFailsRuntime()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+        monkeypatch.setattr(
+            "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **kw: runtime
+        )
         adapter = OmpAdapter(
             OmpAdapterConfig(cwd=str(tmp_path), turn_timeout_s=TURN_TIMEOUT_S), emit=()
         )

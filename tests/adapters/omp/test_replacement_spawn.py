@@ -10,14 +10,9 @@ from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.core.model_catalog import ModelSelection
 from band.integrations.ompwire import OmpCommandName
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import (
-    Launches,
-    launches,
-    requests_named,
-    run_turn,
-)
-
-__all__ = ["launches"]
+from tests.adapters.omp.lifecyclekit import Launches
+from tests.adapters.omp.models import requests_named
+from tests.adapters.omp.turns import run_turn
 
 
 class TestReplacementSpawn:

@@ -15,13 +15,12 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 from band.runtime.mailbox import RoomMailbox
-from tests.integrations.omppeer import HOST_CANCELLED_ID, UI_CANCELLED_ID
-from tests.integrations.omprpc.kit import (
-    ClientFactory,
-    Observer,
-    checkpoint_frames,
-    second_prompt,
-)
+from tests.integrations.omppeers.base import COMPLETE
+from tests.integrations.omppeers.callbacks import HOST_CANCELLED_ID, UI_CANCELLED_ID
+from tests.integrations.omprpc.events import EventRecorder, follow_up_texts
+from tests.integrations.omprpc.spawn import ClientFactory
+from tests.integrations.omprpc.wirelog import checkpoint_frames
+from tests.integrations.ompscenarios import PeerScenario
 
 ROOM = "scheduled-callbacks"
 
@@ -37,7 +36,7 @@ class TestScheduledCallbacks:
         kind: str,
         target: str,
     ) -> None:
-        client = await client_factory(f"{kind}-cancel")
+        client = await client_factory(PeerScenario(f"{kind}-cancel"))
         mailbox = RoomMailbox()
         entered, queued, release = (asyncio.Event() for _ in range(3))
 
@@ -56,7 +55,7 @@ class TestScheduledCallbacks:
             pytest.fail("A cancelled queued UI request must not execute")
 
         client.schedule_callback = schedule
-        observer = Observer()
+        observer = EventRecorder()
         held = asyncio.create_task(mailbox.ask(ROOM, hold))
         await entered.wait()
         running = asyncio.create_task(
@@ -72,7 +71,7 @@ class TestScheduledCallbacks:
             await held
             frames = await checkpoint_frames(client)
             assert not any(frame.get("id") == target for frame in frames)
-            await second_prompt(client)
+            assert await follow_up_texts(client) == [COMPLETE]
             gc.collect()
             assert not recwarn
         finally:

@@ -8,12 +8,10 @@ from pathlib import Path
 import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
-from tests.adapters.omp.kit import (
-    CancelDuringFailureTools,
-    PendingRuntime,
-    occupied_room_ids,
-    run_turn,
-)
+from tests.adapters.omp.custody import occupied_room_ids
+from tests.adapters.omp.failures import CancelDuringFailureTools
+from tests.adapters.omp.runtime import PendingRuntime
+from tests.adapters.omp.turns import run_turn
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
 
@@ -21,6 +19,7 @@ TURN_TIMEOUT_S = 1.0
 
 
 class TestTimeoutCancelCloses:
+    @pytest.mark.usefixtures("native_startup_ready")
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)
     @pytest.mark.looptime(resolution=binary_clock_resolution())
@@ -28,7 +27,9 @@ class TestTimeoutCancelCloses:
         self, monkeypatch, tmp_path: Path
     ):
         runtime = PendingRuntime()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+        monkeypatch.setattr(
+            "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **kw: runtime
+        )
         adapter = OmpAdapter(
             OmpAdapterConfig(cwd=str(tmp_path), turn_timeout_s=TURN_TIMEOUT_S),
             emit=(),

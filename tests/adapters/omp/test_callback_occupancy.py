@@ -8,7 +8,6 @@ from pathlib import Path
 from band.core.model_catalog import ModelSelection
 from band.testing import failure_reports
 from tests.adapters.omp.childselection import ChildSelectingResolver
-from tests.adapters.omp.kit import run_turn
 from tests.adapters.omp.mailboxkit import (
     AdmissionMailbox,
     CallbackResolver,
@@ -29,6 +28,7 @@ from tests.adapters.omp.mailboxpeer import (
     PeerCommand,
     model_reply,
 )
+from tests.adapters.omp.turns import run_turn
 
 
 class TestCallbackOccupancy:

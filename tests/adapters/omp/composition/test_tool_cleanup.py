@@ -11,7 +11,7 @@ from band.integrations.ompwire import OmpFrameType
 from band.runtime.tools import AgentTools
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.runtime import ReplyingPlatform
-from tests.adapters.omp.kit import claimed_workspace_rooms, run_turn
+from tests.adapters.omp.custody import claimed_workspace_rooms
 from tests.adapters.omp.mailboxkit import (
     mailbox_adapter,
     peer_frames,
@@ -26,7 +26,8 @@ from tests.adapters.omp.mailboxpeer import (
     model_reply,
 )
 from tests.adapters.omp.retirementkit import native_overlay
-from tests.integrations.omprpc.kit import owned_rpc_process
+from tests.adapters.omp.turns import run_turn
+from tests.integrations.omprpc.processes import owned_rpc_process
 from tests.runtime.helpers import ALICE
 
 

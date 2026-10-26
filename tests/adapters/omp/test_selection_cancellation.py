@@ -12,19 +12,13 @@ from band.converters.omp import OmpSessionState
 from band.core.model_catalog import ModelSelection
 from band.integrations.ompwire import OmpCommandName
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import (
-    Launches,
-    RecordingRuntime,
-    SelectionGateRuntime,
-    launches,
-    run_turn,
-)
-from tests.adapters.omp.lifecyclekit import ObservedMailbox
-
-__all__ = ["launches"]
+from tests.adapters.omp.lifecyclekit import Launches, ObservedMailbox
+from tests.adapters.omp.models import RecordingRuntime, SelectionGateRuntime
+from tests.adapters.omp.turns import run_turn
 
 
 class TestSelectionCancellation:
+    @pytest.mark.usefixtures("native_startup_ready")
     @pytest.mark.parametrize(
         ("held_command", "requested_effort"),
         [
@@ -47,7 +41,8 @@ class TestSelectionCancellation:
         fresh.finish.set()
         runtimes = iter((interrupted, fresh))
         monkeypatch.setattr(
-            "band.adapters.omp.OmpRpcClient", lambda *a, **kw: next(runtimes)
+            "band.adapters.omp.lifecycle.OmpRpcClient",
+            lambda *a, **kw: next(runtimes),
         )
         adapter = OmpAdapter(
             OmpAdapterConfig(

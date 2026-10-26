@@ -9,12 +9,9 @@ from pathlib import Path
 import pytest
 
 from band.adapters.omp import OMP_PERMISSION_TOOL, OMP_TOOL_APPROVAL_HEADER
-from tests.adapters.omp.kit import (
-    owned_rpc_turn,
-    tool_call_records,
-    tool_result_records,
-)
-from tests.integrations.omppermissionpeer import NATIVE_EVENT_ID
+from tests.adapters.omp.permissions import owned_rpc_turn
+from tests.adapters.omp.records import tool_call_records, tool_result_records
+from tests.integrations.omppermissionpeer import NATIVE_EVENT_ID, PermissionOrder
 
 SECRET = "adversarial-private-content"
 ENABLED_PATH = "xd://mcp__band_send_message"
@@ -44,7 +41,7 @@ async def _turn(
             monkeypatch,
             tmp_path,
             title,
-            "native-first",
+            PermissionOrder.NATIVE_FIRST,
             native_name=native_name,
             native_arguments=native_arguments,
             inject_band_tools=False,

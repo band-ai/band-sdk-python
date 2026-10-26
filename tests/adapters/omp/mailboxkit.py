@@ -15,8 +15,8 @@ from band.adapters.omp import (
     OmpAdapter,
     OmpAdapterConfig,
     OmpPermissionRequest,
-    PermissionResolver,
 )
+from band.adapters.omp.config import PermissionResolver
 from band.core.model_catalog import ModelSelection
 from band.integrations.omp import OMP_FORM_APPROVE
 from band.integrations.omprpc import OmpRpcClient
@@ -32,7 +32,8 @@ from tests.adapters.omp.mailboxpeer import (
     ORIGINAL_MODEL,
     SECOND_MODEL,
 )
-from tests.integrations.omprpc.kit import checkpoint_frames
+from tests.adapters.omp.resolution import CleanupObservedAdapter
+from tests.integrations.omprpc.wirelog import checkpoint_frames
 from tests.paths import REPO_ROOT
 
 Result = TypeVar("Result")
@@ -59,7 +60,7 @@ def mailbox_adapter(
     transcript: Path | None = None,
     initial_tool: bool = False,
 ) -> OmpAdapter:
-    return OmpAdapter(
+    return CleanupObservedAdapter(
         OmpAdapterConfig(
             command=(
                 sys.executable,

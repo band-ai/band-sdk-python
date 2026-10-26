@@ -28,8 +28,8 @@ from tests.adapters.omp.declinepeer import (
     SECOND_DECLINE_CALL,
     DeclineScenario,
 )
-from tests.adapters.omp.kit import run_turn
 from tests.adapters.omp.mailboxkit import AdmissionMailbox, room_client
+from tests.adapters.omp.turns import run_turn
 
 
 class TestTerminalDecline:

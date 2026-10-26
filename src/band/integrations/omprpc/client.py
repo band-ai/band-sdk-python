@@ -23,6 +23,7 @@ from band.integrations.codex.winspawn import (
 )
 from band.integrations.omprpc.errors import (
     CALLBACKS_UNFINISHED,
+    OmpCompletionTimeout,
     OmpProcessError,
     OmpPromptError,
     OmpProtocolError,
@@ -35,7 +36,12 @@ from band.integrations.omprpc.frames import (
     payload_json,
     ui_response_frame,
 )
-from band.integrations.omprpc.prompt import OmpCallbackKind, PromptCallback, PromptRun
+from band.integrations.omprpc.prompt import (
+    CompletionAction,
+    OmpCallbackKind,
+    PromptCallback,
+    PromptRun,
+)
 from band.integrations.omprpc.scope import OmpProcessScope
 from band.integrations.ompwire import (
     OMP_FRAME_BYTES,
@@ -81,6 +87,7 @@ _DRAIN_BYTES = 64 * 1024
 _ABORT_TIMEOUT_S = 1.0
 PROCESS_EXIT_TIMEOUT_S = 1.0
 CALLBACK_EXIT_TIMEOUT_S = 1.0
+COMPLETION_TIMEOUT_S = 30.0
 _EVENT_TYPES = frozenset(OmpEventType)
 _UI_NOTIFICATIONS = frozenset(
     {"notify", "setStatus", "setWidget", "setTitle", "set_editor_text", "open_url"}
@@ -119,6 +126,7 @@ class OmpRpcClient:
         self.after_stdin_closed: Callable[[], None] = _noop
         self.callback_exit_timeout_s = CALLBACK_EXIT_TIMEOUT_S
         self.process_exit_timeout_s = PROCESS_EXIT_TIMEOUT_S
+        self.completion_timeout_s = COMPLETION_TIMEOUT_S
         self._proc: asyncio.subprocess.Process | None = None
         self._windows_process: WindowsProcess | None = None
         self._process_scope: OmpProcessScope | None = None
@@ -135,6 +143,8 @@ class OmpRpcClient:
         self._max_frame_bytes = OMP_FRAME_BYTES
         self._pending: dict[str, PendingRequest] = {}
         self._turn: PromptRun | None = None
+        self._retirement_error: OmpProcessError | None = None
+        self._survivors: set[asyncio.Task[None]] = set()
         self._start_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._prompt_lock = asyncio.Lock()
@@ -144,6 +154,8 @@ class OmpRpcClient:
     async def start(self) -> None:
         """Start the supplied command and require the native RPC protocol."""
         async with self._start_lock:
+            if self._retirement_error is not None:
+                raise self._retirement_error
             if self._closing:
                 await self.close()
                 self._proc = None
@@ -273,9 +285,34 @@ class OmpRpcClient:
         if turn.stop_after_tool_id is None:
             turn.stop_after_tool_id = call_id
 
+    def _retire_survivors(self) -> OmpProcessError | None:
+        """Re-prove callback retirement on every repeat close attempt."""
+        pending = {task for task in self._survivors if not task.done()}
+        if pending:
+            if self._retirement_error is None:
+                self._retirement_error = OmpProcessError(
+                    f"OMP callbacks survived cancellation: {len(pending)} task(s)"
+                    " still pending; retirement is unproven"
+                )
+            return self._retirement_error
+        if self._survivors:
+            # Every survivor has finished: callback cleanup is now proven and
+            # replacement is unblocked.
+            for task in self._survivors:
+                OmpRpcClient._consume_task(task)
+            self._retirement_error = None
+        self._survivors.clear()
+        return None
+
+    def raise_if_retirement_unproven(self) -> None:
+        """Reject release while callbacks from a failed retirement still survive."""
+        if error := self._retire_survivors():
+            raise error
+
     async def close(self) -> None:
         """Finish shared bounded cleanup before propagating caller cancellation."""
         if self._proc is None and self._spawn_task is None:
+            self.raise_if_retirement_unproven()
             return
         self._begin_close()
         closing = self._close_task
@@ -315,6 +352,7 @@ class OmpRpcClient:
         allow_closing: bool = False,
         preceding_frame: dict[str, JsonValue] | None = None,
         schedule_write: OmpScheduler | None = None,
+        completion: bool = False,
     ) -> ReceivedResponse:
         if not allow_closing:
             self._ensure_running()
@@ -329,15 +367,27 @@ class OmpRpcClient:
         )
         self._pending[request_id] = PendingRequest(command, future)
         try:
-            if preceding_frame is None:
-                write = partial(self._write_frame, frame.root)
-                if schedule_write is None:
-                    await write()
-                else:
-                    await schedule_write(write)
-            else:
-                await self._write_frames(preceding_frame, frame.root)
-            response = await future
+            deadline = asyncio.timeout(
+                self.completion_timeout_s if completion else None
+            )
+            try:
+                async with deadline:
+                    if preceding_frame is None:
+                        write = partial(self._write_frame, frame.root)
+                        if schedule_write is None:
+                            await write()
+                        else:
+                            await schedule_write(write)
+                    else:
+                        await self._write_frames(preceding_frame, frame.root)
+                    response = await future
+            except TimeoutError as cause:
+                if not deadline.expired():
+                    raise
+                raise OmpCompletionTimeout(
+                    f"OMP {command} response timed out during prompt completion;"
+                    " the turn outcome is uncertain"
+                ) from cause
             if isinstance(response, (OmpRpcError, OmpProcessError)):
                 raise response
             return response
@@ -379,6 +429,7 @@ class OmpRpcClient:
         work = asyncio.create_task(
             self._complete_prompt(turn, message, schedule_admission)
         )
+        guard = asyncio.create_task(self._guard_completion(turn, work))
         try:
             done, _ = await asyncio.wait(
                 (work, turn.failure), return_when=asyncio.FIRST_COMPLETED
@@ -388,25 +439,107 @@ class OmpRpcClient:
             await work
         except OmpRpcError:
             if not turn.rejected:
-                await self.close()
+                await self._close_preserving()
             raise
         except OmpPromptError:
             raise
         except BaseException:
-            await self.close()
+            await self._close_preserving()
             raise
         finally:
+            workers = [work, event_worker, guard, *turn.callback_tasks]
+            if turn.stop_task is not None:
+                workers.append(turn.stop_task)
+            self._survivors.update(turn.callback_tasks)
+            self._survivors.add(event_worker)
             self._turn = None
-            await self._cancel_tasks(
-                [
-                    work,
-                    event_worker,
-                    *turn.callback_tasks,
-                    *([turn.stop_task] if turn.stop_task is not None else []),
-                ],
-                timeout=self.callback_exit_timeout_s,
-                label="callback",
+            try:
+                await self._cancel_tasks(
+                    workers,
+                    timeout=self.callback_exit_timeout_s,
+                    label="callback",
+                )
+            finally:
+                if error := self._retire_survivors():
+                    self._record_failure(error)
+
+    async def _close_preserving(self) -> None:
+        # A retirement failure must not replace the honest completion failure;
+        # it stays recorded so retirement-dependent restarts fail closed.
+        try:
+            await self.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as cleanup:  # noqa: BLE001 -- preserve the turn error
+            logger.error("OMP retirement failed after prompt error: %s", cleanup)
+
+    async def _guard_completion(
+        self, turn: PromptRun, work: asyncio.Task[None]
+    ) -> None:
+        """Fail completion when fresh idle evidence exhausts its budget."""
+        armed_since: float | None = None
+        armed_activity_sequence = turn.last_activity_sequence
+        try:
+            while self._turn is turn and not work.done():
+                if armed_activity_sequence != turn.last_activity_sequence:
+                    armed_since = None
+                    armed_activity_sequence = turn.last_activity_sequence
+                # Clear before inspection so subsequent evidence cannot be lost.
+                turn.changed.clear()
+                match turn.completion_action():
+                    case CompletionAction.STOP:
+                        return
+                    case CompletionAction.WAIT_FOR_ACTIVITY:
+                        armed_since = None
+                        await turn.changed.wait()
+                    case CompletionAction.REFRESH_SNAPSHOT:
+                        await self._refresh_completion_snapshot(
+                            turn, "Invalid OMP completion protocol data"
+                        )
+                    case CompletionAction.WATCH_IDLE_BUDGET:
+                        armed_since = await self._watch_idle_completion_budget(
+                            turn, armed_since
+                        )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 -- belongs to the awaiting prompt
+            turn.fail(error)
+
+    async def _refresh_completion_snapshot(
+        self, turn: PromptRun, invalid_state_message: str
+    ) -> None:
+        snapshot = await self._request_frame(
+            OmpCommandName.GET_STATE, {}, completion=True
+        )
+        state = self._parse_response(snapshot.frame, OmpState, invalid_state_message)
+        turn.record_snapshot(snapshot.sequence, state)
+
+    async def _watch_idle_completion_budget(
+        self, turn: PromptRun, armed_since: float | None
+    ) -> float:
+        now = asyncio.get_running_loop().time()
+        if armed_since is None:
+            return now
+        remaining = self.completion_timeout_s - (now - armed_since)
+        if remaining <= 0:
+            raise OmpCompletionTimeout(
+                "OMP completion stayed idle without its result,"
+                " settlement, or final drain; the turn outcome is uncertain"
             )
+        await self._wait_for_evidence_or_deadline(turn, remaining)
+        return armed_since
+
+    async def _wait_for_evidence_or_deadline(
+        self, turn: PromptRun, timeout_s: float
+    ) -> None:
+        changed = asyncio.create_task(turn.changed.wait())
+        try:
+            done, _ = await asyncio.wait({changed}, timeout=timeout_s)
+            if changed in done:
+                await changed
+        finally:
+            changed.cancel()
+            await asyncio.gather(changed, return_exceptions=True)
 
     async def _complete_prompt(
         self, turn: PromptRun, message: str, schedule_admission: OmpScheduler | None
@@ -426,9 +559,11 @@ class OmpRpcClient:
             OmpPromptAcceptance,
             "Invalid OMP prompt acceptance protocol data",
         )
+        turn.result_owed = acceptance.agentInvoked is not False
+        turn.changed.set()
         outcome: OmpPromptResult | None = None
         # A synchronous local command explicitly owes no prompt_result.
-        if acceptance.agentInvoked is not False:
+        if turn.result_owed:
             outcome = await turn.result
         await self._wait_for_settlement(turn)
         await turn.events.join()
@@ -438,7 +573,9 @@ class OmpRpcClient:
                     while any(not task.done() for task in turn.callback_tasks):
                         await asyncio.wait(turn.callback_tasks)
             except TimeoutError:
-                error = OmpProcessError(CALLBACKS_UNFINISHED)
+                error = OmpCompletionTimeout(
+                    f"{CALLBACKS_UNFINISHED}; the turn outcome is uncertain"
+                )
                 self._record_failure(error)
                 raise error from None
         if turn.stop_task is not None:
@@ -464,25 +601,22 @@ class OmpRpcClient:
             )
 
     async def _wait_for_settlement(self, turn: PromptRun) -> None:
-        snapshot = await self._request_frame(OmpCommandName.GET_STATE, {})
-        state = self._parse_response(
-            snapshot.frame, OmpState, "Invalid OMP settlement protocol data"
-        )
-        if state.isSettled and snapshot.sequence >= turn.last_activity_sequence:
-            return
-        # An old, uncorrelated session_settled cannot overrule a newer busy snapshot.
-        while (
-            turn.settled_sequence <= snapshot.sequence
-            or turn.settled_sequence <= turn.last_activity_sequence
-        ):
+        while True:
+            await self._refresh_completion_snapshot(
+                turn, "Invalid OMP settlement protocol data"
+            )
+            if turn.settlement_confirmed():
+                return
             turn.changed.clear()
             await turn.changed.wait()
 
     async def _deliver_events(self, turn: PromptRun) -> None:
         try:
-            while True:
+            while self._turn is turn and not self._closing:
                 event = await turn.events.get()
                 try:
+                    if self._turn is not turn or self._closing:
+                        return
                     await turn.on_event(event)
                 finally:
                     turn.events.task_done()
@@ -568,6 +702,7 @@ class OmpRpcClient:
                 result = OmpPromptResult.model_validate(payload)
                 if turn is not None and result.id == turn.id and not turn.result.done():
                     turn.result.set_result(result)
+                    turn.changed.set()
                 else:
                     logger.debug("OMP RPC ignored an unmatched prompt_result")
             case OmpFrameType.SESSION_SETTLED:
@@ -870,6 +1005,7 @@ class OmpRpcClient:
             await self._cancel_tasks(
                 workers, timeout=self.callback_exit_timeout_s, label="callback"
             )
+            self._survivors.update(task for task in workers if not task.done())
 
         owner = self._windows_process
         scope = self._process_scope
@@ -883,6 +1019,9 @@ class OmpRpcClient:
                 self._proc = owner.process
         process = await self._settle_spawn()
         if process is None:
+            error = self._retire_survivors()
+            if error is not None:
+                raise error
             self._windows_process = None
             self._process_scope = None
             return
@@ -941,8 +1080,6 @@ class OmpRpcClient:
                     scope.close, process, self.process_exit_timeout_s
                 )
             await self._await_contained_exit(process)
-            self._windows_process = None
-            self._process_scope = None
         finally:
             # A cancelled pipe read on Windows stays pending until the child is
             # killed; drain stdout only after that reader finishes.
@@ -957,3 +1094,8 @@ class OmpRpcClient:
             await self._cancel_tasks(
                 drains, timeout=self.callback_exit_timeout_s, label="drain"
             )
+        error = self._retire_survivors()
+        if error is not None:
+            raise error
+        self._windows_process = None
+        self._process_scope = None

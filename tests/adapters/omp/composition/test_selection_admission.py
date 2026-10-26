@@ -13,7 +13,6 @@ from band.integrations.omprpc import OmpProcessError
 from band.runtime.tools import AgentTools
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.runtime import ReplyingPlatform
-from tests.adapters.omp.kit import run_turn
 from tests.adapters.omp.lifecyclekit import HeldWaiterMailbox
 from tests.adapters.omp.mailboxkit import mailbox_adapter, room_client
 from tests.adapters.omp.mailboxpeer import (
@@ -23,7 +22,8 @@ from tests.adapters.omp.mailboxpeer import (
     PeerCommand,
     model_reply,
 )
-from tests.integrations.omprpc.kit import owned_rpc_process
+from tests.adapters.omp.turns import run_turn
+from tests.integrations.omprpc.processes import owned_rpc_process
 from tests.runtime.helpers import ALICE
 
 

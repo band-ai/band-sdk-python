@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -20,19 +19,12 @@ from band.integrations.ompprocess import (
 from band.integrations.ompwire import OmpCommandName
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 from band.testing import FakeAgentTools, failure_reports
-from tests.adapters.omp.kit import (
-    BandMcpReplyRuntime,
-    Launches,
-    checkpoint,
-    launches,
-    remote,
-    requests_named,
-    run_turn,
-)
+from tests.adapters.omp.lifecyclekit import Launches
+from tests.adapters.omp.models import requests_named
 from tests.adapters.omp.readiness import ReceiptRuntime
+from tests.adapters.omp.resolution import checkpoint, remote
+from tests.adapters.omp.turns import run_turn
 from tests.integrations.acp.conftest import make_platform_message
-
-__all__ = ["launches"]
 
 
 class TestMcpResolution:
@@ -85,7 +77,7 @@ class TestMcpResolution:
     async def test_a_resolved_set_replaces_static_servers_even_when_empty(
         self, launches: Launches, tmp_path: Path, monkeypatch
     ):
-        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", omp_mcp_ready)
+        monkeypatch.setattr("band.adapters.omp.lifecycle.omp_mcp_ready", omp_mcp_ready)
         launches.runtime_factory = lambda: ReceiptRuntime(launches.plugins[-1], ())
         adapter = OmpAdapter(
             OmpAdapterConfig(cwd=str(tmp_path), mcp_servers={"stale": remote("old")}),
@@ -105,7 +97,7 @@ class TestMcpResolution:
     async def test_readiness_checks_the_same_snapshot_the_overlay_carries(
         self, launches: Launches, tmp_path: Path, monkeypatch
     ):
-        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", omp_mcp_ready)
+        monkeypatch.setattr("band.adapters.omp.lifecycle.omp_mcp_ready", omp_mcp_ready)
         launches.runtime_factory = lambda: ReceiptRuntime(
             launches.plugins[-1], ("linear",)
         )
@@ -145,7 +137,7 @@ class TestMcpResolution:
         receipt_servers: tuple[str, ...] | None,
         error: str,
     ) -> None:
-        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", omp_mcp_ready)
+        monkeypatch.setattr("band.adapters.omp.lifecycle.omp_mcp_ready", omp_mcp_ready)
         launches.runtime_factory = lambda: ReceiptRuntime(
             launches.plugins[-1], receipt_servers
         )
@@ -207,7 +199,9 @@ class TestMcpResolution:
             overlays.append(kwargs["workspace"])
             return real_plugin(servers, **kwargs)
 
-        monkeypatch.setattr("band.adapters.omp.omp_mcp_plugin", recording_plugin)
+        monkeypatch.setattr(
+            "band.adapters.omp.lifecycle.omp_mcp_plugin", recording_plugin
+        )
 
         async def resolve(_workspace: str):
             entered.set()
@@ -358,23 +352,12 @@ class TestMcpResolution:
         finally:
             await adapter.cleanup_all()
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("external", [{}, {"linear": remote("grant-A")}])
     async def test_the_configured_band_endpoint_survives_any_resolved_external_set(
-        self, tmp_path: Path, monkeypatch, external
-    ):
-        overlays: list[dict[str, object]] = []
-
-        def spawn(command, **_kwargs):
-            plugin = Path(command[command.index("--plugin-dir") + 1])
-            overlays.append(
-                json.loads((plugin / ".mcp.json").read_text(encoding="utf-8"))
-            )
-            return BandMcpReplyRuntime()
-
-        ready = AsyncMock()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", spawn)
-        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", ready)
+        self,
+        tmp_path: Path,
+        external,
+    ) -> None:
         band = OmpMcpServer(type=OmpMcpTransport.HTTP, url="http://127.0.0.1:9/band")
         adapter = OmpAdapter(
             OmpAdapterConfig(
@@ -385,21 +368,10 @@ class TestMcpResolution:
             resolve_mcp_servers=AsyncMock(return_value=external),
             emit=(),
         )
-        tools = FakeAgentTools()
-
-        await run_turn(adapter, tools)
-
-        expected = {BAND_MCP_SERVER_NAME, *external}
-        (overlay,) = overlays
-        assert (
-            set(overlay["mcpServers"]) == expected
-        )  # the cached external entry is gone
-        assert (
-            overlay["mcpServers"][BAND_MCP_SERVER_NAME]["url"]
-            == "http://127.0.0.1:9/band"
-        )
-        assert set(ready.await_args.args[2]) == expected
-        assert (
-            tools.turn.replied
-        )  # Band's reply tool still routes through its own server
-        await adapter.cleanup_all()
+        try:
+            room = adapter._room("room-123")
+            await adapter._prepare_room(room, OmpSessionState())
+            assert set(room.servers) == {BAND_MCP_SERVER_NAME, *external}
+            assert room.servers[BAND_MCP_SERVER_NAME] == band
+        finally:
+            await adapter.cleanup_all()

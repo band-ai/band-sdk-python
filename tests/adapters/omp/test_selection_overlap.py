@@ -7,12 +7,12 @@ import asyncio
 import pytest
 
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import run_turn
 from tests.adapters.omp.mailboxpeer import MODEL_PROVIDER, ORIGINAL_MODEL
 from tests.adapters.omp.selectionkit import (
     ACCEPTED_MODEL,
     SELECTED_EFFORT,
 )
+from tests.adapters.omp.turns import run_turn
 
 
 class TestSelectionOverlap:

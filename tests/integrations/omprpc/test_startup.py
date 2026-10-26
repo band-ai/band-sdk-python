@@ -13,13 +13,13 @@ from band.integrations.omprpc import (
     OmpRpcClient,
     OmpRpcError,
 )
-from tests.integrations.omppeer import OVERSIZE_AFTER_READY
-from tests.integrations.omprpc.kit import (
+from tests.integrations.omprpc.processes import owned_rpc_process
+from tests.integrations.omprpc.spawn import (
     OMP_PEER_COMMAND,
     ClientFactory,
     SpawnBarrier,
-    owned_rpc_process,
 )
+from tests.integrations.ompscenarios import PeerScenario
 
 
 class TestStartupNegotiation:
@@ -31,7 +31,7 @@ class TestStartupNegotiation:
             (
                 *OMP_PEER_COMMAND,
                 "--scenario",
-                "no-ready",
+                PeerScenario.NO_READY,
             ),
             create_process=barrier.create,
         )
@@ -60,20 +60,25 @@ class TestStartupNegotiation:
     @pytest.mark.parametrize(
         ("scenario", "error"),
         [
-            ("no-v2", OmpProtocolError),
-            ("bad-negotiation", OmpProtocolError),
-            ("negotiation-rejected", OmpRpcError),
+            (PeerScenario.NO_V2, OmpProtocolError),
+            (PeerScenario.BAD_NEGOTIATION, OmpProtocolError),
+            (PeerScenario.NEGOTIATION_REJECTED, OmpRpcError),
         ],
     )
     async def test_start_requires_successful_native_v2_negotiation(
-        self, client_factory: ClientFactory, scenario: str, error: type[RuntimeError]
+        self,
+        client_factory: ClientFactory,
+        scenario: PeerScenario,
+        error: type[RuntimeError],
     ) -> None:
         async with asyncio.timeout(6):
             with pytest.raises(error, match="protocol"):
                 await client_factory(scenario)
 
     async def test_negotiated_frame_limit_applies_before_the_next_line(self) -> None:
-        client = OmpRpcClient((*OMP_PEER_COMMAND, "--scenario", OVERSIZE_AFTER_READY))
+        client = OmpRpcClient(
+            (*OMP_PEER_COMMAND, "--scenario", PeerScenario.OVERSIZE_AFTER_READY)
+        )
         try:
             with pytest.raises(OmpProtocolError):
                 await client.start()
@@ -84,7 +89,7 @@ class TestStartupNegotiation:
     async def test_graceful_close_does_not_log_stdout_eof_as_a_crash(
         self, client_factory: ClientFactory, caplog: pytest.LogCaptureFixture
     ) -> None:
-        client = await client_factory("basic")
+        client = await client_factory(PeerScenario.STANDARD_TURN)
         with caplog.at_level(logging.ERROR, logger="band.integrations.omprpc"):
             await client.close()
         assert caplog.records == []

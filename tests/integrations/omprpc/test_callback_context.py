@@ -12,8 +12,10 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from tests.integrations.omppeer import UI_APPROVE
-from tests.integrations.omprpc.kit import ClientFactory, Observer
+from tests.integrations.ompframes import UI_APPROVE
+from tests.integrations.omprpc.events import EventRecorder
+from tests.integrations.omprpc.spawn import ClientFactory
+from tests.integrations.ompscenarios import PeerScenario
 
 PROMPT_TOKEN = ContextVar("omp_rpc_prompt_token", default="reader")
 
@@ -23,8 +25,8 @@ class TestCallbackWithoutPromptContext:
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("callbacks")
-        observer = Observer()
+        client = await client_factory(PeerScenario.PARALLEL_CALLBACKS)
+        observer = EventRecorder()
         seen: list[str] = []
 
         async def on_ui(_request: OmpUIRequest) -> OmpUIResponse:

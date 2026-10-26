@@ -10,25 +10,18 @@ from band.adapters.omp import (
     OMP_PERMISSION_CALL_ID_PREFIX,
     OMP_PERMISSION_TOOL,
     OMP_TOOL_APPROVAL_HEADER,
-    OmpAdapter,
-    OmpAdapterConfig,
 )
-from band.converters.omp import OmpSessionState
-from band.integrations.ompwire import OmpEventType, OmpUIMethod
-from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import (
-    RepeatedRuntime,
-    _cancel,
-    _ready,
-    owned_rpc_turn,
-    tool_call_records,
-    tool_result_records,
-)
-from tests.integrations.acp.conftest import make_platform_message
+from band.core.protocols import TurnResultAlreadyReported
+from band.integrations.ompwire import OmpEventType, OmpUIMethod, OmpUIRequest
+from tests.adapters.omp.activitykit import tool_end, tool_start
+from tests.adapters.omp.permissions import decline_permission, owned_rpc_turn
+from tests.adapters.omp.records import tool_call_records, tool_result_records
+from tests.adapters.omp.turns import NativeTurnFactory
 from tests.integrations.omppermissionpeer import (
     DENIED_PATH,
     NATIVE_EVENT_ID,
     NATIVE_FAILURE_OUTPUT,
+    PermissionOrder,
 )
 
 
@@ -37,17 +30,21 @@ class TestPermissionRecords:
         ("order", "expected"),
         [
             (
-                "native-first",
+                PermissionOrder.NATIVE_FIRST,
                 [OmpEventType.TOOL_START, OmpUIMethod.SELECT, OmpEventType.TOOL_END],
             ),
             (
-                "permission-first",
+                PermissionOrder.PERMISSION_FIRST,
                 [OmpUIMethod.SELECT, OmpEventType.TOOL_START, OmpEventType.TOOL_END],
             ),
         ],
     )
     async def test_permission_and_native_records_are_independent_in_both_orders(
-        self, monkeypatch, tmp_path: Path, order: str, expected: list[object]
+        self,
+        monkeypatch,
+        tmp_path: Path,
+        order: PermissionOrder,
+        expected: list[object],
     ) -> None:
         tools, observed = await owned_rpc_turn(
             monkeypatch, tmp_path, f"{OMP_TOOL_APPROVAL_HEADER}read", order
@@ -87,26 +84,23 @@ class TestPermissionRecords:
         assert len(calls) == len(results) == 2
 
     async def test_repeated_owned_permission_requests_get_distinct_event_ids(
-        self, monkeypatch, tmp_path: Path
+        self, native_turn: NativeTurnFactory
     ) -> None:
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", RepeatedRuntime)
-        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", _ready)
-        adapter = OmpAdapter(
-            OmpAdapterConfig(cwd=str(tmp_path)), resolve_permission=_cancel
-        )
-        tools = FakeAgentTools()
-        try:
-            await adapter.on_message(
-                make_platform_message("Repeat the question"),
-                tools,
-                OmpSessionState(),
-                None,
-                None,
-                is_session_bootstrap=True,
-                room_id="room",
-            )
-        finally:
-            await adapter.cleanup_all()
+        with pytest.raises(TurnResultAlreadyReported):
+            async with native_turn(resolve_permission=decline_permission) as turn:
+                request = OmpUIRequest(
+                    id=NATIVE_EVENT_ID, method=OmpUIMethod.SELECT, title="A question"
+                )
+                first = await turn.callbacks.ui(request)
+                second = await turn.callbacks.ui(request)
+                assert first.cancelled and second.cancelled
+                await turn.callbacks.event(
+                    tool_start(NATIVE_EVENT_ID, "read", path=DENIED_PATH)
+                )
+                await turn.callbacks.event(
+                    tool_end(NATIVE_EVENT_ID, "read", is_error=True)
+                )
+        tools = turn.tools
         calls = tool_call_records(tools)
         permission_ids = [
             call["tool_call_id"]

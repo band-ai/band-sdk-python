@@ -7,13 +7,16 @@ from collections.abc import Awaitable
 from pathlib import Path
 
 from band.integrations.omprpc.prompt import OmpCallbackKind
-from tests.adapters.omp.kit import checkpoint, run_turn, start_cleanup
 from tests.adapters.omp.mailboxkit import MailboxTools, mailbox_adapter, room_client
 from tests.adapters.omp.mailboxpeer import (
     FIRST_CALLBACK,
     ORIGINAL_MODEL,
     PeerCommand,
     model_reply,
+)
+from tests.adapters.omp.resolution import (
+    checkpoint,
+    start_cleanup,
 )
 from tests.adapters.omp.retirementkit import (
     CallbackExit,
@@ -22,7 +25,8 @@ from tests.adapters.omp.retirementkit import (
     exercise_callback_retirement,
     native_overlay,
 )
-from tests.integrations.omprpc.kit import owned_rpc_process
+from tests.adapters.omp.turns import run_turn
+from tests.integrations.omprpc.processes import owned_rpc_process
 
 
 class TestCallbackRetirement:

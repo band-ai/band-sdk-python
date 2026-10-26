@@ -27,7 +27,9 @@ from tests.integrations.omprpc.callbackpeer import (
     RELEASE_ACCEPTANCE,
     CallbackKind,
 )
-from tests.integrations.omprpc.kit import Observer, checkpoint_frames, owned_rpc_process
+from tests.integrations.omprpc.events import EventRecorder
+from tests.integrations.omprpc.processes import owned_rpc_process
+from tests.integrations.omprpc.wirelog import checkpoint_frames
 
 
 @pytest.mark.parametrize(
@@ -43,7 +45,7 @@ class TestPromptAdmission:
         mailbox = RoomMailbox()
         held = Hold()
         queued = asyncio.Event()
-        callbacks, observer = ImmediateCallbacks(), Observer()
+        callbacks, observer = ImmediateCallbacks(), EventRecorder()
 
         async def admission(write: Callable[[], Awaitable[None]]) -> None:
             queued.set()
@@ -92,7 +94,7 @@ class TestPromptAdmission:
         mailbox = RoomMailbox()
         held = Hold()
         queued = asyncio.Event()
-        callbacks, observer = ImmediateCallbacks(), Observer()
+        callbacks, observer = ImmediateCallbacks(), EventRecorder()
 
         async with callback_client(
             CallbackKind.HOST, False, transcript=transcript
@@ -103,7 +105,8 @@ class TestPromptAdmission:
             async def successor() -> None:
                 queued.set()
                 await mailbox.ask(
-                    ROOM, partial(client.request, OmpCommandName.SET_MODEL)
+                    ROOM,
+                    partial(client.request, OmpCommandName.SET_HOST_TOOLS, tools=[]),
                 )
 
             with tasks():
@@ -129,7 +132,7 @@ class TestPromptAdmission:
                     await checkpoint_frames(client)
                     assert received_commands(transcript) == [
                         OmpCommandName.PROMPT,
-                        OmpCommandName.SET_MODEL,
+                        OmpCommandName.SET_HOST_TOOLS,
                     ]
                     assert not prompt.done()
                     await client.request(RELEASE_ACCEPTANCE)
@@ -149,7 +152,7 @@ class TestPromptAdmission:
         transcript = tmp_path / "cancelled-admission.jsonl"
         mailbox = RoomMailbox()
         held = Hold()
-        callbacks, observer = ImmediateCallbacks(), Observer()
+        callbacks, observer = ImmediateCallbacks(), EventRecorder()
 
         async with callback_client(
             CallbackKind.HOST, False, transcript=transcript
@@ -185,7 +188,7 @@ class TestPromptAdmission:
     ) -> None:
         transcript = tmp_path / "cancelled-acceptance.jsonl"
         mailbox = RoomMailbox()
-        callbacks, observer = ImmediateCallbacks(), Observer()
+        callbacks, observer = ImmediateCallbacks(), EventRecorder()
         async with callback_client(
             CallbackKind.HOST, False, transcript=transcript
         ) as client:

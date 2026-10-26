@@ -8,7 +8,10 @@ from enum import StrEnum
 from pathlib import Path
 
 from band.integrations.ompwire import OmpCommandName, OmpFrameType, OmpUIMethod
-from tests.integrations.omppeer import COMPLETE, Frame, Peer, announce_ready, send
+from tests.integrations.ompframes import Frame, send
+from tests.integrations.omppeer import announce_ready
+from tests.integrations.omppeers.base import COMPLETE, RpcPeer
+from tests.integrations.ompscenarios import PeerScenario
 
 CALLBACK_ID = "reused-callback"
 OLD_RESULT = "old callback result"
@@ -25,9 +28,9 @@ class CallbackKind(StrEnum):
     UI = "ui"
 
 
-class CallbackPeer(Peer):
+class CallbackPeer(RpcPeer):
     def __init__(self, kind: CallbackKind) -> None:
-        super().__init__("callback-identity")
+        super().__init__()
         self.kind = kind
         self.hold_acceptance = False
         self.held_prompt: Frame | None = None
@@ -100,9 +103,9 @@ class CallbackPeer(Peer):
                 self.callback()
                 self.respond(frame)
             case command if command == FINISH:
-                self.end(COMPLETE)
-                self.result(settled=True)
-                self.settle()
+                self.emit_assistant_turn(COMPLETE)
+                self.send_prompt_result(settled=True)
+                self.settle_session()
                 self.respond(frame)
             case _:
                 super().handle(frame)
@@ -114,7 +117,7 @@ def main() -> None:
     parser.add_argument("--transcript", type=Path)
     args = parser.parse_args()
     peer = CallbackPeer(args.kind)
-    announce_ready(peer.scenario)
+    announce_ready(PeerScenario.STANDARD_TURN)
     for line in sys.stdin:
         if args.transcript is not None:
             with args.transcript.open("a", encoding="utf-8") as transcript:

@@ -19,7 +19,10 @@ from band.integrations.ompwire import (
     OmpUIMethod,
 )
 from band.runtime.tools import BandTool
-from tests.integrations.omppeer import Frame, Peer, announce_ready, send
+from tests.integrations.ompframes import Frame, send
+from tests.integrations.omppeer import announce_ready
+from tests.integrations.omppeers.base import RpcPeer
+from tests.integrations.ompscenarios import PeerScenario
 
 MODEL_PROVIDER = "openai"
 ORIGINAL_MODEL = "original"
@@ -47,9 +50,9 @@ def model_reply(model: str) -> str:
     return f"Native model: {MODEL_PROVIDER}/{model}"
 
 
-class MailboxPeer(Peer):
+class MailboxPeer(RpcPeer):
     def __init__(self) -> None:
-        super().__init__("mailbox")
+        super().__init__()
         self.callback_turn = int(sys.argv[1])
         self.callback_count = int(sys.argv[2])
         self.initial_tool = sys.argv[4] == OmpFrameType.HOST_TOOL_CALL
@@ -107,9 +110,9 @@ class MailboxPeer(Peer):
         )
 
     def finish_reply(self) -> None:
-        self.end(model_reply(self.model))
-        self.result(settled=True)
-        self.settle()
+        self.emit_assistant_turn(model_reply(self.model))
+        self.send_prompt_result(settled=True)
+        self.settle_session()
 
     def prompt(self, frame: Frame) -> None:
         self.prompt_id = frame.id
@@ -121,8 +124,8 @@ class MailboxPeer(Peer):
             (self.plugin / OMP_MCP_RECEIPT).write_text(
                 '{"systemPromptReady":true,"servers":[]}', encoding="utf-8"
             )
-            self.result(settled=True)
-            self.settle()
+            self.send_prompt_result(settled=True)
+            self.settle_session()
             return
         self.prompt_count += 1
         send({"type": OmpEventType.AGENT_START})
@@ -224,7 +227,7 @@ class MailboxPeer(Peer):
 
 
 def main() -> None:
-    announce_ready("mailbox")
+    announce_ready(PeerScenario.STANDARD_TURN)
     peer = MailboxPeer()
     for line in sys.stdin:
         if sys.argv[3]:

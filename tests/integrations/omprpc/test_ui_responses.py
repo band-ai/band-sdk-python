@@ -8,12 +8,12 @@ import pytest
 from pydantic import JsonValue
 
 from band.integrations.ompwire import OmpFrameType, OmpUIRequest, OmpUIResponse
-from tests.integrations.omprpc.kit import (
-    ClientFactory,
-    Observer,
-    checkpoint_frames,
-    second_prompt,
-)
+from tests.integrations.omppeers.base import COMPLETE
+from tests.integrations.omprpc.callbacks import echo_tool
+from tests.integrations.omprpc.events import EventRecorder, follow_up_texts
+from tests.integrations.omprpc.spawn import ClientFactory
+from tests.integrations.omprpc.wirelog import checkpoint_frames
+from tests.integrations.ompscenarios import PeerScenario
 
 
 class TestUIResponseVariants:
@@ -42,8 +42,8 @@ class TestUIResponseVariants:
         response: OmpUIResponse,
         answer: dict[str, JsonValue],
     ) -> None:
-        client = await client_factory("callbacks")
-        observer = Observer()
+        client = await client_factory(PeerScenario.PARALLEL_CALLBACKS)
+        observer = EventRecorder()
 
         async def on_ui(_request: OmpUIRequest) -> OmpUIResponse:
             return response
@@ -52,7 +52,7 @@ class TestUIResponseVariants:
             await client.prompt(
                 "first",
                 on_event=observer.on_event,
-                on_tool=observer.on_tool,
+                on_tool=echo_tool,
                 on_ui=on_ui,
             )
             frames = await checkpoint_frames(client)
@@ -62,4 +62,4 @@ class TestUIResponseVariants:
             "id": "approval-1",
             **answer,
         }
-        await second_prompt(client)
+        assert await follow_up_texts(client) == [COMPLETE]

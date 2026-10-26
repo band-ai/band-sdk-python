@@ -136,7 +136,7 @@ def received_commands(transcript: Path) -> list[OmpCommandName]:
     return [
         OmpCommandName(frame["type"])
         for frame in frames
-        if frame["type"] in (OmpCommandName.PROMPT, OmpCommandName.SET_MODEL)
+        if frame["type"] in (OmpCommandName.PROMPT, OmpCommandName.SET_HOST_TOOLS)
     ]
 
 

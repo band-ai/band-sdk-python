@@ -9,12 +9,9 @@ from pathlib import Path
 import pytest
 
 from band.adapters.omp import OMP_PERMISSION_TOOL, OMP_TOOL_APPROVAL_HEADER
-from tests.adapters.omp.kit import (
-    owned_rpc_turn,
-    tool_call_records,
-    tool_result_records,
-)
-from tests.integrations.omppermissionpeer import NATIVE_EVENT_ID
+from tests.adapters.omp.permissions import owned_rpc_turn
+from tests.adapters.omp.records import tool_call_records, tool_result_records
+from tests.integrations.omppermissionpeer import NATIVE_EVENT_ID, PermissionOrder
 
 FILE_CONTENT = "private-file-bytes-4e612b"
 FILE_ARGUMENTS = {
@@ -60,7 +57,7 @@ class TestPermissionProjection:
             wire_arguments
         )
         tools, _ = await owned_rpc_turn(
-            monkeypatch, tmp_path, title, "permission-first"
+            monkeypatch, tmp_path, title, PermissionOrder.PERMISSION_FIRST
         )
         permission = next(
             call
@@ -95,7 +92,7 @@ class TestPermissionProjection:
         self, monkeypatch, tmp_path: Path, title: str
     ) -> None:
         tools, _ = await owned_rpc_turn(
-            monkeypatch, tmp_path, title, "permission-first"
+            monkeypatch, tmp_path, title, PermissionOrder.PERMISSION_FIRST
         )
         permission = next(
             call
@@ -111,7 +108,7 @@ class TestPermissionProjection:
     ) -> None:
         title = "Approve tool?"
         tools, _ = await owned_rpc_turn(
-            monkeypatch, tmp_path, title, "permission-first"
+            monkeypatch, tmp_path, title, PermissionOrder.PERMISSION_FIRST
         )
         permission = next(
             call
@@ -153,7 +150,7 @@ class TestPermissionProjection:
                 monkeypatch,
                 tmp_path,
                 "A question",
-                "permission-first",
+                PermissionOrder.PERMISSION_FIRST,
                 native_name=native_name,
                 native_arguments=arguments,
                 native_error=False,
@@ -192,7 +189,7 @@ class TestPermissionProjection:
             monkeypatch,
             tmp_path,
             "A question",
-            "permission-first",
+            PermissionOrder.PERMISSION_FIRST,
             native_name="write",
             native_arguments=arguments,
             native_error=False,
@@ -222,7 +219,7 @@ class TestPermissionProjection:
         sys.set_int_max_str_digits(4300)
         try:
             tools, _ = await owned_rpc_turn(
-                monkeypatch, tmp_path, title, "permission-first"
+                monkeypatch, tmp_path, title, PermissionOrder.PERMISSION_FIRST
             )
         finally:
             sys.set_int_max_str_digits(limit)

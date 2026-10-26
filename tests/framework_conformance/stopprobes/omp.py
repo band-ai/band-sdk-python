@@ -27,7 +27,6 @@ from tests.framework_conformance.stopprobes import (
     wait_until,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
-from tests.framework_conformance.turnprobes.omp import admit_prompt
 
 if TYPE_CHECKING:
     from band.integrations.omprpc.client import OmpScheduler
@@ -41,6 +40,10 @@ if TYPE_CHECKING:
 
 PROMPT_CANCELLED = "prompt cancelled"
 CLOSED = "closed"
+
+
+async def empty_prompt_write() -> None:
+    return None
 
 
 class HeldOmpClient:
@@ -75,7 +78,8 @@ class HeldOmpClient:
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
         schedule_admission: OmpScheduler | None = None,
     ) -> None:
-        await admit_prompt(schedule_admission)
+        if schedule_admission is not None:
+            await schedule_admission(empty_prompt_write)
         del message, on_event, on_tool, on_ui
         self.prompting = True
         try:
@@ -83,6 +87,9 @@ class HeldOmpClient:
         except asyncio.CancelledError:
             self.journal.append(PROMPT_CANCELLED)
             raise
+
+    def raise_if_retirement_unproven(self) -> None:
+        return None
 
     async def close(self) -> None:
         self.journal.append(CLOSED)
@@ -98,8 +105,8 @@ async def run_probe(mode: ControlMode | None) -> list[str]:
     client = HeldOmpClient()
     with (
         tempfile.TemporaryDirectory(prefix="band-stop-omp-") as workspace,
-        patch("band.adapters.omp.OmpRpcClient", return_value=client),
-        patch("band.adapters.omp.omp_mcp_ready", new=AsyncMock()),
+        patch("band.adapters.omp.lifecycle.OmpRpcClient", return_value=client),
+        patch("band.adapters.omp.lifecycle.omp_mcp_ready", new=AsyncMock()),
     ):
         adapter = OmpAdapter(OmpAdapterConfig(cwd=workspace))
         await adapter.on_started("Agent", "A coding agent")

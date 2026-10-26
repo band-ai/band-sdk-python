@@ -7,13 +7,15 @@ import asyncio
 import pytest
 
 from tests.conftest import eager_tasks, requires_eager_tasks
+from tests.integrations.omppeers.base import COMPLETE
 from tests.integrations.omprpc.callbackkit import (
     ImmediateCallbacks,
     callback_client,
     callback_results,
 )
 from tests.integrations.omprpc.callbackpeer import FINISH, NEW_RESULT, CallbackKind
-from tests.integrations.omprpc.kit import Observer, checkpoint_frames, second_prompt
+from tests.integrations.omprpc.events import EventRecorder, follow_up_texts
+from tests.integrations.omprpc.wirelog import checkpoint_frames
 
 
 class TestCallbackStartup:
@@ -34,7 +36,7 @@ class TestCallbackStartup:
                 running = asyncio.create_task(
                     client.prompt(
                         "first",
-                        on_event=Observer().on_event,
+                        on_event=EventRecorder().on_event,
                         on_tool=callbacks.on_tool,
                         on_ui=callbacks.on_ui,
                     )
@@ -46,7 +48,7 @@ class TestCallbackStartup:
                     ]
                     await client.request(FINISH)
                     await running
-                    await second_prompt(client)
+                    assert await follow_up_texts(client) == [COMPLETE]
                 finally:
                     running.cancel()
                     await asyncio.gather(running, return_exceptions=True)

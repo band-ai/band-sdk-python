@@ -9,6 +9,7 @@ from hypothesis import strategies as st
 from tests.adapters.omp.lifecycle import NativeStep, Step, play, play_native
 
 
+@pytest.mark.usefixtures("native_startup_ready")
 class TestRoomLifecycleModel:
     @pytest.mark.timeout(90)
     @settings(

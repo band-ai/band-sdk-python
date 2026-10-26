@@ -11,19 +11,12 @@ from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.core.model_catalog import ModelSelection
 from band.integrations.ompwire import OmpCommandName
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import (
-    Launches,
-    RecordingRuntime,
-    SelectionGateRuntime,
-    checkpoint,
-    launches,
-    run_turn,
-)
-from tests.adapters.omp.lifecyclekit import ObservedMailbox
+from tests.adapters.omp.lifecyclekit import Launches, ObservedMailbox
 from tests.adapters.omp.mailboxpeer import MODEL_PROVIDER, ORIGINAL_MODEL
+from tests.adapters.omp.models import RecordingRuntime, SelectionGateRuntime
+from tests.adapters.omp.resolution import checkpoint
 from tests.adapters.omp.selectionkit import ACCEPTED_MODEL
-
-__all__ = ["launches"]
+from tests.adapters.omp.turns import run_turn
 
 
 class TestStartupSelection:

@@ -25,7 +25,7 @@ from band.integrations.ompwire import (
 )
 from band.testing import FakeAgentTools
 from tests.integrations.acp.conftest import make_platform_message
-from tests.integrations.omprpc.kit import checkpoint_frames
+from tests.integrations.omprpc.wirelog import checkpoint_frames
 
 
 async def ask_turn(

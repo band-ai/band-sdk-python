@@ -16,14 +16,8 @@ from band.core.model_catalog import ModelSelection
 from band.integrations.omprpc import OmpProcessError
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.hold import Hold
-from tests.adapters.omp.kit import (
-    Launches,
-    PendingRuntime,
-    SignallingLock,
-    claimed_workspace_rooms,
-    run_turn,
-)
-from tests.adapters.omp.lifecyclekit import HeldWaiterMailbox
+from tests.adapters.omp.custody import claimed_workspace_rooms
+from tests.adapters.omp.lifecyclekit import HeldWaiterMailbox, Launches, SignallingLock
 from tests.adapters.omp.mailboxkit import (
     CallbackResolver,
     MailboxTools,
@@ -43,7 +37,9 @@ from tests.adapters.omp.mailboxpeer import (
     model_reply,
 )
 from tests.adapters.omp.retirementkit import native_overlay
-from tests.integrations.omprpc.kit import owned_rpc_process
+from tests.adapters.omp.runtime import PendingRuntime
+from tests.adapters.omp.turns import run_turn
+from tests.integrations.omprpc.processes import owned_rpc_process
 
 ROOM = "room-123"
 
@@ -198,7 +194,7 @@ async def play(steps: list[Step]) -> None:
         MonkeyPatch.context() as patch,
     ):
         launches = Launches()
-        patch.setattr("band.adapters.omp.OmpRpcClient", launches)
+        patch.setattr("band.adapters.omp.lifecycle.OmpRpcClient", launches)
         model = RoomLifecycle(Path(directory), launches)
         try:
             async with asyncio.timeout(15):

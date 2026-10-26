@@ -9,9 +9,8 @@ import pytest
 
 from band.adapters.omp import OmpAdapter
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import Launches, StartupGate, launches, run_turn
-
-__all__ = ["launches"]
+from tests.adapters.omp.lifecyclekit import Launches, StartupGate
+from tests.adapters.omp.turns import run_turn
 
 
 class TestPluginReady:
@@ -20,7 +19,7 @@ class TestPluginReady:
         self, monkeypatch: pytest.MonkeyPatch, launches: Launches, tmp_path: Path
     ) -> None:
         ready = StartupGate()
-        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", ready)
+        monkeypatch.setattr("band.adapters.omp.lifecycle.omp_mcp_ready", ready)
         adapter = OmpAdapter(workspace_for_room=lambda _room: str(tmp_path), emit=())
         tools = FakeAgentTools()
         turn = asyncio.create_task(run_turn(adapter, tools))
