@@ -27,7 +27,7 @@ from tests.integrations.omprpc.wirelog import checkpoint_frames
 class TestCallbackCancellation:
     @pytest.mark.parametrize("kind", list(CallbackKind))
     async def test_running_callback_settles_without_a_response(
-        self, kind: CallbackKind, recwarn: pytest.WarningsRecorder
+        self, kind: CallbackKind, callback_warnings: pytest.WarningsRecorder
     ) -> None:
         async with (
             asyncio.timeout(10),
@@ -53,7 +53,7 @@ class TestCallbackCancellation:
                 await running
                 assert await follow_up_texts(client) == [COMPLETE]
                 gc.collect()
-                assert not recwarn
+                assert not callback_warnings
             finally:
                 old.release.set()
                 running.cancel()

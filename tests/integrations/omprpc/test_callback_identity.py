@@ -32,7 +32,10 @@ class TestCallbackIdentity:
         "scheduled", [False, True], ids=["standalone", "scheduled"]
     )
     async def test_cancelled_handler_cannot_answer_reused_id(
-        self, kind: CallbackKind, scheduled: bool, recwarn: pytest.WarningsRecorder
+        self,
+        kind: CallbackKind,
+        scheduled: bool,
+        callback_warnings: pytest.WarningsRecorder,
     ) -> None:
         async with (
             asyncio.timeout(10),
@@ -63,7 +66,7 @@ class TestCallbackIdentity:
                 await running
                 assert await follow_up_texts(client) == [COMPLETE]
                 gc.collect()
-                assert not recwarn
+                assert not callback_warnings
             finally:
                 old.release.set()
                 replacement.release.set()

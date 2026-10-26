@@ -32,7 +32,7 @@ class TestScheduledCallbacks:
     async def test_cancellation_before_execution_releases_the_callback(
         self,
         client_factory: ClientFactory,
-        recwarn: pytest.WarningsRecorder,
+        callback_warnings: pytest.WarningsRecorder,
         kind: str,
         target: str,
     ) -> None:
@@ -73,7 +73,7 @@ class TestScheduledCallbacks:
             assert not any(frame.get("id") == target for frame in frames)
             assert await follow_up_texts(client) == [COMPLETE]
             gc.collect()
-            assert not recwarn
+            assert not callback_warnings
         finally:
             release.set()
             running.cancel()

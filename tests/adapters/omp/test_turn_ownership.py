@@ -4,90 +4,67 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
-from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
-from tests.adapters.omp.runtime import PendingRuntime
-from tests.adapters.omp.turns import run_turn
+from band.testing import MISSING_REPLY_FAILURE, failure_reports
+from tests.adapters.omp.mailboxkit import (
+    CallbackResolver,
+    MailboxTools,
+    mailbox_adapter,
+)
+from tests.adapters.omp.mailboxpeer import CALLBACK_MODEL, model_reply
+from tests.adapters.omp.turns import NativeTurnFactory, reply_call, run_turn
+from tests.toolkit.tasks import background
 
 
 class TestTurnOwnership:
-    @pytest.mark.usefixtures("native_startup_ready")
-    @pytest.mark.asyncio
     async def test_background_reply_keeps_original_turn_owned(
-        self, monkeypatch, tmp_path: Path
-    ):
-        runtime = PendingRuntime()
-        monkeypatch.setattr(
-            "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **kw: runtime
-        )
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
-        tools = FakeAgentTools()
-        task = asyncio.create_task(run_turn(adapter, tools))
-        await asyncio.wait_for(runtime.yielded.wait(), 1)
-        assert not task.done()
-        assert not failure_reports(tools)
-        assert not tools.turn.replied
-        runtime.finish.set()
-        await task
-        assert tools.turn.replied
-        assert not failure_reports(tools)
-        await adapter.cleanup_all()
-        assert runtime.closed
+        self, native_turn: NativeTurnFactory
+    ) -> None:
+        async with native_turn(emit=()) as turn:
+            assert failure_reports(turn.tools) == []
+            assert not turn.tools.turn.replied
+            await turn.callbacks.tool(reply_call("Background work finished"))
 
-    @pytest.mark.usefixtures("native_startup_ready")
-    @pytest.mark.asyncio
+        assert turn.tools.turn.replied
+        assert failure_reports(turn.tools) == []
+
     async def test_settled_without_terminal_tool_still_reports_failure(
-        self, monkeypatch, tmp_path: Path
-    ):
-        runtime = PendingRuntime()
-        runtime.reply = False
-        runtime.finish.set()
-        monkeypatch.setattr(
-            "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **kw: runtime
-        )
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
-        tools = FakeAgentTools()
+        self, native_turn: NativeTurnFactory
+    ) -> None:
         with pytest.raises(TurnResultAlreadyReported):
-            await run_turn(adapter, tools)
-        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
-        assert not tools.turn.replied
-        await adapter.cleanup_all()
+            async with native_turn(emit=()) as turn:
+                assert not turn.tools.turn.replied
 
-    @pytest.mark.usefixtures("native_startup_ready")
-    @pytest.mark.asyncio
+        assert failure_reports(turn.tools) == [MISSING_REPLY_FAILURE]
+        assert not turn.tools.turn.replied
+
     async def test_cancelled_background_turn_cannot_own_next_reply(
-        self, monkeypatch, tmp_path: Path
-    ):
-        runtimes: asyncio.Queue[PendingRuntime] = asyncio.Queue()
+        self, tmp_path: Path
+    ) -> None:
+        resolver = CallbackResolver(held=True)
+        adapter = mailbox_adapter(tmp_path, resolver)
+        resolver.adapter = adapter
+        old_tools = MailboxTools()
+        try:
+            async with background(run_turn(adapter, old_tools)) as pending:
+                await resolver.first.reached.wait()
+                pending.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await pending
 
-        def spawn(*args, **kwargs):
-            runtime = PendingRuntime()
-            runtimes.put_nowait(runtime)
-            return runtime
+            resolver.first.released.set()
+            new_tools = MailboxTools()
+            await run_turn(adapter, new_tools, bootstrap=False)
 
-        monkeypatch.setattr("band.adapters.omp.lifecycle.OmpRpcClient", spawn)
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
-        old_tools = FakeAgentTools()
-        pending = asyncio.create_task(run_turn(adapter, old_tools))
-        old_runtime = await asyncio.wait_for(runtimes.get(), 1)
-        await asyncio.wait_for(old_runtime.yielded.wait(), 1)
-        pending.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await pending
-        assert old_runtime.closed
-        new_tools = FakeAgentTools()
-        new_tools.fetch_room_context = AsyncMock(return_value={"data": []})
-        next_turn = asyncio.create_task(run_turn(adapter, new_tools, bootstrap=False))
-        new_runtime = await asyncio.wait_for(runtimes.get(), 1)
-        await asyncio.wait_for(new_runtime.yielded.wait(), 1)
-        new_runtime.finish.set()
-        await next_turn
-        assert new_tools.turn.replied
-        assert not old_tools.turn.replied
-        assert not failure_reports(old_tools)
-        await adapter.cleanup_all()
+            assert new_tools.chat == [model_reply(CALLBACK_MODEL)]
+            assert old_tools.chat == []
+            assert new_tools.turn.replied
+            assert not old_tools.turn.replied
+            assert failure_reports(old_tools) == []
+            assert failure_reports(new_tools) == []
+        finally:
+            resolver.first.released.set()
+            await adapter.cleanup_all()
