@@ -15,11 +15,12 @@ from webhooks import WebhookSettings, read_message, send, webhook_url
 
 logger = logging.getLogger(__name__)
 
+SERVICE = "Slack"
 SLACK_WEBHOOK_PREFIXES = ("https://hooks.slack.com/services/",)
 
 
 def post_message(webhook_url: str, text: str) -> None:
-    send("Slack", "POST", webhook_url, {"text": text})
+    send(SERVICE, "POST", webhook_url, {"text": text})
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -66,10 +66,23 @@ class TestExtractReport:
         "off_schema",
         [
             REPORT | {"items": []},
+            REPORT | {"status": "no_user_facing_changes"},
+            REPORT
+            | {
+                "status": "no_user_facing_changes",
+                "items": [],
+                "breaking": {"title": "Gone", "markdown": "Gone."},
+            },
             REPORT | {"items": [REPORT["items"][0] | {"label": "Two\nlines"}]},
             REPORT | {"breaking": {"title": "Two\nlines", "markdown": "Gone."}},
         ],
-        ids=["documented-without-items", "multi-line-label", "multi-line-title"],
+        ids=[
+            "documented-without-items",
+            "nothing-user-facing-with-items",
+            "nothing-user-facing-with-breaking",
+            "multi-line-label",
+            "multi-line-title",
+        ],
     )
     def test_off_schema_report_fails(
         self,
@@ -84,3 +97,19 @@ class TestExtractReport:
         }
         with pytest.raises(ValidationError):
             extractreport.extract_report(execution_file(tmp_path, [result]))
+
+    def test_schema_rejection_log_never_repeats_model_text(
+        self,
+        extractreport: ModuleType,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        leaky = REPORT["items"][0] | {"label": "Key\nsk-ant-s3cr3t"}
+        result = {
+            "type": "result",
+            "subtype": "success",
+            "structured_output": REPORT | {"items": [leaky]},
+        }
+        path = execution_file(tmp_path, [result])
+        assert extractreport.main([str(path), "--out", str(tmp_path / "r.json")]) == 1
+        assert "s3cr3t" not in caplog.text

@@ -22,6 +22,7 @@ from webhooks import WebhookSettings, read_message, send, webhook_url
 
 logger = logging.getLogger(__name__)
 
+SERVICE = "Discord"
 DISCORD_WEBHOOK_PREFIXES = (
     "https://discord.com/api/webhooks/",
     "https://discordapp.com/api/webhooks/",
@@ -37,7 +38,7 @@ def post_message(webhook_url: str, text: str, *, mentions: bool = True) -> str:
     allowed = CHANNEL_MENTIONS if mentions else NO_MENTIONS
     query = urllib.parse.urlencode({"wait": "true"})
     body = send(
-        "Discord",
+        SERVICE,
         "POST",
         f"{webhook_url}?{query}",
         {"content": text, "allowed_mentions": allowed},
@@ -46,9 +47,7 @@ def post_message(webhook_url: str, text: str, *, mentions: bool = True) -> str:
 
 
 def delete_message(webhook_url: str, message_id: str) -> None:
-    send(
-        "Discord", "DELETE", f"{webhook_url}/messages/{urllib.parse.quote(message_id)}"
-    )
+    send(SERVICE, "DELETE", f"{webhook_url}/messages/{urllib.parse.quote(message_id)}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:

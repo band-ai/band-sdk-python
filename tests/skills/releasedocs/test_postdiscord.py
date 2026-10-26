@@ -23,6 +23,7 @@ class TestPostDiscord:
     def test_post_waits_for_the_message_id(
         self,
         postdiscord: ModuleType,
+        webhooks: ModuleType,
         peer: WebhookPeer,
         mentions: bool,
         parse: list[str],
@@ -32,16 +33,26 @@ class TestPostDiscord:
             postdiscord.post_message(peer.url, MESSAGE, mentions=mentions) == MESSAGE_ID
         )
         assert peer.received == [
-            Received("POST", f"{WEBHOOK_PATH}?wait=true", posted(MESSAGE, parse))
+            Received(
+                "POST",
+                f"{WEBHOOK_PATH}?wait=true",
+                posted(MESSAGE, parse),
+                webhooks.USER_AGENT,
+            )
         ]
 
     def test_delete_targets_the_message(
-        self, postdiscord: ModuleType, peer: WebhookPeer
+        self, postdiscord: ModuleType, webhooks: ModuleType, peer: WebhookPeer
     ) -> None:
         peer.reply(204)
         postdiscord.delete_message(peer.url, MESSAGE_ID)
         assert peer.received == [
-            Received("DELETE", f"{WEBHOOK_PATH}/messages/{MESSAGE_ID}", b"")
+            Received(
+                "DELETE",
+                f"{WEBHOOK_PATH}/messages/{MESSAGE_ID}",
+                b"",
+                webhooks.USER_AGENT,
+            )
         ]
 
     def test_non_2xx_answer_fails(

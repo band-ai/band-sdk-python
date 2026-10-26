@@ -14,6 +14,7 @@ class Received:
     method: str
     path: str
     body: bytes
+    user_agent: str
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,12 @@ class PeerHandler(BaseHTTPRequestHandler):
 
     def answer(self) -> None:
         length = int(self.headers.get("Content-Length", 0))
-        request = Received(self.command, self.path, self.rfile.read(length))
+        request = Received(
+            self.command,
+            self.path,
+            self.rfile.read(length),
+            self.headers.get("User-Agent", ""),
+        )
         reply = self.server.peer.answer(request)
         self.send_response(reply.status)
         self.send_header("Content-Length", str(len(reply.body)))

@@ -43,7 +43,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         report = extract_report(args.execution_file)
     except ValidationError as exc:
-        logger.error("The report does not match the schema:\n%s", exc)
+        # Without the input: model text may hold a secret.
+        errors = exc.errors(include_input=False, include_url=False)
+        logger.error(
+            "The report does not match the schema:\n%s",
+            "\n".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in errors),
+        )
         return 1
     except ValueError as exc:
         logger.error("No report: %s", exc)

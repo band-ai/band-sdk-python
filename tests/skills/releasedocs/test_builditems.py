@@ -47,6 +47,9 @@ RELEASE_PRS = {
 BREAKING_PR = RELEASE_PRS | {
     "pull_requests": [RELEASE_PRS["pull_requests"][0] | {"breaking": True}]
 }
+BREAKING_COMMIT = RELEASE_PRS | {
+    "loose_commits": [RELEASE_PRS["loose_commits"][0] | {"breaking": True}]
+}
 PRODUCT_ARGS = [
     *("--product-name", PRODUCT["name"]),
     *("--product-label", PRODUCT["label"]),
@@ -109,6 +112,7 @@ class TestBuildItems:
             (documented(item([])), RELEASE_PRS),
             (documented(item(["102"])), RELEASE_PRS),
             (documented(item(["101"])), BREAKING_PR),
+            (documented(item(["101"])), BREAKING_COMMIT),
             (documented(item(["101"], "Reads the ghp_ token.")), RELEASE_PRS),
             (documented(item(["101"], "See https://example.com.")), RELEASE_PRS),
             (breaking(title="See https://example.com"), BREAKING_PR),
@@ -118,7 +122,8 @@ class TestBuildItems:
             "unknown-source",
             "no-source",
             "internal-source",
-            "breaking-without-block",
+            "breaking-pr-without-block",
+            "breaking-commit-without-block",
             "credential",
             "url",
             "url-in-breaking-title",
@@ -154,11 +159,14 @@ class TestBuildItems:
             )
         )
 
-    def test_breaking_release_passes_with_its_block(
-        self, builditems: ModuleType, tmp_path: Path
+    def test_breaking_release_bundles_its_block(
+        self, builditems: ModuleType, releasedata: ModuleType, tmp_path: Path
     ) -> None:
-        code, out, _ = build(builditems, tmp_path, breaking(), BREAKING_PR)
-        assert (code, out.exists()) == (0, True)
+        report = breaking()
+        code, out, _ = build(builditems, tmp_path, report, BREAKING_PR)
+        assert code == 0
+        notes = releasedata.ReleaseNotes.model_validate_json(out.read_text())
+        assert notes.breaking == releasedata.Breaking.model_validate(report["breaking"])
 
     def test_no_user_facing_changes_writes_no_entry(
         self, builditems: ModuleType, tmp_path: Path
@@ -170,3 +178,14 @@ class TestBuildItems:
             False,
             "has_entry=false\n",
         )
+
+    def test_rejection_log_never_repeats_model_text(
+        self,
+        builditems: ModuleType,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        leaky = item([], "Reads sk-ant-s3cr3t.") | {"label": "Key sk-ant-s3cr3t"}
+        code, _, _ = build(builditems, tmp_path, documented(leaky), RELEASE_PRS)
+        assert code == 1
+        assert "s3cr3t" not in caplog.text

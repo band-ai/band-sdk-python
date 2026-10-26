@@ -26,14 +26,15 @@ logger = logging.getLogger(__name__)
 def report_problems(report: ChangelogReport, release: ReleasePrs) -> list[str]:
     """List every way the report fails to trace to the release or is unsafe."""
     known = release.sources
+    # Items are named by position: model text may hold the secret being rejected.
     problems = [
-        f"item {item.label!r} cites no source"
-        for item in report.items
+        f"item {index} cites no source"
+        for index, item in enumerate(report.items)
         if not item.sources
     ]
     problems += [
-        f"item {item.label!r} cites {source!r}, which is not in this release"
-        for item in report.items
+        f"item {index} cites {source!r}, which is not in this release"
+        for index, item in enumerate(report.items)
         for source in item.sources
         if source not in known
     ]

@@ -101,6 +101,61 @@ tags: ["feature", "fix", "typescript", "python"]
 - **TypeScript SDK:**
   - **Typed Rooms** — Room ids are typed.
 """
+PYTHON_LAST = """---
+tags: ["fix", "security", "typescript", "python"]
+---
+
+## Fixed
+- **TypeScript SDK:**
+  - **Typed Rooms** — Room ids are typed.
+- **Python SDK:**
+  - **Earlier Fix** — Fixed earlier today.
+
+## Security
+- **TypeScript SDK:**
+  - **Safe Logs** — Logs drop secrets.
+"""
+PYTHON_LAST_MERGED = """---
+tags: ["feature", "security", "fix", "typescript", "python"]
+---
+
+## Added
+- **Python SDK:**
+  - **Send Retries** — Sends retry with backoff.
+
+## Fixed
+- **TypeScript SDK:**
+  - **Typed Rooms** — Room ids are typed.
+- **Python SDK:**
+  - **Earlier Fix** — Fixed earlier today.
+  - **Reconnect** — Rooms rejoin after a drop.
+
+## Security
+- **TypeScript SDK:**
+  - **Safe Logs** — Logs drop secrets.
+"""
+SAME_WORDING = """---
+tags: ["fix", "typescript"]
+---
+
+## Fixed
+- **TypeScript SDK:**
+  - **Reconnect** — Rooms rejoin after a drop.
+"""
+SAME_WORDING_MERGED = """---
+tags: ["feature", "fix", "typescript", "python"]
+---
+
+## Added
+- **Python SDK:**
+  - **Send Retries** — Sends retry with backoff.
+
+## Fixed
+- **TypeScript SDK:**
+  - **Reconnect** — Rooms rejoin after a drop.
+- **Python SDK:**
+  - **Reconnect** — Rooms rejoin after a drop.
+"""
 UNUSED_CATEGORY = """---
 tags: ["deprecation", "typescript"]
 ---
@@ -163,6 +218,23 @@ Tools now carry a prefix.
 - **Python SDK:**
   - **Tool Prefix** — Tool names start with a prefix.
 """
+PR_BODY = f"""## Summary
+
+Python SDK band-sdk-v6.1.0 changelog entry.
+
+- **Send Retries** — Sends retry with backoff.
+- **Reconnect** — Rooms rejoin after a drop.
+
+## Source
+
+- Release: {RELEASE_URL}
+- Range: `band-sdk-v6.0.1...band-sdk-v6.1.0`
+- Product: Python SDK
+
+## Holdbacks
+
+None.
+"""
 PR_BODY_WITH_HOLDBACK = f"""## Summary
 
 Python SDK band-sdk-v6.1.0 changelog entry.
@@ -188,9 +260,18 @@ class TestMergeEntry:
             (ANOTHER_PRODUCT, ANOTHER_PRODUCT_MERGED),
             (BAND_MCP, BAND_MCP_MERGED),
             (SAME_DAY, SAME_DAY_MERGED),
+            (PYTHON_LAST, PYTHON_LAST_MERGED),
+            (SAME_WORDING, SAME_WORDING_MERGED),
             (UNUSED_CATEGORY, UNUSED_CATEGORY_MERGED),
         ],
-        ids=["another-product", "band-mcp", "same-day-python", "unused-category"],
+        ids=[
+            "another-product",
+            "band-mcp",
+            "same-day-python",
+            "same-day-python-last",
+            "another-product-same-wording",
+            "unused-category",
+        ],
     )
     def test_items_join_the_date_file(
         self,
@@ -204,8 +285,10 @@ class TestMergeEntry:
         date_file = tmp_path / f"{RELEASE_DATE}.md"
         date_file.write_text(existing, encoding="utf-8", newline="")
         notes = make_notes([make_item(*SEND_RETRIES), make_item(*RECONNECT)])
-        renderentry.merge_into(notes, tmp_path, [], tmp_path / "pr-body.md")
+        body = tmp_path / "pr-body.md"
+        renderentry.merge_into(notes, tmp_path, [], body)
         assert date_file.read_text(encoding="utf-8") == merged
+        assert body.read_text(encoding="utf-8") == PR_BODY
 
     @pytest.mark.parametrize(
         ("existing", "merged"),
@@ -247,17 +330,29 @@ class TestMergeEntry:
         assert path.read_text(encoding="utf-8") == renderentry.render_standalone(notes)
 
     @pytest.mark.parametrize(
-        "damaged",
+        ("damaged", "error"),
         [
-            SAME_DAY_MERGED.replace("  - **Earlier Fix** — Fixed earlier today.\n", ""),
-            SAME_DAY_MERGED.replace(
-                "- **TypeScript SDK:**\n  - **Typed Rooms** — Room ids are typed.\n", ""
-            ).replace(
-                "## Fixed\n",
-                "## Fixed\n- **TypeScript SDK:**\n  - **Typed Rooms** — Room ids are typed.\n",
+            (
+                SAME_DAY_MERGED.replace(
+                    "  - **Earlier Fix** — Fixed earlier today.\n", ""
+                ),
+                "dropped or reordered",
             ),
-            SAME_DAY_MERGED.replace(
-                "  - **Reconnect** — Rooms rejoin after a drop.\n", ""
+            (
+                SAME_DAY_MERGED.replace(
+                    "- **TypeScript SDK:**\n  - **Typed Rooms** — Room ids are typed.\n",
+                    "",
+                ).replace(
+                    "## Fixed\n",
+                    "## Fixed\n- **TypeScript SDK:**\n  - **Typed Rooms** — Room ids are typed.\n",
+                ),
+                "dropped or reordered",
+            ),
+            (
+                SAME_DAY_MERGED.replace(
+                    "  - **Reconnect** — Rooms rejoin after a drop.\n", ""
+                ),
+                "lost our lines",
             ),
         ],
         ids=["dropped-line", "reordered-lines", "lost-our-line"],
@@ -268,10 +363,11 @@ class TestMergeEntry:
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         damaged: str,
+        error: str,
     ) -> None:
         notes = make_notes([make_item(*SEND_RETRIES), make_item(*RECONNECT)])
         standalone = renderentry.render_standalone(notes)
-        with pytest.raises(renderentry.EntryError):
+        with pytest.raises(renderentry.EntryError, match=error):
             renderentry.check_merge(SAME_DAY, damaged, standalone)
 
     def test_held_item_is_omitted_and_listed_in_the_pr_body(

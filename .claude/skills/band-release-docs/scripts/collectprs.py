@@ -38,6 +38,8 @@ INTERNAL_PATHS = ("tests/", ".github/", ".claude/")
 AUTORELEASE_LABEL_PREFIX = "autorelease:"
 # The asset whose presence marks a release as announced.
 ANNOUNCED_ASSET = "release-notes.json"
+# What ``gh release view`` prints for a release this token cannot see.
+RELEASE_NOT_FOUND = "release not found"
 RELEASE_PLEASE_CONFIG = "release-please-config.json"
 
 PR_NUMBER = re.compile(r"\(#(\d+)\)\s*$")
@@ -194,7 +196,9 @@ def range_commits(
     commits = []
     for record in filter(None, records):
         sha, subject, body = record.split(FIELD_SEPARATOR)
-        listing = git(repo, "show", "--name-only", "--format=", sha)
+        # Without renames a move lists both paths, so moving public code into
+        # tests/ still touches src/.
+        listing = git(repo, "show", "--name-only", "--no-renames", "--format=", sha)
         files = [name for name in listing.splitlines() if name]
         commits.append(Commit(sha, subject, body, without_excluded(files, excluded)))
     return commits
@@ -256,27 +260,39 @@ def collect(
     )
 
 
-def gh_json(*args: str) -> str | None:
-    """Run ``gh`` and return its JSON; ``None`` when the object does not exist."""
-    result = subprocess.run(["gh", *args], check=False, capture_output=True, text=True)
-    if result.returncode == 0:
-        return result.stdout
-    if "not found" in result.stderr.lower():
-        return None
-    raise RuntimeError(f"gh {' '.join(args[:2])} failed: {result.stderr.strip()}")
+def gh(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["gh", *args], check=False, capture_output=True, text=True)
+
+
+def gh_failed(
+    args: Sequence[str], result: subprocess.CompletedProcess[str]
+) -> Exception:
+    return RuntimeError(f"gh {' '.join(args[:2])} failed: {result.stderr.strip()}")
 
 
 def gh_release(tag: str) -> Release | None:
-    fields = "url,publishedAt,isPrerelease,isDraft,assets"
-    found = gh_json("release", "view", tag, "--json", fields)
-    return None if found is None else Release.model_validate_json(found)
+    """The release, or ``None`` when this token cannot see it."""
+    args = (
+        "release",
+        "view",
+        tag,
+        "--json",
+        "url,publishedAt,isPrerelease,isDraft,assets",
+    )
+    result = gh(*args)
+    if result.returncode == 0:
+        return Release.model_validate_json(result.stdout)
+    if RELEASE_NOT_FOUND in result.stderr:
+        return None
+    raise gh_failed(args, result)
 
 
 def gh_pr_meta(number: int) -> PrMeta:
-    found = gh_json("pr", "view", str(number), "--json", "title,body,labels")
-    if found is None:
-        raise RuntimeError(f"PR #{number} named in the range does not exist")
-    return PrMeta.model_validate_json(found)
+    args = ("pr", "view", str(number), "--json", "title,body,labels")
+    result = gh(*args)
+    if result.returncode != 0:
+        raise gh_failed(args, result)
+    return PrMeta.model_validate_json(result.stdout)
 
 
 def run(
@@ -299,6 +315,8 @@ def run(
     collected = collect(repo, tag, release=release, pr_meta=pr_meta, since=since)
     has_changes = collected.has_changes
     reason = "" if has_changes else StopReason.NO_CHANGES
+    if not has_changes:
+        logger.info("Not announcing %s: %s", tag, reason)
     append_outputs(outputs, proceed=True, has_changes=has_changes, reason=reason)
     return collected
 

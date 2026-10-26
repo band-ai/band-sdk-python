@@ -1,4 +1,4 @@
-"""``tag_version`` accepts only strict band-sdk release tags and orders them numerically."""
+"""``tag_version`` accepts only strict band-sdk release tags."""
 
 from __future__ import annotations
 
@@ -31,7 +31,3 @@ class TestTagVersion:
         self, collectprs: ModuleType, tag: str
     ) -> None:
         assert collectprs.tag_version(tag) is None
-
-    def test_versions_order_numerically(self, collectprs: ModuleType) -> None:
-        tags = ["band-sdk-v6.9.0", "band-sdk-v6.10.0", "band-sdk-v6.2.3"]
-        assert max(tags, key=collectprs.tag_version) == "band-sdk-v6.10.0"

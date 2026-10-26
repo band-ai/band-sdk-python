@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 # Mirrors the root package entry of this repository's release-please config.
-RELEASE_PLEASE_CONFIG = {"packages": {".": {"exclude-paths": ["packages"]}}}
+ROOT_PACKAGE_CONFIG = {"packages": {".": {"exclude-paths": ["packages"]}}}
 
 
 class ThrowawayRepo:
@@ -21,7 +21,7 @@ class ThrowawayRepo:
         self.git("config", "user.email", "release-tester@example.invalid")
         self.git("config", "commit.gpgsign", "false")
         self.git("config", "tag.gpgsign", "false")
-        self.commit("chore: initial", {config_file: json.dumps(RELEASE_PLEASE_CONFIG)})
+        self.commit("chore: initial", {config_file: json.dumps(ROOT_PACKAGE_CONFIG)})
 
     def git(self, *args: str) -> str:
         return subprocess.run(
@@ -44,3 +44,9 @@ class ThrowawayRepo:
 
     def tag(self, name: str) -> None:
         self.git("tag", name)
+
+    def move(self, subject: str, source: str, target: str) -> None:
+        """Move one tracked file as a squash commit."""
+        (self.root / target).parent.mkdir(parents=True, exist_ok=True)
+        self.git("mv", source, target)
+        self.git("commit", "--quiet", "--message", subject)

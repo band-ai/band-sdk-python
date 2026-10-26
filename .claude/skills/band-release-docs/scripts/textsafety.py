@@ -18,14 +18,17 @@ CREDENTIAL_PATTERNS = (
 URL_PATTERN = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
 URL_FINDING = "a URL"
 
-# A ``` or ~~~ fenced block, or an inline code span closed by a backtick run
-# of equal length; like CommonMark's, a span never crosses a blank line.
+# A ``` or ~~~ fenced block, indented or not (as in a list item).
+FENCE = r"^[ \t]*(?P<fence>```|~~~)[^\n]*\n.*?^[ \t]*(?P=fence)[ \t]*$"
+FENCE_PATTERN = re.compile(FENCE, re.DOTALL | re.MULTILINE)
+# A fenced block, or an inline code span closed by a backtick run of equal
+# length; like CommonMark's, a span never crosses a blank line.
 CODE_PATTERN = re.compile(
-    r"^(?P<fence>```|~~~)[^\n]*\n.*?^(?P=fence)[ \t]*$"
-    r"|(?<!`)(?P<ticks>`+)(?!`)(?:(?!\n[ \t]*\n).)+?(?<!`)(?P=ticks)(?!`)",
+    FENCE + r"|(?<!`)(?P<ticks>`+)(?!`)(?:(?!\n[ \t]*\n).)+?(?<!`)(?P=ticks)(?!`)",
     re.DOTALL | re.MULTILINE,
 )
-MDX_SPECIALS = re.compile(r"[{}<>]")
+# A backslash is escaped too, or it would cancel the escape that follows it.
+MDX_SPECIALS = re.compile(r"[\\{}<>]")
 DISCORD_MENTIONS = re.compile(r"@(?:everyone|here)\b")
 GITHUB_REFERENCE = re.compile(
     r"https?://github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+\S*"
@@ -56,6 +59,16 @@ def discord_text(text: str) -> str:
 def mdx_text(text: str) -> str:
     """Escape MDX expression and JSX characters outside code."""
     return outside_code(text, lambda plain: MDX_SPECIALS.sub(r"\\\g<0>", plain))
+
+
+def without_fenced_code(text: str) -> str:
+    """Blank every fenced block's body, keeping its fences and the line count."""
+    return FENCE_PATTERN.sub(blank_fence_body, text)
+
+
+def blank_fence_body(fence: re.Match[str]) -> str:
+    lines = fence.group(0).split("\n")
+    return "\n".join([lines[0], *[""] * (len(lines) - 2), lines[-1]])
 
 
 def pr_body_text(text: str) -> str:

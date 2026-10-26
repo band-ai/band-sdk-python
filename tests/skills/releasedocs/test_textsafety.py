@@ -74,6 +74,13 @@ class TestTextSafety:
                 "~~~python\nx = {1}\n~~~\nthen \\{y\\}",
             ),
             ("Use `x then {a}.\n\nLater `y`", "Use `x then \\{a\\}.\n\nLater `y`"),
+            ("`a\nb {x}` and {y}", "`a\nb {x}` and \\{y\\}"),
+            ("```\n~~~\n{a}\n```", "```\n~~~\n{a}\n```"),
+            (
+                "1. Update:\n\n   ```python\n   cfg = {1}\n\n   x = <2>\n   ```",
+                "1. Update:\n\n   ```python\n   cfg = {1}\n\n   x = <2>\n   ```",
+            ),
+            ("Use C:\\{name} now", "Use C:\\\\\\{name\\} now"),
             ("Retries back off.", "Retries back off."),
         ],
     )

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from releasedata import Category, Item, ReleaseNotes
-from textsafety import mdx_text, pr_body_text
+from textsafety import mdx_text, pr_body_text, without_fenced_code
 from validateentry import CATEGORY_TAGS, TAG_ORDER, parse_tags, validate
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,9 @@ def checked_standalone(notes: ReleaseNotes) -> str:
     text = render_standalone(notes)
     with tempfile.TemporaryDirectory() as scratch:
         path = entry_path(Path(scratch), notes)
-        path.write_text(text, encoding="utf-8", newline="")
+        # The vendored validator reads `#` and `- ` lines inside code fences as
+        # headings and bullets, so it checks the entry with fence bodies blanked.
+        path.write_text(without_fenced_code(text), encoding="utf-8", newline="")
         violations = validate(
             path,
             surface=SURFACE,
@@ -170,6 +172,23 @@ def insert(lines: list[str], at: int, new: list[str]) -> list[str]:
     return lines[:at] + new + lines[at:]
 
 
+def product_items(lines: list[str], section: Section, bullet: str) -> range | None:
+    """The lines nested under ``bullet`` in ``section``; ``None`` without the bullet."""
+    own = range(section.start + 1, section.content_end)
+    product = next((index for index in own if lines[index] == bullet), None)
+    if product is None:
+        return None
+    nested_end = next(
+        (
+            index
+            for index in own
+            if index > product and not lines[index].startswith(" ")
+        ),
+        section.content_end,
+    )
+    return range(product + 1, nested_end)
+
+
 def with_items(lines: list[str], notes: ReleaseNotes, category: Category) -> list[str]:
     """Place one category's items under its section and product bullet."""
     items = list(map(item_line, notes.items_in({category})))
@@ -177,19 +196,10 @@ def with_items(lines: list[str], notes: ReleaseNotes, category: Category) -> lis
     section = next((s for s in found if s.title == category), None)
     if section is not None:
         bullet = product_bullet(notes)
-        own = range(section.start + 1, section.content_end)
-        product = next((index for index in own if lines[index] == bullet), None)
-        if product is None:
+        nested = product_items(lines, section, bullet)
+        if nested is None:
             return insert(lines, section.content_end, [bullet, *items])
-        nested_end = next(
-            (
-                index
-                for index in own
-                if index > product and not lines[index].startswith(" ")
-            ),
-            section.content_end,
-        )
-        return insert(lines, nested_end, items)
+        return insert(lines, nested.stop, items)
     block = category_block(notes, category)
     order = list(Category)
     categories = [s for s in found if is_category(s)]
@@ -244,10 +254,24 @@ def check_merge(existing: str, merged: str, standalone: str) -> None:
         raise EntryError(f"the merge lost our lines: {missing}")
 
 
+def filed_lines(lines: list[str], notes: ReleaseNotes) -> set[str]:
+    """This product's item lines, and every section heading, already in the file."""
+    bullet = product_bullet(notes)
+    found = sections(lines)
+    items = {
+        lines[index]
+        for section in found
+        if is_category(section)
+        and (nested := product_items(lines, section, bullet)) is not None
+        for index in nested
+    }
+    return items | {lines[section.start] for section in found}
+
+
 def check_not_merged(existing: str, notes: ReleaseNotes) -> None:
     """Refuse a date file that already holds this entry's items or breaking heading."""
     ours = set(map(item_line, notes.items)) | set(breaking_block(notes)[:1])
-    present = sorted(ours & set(existing.splitlines()))
+    present = sorted(ours & filed_lines(existing.splitlines(), notes))
     if present:
         raise EntryError(
             f"the date file already holds {present}; start again from a fresh worktree"

@@ -14,6 +14,8 @@ from tests.skills.releasedocs.samples import (
     RELEASE_TAG,
 )
 
+# The only PR the gate may look up; any other lookup raises.
+PR_TABLE = {20: {"title": "Retry sends", "body": "", "labels": []}}
 ANNOUNCED = PUBLISHED_RELEASE | {"assets": [{"name": "release-notes.json"}]}
 
 
@@ -36,9 +38,7 @@ def gate(
         since=None,
         outputs=outputs,
         release_lookup=lambda _tag: release_of(collectprs, fields),
-        pr_meta=lambda number: collectprs.PrMeta(
-            title=f"#{number}", body="", labels=[]
-        ),
+        pr_meta=lambda number: collectprs.PrMeta.model_validate(PR_TABLE[number]),
     )
 
 

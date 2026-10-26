@@ -21,6 +21,8 @@ RELEASE_PR_BODY = "release-please release notes."
 # The only PRs the collector may look up; internal-only PRs (12, 14) and the
 # band-mcp PR (11) are absent, so fetching one raises.
 PR_TABLE = {
+    1: {"title": "Fakes", "body": "Public fakes.", "labels": []},
+    2: {"title": "Drop fakes", "body": "Fakes move to tests.", "labels": []},
     10: {"title": "Earlier", "body": "Earlier work.", "labels": []},
     13: {"title": "Reshape send", "body": "Send keeps order.", "labels": []},
     15: {
@@ -157,3 +159,40 @@ class TestReleaseRange:
         repo.tag(RELEASE_TAG)
         with pytest.raises(ValueError, match="precedes"):
             collectprs.previous_sdk_tag(repo.root, RELEASE_TAG)
+
+    def test_range_starts_at_the_numerically_highest_earlier_tag(
+        self, collectprs: ModuleType, repo: ThrowawayRepo
+    ) -> None:
+        for minor in (9, 10):
+            repo.commit(
+                f"feat: minor {minor} (#{minor})", {f"src/band/m{minor}.py": ""}
+            )
+            repo.tag(f"band-sdk-v6.{minor}.0")
+        repo.commit("feat: next (#11)", {"src/band/next.py": ""})
+        repo.tag("band-sdk-v6.11.0")
+        assert collectprs.previous_sdk_tag(repo.root, "band-sdk-v6.11.0") == (
+            "band-sdk-v6.10.0"
+        )
+
+    def test_moving_public_code_into_tests_is_user_facing(
+        self, collectprs: ModuleType, repo: ThrowawayRepo
+    ) -> None:
+        repo.tag(PREVIOUS_TAG)
+        repo.commit("feat: fakes (#1)", {"src/band/testing/fakes.py": "FAKE = 1\n"})
+        repo.move(
+            "refactor!: drop the public fakes (#2)",
+            "src/band/testing/fakes.py",
+            "tests/fakes.py",
+        )
+        repo.tag(RELEASE_TAG)
+        release = collectprs.Release.model_validate(PUBLISHED_RELEASE)
+        result = collectprs.collect(
+            repo.root,
+            RELEASE_TAG,
+            release=release,
+            pr_meta=lambda number: collectprs.PrMeta.model_validate(PR_TABLE[number]),
+        )
+        assert [(pr.number, pr.breaking) for pr in result.pull_requests] == [
+            (1, False),
+            (2, True),
+        ]
