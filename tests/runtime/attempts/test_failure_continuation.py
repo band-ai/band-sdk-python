@@ -9,7 +9,6 @@ from tests.platform.settlement.kit import ROOM_ID
 from tests.runtime.attempts.conftest import EXECUTION_BUDGET
 from tests.runtime.recovery.kit import (
     CONTROL,
-    RESYNC_SECONDS,
     Ending,
     Entrance,
     Fault,
@@ -17,8 +16,6 @@ from tests.runtime.recovery.kit import (
     Route,
 )
 from tests.runtime.recovery.preparation import ROOM_PREPARATIONS, RoomPreparation
-
-pytestmark = pytest.mark.looptime
 
 
 @pytest.mark.parametrize("fault", list(Fault))
@@ -35,11 +32,11 @@ class TestFailureContinuation:
         room = retrying_room
         room.peer.fail_terminals(fault, *room.members)
         await room.start(route)
-        await room.advance(RESYNC_SECONDS)
         await prepare_room(room)
 
         room.peer.post(CONTROL)
-        await room.advance(RESYNC_SECONDS)
+        await room.ctx.request_resync()
+        await room.control_settled(CONTROL)
 
         assert room.model_turns == [room.members]
         assert room.adapter.controls == [CONTROL]

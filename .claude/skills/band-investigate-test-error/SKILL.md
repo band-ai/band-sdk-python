@@ -93,6 +93,10 @@ lens 4 and run three passes.
    "Test Synchronization" and the [test conventions' controlled-clock
    boundary](../band-python-test-conventions/SKILL.md#time-is-a-hung-test-guard-not-proof).
    Prefer gates and awaited completion over timers for time-agnostic claims.
+   For a unit test that fails only in CI or only sometimes, check order and
+   shared-state dependence: rerun with the `pytest-randomly` seed from the
+   failing run's header (`--randomly-seed=N`) and alone, and see the
+   [isolation rules](../band-python-test-conventions/SKILL.md#isolation-non-live).
    For an E2E test, scrutinize the matrix/baseline expectations
    (`tests/e2e/baseline/smoke/matrix/`), including agent-scoped `/context` recall
    assumptions and room rejoin/rehydration timing. Show the mismatch between what the test
