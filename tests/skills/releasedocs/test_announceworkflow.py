@@ -88,6 +88,12 @@ class TestAnnounceWorkflow:
         assert sparse
         assert set(sparse) == {SKILL_CHECKOUT}
 
+    def test_claude_gets_only_the_read_tools(self) -> None:
+        (claude,) = [s for s in all_steps() if s.get("id") == "claude"]
+        flags = claude["with"]["claude_args"].split()
+        assert {"--restricted", "--strict-mcp-config"} <= set(flags)
+        assert flags[flags.index("--tools") + 1] == "Read,Glob,Grep"
+
     def test_announcement_targets_exist(self, announcement: ModuleType) -> None:
         targets = set(re.findall(r"--target ([\w-]+)", workflow_text()))
         assert targets == {target.value for target in announcement.Target}

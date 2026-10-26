@@ -158,7 +158,8 @@ jobs:
         run: echo "schema=$(uv run --script "$SKILL/scripts/reportschema.py")" >> "$GITHUB_OUTPUT"
 
       # --tools removes every other built-in tool; --restricted confines the
-      # file tools to the working directory.
+      # file tools to the working directory; --strict-mcp-config drops MCP
+      # servers, which --tools does not cover.
       - name: Write the changelog items
         id: claude
         timeout-minutes: ${{ fromJSON(env.CHANGELOG_TIMEOUT_MINUTES) }}
@@ -176,6 +177,7 @@ jobs:
             --max-budget-usd ${{ env.CHANGELOG_MAX_BUDGET_USD }}
             --tools Read,Glob,Grep
             --restricted
+            --strict-mcp-config
             --json-schema '${{ steps.schema.outputs.schema }}'
 
       - name: Read the report
