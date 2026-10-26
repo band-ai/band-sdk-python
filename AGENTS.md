@@ -80,7 +80,7 @@ explicit user approval.
 | Skill | Use when |
 |---|---|
 | [band-python-conventions](.claude/skills/band-python-conventions/SKILL.md) | Python source, comments, docstrings, and error handling |
-| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing/reviewing tests; complementary branches not line counts; intent assertions; seams not patches; no wall-clock proof |
+| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing/reviewing any test (non-live unit tests included); before-writing gate and before-finishing checklist; complementary branches not line counts; intent assertions; seams not patches; non-live isolation; no wall-clock proof |
 
 | Skill | Use when |
 |---|---|
@@ -248,11 +248,12 @@ within a duration to establish correctness. Hold an operation at the relevant
 boundary, assert the behavior while it is blocked, then release it and await
 confirmed completion.
 
-Test timeout, expiry, and deadline behavior with a controlled clock. Keep real
-subprocess and network readiness independent of that clock. Real-time timeouts
-may guard against a hung test, but must not drive the scenario or serve as proof
-of the behavior under test. Cleanup must account for resources created during
-failed or cancelled startup and await their confirmed release.
+Test timeout, expiry, and deadline behavior with a controlled clock
+(`looptime`). Keep real subprocess and network readiness independent of that
+clock. Real-time timeouts may guard against a hung test, but must not drive the
+scenario or serve as proof of the behavior under test. Cleanup must account for
+resources created during failed or cancelled startup and await their confirmed
+release.
 
 ## Testing Structure
 
@@ -488,9 +489,9 @@ install` it and exercise the real call in this repo's venv.
 
 For Python changes, before selecting checks, re-read your own diff once against
 the `band-python-conventions` skill — including code you just wrote this session,
-not only code you started from. Test diffs also re-read
-`band-python-test-conventions` (complementary branches, intent assertions,
-seams not patches, no wall-clock proof). Check these design rules explicitly:
+not only code you started from. Test diffs also walk the
+[test conventions' "Before finishing" checklist](.claude/skills/band-python-test-conventions/SKILL.md#before-finishing).
+Check these design rules explicitly:
 
 - **Single source of truth**: a literal, magic string, or multi-line block
   re-typed in more than one place (a second copy you just wrote counts) instead
@@ -622,10 +623,10 @@ The readiness review checks the actual diff and relevant existing tests:
 - **Implementation complete:** the diff solves the cause or need at its
   authoritative boundary, is focused and maintainable, and has no known
   blocking defects or unfinished in-scope work hidden as follow-ups.
-- **Coverage meaningful:** apply the test-conventions skill's "Coverage and
-  realistic flows" guidance. Map important scenarios to assertions, include
-  relevant complex interactions and failure/recovery paths, and close material
-  in-scope gaps. Passing tests and coverage percentages alone are insufficient.
+- **Coverage meaningful:** apply the test-conventions skill's
+  [coverage guidance](.claude/skills/band-python-test-conventions/SKILL.md#coverage-is-branches-not-lines).
+  Map important scenarios to assertions, include relevant complex
+  interactions and failure/recovery paths, and close material in-scope gaps. Passing tests and coverage percentages alone are insufficient.
 - **Validation evidenced:** the applicable author checks from the Pre-Commit
   Checklist passed for the implementation being reviewed. Record the reviewed
   head, checks and outcomes, scenario coverage, and material limitations in

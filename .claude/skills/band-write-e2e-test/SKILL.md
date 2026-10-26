@@ -43,8 +43,9 @@ written.
 - A behaviour is only covered for one adapter and should run across frameworks.
 
 Do **not** use this for unit/adapter/converter tests (those live in `tests/adapters/`,
-`tests/converters/`, `tests/framework_conformance/` and don't touch the platform), or for
-a one-line tweak to an existing E2E test — just make it.
+`tests/converters/`, `tests/framework_conformance/` and don't touch the platform; write
+them with [test conventions](../band-python-test-conventions/SKILL.md)), or for a
+one-line tweak to an existing E2E test — just make it.
 
 ## Phase 1 — Collect context
 

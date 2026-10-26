@@ -58,7 +58,7 @@ __all__ = [
 ]
 
 
-# Marker names the conftest fixtures resolve. Registered in conftest.
+# Marker names the conftest fixtures resolve. Registered in pyproject.toml.
 WITH_ADAPTERS_MARKER = "with_adapters"  # read by the agent / agents fixtures
 PER_ADAPTER_MARKER = (
     "per_adapter"  # read by the cell / agent / peer fixtures (per-cell steering)
