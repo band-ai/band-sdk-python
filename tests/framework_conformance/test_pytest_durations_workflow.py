@@ -49,7 +49,7 @@ class TestPytestDurationsWorkflow:
         pr = next(
             step
             for step in steps
-            if step.get("name") == "Open a durations PR when the file drifted"
+            if step.get("name") == "Open, update, or close the durations PR"
         )
         script = pr["run"]
         assert 'git add -- "$DURATIONS_PATH"' in script

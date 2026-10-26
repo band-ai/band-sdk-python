@@ -1,5 +1,6 @@
 # Weekly / on-demand refresh of `.test_durations`. Times the unit suite with
-# in-job xdist on one runner and opens a PR from main when the file drifts.
+# in-job xdist on one runner and keeps one PR from main: opened or updated
+# when the file drifts, closed as stale when it no longer does.
 # GitHub only registers workflow_dispatch once this file is on the default
 # branch.
 
@@ -64,13 +65,20 @@ jobs:
             --band-durations-path "$DURATIONS_PATH" \
             --ignore=tests/e2e --ignore=tests/integration
 
-      - name: Open a durations PR when the file drifted
+      - name: Open, update, or close the durations PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
+          # --head matches fork PRs by branch name too; only our own branch counts.
+          open_pr="$(gh pr list --head "$DURATIONS_BRANCH" --base main --state open \
+            --json number,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | .number')"
           git add -- "$DURATIONS_PATH"
           if git diff --cached --quiet; then
+            # main already matches fresh timings, so an open PR is stale.
+            if [ -n "$open_pr" ]; then
+              gh pr close "$open_pr" --comment "Fresh durations match main; superseded."
+            fi
             echo "durations unchanged; no PR"
             exit 0
           fi
@@ -81,7 +89,7 @@ jobs:
           # Plain --force: the branch is bot-owned with deterministic per-run
           # content, and a re-run must simply overwrite the previous attempt.
           git push -u origin "$DURATIONS_BRANCH" --force
-          if [ -z "$(gh pr list --head "$DURATIONS_BRANCH" --state open --json number --jq '.[].number')" ]; then
+          if [ -z "$open_pr" ]; then
             gh pr create \
               --base main \
               --title "chore: refresh unit-test durations" \
