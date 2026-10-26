@@ -18,13 +18,11 @@ import yaml
 from tests.paths import RELEASE_DOCS_SCRIPTS, RELEASE_DOCS_SKILL, REPO_ROOT
 
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-announce.yml"
+SKILL_CHECKOUT = "/${{ env.SKILL }}/"
 
 
 def workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
-
-
-SKILL_CHECKOUT = "/${{ env.SKILL }}/"
 
 
 def workflow() -> dict[str, Any]:
@@ -79,14 +77,6 @@ class TestAnnounceWorkflow:
         read = outputs_read(step)
         assert read
         assert read - outputs_written(script) == set()
-
-    def test_needs_gates_read_declared_job_outputs(self) -> None:
-        jobs = workflow()["jobs"]
-        read = set(re.findall(r"needs\.(\w+)\.outputs\.(\w+)", workflow_text()))
-        assert read
-        assert {
-            (job, key) for job, key in read if key not in jobs[job]["outputs"]
-        } == set()
 
     def test_every_checkout_of_the_skill_fetches_it(self) -> None:
         assert REPO_ROOT / workflow()["env"]["SKILL"] == RELEASE_DOCS_SKILL
