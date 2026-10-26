@@ -218,6 +218,8 @@ jobs:
               echo '```md'
               cat bundle/*.md
               echo '```'
+              echo
+              echo "File the Fern changelog and docs PRs with \`/band-release-docs $TAG\`."
             else
               echo "Claude judged no user-facing changes; nothing is attached or posted."
             fi

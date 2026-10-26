@@ -87,6 +87,11 @@ def postdiscord(scripts: Callable[[str], ModuleType]) -> ModuleType:
 
 
 @pytest.fixture
+def docsrange(scripts: Callable[[str], ModuleType]) -> ModuleType:
+    return scripts("docsrange")
+
+
+@pytest.fixture
 def repo(tmp_path: Path, collectprs: ModuleType) -> ThrowawayRepo:
     return ThrowawayRepo(tmp_path / "repo", collectprs.RELEASE_PLEASE_CONFIG)
 
