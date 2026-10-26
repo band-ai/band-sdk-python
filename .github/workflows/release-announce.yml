@@ -1,0 +1,361 @@
+# Announces every band-sdk release on Slack and Discord and attaches its
+# release-notes bundle (release-notes.json, release-prs.json, and the
+# standalone Fern entry <release date>.md) to the GitHub Release.
+#
+# Claude only judges and writes: it reads release-prs.json through Read, Glob,
+# and Grep confined to a checkout holding only the skill, and returns one
+# structured report. The scripts in .claude/skills/band-release-docs/scripts
+# collect, validate, render, and post; model-written text moves only through
+# files and artifacts, never step outputs, env, or expressions in run scripts.
+#
+# Triggers: a successful release-event band-publish run for a band-sdk-v*
+# tag (live), or workflow_dispatch with a tag and a mode:
+#   live     attach the bundle, post to Slack and Discord (@everyone)
+#   test     keep the bundle as a workflow artifact; post once per channel
+#            prefixed "TEST — please ignore" with no ping; the Discord post is
+#            deleted by the job, the Slack post by a Slack admin
+#   dry-run  run Claude and every gate; write the entry and the exact
+#            announcement text to the summary; attach and post nothing
+# Releases published by a band-publish dispatch carry no release event, so
+# announce them by dispatching this workflow.
+#
+# Recovery: "Re-run failed jobs". collect, changelog, bundle, slack, and
+# discord are separate jobs, so a Discord failure after Slack posted re-posts
+# only to Discord.
+# Re-announcing: a live run stops before Claude when the release already
+# carries release-notes.json. Delete that asset, then dispatch again.
+#
+# Limits live in env below; job-level timeout-minutes cannot read env, so each
+# job carries a literal 10-minute backstop (30 for changelog).
+
+name: release-announce
+
+on:
+  workflow_run:
+    workflows: [band-publish]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to announce (e.g. band-sdk-v6.1.0)
+        required: true
+        type: string
+      mode:
+        description: live posts and attaches; test posts disclaimers; dry-run only previews
+        required: true
+        default: live
+        type: choice
+        options: [live, test, dry-run]
+      model:
+        description: Claude model for this run (defaults to the ANTHROPIC_MODEL variable, then sonnet)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-announce-${{ inputs.tag || github.event.workflow_run.head_branch }}-${{ inputs.mode || 'live' }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+  MODE: ${{ inputs.mode || 'live' }}
+  ANTHROPIC_MODEL: ${{ inputs.model || vars.ANTHROPIC_MODEL || 'sonnet' }}
+  PRODUCT_NAME: Band Python SDK
+  PRODUCT_LABEL: Python SDK
+  PRODUCT_TAG: python
+  SCRIPTS: .claude/skills/band-release-docs/scripts
+  CHANGELOG_MAX_TURNS: 30
+  CHANGELOG_MAX_BUDGET_USD: 3
+  CHANGELOG_TIMEOUT_MINUTES: 20
+
+jobs:
+  collect:
+    # Release-event runs carry the tag in head_branch; band-mcp-v* releases
+    # and failed publishes never announce.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'release' &&
+       startsWith(github.event.workflow_run.head_branch, 'band-sdk-v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      proceed: ${{ steps.collect.outputs.proceed }}
+      has_changes: ${{ steps.collect.outputs.has_changes }}
+    steps:
+      - name: Validate the tag
+        run: |
+          if [[ ! "$TAG" =~ ^band-sdk-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$TAG' is not a band-sdk-vX.Y.Z tag"
+            exit 1
+          fi
+
+      - name: Checkout with full history and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Collect the release's PRs
+        id: collect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=("$TAG" --outputs "$GITHUB_OUTPUT")
+          if [[ "$MODE" == live ]]; then args+=(--live); fi
+          uv run --script "$SCRIPTS/collectprs.py" "${args[@]}" > release-prs.json
+
+      - name: Record why nothing is announced
+        if: steps.collect.outputs.reason != ''
+        env:
+          REASON: ${{ steps.collect.outputs.reason }}
+        run: echo "$REASON" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release-prs.json
+        if: steps.collect.outputs.proceed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-prs
+          path: release-prs.json
+          overwrite: true
+
+  changelog:
+    needs: collect
+    if: needs.collect.outputs.proceed == 'true' && needs.collect.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      has_entry: ${{ steps.build.outputs.has_entry }}
+    steps:
+      # Exactly the skill: no AGENTS.md, CLAUDE.md, settings, or other skills
+      # (cone mode would add every root file).
+      - name: Checkout the skill only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: /.claude/skills/band-release-docs/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Download release-prs.json
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-prs
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Emit the report schema
+        id: schema
+        run: echo "schema=$(uv run --script "$SCRIPTS/reportschema.py")" >> "$GITHUB_OUTPUT"
+
+      # --tools removes every other built-in tool; --restricted confines the
+      # file tools to the working directory.
+      - name: Write the changelog items
+        id: claude
+        timeout-minutes: ${{ fromJSON(env.CHANGELOG_TIMEOUT_MINUTES) }}
+        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
+        with:
+          anthropic_api_key: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          allowed_bots: band-release-please-public
+          prompt: >-
+            Follow .claude/skills/band-release-docs/changelog.md for release
+            ${{ env.TAG }}. The release's PRs are in release-prs.json in the
+            working directory.
+          claude_args: >-
+            --max-turns ${{ env.CHANGELOG_MAX_TURNS }}
+            --max-budget-usd ${{ env.CHANGELOG_MAX_BUDGET_USD }}
+            --tools Read,Glob,Grep
+            --restricted
+            --json-schema '${{ steps.schema.outputs.schema }}'
+
+      - name: Read the report
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: uv run --script "$SCRIPTS/extractreport.py" "$EXECUTION_FILE" --out report.json
+
+      - name: Trace the items to the release
+        id: build
+        run: |
+          uv run --script "$SCRIPTS/builditems.py" report.json release-prs.json \
+            --product-name "$PRODUCT_NAME" --product-label "$PRODUCT_LABEL" \
+            --product-tag "$PRODUCT_TAG" \
+            --out bundle/release-notes.json --outputs "$GITHUB_OUTPUT"
+
+      - name: Render and validate the Fern entry
+        if: steps.build.outputs.has_entry == 'true'
+        run: |
+          uv run --script "$SCRIPTS/renderentry.py" bundle/release-notes.json --out bundle/
+          cp release-prs.json bundle/
+
+      - name: Upload the bundle
+        if: steps.build.outputs.has_entry == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bundle
+          path: bundle/
+          overwrite: true
+
+      - name: Summarize
+        env:
+          HAS_ENTRY: ${{ steps.build.outputs.has_entry }}
+        run: |
+          {
+            echo "Model: \`$ANTHROPIC_MODEL\`"
+            echo
+            if [[ "$HAS_ENTRY" == true ]]; then
+              echo '```md'
+              cat bundle/*.md
+              echo '```'
+            else
+              echo "Claude judged no user-facing changes; nothing is attached or posted."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  bundle:
+    needs: changelog
+    # Job-level if cannot read env; inputs.mode is empty on workflow_run, so
+    # automatic runs attach.
+    if: needs.changelog.outputs.has_entry == 'true' && inputs.mode != 'dry-run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download the bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: bundle
+          path: bundle
+
+      - name: Attach the bundle to the release
+        if: env.MODE == 'live'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" bundle/* --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Keep the bundle as an artifact
+        if: env.MODE == 'test'
+        run: echo "Test mode, so the bundle stays a workflow artifact." >> "$GITHUB_STEP_SUMMARY"
+
+  slack:
+    needs: [changelog, bundle]
+    # Without a status function a skipped bundle (dry-run) would skip this
+    # job too; a failed bundle still blocks posting.
+    if: >-
+      ${{ !cancelled() && needs.changelog.outputs.has_entry == 'true' &&
+      (needs.bundle.result == 'success' ||
+       (needs.bundle.result == 'skipped' && inputs.mode == 'dry-run')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the skill only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: /.claude/skills/band-release-docs/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Download the bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: bundle
+          path: bundle
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Format the Slack post
+        run: |
+          args=(--notes bundle/release-notes.json --target slack-webhook)
+          if [[ "$MODE" == test ]]; then args+=(--test); fi
+          uv run --script "$SCRIPTS/announcement.py" "${args[@]}" > message.txt
+          { echo '```'; cat message.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post to Slack
+        if: env.MODE != 'dry-run'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: uv run --script "$SCRIPTS/postslack.py" --message-file message.txt
+
+  discord:
+    needs: [changelog, bundle]
+    if: >-
+      ${{ !cancelled() && needs.changelog.outputs.has_entry == 'true' &&
+      (needs.bundle.result == 'success' ||
+       (needs.bundle.result == 'skipped' && inputs.mode == 'dry-run')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the skill only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: /.claude/skills/band-release-docs/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Download the bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: bundle
+          path: bundle
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Format the Discord post
+        run: |
+          args=(--notes bundle/release-notes.json --target discord)
+          if [[ "$MODE" == test ]]; then args+=(--test); fi
+          uv run --script "$SCRIPTS/announcement.py" "${args[@]}" > message.txt
+          { echo '```'; cat message.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post to Discord
+        id: post
+        if: env.MODE != 'dry-run'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          args=(--message-file message.txt)
+          if [[ "$MODE" == test ]]; then args+=(--no-mentions); fi
+          message_id=$(uv run --script "$SCRIPTS/postdiscord.py" "${args[@]}")
+          echo "message_id=$message_id" >> "$GITHUB_OUTPUT"
+          echo "Discord message id: \`$message_id\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the test post
+        if: env.MODE == 'test'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          MESSAGE_ID: ${{ steps.post.outputs.message_id }}
+        run: uv run --script "$SCRIPTS/postdiscord.py" --delete "$MESSAGE_ID"
+
+  alert:
+    needs: [collect, changelog, bundle, slack, discord]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the skill only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: /.claude/skills/band-release-docs/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Alert Slack
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          failed=$(jq -r '[to_entries[] | select(.value.result == "failure") | .key] | join(", ")' <<< "$NEEDS")
+          printf 'release-announce failed for %s (%s): %s\n%s\n' "$TAG" "$MODE" "$failed" "$RUN_URL" \
+            | uv run --script "$SCRIPTS/postslack.py"
