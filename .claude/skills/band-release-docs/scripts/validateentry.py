@@ -140,10 +140,13 @@ def check_headings(
     offset: int,
     breaking: bool,
     product_label: str | None,
+    subtitle: str | None,
     report: Report,
 ) -> list[str]:
     categories: list[str] = []
     entry_titles = 0
+    level_two = 0
+    saw_subtitle = False
 
     for index, line in enumerate(lines):
         lineno = offset + index
@@ -156,6 +159,12 @@ def check_headings(
             report.add(lineno, "entries start at '## <Category>' — no H1")
             continue
         if level == 2:
+            level_two += 1
+            if subtitle is not None and title == subtitle:
+                saw_subtitle = True
+                if level_two != 1:
+                    report.add(lineno, f"'## {subtitle}' must open the release block")
+                continue
             if title in CATEGORIES:
                 if title in categories:
                     report.add(
@@ -185,6 +194,8 @@ def check_headings(
                 f"'- **{title}:**' bullet and nest the entries two spaces under it",
             )
 
+    if subtitle is not None and not saw_subtitle:
+        report.add(offset, f"a release block starts with '## {subtitle}'")
     ordered = sorted(categories, key=CATEGORIES.index)
     if categories != ordered:
         report.add(
@@ -260,6 +271,7 @@ def validate(
     product_label: str | None = None,
     product_tag: str | None = None,
     release_date: str | None = None,
+    release_version: str | None = None,
     breaking: bool = False,
 ) -> list[str]:
     text = path.read_text(encoding="utf-8")
@@ -275,7 +287,14 @@ def validate(
 
     block, body_start = split_frontmatter(text)
     body_lines = text.splitlines()[body_start - 1 :]
-    categories = check_headings(body_lines, body_start, breaking, product_label, report)
+    subtitle = (
+        f"{product_label} {release_version}"
+        if surface in TAGGED_SURFACES and product_label and release_version
+        else None
+    )
+    categories = check_headings(
+        body_lines, body_start, breaking, product_label, subtitle, report
+    )
     check_bullets(body_lines, body_start, surface, product_label, report)
     check_frontmatter(block, surface, product_tag, categories, report)
     return report.violations
@@ -292,6 +311,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--product-tag", help="product frontmatter tag, e.g. python")
     parser.add_argument("--release-date", help="expected YYYY-MM-DD filename stem")
     parser.add_argument(
+        "--release-version", help="the X.Y.Z the '## <label> <version>' subtitle names"
+    )
+    parser.add_argument(
         "--breaking", action="store_true", help="allow one breaking-change entry title"
     )
     args = parser.parse_args(argv)
@@ -307,6 +329,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         product_label=args.product_label,
         product_tag=args.product_tag,
         release_date=args.release_date,
+        release_version=args.release_version,
         breaking=args.breaking,
     )
     if violations:

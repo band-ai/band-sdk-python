@@ -22,12 +22,14 @@ not from taste. Counts below are from that corpus.
 one of them since 2026-05-26. Do not add frontmatter to the other surfaces.
 
 **Filename**: `YYYY-MM-DD.md` — the release date, never today's date. If the
-file already exists (another release the same day), append to it; never
-overwrite.
+file already exists (another release the same day), add the release as its own
+block above the earlier ones; never overwrite or interleave.
 
 ## Structure
 
 ```md
+## Python SDK 6.1.0
+
 ## Added
 - **Python SDK:**
   - **Strands Agents Adapter** — Connect an AWS Strands Agents-based agent to Band chat rooms.
@@ -44,12 +46,18 @@ overwrite.
 
 Rules:
 
+0. **Version subtitle (`sdks`).** Each release's block starts with
+   `## <Product Label> <version>`, the version from the release tag, and its
+   sections follow. Same-day releases share the file as separate blocks, newest
+   first, each under its own subtitle, as Fern's changelog skill requires
+   (`thenvoi/fern` `.claude/skills/changelog/SKILL.md`, since
+   [thenvoi/fern#394](https://github.com/thenvoi/fern/pull/394)).
 1. **Categories are `##`** — [Keep a Changelog](https://keepachangelog.com/en/1.1.0/):
    `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`, in that
-   order, each at most once. The corpus uses exactly these four in practice:
-   Added (49), Fixed (39), Changed (36), Security (11).
-2. **No entry title.** A `##` heading that isn't a category is only allowed in a
-   breaking-change entry (see below).
+   order, each at most once per release. The corpus uses exactly these four in
+   practice: Added (49), Fixed (39), Changed (36), Security (11).
+2. **No other entry title.** Besides the version subtitle, a `##` heading that
+   isn't a category is only allowed in a breaking-change entry (see below).
 3. **No blank line between a category heading and its first bullet** — 135
    occurrences tight, 0 with a blank line.
 4. **Bullets are `- **Label** — sentence.`** with an em dash (236 em dash vs 12
@@ -120,7 +128,7 @@ publishing a vague claim like "Bug fixes."
 ```sh
 python <this-skill>/scripts/validateentry.py <entry file> \
   --surface sdks --product-label "Python SDK" --product-tag python \
-  --release-date <YYYY-MM-DD>
+  --release-date <YYYY-MM-DD> --release-version <X.Y.Z>
 ```
 
 Run it before `fern check`, and never open the PR while either one fails.

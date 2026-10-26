@@ -1,4 +1,4 @@
-"""Merging into an existing Fern date file places our bullets and leaves every other line intact."""
+"""Merging adds our release block above the date file's earlier releases and keeps every other line."""
 
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ ANOTHER_PRODUCT = """---
 tags: ["fix", "typescript"]
 ---
 
+## TypeScript SDK 0.1.10
+
 ## Fixed
 - **TypeScript SDK:**
   - **LangGraph Reliability** — Agents stay responsive across turns.
@@ -28,19 +30,65 @@ ANOTHER_PRODUCT_MERGED = """---
 tags: ["feature", "fix", "typescript", "python"]
 ---
 
+## Python SDK 6.1.0
+
 ## Added
 - **Python SDK:**
   - **Send Retries** — Sends retry with backoff.
 
 ## Fixed
-- **TypeScript SDK:**
-  - **LangGraph Reliability** — Agents stay responsive across turns.
 - **Python SDK:**
   - **Reconnect** — Rooms rejoin after a drop.
+
+## TypeScript SDK 0.1.10
+
+## Fixed
+- **TypeScript SDK:**
+  - **LangGraph Reliability** — Agents stay responsive across turns.
 """
-ANOTHER_PRODUCT_BREAKING_MERGED = """---
-tags: ["improvement", "breaking-change", "fix", "typescript", "python"]
+EARLIER_RELEASE = """---
+tags: ["breaking-change", "fix", "python"]
 ---
+
+## Python SDK 6.0.1
+
+## Python SDK: Legacy Client Removed
+
+The legacy client is gone.
+
+## Fixed
+- **Python SDK:**
+  - **Earlier Fix** — Fixed earlier today.
+"""
+EARLIER_RELEASE_MERGED = """---
+tags: ["feature", "breaking-change", "fix", "python"]
+---
+
+## Python SDK 6.1.0
+
+## Added
+- **Python SDK:**
+  - **Send Retries** — Sends retry with backoff.
+
+## Fixed
+- **Python SDK:**
+  - **Reconnect** — Rooms rejoin after a drop.
+
+## Python SDK 6.0.1
+
+## Python SDK: Legacy Client Removed
+
+The legacy client is gone.
+
+## Fixed
+- **Python SDK:**
+  - **Earlier Fix** — Fixed earlier today.
+"""
+EARLIER_RELEASE_BREAKING_MERGED = """---
+tags: ["improvement", "breaking-change", "fix", "python"]
+---
+
+## Python SDK 6.1.0
 
 ## Python SDK: Platform Tool Names Now Prefixed
 
@@ -50,173 +98,25 @@ Tools now carry a prefix.
 - **Python SDK:**
   - **Tool Prefix** — Tool names start with a prefix.
 
-## Fixed
-- **TypeScript SDK:**
-  - **LangGraph Reliability** — Agents stay responsive across turns.
-"""
-BAND_MCP = """---
-tags: ["feature", "python"]
----
+## Python SDK 6.0.1
 
-## Added
-- **Band MCP:**
-  - **Room Tools** — The MCP server lists room tools.
-"""
-BAND_MCP_MERGED = """---
-tags: ["feature", "fix", "python"]
----
+## Python SDK: Legacy Client Removed
 
-## Added
-- **Band MCP:**
-  - **Room Tools** — The MCP server lists room tools.
-- **Python SDK:**
-  - **Send Retries** — Sends retry with backoff.
+The legacy client is gone.
 
 ## Fixed
 - **Python SDK:**
-  - **Reconnect** — Rooms rejoin after a drop.
+  - **Earlier Fix** — Fixed earlier today.
 """
-SAME_DAY = """---
-tags: ["fix", "typescript", "python"]
+# Filed before Fern's version subtitles: which release these items belong to
+# cannot be told apart from ours once our block sits above them.
+WITHOUT_SUBTITLE = """---
+tags: ["fix", "python"]
 ---
 
 ## Fixed
 - **Python SDK:**
   - **Earlier Fix** — Fixed earlier today.
-- **TypeScript SDK:**
-  - **Typed Rooms** — Room ids are typed.
-"""
-SAME_DAY_MERGED = """---
-tags: ["feature", "fix", "typescript", "python"]
----
-
-## Added
-- **Python SDK:**
-  - **Send Retries** — Sends retry with backoff.
-
-## Fixed
-- **Python SDK:**
-  - **Earlier Fix** — Fixed earlier today.
-  - **Reconnect** — Rooms rejoin after a drop.
-- **TypeScript SDK:**
-  - **Typed Rooms** — Room ids are typed.
-"""
-PYTHON_LAST = """---
-tags: ["fix", "security", "typescript", "python"]
----
-
-## Fixed
-- **TypeScript SDK:**
-  - **Typed Rooms** — Room ids are typed.
-- **Python SDK:**
-  - **Earlier Fix** — Fixed earlier today.
-
-## Security
-- **TypeScript SDK:**
-  - **Safe Logs** — Logs drop secrets.
-"""
-PYTHON_LAST_MERGED = """---
-tags: ["feature", "security", "fix", "typescript", "python"]
----
-
-## Added
-- **Python SDK:**
-  - **Send Retries** — Sends retry with backoff.
-
-## Fixed
-- **TypeScript SDK:**
-  - **Typed Rooms** — Room ids are typed.
-- **Python SDK:**
-  - **Earlier Fix** — Fixed earlier today.
-  - **Reconnect** — Rooms rejoin after a drop.
-
-## Security
-- **TypeScript SDK:**
-  - **Safe Logs** — Logs drop secrets.
-"""
-SAME_WORDING = """---
-tags: ["fix", "typescript"]
----
-
-## Fixed
-- **TypeScript SDK:**
-  - **Reconnect** — Rooms rejoin after a drop.
-"""
-SAME_WORDING_MERGED = """---
-tags: ["feature", "fix", "typescript", "python"]
----
-
-## Added
-- **Python SDK:**
-  - **Send Retries** — Sends retry with backoff.
-
-## Fixed
-- **TypeScript SDK:**
-  - **Reconnect** — Rooms rejoin after a drop.
-- **Python SDK:**
-  - **Reconnect** — Rooms rejoin after a drop.
-"""
-UNUSED_CATEGORY = """---
-tags: ["deprecation", "typescript"]
----
-
-## Deprecated
-- **TypeScript SDK:**
-  - **Old Client** — The old client is deprecated.
-"""
-UNUSED_CATEGORY_MERGED = """---
-tags: ["feature", "deprecation", "fix", "typescript", "python"]
----
-
-## Added
-- **Python SDK:**
-  - **Send Retries** — Sends retry with backoff.
-
-## Deprecated
-- **TypeScript SDK:**
-  - **Old Client** — The old client is deprecated.
-
-## Fixed
-- **Python SDK:**
-  - **Reconnect** — Rooms rejoin after a drop.
-"""
-TWO_BREAKING = """---
-tags: ["breaking-change", "typescript", "python"]
----
-
-## TypeScript SDK: Old Rename
-
-TypeScript details.
-
-## Python SDK: Earlier Break
-
-Python details.
-
-## Changed
-- **TypeScript SDK:**
-  - **Rename** — Clients are renamed.
-"""
-TWO_BREAKING_MERGED = """---
-tags: ["improvement", "breaking-change", "typescript", "python"]
----
-
-## TypeScript SDK: Old Rename
-
-TypeScript details.
-
-## Python SDK: Earlier Break
-
-Python details.
-
-## Python SDK: Platform Tool Names Now Prefixed
-
-Tools now carry a prefix.
-
-## Changed
-- **TypeScript SDK:**
-  - **Rename** — Clients are renamed.
-- **Python SDK:**
-  - **Tool Prefix** — Tool names start with a prefix.
 """
 PR_BODY = f"""## Summary
 
@@ -258,22 +158,11 @@ class TestMergeEntry:
         ("existing", "merged"),
         [
             (ANOTHER_PRODUCT, ANOTHER_PRODUCT_MERGED),
-            (BAND_MCP, BAND_MCP_MERGED),
-            (SAME_DAY, SAME_DAY_MERGED),
-            (PYTHON_LAST, PYTHON_LAST_MERGED),
-            (SAME_WORDING, SAME_WORDING_MERGED),
-            (UNUSED_CATEGORY, UNUSED_CATEGORY_MERGED),
+            (EARLIER_RELEASE, EARLIER_RELEASE_MERGED),
         ],
-        ids=[
-            "another-product",
-            "band-mcp",
-            "same-day-python",
-            "same-day-python-last",
-            "another-product-same-wording",
-            "unused-category",
-        ],
+        ids=["another-product", "earlier-python-release"],
     )
-    def test_items_join_the_date_file(
+    def test_release_block_goes_above_the_earlier_ones(
         self,
         renderentry: ModuleType,
         make_item: Callable[..., object],
@@ -290,33 +179,37 @@ class TestMergeEntry:
         assert date_file.read_text(encoding="utf-8") == merged
         assert body.read_text(encoding="utf-8") == PR_BODY
 
-    @pytest.mark.parametrize(
-        ("existing", "merged"),
-        [
-            (TWO_BREAKING, TWO_BREAKING_MERGED),
-            (ANOTHER_PRODUCT, ANOTHER_PRODUCT_BREAKING_MERGED),
-        ],
-        ids=["after-breaking-blocks", "before-the-categories"],
-    )
-    def test_breaking_block_joins_the_date_file(
+    def test_breaking_release_block_keeps_its_breaking_section(
         self,
         renderentry: ModuleType,
         releasedata: ModuleType,
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
-        existing: str,
-        merged: str,
     ) -> None:
         date_file = tmp_path / f"{RELEASE_DATE}.md"
-        date_file.write_text(existing, encoding="utf-8", newline="")
+        date_file.write_text(EARLIER_RELEASE, encoding="utf-8", newline="")
         breaking = releasedata.Breaking(
             title="Platform Tool Names Now Prefixed",
             markdown="Tools now carry a prefix.",
         )
         notes = make_notes([make_item(*TOOL_PREFIX)], breaking)
         renderentry.merge_into(notes, tmp_path, [], tmp_path / "pr-body.md")
-        assert date_file.read_text(encoding="utf-8") == merged
+        assert date_file.read_text(encoding="utf-8") == EARLIER_RELEASE_BREAKING_MERGED
+
+    def test_date_file_without_subtitles_is_refused(
+        self,
+        renderentry: ModuleType,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+    ) -> None:
+        date_file = tmp_path / f"{RELEASE_DATE}.md"
+        date_file.write_text(WITHOUT_SUBTITLE, encoding="utf-8", newline="")
+        notes = make_notes([make_item(*SEND_RETRIES)])
+        with pytest.raises(renderentry.EntryError, match="predate version subtitles"):
+            renderentry.merge_into(notes, tmp_path, [], tmp_path / "pr-body.md")
+        assert date_file.read_text(encoding="utf-8") == WITHOUT_SUBTITLE
 
     def test_new_date_file_is_the_standalone_entry(
         self,
@@ -333,23 +226,23 @@ class TestMergeEntry:
         ("damaged", "error"),
         [
             (
-                SAME_DAY_MERGED.replace(
+                EARLIER_RELEASE_MERGED.replace(
                     "  - **Earlier Fix** — Fixed earlier today.\n", ""
                 ),
                 "dropped or reordered",
             ),
             (
-                SAME_DAY_MERGED.replace(
-                    "- **TypeScript SDK:**\n  - **Typed Rooms** — Room ids are typed.\n",
-                    "",
+                EARLIER_RELEASE_MERGED.replace(
+                    "The legacy client is gone.\n\n## Fixed",
+                    "## Fixed",
                 ).replace(
-                    "## Fixed\n",
-                    "## Fixed\n- **TypeScript SDK:**\n  - **Typed Rooms** — Room ids are typed.\n",
+                    "  - **Earlier Fix** — Fixed earlier today.\n",
+                    "  - **Earlier Fix** — Fixed earlier today.\nThe legacy client is gone.\n",
                 ),
                 "dropped or reordered",
             ),
             (
-                SAME_DAY_MERGED.replace(
+                EARLIER_RELEASE_MERGED.replace(
                     "  - **Reconnect** — Rooms rejoin after a drop.\n", ""
                 ),
                 "lost our lines",
@@ -368,7 +261,7 @@ class TestMergeEntry:
         notes = make_notes([make_item(*SEND_RETRIES), make_item(*RECONNECT)])
         standalone = renderentry.render_standalone(notes)
         with pytest.raises(renderentry.EntryError, match=error):
-            renderentry.check_merge(SAME_DAY, damaged, standalone)
+            renderentry.check_merge(EARLIER_RELEASE, damaged, standalone)
 
     def test_held_item_is_omitted_and_listed_in_the_pr_body(
         self,

@@ -63,6 +63,8 @@ class TestStandaloneEntry:
             'tags: ["feature", "breaking-change", "security", "fix", "python"]\n'
             "---\n"
             "\n"
+            "## Python SDK 6.1.0\n"
+            "\n"
             "## Added\n"
             "- **Python SDK:**\n"
             "  - **Send Retries** — Sends retry with backoff.\n"
@@ -85,6 +87,7 @@ class TestStandaloneEntry:
             product_label=PRODUCT["label"],
             product_tag=PRODUCT["tag"],
             release_date=RELEASE_DATE,
+            release_version=notes.version,
         )
         assert violations == []
 
@@ -112,6 +115,8 @@ class TestStandaloneEntry:
             "---\n"
             'tags: ["improvement", "breaking-change", "python"]\n'
             "---\n"
+            "\n"
+            "## Python SDK 6.1.0\n"
             "\n"
             "## Python SDK: Platform Tool Names Now Prefixed\n"
             "\n"

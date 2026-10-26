@@ -5,9 +5,10 @@
 """Render ``release-notes.json`` as a Fern changelog entry.
 
 ``--out DIR`` writes the standalone ``<release_date>.md``. ``--merge-into DIR``
-merges the entry into that directory's date file, leaving every other line
-unchanged, and writes the Fern PR body to ``--pr-body``. Either way the
-standalone entry must pass ``validateentry.py`` first.
+adds the entry to that directory's date file as a release block above the
+earlier ones, leaving every other line unchanged, and writes the Fern PR body to
+``--pr-body``. Either way the standalone entry must pass ``validateentry.py``
+first.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ import logging
 import re
 import tempfile
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 from releasedata import Category, Item, ReleaseNotes
@@ -32,8 +32,8 @@ SURFACE = "sdks"
 BREAKING_TAG = CATEGORY_TAGS[Category.REMOVED][0]
 FRONTMATTER_FENCE = "---"
 TAGS_LINE = re.compile(r"^tags:\s*\[(.*)\]\s*$")
-SECTION_HEADING = re.compile(r"^## (.*?)\s*$")
-CATEGORY_TITLES = frozenset(Category)
+# A release block's opening line, `## <SDK> <version>`, for any SDK.
+RELEASE_SUBTITLE = re.compile(r"^## .+ \d+\.\d+\.\d+\s*$")
 
 
 class EntryError(ValueError):
@@ -82,8 +82,13 @@ def category_block(notes: ReleaseNotes, category: Category) -> list[str]:
     return [f"## {category}", product_bullet(notes), *map(item_line, items)]
 
 
+def subtitle(notes: ReleaseNotes) -> str:
+    return f"## {notes.product.label} {notes.version}"
+
+
 def render_standalone(notes: ReleaseNotes) -> str:
-    blocks = [breaking_block(notes)] if notes.breaking else []
+    blocks = [[subtitle(notes)]]
+    blocks += [breaking_block(notes)] if notes.breaking else []
     blocks += [category_block(notes, category) for category in kept_categories(notes)]
     body = "\n\n".join("\n".join(block) for block in blocks)
     frontmatter = [FRONTMATTER_FENCE, tags_line(entry_tags(notes)), FRONTMATTER_FENCE]
@@ -104,21 +109,12 @@ def checked_standalone(notes: ReleaseNotes) -> str:
             product_label=notes.product.label,
             product_tag=notes.product.tag,
             release_date=notes.release_date,
+            release_version=notes.version,
             breaking=notes.breaking is not None,
         )
     if violations:
         raise EntryError("\n".join(violations))
     return text
-
-
-@dataclass(frozen=True)
-class Section:
-    """A ``## `` section: heading line, content, and trailing blank lines."""
-
-    title: str
-    start: int
-    end: int
-    content_end: int
 
 
 def body_start(lines: list[str]) -> int:
@@ -127,24 +123,11 @@ def body_start(lines: list[str]) -> int:
     return lines.index(FRONTMATTER_FENCE, 1) + 1
 
 
-def sections(lines: list[str]) -> list[Section]:
-    starts = [
-        (index, match.group(1))
-        for index in range(body_start(lines), len(lines))
-        if (match := SECTION_HEADING.match(lines[index]))
-    ]
-    found = []
-    for position, (start, title) in enumerate(starts):
-        end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
-        content_end = end
-        while content_end > start + 1 and not lines[content_end - 1].strip():
-            content_end -= 1
-        found.append(Section(title, start, end, content_end))
-    return found
-
-
-def is_category(section: Section) -> bool:
-    return section.title in CATEGORY_TITLES
+def body(lines: list[str]) -> list[str]:
+    """The lines after the frontmatter, without leading blank lines."""
+    rest = lines[body_start(lines) :]
+    first = next((index for index, line in enumerate(rest) if line.strip()), len(rest))
+    return rest[first:]
 
 
 def merged_tags(lines: list[str], notes: ReleaseNotes) -> list[str]:
@@ -157,82 +140,28 @@ def merged_tags(lines: list[str], notes: ReleaseNotes) -> list[str]:
     return [tag for tag in TAG_ORDER if tag in known] + list(dict.fromkeys(products))
 
 
-def with_tags(lines: list[str], tags: list[str]) -> list[str]:
-    start = body_start(lines)
-    if start == 0:
-        return [FRONTMATTER_FENCE, tags_line(tags), FRONTMATTER_FENCE, "", *lines]
-    fence_end = start - 1
-    head = [
-        tags_line(tags) if TAGS_LINE.match(line) else line for line in lines[:fence_end]
-    ]
-    return head + lines[fence_end:]
+def check_mergeable(existing: list[str], notes: ReleaseNotes) -> None:
+    """Refuse a file that already holds this release, or whose releases have no subtitle."""
+    if subtitle(notes) in existing:
+        raise EntryError(
+            f"the date file already holds '{subtitle(notes)}'; "
+            "start again from a fresh worktree"
+        )
+    earlier = body(existing)
+    if earlier and not RELEASE_SUBTITLE.match(earlier[0]):
+        raise EntryError(
+            "the date file's entries predate version subtitles; "
+            "add their '## <SDK> <version>' subtitle first"
+        )
 
 
-def insert(lines: list[str], at: int, new: list[str]) -> list[str]:
-    return lines[:at] + new + lines[at:]
-
-
-def product_items(lines: list[str], section: Section, bullet: str) -> range | None:
-    """The lines nested under ``bullet`` in ``section``; ``None`` without the bullet."""
-    own = range(section.start + 1, section.content_end)
-    product = next((index for index in own if lines[index] == bullet), None)
-    if product is None:
-        return None
-    nested_end = next(
-        (
-            index
-            for index in own
-            if index > product and not lines[index].startswith(" ")
-        ),
-        section.content_end,
-    )
-    return range(product + 1, nested_end)
-
-
-def with_items(lines: list[str], notes: ReleaseNotes, category: Category) -> list[str]:
-    """Place one category's items under its section and product bullet."""
-    items = list(map(item_line, notes.items_in({category})))
-    found = sections(lines)
-    section = next((s for s in found if s.title == category), None)
-    if section is not None:
-        bullet = product_bullet(notes)
-        nested = product_items(lines, section, bullet)
-        if nested is None:
-            return insert(lines, section.content_end, [bullet, *items])
-        return insert(lines, nested.stop, items)
-    block = category_block(notes, category)
-    order = list(Category)
-    categories = [s for s in found if is_category(s)]
-    later = [
-        s for s in categories if order.index(Category(s.title)) > order.index(category)
-    ]
-    if later:
-        return insert(lines, later[0].start, [*block, ""])
-    at = categories[-1].content_end if categories else len(lines)
-    return insert(lines, at, ["", *block])
-
-
-def with_breaking(lines: list[str], notes: ReleaseNotes) -> list[str]:
-    """Place the breaking block after any existing ones, before the categories."""
-    block = breaking_block(notes)
-    if not block:
-        return lines
-    found = sections(lines)
-    breaking = [s for s in found if not is_category(s)]
-    if breaking:
-        return insert(lines, breaking[-1].content_end, ["", *block])
-    if found:
-        return insert(lines, found[0].start, [*block, ""])
-    return [*lines, "", *block]
-
-
-def merge_entry(existing: str, notes: ReleaseNotes) -> str:
+def merge_entry(existing: str, notes: ReleaseNotes, standalone: str) -> str:
+    """Put this release's block above the earlier ones, with the tags combined."""
     lines = existing.splitlines()
-    merged = with_tags(lines, merged_tags(lines, notes))
-    merged = with_breaking(merged, notes)
-    for category in kept_categories(notes):
-        merged = with_items(merged, notes, category)
-    return "\n".join(merged) + "\n"
+    tags = merged_tags(lines, notes)
+    frontmatter = [FRONTMATTER_FENCE, tags_line(tags), FRONTMATTER_FENCE]
+    ours = body(standalone.splitlines())
+    return "\n".join([*frontmatter, "", *ours, "", *body(lines)]) + "\n"
 
 
 def is_subsequence(needles: list[str], haystack: list[str]) -> bool:
@@ -246,36 +175,10 @@ def check_merge(existing: str, merged: str, standalone: str) -> None:
     after = merged.splitlines()
     if not is_subsequence(before, after):
         raise EntryError("the merge dropped or reordered an existing line")
-    standalone_lines = standalone.splitlines()
-    body = standalone_lines[body_start(standalone_lines) :]
-    ours = [line for line in body if line.strip()]
+    ours = [line for line in body(standalone.splitlines()) if line.strip()]
     missing = [line for line in ours if line not in after]
     if missing:
         raise EntryError(f"the merge lost our lines: {missing}")
-
-
-def filed_lines(lines: list[str], notes: ReleaseNotes) -> set[str]:
-    """This product's item lines, and every section heading, already in the file."""
-    bullet = product_bullet(notes)
-    found = sections(lines)
-    items = {
-        lines[index]
-        for section in found
-        if is_category(section)
-        and (nested := product_items(lines, section, bullet)) is not None
-        for index in nested
-    }
-    return items | {lines[section.start] for section in found}
-
-
-def check_not_merged(existing: str, notes: ReleaseNotes) -> None:
-    """Refuse a date file that already holds this entry's items or breaking heading."""
-    ours = set(map(item_line, notes.items)) | set(breaking_block(notes)[:1])
-    present = sorted(ours & filed_lines(existing.splitlines(), notes))
-    if present:
-        raise EntryError(
-            f"the date file already holds {present}; start again from a fresh worktree"
-        )
 
 
 def held_back(
@@ -337,8 +240,8 @@ def merge_into(
     standalone = checked_standalone(kept)
     path = entry_path(directory, kept)
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    check_not_merged(existing, kept)
-    merged = merge_entry(existing, kept) if existing else standalone
+    check_mergeable(existing.splitlines(), kept)
+    merged = merge_entry(existing, kept, standalone) if existing else standalone
     check_merge(existing, merged, standalone)
     path.write_text(merged, encoding="utf-8", newline="")
     body.write_text(pr_body(kept, held), encoding="utf-8", newline="")

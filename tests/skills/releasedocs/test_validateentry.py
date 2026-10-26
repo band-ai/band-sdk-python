@@ -38,6 +38,12 @@ tags: ["fix", "typescript"]
 - **LangGraph Adapter Reliability** — Fixes agents going silent across turns.
 """
 PYTHON = {"product_label": "Python SDK", "product_tag": "python"}
+RELEASE_VERSION = "6.1.0"
+SUBTITLE = f"## Python SDK {RELEASE_VERSION}"
+# The canonical entry as one release block under Fern's version subtitle.
+SUBTITLED_SDK_ENTRY = CANONICAL_SDK_ENTRY.replace(
+    "---\n\n", f"---\n\n{SUBTITLE}\n\n", 1
+)
 SWAPPED = """## Fixed
 - **Python SDK:**
   - **A** — One.
@@ -68,6 +74,30 @@ def mentions(violations: list[str], needle: str) -> bool:
 class TestValidateEntry:
     def test_canonical_sdk_entry_passes(self, check: Callable[..., list[str]]) -> None:
         assert check(CANONICAL_SDK_ENTRY, release_date="2026-08-03", **PYTHON) == []
+
+    def test_release_block_opens_with_its_version_subtitle(
+        self, check: Callable[..., list[str]]
+    ) -> None:
+        assert (
+            check(SUBTITLED_SDK_ENTRY, release_version=RELEASE_VERSION, **PYTHON) == []
+        )
+
+    @pytest.mark.parametrize(
+        ("text", "needle"),
+        [
+            (CANONICAL_SDK_ENTRY, f"a release block starts with '{SUBTITLE}'"),
+            (
+                CANONICAL_SDK_ENTRY.replace("## Fixed", f"{SUBTITLE}\n\n## Fixed"),
+                f"'{SUBTITLE}' must open the release block",
+            ),
+        ],
+        ids=["missing", "not-first"],
+    )
+    def test_misplaced_version_subtitle_is_reported(
+        self, check: Callable[..., list[str]], text: str, needle: str
+    ) -> None:
+        violations = check(text, release_version=RELEASE_VERSION, **PYTHON)
+        assert mentions(violations, needle)
 
     @pytest.mark.parametrize(
         "needle",
