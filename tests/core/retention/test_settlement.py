@@ -12,6 +12,49 @@ from tests.core.retention.kit import ResidenceHost
 
 
 class TestSettlement:
+    async def test_disposal_joins_the_accepted_operation_without_capturing_its_caller(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        accepted = Hold()
+        unrelated = Hold()
+        continued = asyncio.Event()
+
+        async def operation() -> None:
+            async with resident.room.use():
+                task = asyncio.current_task()
+                assert task is not None
+                resident.room.begin_settlement(task)
+                await accepted.wait()
+
+        async def caller() -> None:
+            await resident.room.start_owned(operation)
+            await unrelated.wait()
+            continued.set()
+
+        wrapper = asyncio.create_task(caller())
+        try:
+            await accepted.arrived()
+            attempt = resident.room.request_disposal()
+            assert attempt is not None
+            assert resident.room.closing and resident.room.snapshot.accepted == 1
+            assert resident.live and not attempt.done()
+
+            accepted.released.set()
+            await unrelated.arrived()
+            await attempt
+            assert resident.room.snapshot.state is Residency.CLOSED
+            assert not resident.live and resident.identity is None
+            assert not wrapper.done() and not wrapper.cancelling()
+
+            unrelated.released.set()
+            await wrapper
+            assert continued.is_set()
+        finally:
+            accepted.released.set()
+            unrelated.released.set()
+            await asyncio.gather(wrapper, return_exceptions=True)
+
     @pytest.mark.parametrize("clear_cancel", [False, True])
     async def test_disposal_joins_an_abandoned_acquisition_without_recancelling(
         self, host: ResidenceHost, clear_cancel: bool

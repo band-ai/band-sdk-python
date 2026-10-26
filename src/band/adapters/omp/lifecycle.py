@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import collections.abc
 import logging
-from collections.abc import Awaitable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
+from contextvars import Context
 from functools import partial
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import TypeVar, cast
 
 from pydantic import BaseModel, JsonValue
 
@@ -17,12 +18,11 @@ from band.adapters.omp.contract import OmpAdapterContract
 from band.adapters.omp.roomstate import (
     OMP_SESSION_DIRECTORY,
     OmpRoom,
-    RoomGate,
     _selection_after,
 )
 from band.converters.omp import OmpSessionState
 from band.core.model_catalog import ModelSelection
-from band.core.retention import ReleaseCause, ReleaseOutcome
+from band.core.retention import ReleaseCause, ReleaseOutcome, Residency
 from band.core.retention.cleanup import report_owned
 from band.core.turn_lifecycle import retire_provider_timeout
 from band.integrations.omp import OMP_THINKING_LEVEL_AUTO, omp_model_parts
@@ -33,11 +33,14 @@ from band.integrations.ompprocess import (
     omp_mcp_plugin,
     omp_mcp_ready,
 )
-from band.integrations.omprpc import OmpRpcClient, OmpRpcError
+from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
 from band.integrations.ompwire import OmpCommandName, OmpState
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 
 logger = logging.getLogger(__name__)
+
+MODEL_SELECTION_INTERRUPTED = "Native model selection was interrupted"
+T = TypeVar("T")
 
 
 class ThinkingLevels(BaseModel):
@@ -87,9 +90,6 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
             servers = {BAND_MCP_SERVER_NAME: protected, **servers}
         return MappingProxyType(servers)
 
-    def _room_gate(self, room_id: str) -> RoomGate:
-        return self._locks.setdefault(room_id, RoomGate())
-
     def _room(self, room_id: str) -> OmpRoom:
         room = self._rooms.get(room_id)
         if room is None:
@@ -104,6 +104,13 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
         return room
 
     async def _prepare_room(self, room: OmpRoom, history: OmpSessionState) -> None:
+        await self._exclusive(
+            room.room_id, partial(self._prepare_connection, room, history)
+        )
+
+    async def _prepare_connection(
+        self, room: OmpRoom, history: OmpSessionState
+    ) -> None:
         if room.runtime is not None:
             return
         room.history = history
@@ -124,7 +131,7 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
                     system_prompt=self._build_system_context(),
                 )
             )
-            selection = self._room_selections.get(room_id, self.model_selection)
+            selection = self._selection_for_room(room_id)
             command = self._spawn_command(workspace, selection)
             session_dir = Path(workspace) / OMP_SESSION_DIRECTORY
             session_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -132,6 +139,7 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
             if plugin:
                 command.extend(omp_mcp_arguments(plugin))
             room.runtime = OmpRpcClient(command, env=self._spawn_env(selection))
+            room.runtime.schedule_callback = partial(self._exclusive, room_id)
             room.retiring = False
             await room.client.start()
             if plugin:
@@ -181,7 +189,6 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
             )
             if not dialog.enabled:
                 raise RuntimeError("OMP refused the structured ask dialog")
-            await self._select_model(room, selection)
             await self._refresh_state(room)
         finally:
             room.servers = {}
@@ -215,6 +222,8 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
             raise
         else:
             room.applied_selection = _selection_after(room.applied_selection, selection)
+        finally:
+            await self._recover_room(room)
 
     async def _apply_native_selection(
         self, room: OmpRoom, selection: ModelSelection
@@ -264,21 +273,62 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
     async def apply_model_selection(
         self, selection: ModelSelection, *, room_id: str
     ) -> None:
-        async with (
-            self._room_gate(room_id),
-            self._selection_locks.setdefault(room_id, asyncio.Lock()),
+        await self._exclusive(
+            room_id, partial(self._apply_selection, room_id, selection)
+        )
+
+    def _selection_for_room(self, room_id: str) -> ModelSelection:
+        return self._room_selections.get(room_id, self.model_selection)
+
+    async def _apply_selection(self, room_id: str, selection: ModelSelection) -> None:
+        room = self._rooms.get(room_id)
+        if (
+            room is not None
+            and room.runtime is not None
+            and room.retained.snapshot.state == Residency.RESIDENT
+            and not room.retained.closing
+            and not room.retiring
         ):
-            room = self._rooms.get(room_id)
-            if (
-                room is not None
-                and room.runtime is not None
-                and not room.retained.closing
-                and not room.retiring
-            ):
-                await self._select_model(room, selection)
-            self._room_selections[room_id] = _selection_after(
-                self._room_selections.get(room_id, self.model_selection),
-                selection,
+            await self._select_model(room, selection)
+        self._room_selections[room_id] = _selection_after(
+            self._selection_for_room(room_id), selection
+        )
+
+    async def _reconcile_selection(self, room: OmpRoom) -> None:
+        selection = self._selection_for_room(room.room_id)
+        if selection != room.applied_selection:
+            await self._select_model(room, selection)
+
+    async def _schedule_prompt(
+        self, room: OmpRoom, write: Callable[[], Awaitable[None]]
+    ) -> None:
+        await self._exclusive(room.room_id, partial(self._admit_prompt, room, write))
+
+    async def _admit_prompt(
+        self, room: OmpRoom, write: Callable[[], Awaitable[None]]
+    ) -> None:
+        self._require_prompt_authority(room)
+        await self._reconcile_selection(room)
+        self._require_prompt_authority(room)
+        await write()
+
+    @staticmethod
+    def _require_prompt_authority(room: OmpRoom) -> None:
+        if room.retiring or not room.retained.has_authority(room.retained.generation):
+            raise OmpProcessError(MODEL_SELECTION_INTERRUPTED)
+
+    async def _exclusive(self, room_id: str, run: Callable[[], Awaitable[T]]) -> T:
+        """Serialize provider mutations, inlining reentry from the current job."""
+        if self._mailbox.occupying(room_id):
+            return await run()
+        return await self._mailbox.ask(room_id, run)
+
+    async def _recover_room(self, room: OmpRoom) -> None:
+        if room.retiring:
+            Context().run(
+                room.retained.recover,
+                generation=room.retained.generation,
+                reason=MODEL_SELECTION_INTERRUPTED,
             )
 
     def _request_disposal(self, room: OmpRoom) -> asyncio.Task[None] | None:
@@ -286,7 +336,8 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
             fired = retire_provider_timeout(room.deadline)
             if fired and room.operation is not None:
                 room.retained.begin_settlement(room.operation)
-        room.disposal = room.retained.request_disposal()
+        # Retention transitions outlive the provider job that requests cleanup.
+        room.disposal = Context().run(room.retained.request_disposal)
         return room.disposal
 
     async def _join_disposal(self, room: OmpRoom) -> None:
@@ -303,33 +354,49 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
             room.clear_selection = False
 
     async def _release_room(self, room: OmpRoom, cause: ReleaseCause) -> ReleaseOutcome:
-        async with self._room_gate(room.room_id):
-            room.retiring = True
-            try:
-                if room.runtime is not None:
-                    await room.client.close()
-                room.resources.close()
-            except BaseException:
-                room.clear_selection = False
-                raise
-            room.runtime = None
-            self._finalize_selection(room)
+        room.retiring = True
+        try:
+            if room.runtime is not None:
+                # Failed retirement must surface before joining its callback's job.
+                room.client.raise_if_retirement_unproven()
+            return await self._exclusive(
+                room.room_id, partial(self._close_connection, room)
+            )
+        except BaseException:
+            room.clear_selection = False
+            raise
+
+    async def _close_connection(self, room: OmpRoom) -> ReleaseOutcome:
+        if room.runtime is not None:
+            await room.client.close()
+        room.resources.close()
+        room.runtime = None
+        self._finalize_selection(room)
         return ReleaseOutcome.RELEASED
 
     async def _dispose_room(self, room: OmpRoom) -> None:
-        async with self._room_gate(room.room_id):
-            self._finalize_selection(room)
-            room.servers = {}
-            self._workspaces.release(room.room_id)
-            if self._rooms.get(room.room_id) is room:
-                del self._rooms[room.room_id]
+        await self._exclusive(room.room_id, partial(self._forget_room, room))
+
+    async def _forget_room(self, room: OmpRoom) -> None:
+        self._finalize_selection(room)
+        room.servers = {}
+        self._workspaces.release(room.room_id)
+        if self._rooms.get(room.room_id) is room:
+            del self._rooms[room.room_id]
 
     async def on_cleanup(self, room_id: str) -> None:
         room = self._room(room_id)
         if not room.retiring:
             room.clear_selection = True
+        inside_job = self._mailbox.occupying(room_id)
+        if inside_job and room.operation is not None:
+            room.retained.begin_settlement(room.operation)
         attempt = self._request_disposal(room)
-        if attempt is not None and not room.retained.enrolls(asyncio.current_task()):
+        if (
+            attempt is not None
+            and not inside_job
+            and not room.retained.enrolls(asyncio.current_task())
+        ):
             await report_owned(attempt, None)
 
     def _cleanup_rooms(self) -> Iterable[Awaitable[None]]:

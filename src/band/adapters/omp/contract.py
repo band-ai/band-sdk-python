@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from pydantic import JsonValue
 
@@ -12,7 +14,7 @@ from band.adapters.omp.config import (
     OmpAdapterConfig,
     PermissionResolver,
 )
-from band.adapters.omp.roomstate import OmpRoom, RoomGate
+from band.adapters.omp.roomstate import OmpRoom
 from band.adapters.omp.turnstate import OmpTurn
 from band.converters.omp import OmpSessionState
 from band.core.model_catalog import ModelSelection
@@ -27,7 +29,10 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.mailbox import RoomMailbox
 from band.workspaces import RoomWorkspaces
+
+T = TypeVar("T")
 
 
 class OmpAdapterContract(ABC):
@@ -40,8 +45,8 @@ class OmpAdapterContract(ABC):
     _resolve_mcp_servers: McpServerResolver | None
     _workspaces: RoomWorkspaces
     _rooms: dict[str, OmpRoom]
-    _locks: dict[str, RoomGate]
-    _selection_locks: dict[str, asyncio.Lock]
+    _locks: dict[str, asyncio.Lock]
+    _mailbox: RoomMailbox
     _room_selections: dict[str, ModelSelection]
     _retention: RoomRetention
 
@@ -72,7 +77,15 @@ class OmpAdapterContract(ABC):
     def _build_system_context(self) -> str: ...
 
     @abstractmethod
-    def _room_gate(self, room_id: str) -> RoomGate: ...
+    async def _exclusive(self, room_id: str, run: Callable[[], Awaitable[T]]) -> T: ...
+
+    @abstractmethod
+    async def _recover_room(self, room: OmpRoom) -> None: ...
+
+    @abstractmethod
+    async def _schedule_prompt(
+        self, room: OmpRoom, write: Callable[[], Awaitable[None]]
+    ) -> None: ...
 
     @abstractmethod
     def _room(self, room_id: str) -> OmpRoom: ...

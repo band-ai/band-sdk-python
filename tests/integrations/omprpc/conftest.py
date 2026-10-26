@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 
@@ -35,6 +36,13 @@ from tests.integrations.omprpc.gate import ProcessGate, process_gate_session
 from tests.integrations.omprpc.processes import owned_rpc_process, peer_process
 from tests.integrations.omprpc.sessions import RpcTurn, rpc_session
 from tests.integrations.omprpc.spawn import OMP_PEER_COMMAND, ClientFactory
+
+
+@pytest.fixture
+def callback_warnings(request: pytest.FixtureRequest) -> pytest.WarningsRecorder:
+    """Collect earlier garbage before recording this callback scenario."""
+    gc.collect()
+    return request.getfixturevalue("recwarn")
 
 
 @pytest_asyncio.fixture(loop_scope="function")

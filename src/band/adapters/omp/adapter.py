@@ -16,7 +16,7 @@ from band.adapters.omp.config import (
 )
 from band.adapters.omp.events import OmpEventMixin
 from band.adapters.omp.lifecycle import OmpRoomLifecycleMixin
-from band.adapters.omp.roomstate import OmpRoom, RoomGate
+from band.adapters.omp.roomstate import OmpRoom
 from band.adapters.omp.toolprotocol import _omp_host_tool
 from band.adapters.omp.turns import OmpTurnMixin
 from band.converters.omp import OmpHistoryConverter, OmpSessionState
@@ -28,6 +28,7 @@ from band.core.types import AdapterFeatures, Capability, Emit, FeatureKwargs
 from band.integrations.omp import finalize_omp_command
 from band.integrations.ompprocess import omp_rpc_command_in_workspace, omp_runtime_env
 from band.runtime.custom_tools import CustomToolDef, custom_tools_to_schemas
+from band.runtime.mailbox import RoomMailbox
 from band.runtime.tools import (
     get_band_tool_category,
     get_tool_description,
@@ -76,8 +77,8 @@ class OmpAdapter(
             workspace_resolver_for(self.config.cwd, workspace_for_room)
         )
         self._rooms: dict[str, OmpRoom] = {}
-        self._locks: dict[str, RoomGate] = {}
-        self._selection_locks: dict[str, asyncio.Lock] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._mailbox = RoomMailbox()
         self._room_selections: dict[str, ModelSelection] = {}
         self._retention = RoomRetention(
             RoomRetentionConfig(transition_timeout_s=self.config.turn_timeout_s)

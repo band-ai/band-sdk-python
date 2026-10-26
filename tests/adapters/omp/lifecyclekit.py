@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections import deque
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Literal, Self
+from typing import Literal, TypeVar
 
 from band.adapters.omp import (
     OmpAdapter,
 )
-from band.adapters.omp.roomstate import RoomGate
 from band.integrations.omprpc import OmpProcessError
+from band.runtime.mailbox import RoomMailbox
 from tests.adapters.hold import Hold
 from tests.adapters.omp.models import RecordingRuntime
 from tests.adapters.omp.runtime import PendingRuntime
@@ -71,7 +72,7 @@ class SameTaskCleanupRuntime(PendingRuntime):
         self.adapter: OmpAdapter | None = None
         self.cleaned_from_turn = False
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         assert self.adapter is not None
         await self.adapter.on_cleanup("room-123")
         self.cleaned_from_turn = True
@@ -126,7 +127,7 @@ class SignallingLock(asyncio.Lock):
 
 def failing_runtime(closing: asyncio.Event, finish_close: asyncio.Event):
     class FailingRuntime(PendingRuntime):
-        async def prompt(self, *_args, **_kwargs):
+        async def _prompt_body(self, *_args, **_kwargs):
             raise RuntimeError("native turn failed")
 
         async def close(self):
@@ -185,13 +186,34 @@ class SignallingCloseRuntime(RecordingRuntime):
         self.physical_close.set()
 
 
-class ObservedRoomGate(RoomGate):
-    """Report entry attempts while preserving production callback reentry."""
+Result = TypeVar("Result")
+
+
+class ObservedMailbox(RoomMailbox):
+    """Report submissions while preserving production mailbox scheduling."""
 
     def __init__(self) -> None:
         super().__init__()
         self.attempted = asyncio.Event()
 
-    async def __aenter__(self) -> Self:
+    async def ask(self, room_id: str, run: Callable[[], Awaitable[Result]]) -> Result:
         self.attempted.set()
-        return await super().__aenter__()
+        return await super().ask(room_id, run)
+
+
+class HeldWaiterMailbox(RoomMailbox):
+    """Pause selected waiters before submission or after their real jobs finish."""
+
+    def __init__(self, *, before_submit: bool = False) -> None:
+        super().__init__()
+        self.before_submit = before_submit
+        self.waiters: deque[Hold | None] = deque()
+
+    async def ask(self, room_id: str, run: Callable[[], Awaitable[Result]]) -> Result:
+        hold = self.waiters.popleft() if self.waiters else None
+        if hold is not None and self.before_submit:
+            await hold.wait()
+        result = await super().ask(room_id, run)
+        if hold is not None and not self.before_submit:
+            await hold.wait()
+        return result

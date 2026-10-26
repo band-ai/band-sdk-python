@@ -11,7 +11,7 @@ from band.integrations.ompwire import (
 )
 from band.runtime.tools import ToolCallOutcome
 from band.testing import FakeAgentTools
-from tests.adapters.omp.lifecyclekit import BoomCloseRuntime
+from tests.adapters.omp.lifecyclekit import FirstCloseFailsRuntime
 from tests.adapters.omp.runtime import PendingRuntime
 
 
@@ -41,8 +41,8 @@ class FailedDeliveryTools(FakeAgentTools):
         )
 
 
-class BoomCloseDeliveryRuntime(BoomCloseRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+class FirstCloseFailsDeliveryRuntime(FirstCloseFailsRuntime):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         raise DeliveryFailedError(RuntimeError("delivery rejected"))
 
 
@@ -52,7 +52,7 @@ class HangAfterPromptRuntime(PendingRuntime):
         self.prompted = False
         self.hung = asyncio.Event()
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_tool(
             OmpHostToolCall(
                 id="host-call",
@@ -84,8 +84,10 @@ class LeftoverHostToolRuntime(BoomGetStateAfterReplyRuntime):
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
-        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
+        await super()._prompt_body(
+            _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+        )
 
         async def leftover_call() -> None:
             self.started.set()
@@ -103,10 +105,10 @@ class LeftoverHostToolRuntime(BoomGetStateAfterReplyRuntime):
 
 
 class CrashPromptRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         raise RuntimeError("provider crashed")
 
 
 class DeliveryCrashRuntime(PendingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         raise DeliveryFailedError(RuntimeError("delivery rejected"))

@@ -15,6 +15,7 @@ from band.integrations.ompprocess import (
     McpStartupReceipt,
     omp_mcp_ready_command,
 )
+from band.integrations.omprpc.client import OmpScheduler
 from band.integrations.ompwire import (
     OmpCommandName,
     OmpEvent,
@@ -48,6 +49,7 @@ class ReceiptRuntime(RecordingRuntime):
         on_event: Callable[[OmpEvent], Awaitable[None]],
         on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+        schedule_admission: OmpScheduler | None = None,
     ) -> None:
         if _message == f"/{omp_mcp_ready_command(str(self.plugin))}":
             if self.receipt_servers is not None:
@@ -65,4 +67,10 @@ class ReceiptRuntime(RecordingRuntime):
                     receipt.model_dump_json(), encoding="utf-8"
                 )
             return
-        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+        await super().prompt(
+            _message,
+            on_event=on_event,
+            on_tool=on_tool,
+            on_ui=on_ui,
+            schedule_admission=schedule_admission,
+        )
