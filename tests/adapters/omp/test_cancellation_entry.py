@@ -7,15 +7,9 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import (
-    Launches,
-    SwallowingResolver,
-    checkpoint,
-    launches,
-    run_turn,
-)
-
-__all__ = ["launches"]
+from tests.adapters.omp.lifecyclekit import Launches
+from tests.adapters.omp.resolution import SwallowingResolver, checkpoint
+from tests.adapters.omp.turns import run_turn
 
 
 class TestCancellationEntry:

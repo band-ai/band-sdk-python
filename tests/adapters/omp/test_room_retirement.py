@@ -7,24 +7,25 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.testing import FakeAgentTools, reported_failures
-from tests.adapters.omp.kit import (
+from tests.adapters.omp.custody import room_runtime
+from tests.adapters.omp.lifecyclekit import (
+    HeldCloseRuntime,
     Launches,
-    PendingRuntime,
-    RecordingRuntime,
-    SettlingResolver,
+    SignallingCloseRuntime,
     SignallingLock,
     failing_runtime,
-    launches,
+)
+from tests.adapters.omp.models import RecordingRuntime
+from tests.adapters.omp.resolution import (
+    CleanupObservedAdapter,
+    SettlingResolver,
     remote,
-    room_runtime,
-    run_turn,
     settling_adapter,
     start_blocked_turn,
     start_cleanup,
 )
-from tests.adapters.omp.lifecyclekit import HeldCloseRuntime, SignallingCloseRuntime
-
-__all__ = ["launches"]
+from tests.adapters.omp.runtime import PendingRuntime
+from tests.adapters.omp.turns import run_turn
 
 
 class TestRoomRetirement:
@@ -33,7 +34,7 @@ class TestRoomRetirement:
         self, launches: Launches, tmp_path: Path
     ) -> None:
         resolver = SettlingResolver()
-        adapter = OmpAdapter(
+        adapter = CleanupObservedAdapter(
             workspace_for_room=lambda _room: str(tmp_path),
             resolve_mcp_servers=resolver,
             emit=(),
@@ -63,7 +64,7 @@ class TestRoomRetirement:
     ) -> None:
         runtime = SignallingCloseRuntime()
         launches.runtime_factory = lambda: runtime
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        adapter = CleanupObservedAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         await run_turn(adapter, FakeAgentTools())
 
         async def arrive_at_close() -> None:
@@ -91,7 +92,7 @@ class TestRoomRetirement:
         resolver = SettlingResolver()
         resolver.settle.set()
 
-        adapter = OmpAdapter(
+        adapter = CleanupObservedAdapter(
             OmpAdapterConfig(cwd=str(tmp_path)), resolve_mcp_servers=resolver, emit=()
         )
         room_lock = SignallingLock()
@@ -185,7 +186,7 @@ class TestRoomRetirement:
     ):
         runtime = HeldCloseRuntime()
         launches.runtime_factory = lambda: runtime
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        adapter = CleanupObservedAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         await run_turn(adapter, FakeAgentTools())  # a settled turn leaves a live room
         room_cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
         await runtime.closing.arrived()
@@ -239,7 +240,7 @@ class TestRoomRetirement:
             return {"linear": remote("late")}
 
         resolve.calls = 0  # type: ignore[attr-defined]
-        adapter = OmpAdapter(
+        adapter = CleanupObservedAdapter(
             OmpAdapterConfig(cwd=str(tmp_path)), resolve_mcp_servers=resolve, emit=()
         )
 
@@ -286,7 +287,7 @@ class TestRoomRetirement:
     async def test_cleanup_all_joins_a_retirement_with_no_room_or_turn_left(
         self, launches: Launches, tmp_path: Path
     ):
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        adapter = CleanupObservedAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         room_lock = SignallingLock()
         adapter._locks["room-123"] = room_lock
         await room_lock.acquire()  # another holder keeps the retirement from closing
@@ -301,15 +302,18 @@ class TestRoomRetirement:
         await asyncio.wait_for(asyncio.gather(retirement, shutdown), 1)
         assert launches.runtimes == []
 
+    @pytest.mark.usefixtures("native_startup_ready")
     @pytest.mark.asyncio
     async def test_retirement_never_cancels_work_after_the_captured_turn_finished(
         self, tmp_path: Path, monkeypatch
     ):
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        adapter = CleanupObservedAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         unrelated = asyncio.Event()
         continued = asyncio.Event()
         runtime = PendingRuntime()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **k: runtime)
+        monkeypatch.setattr(
+            "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **k: runtime
+        )
 
         async def caller():
             await run_turn(adapter, FakeAgentTools())
@@ -329,6 +333,7 @@ class TestRoomRetirement:
         await asyncio.wait_for(wrapper, 1)
         assert continued.is_set()
 
+    @pytest.mark.usefixtures("native_startup_ready")
     @pytest.mark.asyncio
     async def test_cleanup_joins_outcome_handling_after_the_deadline_context_exited(
         self, launches: Launches, tmp_path: Path, monkeypatch
@@ -337,8 +342,10 @@ class TestRoomRetirement:
         finish_close = asyncio.Event()
 
         runtime = failing_runtime(closing, finish_close)
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **k: runtime)
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        monkeypatch.setattr(
+            "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **k: runtime
+        )
+        adapter = CleanupObservedAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         tools = FakeAgentTools()
         turn = asyncio.create_task(run_turn(adapter, tools))
         await asyncio.wait_for(

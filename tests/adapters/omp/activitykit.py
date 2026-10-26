@@ -11,28 +11,93 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig, OmpTurn, PermissionResolver
+from band.adapters.omp import (
+    OmpAdapter,
+    OmpAdapterConfig,
+    OmpPermissionRequest,
+)
+from band.adapters.omp.config import PermissionResolver
+from band.adapters.omp.turnstate import OmpTurn
 from band.converters.omp import OmpSessionState
 from band.core.types import Emit
+from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from band.integrations.ompwire import (
+    OmpContent,
+    OmpContentKind,
     OmpEvent,
+    OmpEventType,
     OmpHostToolCall,
     OmpToolResult,
+    OmpUIMethod,
     OmpUIRequest,
     OmpUIResponse,
 )
 from band.runtime.tools import AgentTools
 from band.testing.activity import ActivityRecorder
 from band.testing.fake_tools import FakeAgentTools
-from tests.adapters.omp.kit import (
-    EMIT_OFF,
-    EMIT_ON,
-    GatedPermissionResolver,
-    RecordingRuntime,
-    make_adapter,
-    permission_request,
-)
+from tests.adapters.omp.models import RecordingRuntime
 from tests.integrations.acp.conftest import make_platform_message
+
+EMIT_ON: tuple[Emit, ...] = (Emit.TOOL_CALLS,)
+
+
+EMIT_OFF: tuple[Emit, ...] = ()
+
+
+def make_adapter(
+    tmp_path: Path,
+    emit: tuple[Emit, ...],
+    resolve_permission: PermissionResolver | None = None,
+) -> OmpAdapter:
+    return OmpAdapter(
+        OmpAdapterConfig(cwd=str(tmp_path)),
+        emit=emit,
+        resolve_permission=resolve_permission,
+    )
+
+
+class GatedPermissionResolver:
+    """Hold each manual choice until its test supplies a result."""
+
+    def __init__(self, *titles: str) -> None:
+        self.entered = {title: asyncio.Event() for title in titles}
+        self.responses: dict[str, asyncio.Future[str | None]] = {
+            title: asyncio.get_running_loop().create_future() for title in titles
+        }
+
+    async def __call__(self, request: OmpPermissionRequest) -> str | None:
+        self.entered[request.title].set()
+        return await self.responses[request.title]
+
+
+def permission_request(request_id: str) -> OmpUIRequest:
+    return OmpUIRequest(
+        id=request_id,
+        method=OmpUIMethod.SELECT,
+        title=request_id,
+        options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
+    )
+
+
+def tool_start(call_id: str, name: str, **args: object) -> OmpEvent:
+    return OmpEvent(
+        type=OmpEventType.TOOL_START,
+        toolCallId=call_id,
+        toolName=name,
+        args=args,
+    )
+
+
+def tool_end(call_id: str, name: str, *, is_error: bool = False) -> OmpEvent:
+    return OmpEvent(
+        type=OmpEventType.TOOL_END,
+        toolCallId=call_id,
+        toolName=name,
+        result=OmpToolResult(
+            content=[OmpContent(type=OmpContentKind.TEXT, text="private-result")]
+        ),
+        isError=is_error,
+    )
 
 
 class ActivityRuntime(RecordingRuntime):
@@ -80,7 +145,9 @@ async def activity_turn(
     resolve_permission: PermissionResolver | None = None,
 ) -> AsyncIterator[ActivityTurn]:
     runtime = ActivityRuntime()
-    monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+    monkeypatch.setattr(
+        "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **kw: runtime
+    )
     recorder = ActivityRecorder()
     tools = recorder.observing(AgentTools("room", rest_client))
     adapter = OmpAdapter(

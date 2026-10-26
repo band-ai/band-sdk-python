@@ -13,18 +13,18 @@ from band.adapters.omp import (
     OmpAdapter,
     OmpAdapterConfig,
 )
-from band.converters.omp import OmpSessionState
+from band.adapters.omp.turnstate import OmpTurn
 from band.core.types import Emit
+from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
+from band.integrations.ompwire import OmpUIMethod, OmpUIRequest
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import LiveTitleRuntime, _cancel, tool_call_records
-from tests.integrations.acp.conftest import make_platform_message
+from tests.adapters.omp.permissions import decline_permission
+from tests.adapters.omp.records import tool_call_records
 
 
 class TestApprovalTitles:
     @pytest.mark.asyncio
-    async def test_path_and_content_details_are_projected(
-        self, monkeypatch, tmp_path: Path
-    ):
+    async def test_path_and_content_details_are_projected(self, tmp_path: Path):
         secret = "private-file-bytes-live-title"
         title = (
             f"{OMP_TOOL_APPROVAL_HEADER}write\n"
@@ -39,26 +39,23 @@ class TestApprovalTitles:
                 }
             )
         )
-        runtime = LiveTitleRuntime(title)
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
         adapter = OmpAdapter(
             OmpAdapterConfig(cwd=str(tmp_path)),
-            resolve_permission=_cancel,
+            resolve_permission=decline_permission,
             emit={Emit.TOOL_CALLS},
         )
         tools = FakeAgentTools()
-        try:
-            await adapter.on_message(
-                make_platform_message("Handle the permission request"),
-                tools,
-                OmpSessionState(),
-                None,
-                None,
-                is_session_bootstrap=True,
-                room_id="room",
-            )
-        finally:
-            await adapter.cleanup_all()
+        await adapter._permission(
+            OmpUIRequest(
+                id="approval",
+                method=OmpUIMethod.SELECT,
+                title=title,
+                options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
+            ),
+            "room",
+            "session",
+            OmpTurn(tools=tools),
+        )
         permission = next(
             call
             for call in tool_call_records(tools)

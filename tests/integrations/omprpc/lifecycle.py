@@ -14,26 +14,27 @@ from hypothesis import strategies as st
 
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient
 from band.integrations.ompwire import OmpEventType
-from tests.integrations.omppeer import (
-    BACKGROUND_COMPLETE,
-    CRASH_EXIT,
-    LIFECYCLE_SCENARIO,
+from tests.integrations.omppeers.base import BACKGROUND_COMPLETE, COMPLETE
+from tests.integrations.omppeers.process import CRASH_EXIT
+from tests.integrations.omprpc.admission import queue_prompt
+from tests.integrations.omprpc.events import (
+    EventRecorder,
+    follow_up_texts,
+    record_prompt,
 )
-from tests.integrations.omprpc.kit import (
-    OMP_PEER_COMMAND,
+from tests.integrations.omprpc.gate import (
     GatedProcess,
-    Observer,
     ProcessGate,
-    SpawnBarrier,
+    process_gate_session,
+)
+from tests.integrations.omprpc.processes import (
     descendant_client,
     descendant_liveness,
     descendants_started_with,
     owned_rpc_process,
-    process_gate_session,
-    prompt_task,
-    queue_prompt,
-    second_prompt,
 )
+from tests.integrations.omprpc.spawn import OMP_PEER_COMMAND, SpawnBarrier
+from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 
 # Readiness and cancellation use barriers; this only bounds a hung operation.
 STEP_GUARD_S = 15
@@ -82,13 +83,13 @@ class RpcLifecycle:
     def __init__(self, gate: ProcessGate | None, *, detached: bool = False) -> None:
         self.gate = gate
         self.client = (
-            descendant_client(gate, scenario=LIFECYCLE_SCENARIO, detached=detached)
+            descendant_client(gate, scenario=PeerScenario.LIFECYCLE, detached=detached)
             if gate is not None
-            else OmpRpcClient((*OMP_PEER_COMMAND, "--scenario", LIFECYCLE_SCENARIO))
+            else OmpRpcClient((*OMP_PEER_COMMAND, "--scenario", PeerScenario.LIFECYCLE))
         )
         self.live = False
         self.active: asyncio.Task[None] | None = None
-        self.observer: Observer | None = None
+        self.observer: EventRecorder | None = None
         self.tasks: list[asyncio.Task[None]] = []
         self.roots: list[asyncio.subprocess.Process] = []
         self.children: list[GatedProcess] = []
@@ -112,8 +113,8 @@ class RpcLifecycle:
         await self.open()
         if self.active is not None:
             return
-        self.observer = Observer()
-        self.active = prompt_task(self.client, self.observer)
+        self.observer = EventRecorder()
+        self.active = asyncio.create_task(record_prompt(self.client, self.observer))
         self.tasks.append(self.active)
         await self.observer.wait_for(OmpEventType.AGENT_END)
         assert not self.active.done()
@@ -131,7 +132,7 @@ class RpcLifecycle:
 
     async def settle(self) -> None:
         await self.hold_prompt()
-        await self.client.request("release")
+        await self.client.request(PeerCommand.RELEASE_PROMPT)
         assert self.active is not None and self.observer is not None
         await self.active
         assert BACKGROUND_COMPLETE in self.observer.assistant_texts
@@ -151,7 +152,7 @@ class RpcLifecycle:
         await self.open()
         root = owned_rpc_process(self.client)
         with suppress(OmpProcessError):
-            await self.client.request("crash")
+            await self.client.request(PeerCommand.EXIT_PROCESS)
         await root.wait()
         assert root.returncode == CRASH_EXIT
         await self.close()
@@ -211,7 +212,7 @@ class RpcLifecycle:
         await self.record_children()
         self.live = True
         await self.assert_reaped([old_root], old_children)
-        await second_prompt(self.client)
+        assert await follow_up_texts(self.client) == [COMPLETE]
 
     @asynccontextmanager
     async def held_first_spawn(self) -> AsyncIterator[HeldSpawn]:
@@ -269,7 +270,9 @@ class RpcLifecycle:
             case Step.CANCEL_CLOSE_RESTART:
                 await self.cancel_held_close_then_restart()
         if self.live:
-            assert (await self.client.request("checkpoint"))["pid"] is not None
+            assert (await self.client.request(PeerCommand.CHECKPOINT))[
+                "pid"
+            ] is not None
 
     async def assert_custody_survives(self) -> None:
         """Settle leftover work, reap the tree, and prove a fresh turn still works."""
@@ -278,7 +281,7 @@ class RpcLifecycle:
         await self.close()
         assert all(task.done() for task in self.tasks)
         await self.open()
-        await second_prompt(self.client)
+        assert await follow_up_texts(self.client) == [COMPLETE]
         await self.close()
 
     async def cleanup(self) -> None:

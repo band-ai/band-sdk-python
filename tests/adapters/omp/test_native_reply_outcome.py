@@ -10,7 +10,8 @@ from band.adapters.omp import OMP_TOOL_APPROVAL_HEADER
 from band.core.protocols import TurnResultAlreadyReported
 from band.runtime.tools.types import BandTool
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
-from tests.adapters.omp.kit import owned_rpc_turn
+from tests.adapters.omp.permissions import owned_rpc_turn
+from tests.integrations.omppermissionpeer import PermissionOrder
 
 NATIVE_REPLY_TOOL = f"mcp__{BandTool.SEND_MESSAGE}"
 REPLY_PERMISSION_TITLE = f"{OMP_TOOL_APPROVAL_HEADER}{NATIVE_REPLY_TOOL}"
@@ -26,7 +27,7 @@ class TestNativeReplyOutcome:
             monkeypatch,
             tmp_path,
             REPLY_PERMISSION_TITLE,
-            "permission-first",
+            PermissionOrder.PERMISSION_FIRST,
             native_name=NATIVE_REPLY_TOOL,
             native_arguments=REPLY_ARGUMENTS,
             native_error=False,
@@ -47,7 +48,7 @@ class TestNativeReplyOutcome:
                 monkeypatch,
                 tmp_path,
                 REPLY_PERMISSION_TITLE,
-                "permission-first",
+                PermissionOrder.PERMISSION_FIRST,
                 native_name=NATIVE_REPLY_TOOL,
                 native_arguments=REPLY_ARGUMENTS,
                 native_error=True,

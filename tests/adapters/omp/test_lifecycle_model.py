@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from hypothesis import Phase, example, given, settings
 from hypothesis import strategies as st
 
 from tests.adapters.omp.lifecycle import Step, play
 
 
+@pytest.mark.usefixtures("native_startup_ready")
 class TestRoomLifecycleModel:
     @settings(
         max_examples=20,

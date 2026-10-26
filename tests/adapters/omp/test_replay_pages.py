@@ -6,11 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig
+from band.adapters.omp import OmpAdapterConfig
 from band.converters.omp import OmpHistoryConverter
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import RecordingRuntime
+from tests.adapters.omp.custody import owned_room
+from tests.adapters.omp.runtime import AdapterFactory
 from tests.integrations.acp.conftest import make_platform_message
+from tests.integrations.omprpc.wirelog import sent_prompt_messages
 
 
 class TestReplayPages:
@@ -19,12 +21,9 @@ class TestReplayPages:
     )
     @pytest.mark.asyncio
     async def test_off_bootstrap_replay_includes_recent_pages(
-        self, monkeypatch, tmp_path: Path, recent_id: str | None
+        self, tmp_path: Path, recent_id: str | None, real_adapter: AdapterFactory
     ):
-        runtime = RecordingRuntime()
-        runtime.finish.set()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        adapter = real_adapter(config=OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         msg = make_platform_message("Finish the background work")
         older = [
             {
@@ -54,16 +53,15 @@ class TestReplayPages:
             "message_type": "text",
         }
         tools = FakeAgentTools(room_context=[*older, recent, trigger])
-        try:
-            await adapter.run_judged_turn(
-                msg=msg,
-                tools=tools,
-                history=OmpHistoryConverter().convert([]),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=False,
-                room_id="room-123",
-            )
-            assert "UNIQUE_RECENT" in runtime.prompt_text
-        finally:
-            await adapter.cleanup_all()
+        await adapter.run_judged_turn(
+            msg=msg,
+            tools=tools,
+            history=OmpHistoryConverter().convert([]),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+        assert "UNIQUE_RECENT" in "\n".join(
+            await sent_prompt_messages(owned_room(adapter, "room-123").client)
+        )

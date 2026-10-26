@@ -13,7 +13,9 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from tests.integrations.omprpc.kit import ClientFactory, Observer
+from tests.integrations.omprpc.events import EventRecorder
+from tests.integrations.omprpc.spawn import ClientFactory
+from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 
 
 class TestStructuredUIAnswers:
@@ -32,8 +34,8 @@ class TestStructuredUIAnswers:
     async def test_answer_variant_survives_callback_to_wire(
         self, client_factory: ClientFactory, answer: dict[str, JsonValue]
     ) -> None:
-        client = await client_factory("event-backpressure")
-        observer = Observer()
+        client = await client_factory(PeerScenario.EVENT_BACKPRESSURE)
+        observer = EventRecorder()
 
         async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
             assert request.method == "ask"
@@ -51,7 +53,7 @@ class TestStructuredUIAnswers:
         try:
             async with asyncio.timeout(8):
                 await observer.wait_for(OmpEventType.AGENT_START)
-                receipt = await client.request("ask-ui")
+                receipt = await client.request(PeerCommand.ASK_UI)
                 assert receipt == {
                     "answer": {
                         "type": OmpFrameType.UI_RESPONSE,
@@ -59,7 +61,7 @@ class TestStructuredUIAnswers:
                         "answers": [answer],
                     }
                 }
-                await client.request("event-result")
+                await client.request(PeerCommand.EVENT_RESULT)
                 await running
         finally:
             running.cancel()

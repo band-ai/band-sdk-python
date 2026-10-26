@@ -15,35 +15,38 @@ from band.integrations.ompwire import (
     OmpState,
     OmpToolResult,
 )
-from tests.integrations.omppeer import (
-    BACKGROUND_COMPLETE,
-    RESUMED_PROVIDER_FAILED,
-    SETTLED_CALLBACK_SCENARIO,
-    YIELDED,
+from tests.integrations.ompframes import RESUMED_PROVIDER_FAILED
+from tests.integrations.omppeers.base import BACKGROUND_COMPLETE, COMPLETE, YIELDED
+from tests.integrations.omprpc.events import (
+    EventRecorder,
+    follow_up_texts,
+    record_prompt,
 )
-from tests.integrations.omprpc.kit import (
-    ClientFactory,
-    Observer,
-    owned_rpc_process,
-    prompt_task,
-    second_prompt,
-)
+from tests.integrations.omprpc.processes import owned_rpc_process
+from tests.integrations.omprpc.spawn import ClientFactory
+from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 
 
 class TestTurnSettlement:
-    @pytest.mark.parametrize("scenario", ["yield", "stale", "false-result-settled"])
+    @pytest.mark.parametrize(
+        "scenario",
+        [
+            PeerScenario.YIELD_TO_BACKGROUND,
+            PeerScenario.STALE_COMPLETION_BEFORE_YIELD,
+            PeerScenario.FALSE_RESULT_SETTLED,
+        ],
+    )
     async def test_initial_yield_never_finishes_a_background_turn(
-        self, client_factory: ClientFactory, scenario: str
+        self, client_factory: ClientFactory, scenario: PeerScenario
     ) -> None:
         client = await client_factory(scenario)
-        observer = Observer()
-        running = prompt_task(client, observer)
+        observer = EventRecorder()
+        running = asyncio.create_task(record_prompt(client, observer))
         try:
-            first_end = await observer.wait_for(OmpEventType.AGENT_END)
-            assert first_end.awaitingAsyncWork is True
-            await client.request("checkpoint")
+            await observer.wait_for(OmpEventType.AGENT_END)
+            await client.request(PeerCommand.CHECKPOINT)
             assert not running.done()
-            await client.request("release")
+            await client.request(PeerCommand.RELEASE_PROMPT)
             async with asyncio.timeout(5):
                 await running
             assert observer.assistant_texts == [YIELDED, BACKGROUND_COMPLETE]
@@ -54,23 +57,23 @@ class TestTurnSettlement:
     @pytest.mark.parametrize(
         ("scenario", "error"),
         [
-            ("resume-error", RESUMED_PROVIDER_FAILED),
-            ("resume-error-compacted", RESUMED_PROVIDER_FAILED),
+            (PeerScenario.RESUME_ERROR, RESUMED_PROVIDER_FAILED),
+            (PeerScenario.RESUME_ERROR_COMPACTED, RESUMED_PROVIDER_FAILED),
             (
-                "resume-aborted",
+                PeerScenario.RESUME_ABORTED,
                 f"OMP continuation {OmpPromptStatus.ABORTED}",
             ),
         ],
     )
     async def test_resumed_failures_override_a_successful_initial_prompt_result(
-        self, client_factory: ClientFactory, scenario: str, error: str
+        self, client_factory: ClientFactory, scenario: PeerScenario, error: str
     ) -> None:
         client = await client_factory(scenario)
-        observer = Observer()
-        running = prompt_task(client, observer)
+        observer = EventRecorder()
+        running = asyncio.create_task(record_prompt(client, observer))
         try:
             await observer.wait_for(OmpEventType.AGENT_END)
-            await client.request("release")
+            await client.request(PeerCommand.RELEASE_PROMPT)
             async with asyncio.timeout(5):
                 with pytest.raises(OmpPromptError, match=error):
                     await running
@@ -82,14 +85,14 @@ class TestTurnSettlement:
         self,
         client_factory: ClientFactory,
     ) -> None:
-        client = await client_factory("settlement-before-result")
-        observer = Observer()
-        running = prompt_task(client, observer)
+        client = await client_factory(PeerScenario.SETTLEMENT_BEFORE_RESULT)
+        observer = EventRecorder()
+        running = asyncio.create_task(record_prompt(client, observer))
         try:
             await observer.wait_for(OmpEventType.AGENT_END)
-            await client.request("checkpoint")
+            await client.request(PeerCommand.CHECKPOINT)
             assert not running.done()
-            await client.request("release")
+            await client.request(PeerCommand.RELEASE_PROMPT)
             async with asyncio.timeout(5):
                 await running
         finally:
@@ -97,21 +100,26 @@ class TestTurnSettlement:
             await asyncio.gather(running, return_exceptions=True)
 
     @pytest.mark.parametrize(
-        "scenario", ["state-settles", "settles-during-state", "local"]
+        "scenario",
+        [
+            PeerScenario.STATE_SETTLES,
+            PeerScenario.SETTLES_DURING_STATE,
+            PeerScenario.LOCAL_COMMAND,
+        ],
     )
     async def test_native_state_snapshot_and_subscribed_settlement_do_not_race(
-        self, client_factory: ClientFactory, scenario: str
+        self, client_factory: ClientFactory, scenario: PeerScenario
     ) -> None:
         client = await client_factory(scenario)
-        observer = Observer()
+        observer = EventRecorder()
         async with asyncio.timeout(5):
-            await prompt_task(client, observer)
+            await record_prompt(client, observer)
         assert OmpState.model_validate(await client.request("get_state")).isSettled
 
     async def test_settlement_does_not_succeed_while_a_callback_is_still_running(
         self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory(SETTLED_CALLBACK_SCENARIO)
+        client = await client_factory(PeerScenario.SETTLED_DURING_CALLBACK)
         client.callback_exit_timeout_s = 0
         process = owned_rpc_process(client)
         held = asyncio.Event()
@@ -120,7 +128,7 @@ class TestTurnSettlement:
             await held.wait()
             return OmpToolResult(content=[])
 
-        observer = Observer()
+        observer = EventRecorder()
         with pytest.raises(OmpProcessError, match=CALLBACKS_UNFINISHED):
             async with asyncio.timeout(5):
                 await client.prompt(
@@ -132,12 +140,12 @@ class TestTurnSettlement:
         held.set()
         assert process.returncode is not None
         await client.start()
-        await second_prompt(client)
+        assert await follow_up_texts(client) == [COMPLETE]
 
     async def test_settlement_succeeds_after_the_running_callback_finishes(
         self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory(SETTLED_CALLBACK_SCENARIO)
+        client = await client_factory(PeerScenario.SETTLED_DURING_CALLBACK)
         started = asyncio.Event()
         release = asyncio.Event()
 
@@ -146,7 +154,7 @@ class TestTurnSettlement:
             await release.wait()
             return OmpToolResult(content=[])
 
-        observer = Observer()
+        observer = EventRecorder()
         running = asyncio.create_task(
             client.prompt(
                 "first",
@@ -161,7 +169,7 @@ class TestTurnSettlement:
             async with asyncio.timeout(5):
                 await running
             assert owned_rpc_process(client).returncode is None
-            await second_prompt(client)
+            assert await follow_up_texts(client) == [COMPLETE]
         finally:
             running.cancel()
             release.set()

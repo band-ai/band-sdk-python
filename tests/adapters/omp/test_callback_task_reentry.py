@@ -1,72 +1,48 @@
-"""RPC callback tasks may reenter room selection without deadlock."""
+"""Real RPC callback tasks may reenter room selection without deadlock."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig
+from band.adapters.omp import OmpAdapter
+from band.core.model_catalog import ModelSelection
 from band.integrations.ompwire import OmpCommandName
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import (
-    LaterTurnReaderUiRuntime,
-    OtherTaskUiRuntime,
-    SelectingResolver,
-    requests_named,
-    run_turn,
-)
+from tests.adapters.omp.custody import owned_room
+from tests.adapters.omp.models import SelectingResolver
+from tests.adapters.omp.turns import run_turn
 
 
 class TestCallbackTaskReentry:
-    @pytest.mark.asyncio
     async def test_permission_apply_on_callback_task_updates_the_live_model(
-        self, monkeypatch, tmp_path: Path
-    ):
-        runtime = OtherTaskUiRuntime()
-        runtime.finish.set()
-        resolver = SelectingResolver()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
-        adapter = OmpAdapter(
-            OmpAdapterConfig(cwd=str(tmp_path), model="openai/original"),
-            resolve_permission=resolver,
-            emit=(),
+        self, selection_adapter: tuple[OmpAdapter, SelectingResolver]
+    ) -> None:
+        adapter, resolver = selection_adapter
+        tools = FakeAgentTools()
+        await run_turn(adapter, tools)
+        assert resolver.called.is_set()
+        assert tools.turn.replied
+        state = await owned_room(adapter, "room-123").client.request(
+            OmpCommandName.GET_STATE
         )
-        resolver.adapter = adapter
-        try:
-            await run_turn(adapter, FakeAgentTools())
-            assert resolver.called.is_set()
-            assert runtime.model == ("openai", "other")
-            assert requests_named(runtime, OmpCommandName.SET_MODEL)[-1] == {
-                "provider": "openai",
-                "modelId": "other",
-            }
-        finally:
-            await adapter.cleanup_all()
+        assert state["model"] == {"provider": "openai", "id": "other"}
+        assert state["thinkingLevel"] == "low"
 
-    @pytest.mark.asyncio
     async def test_later_turn_reader_callback_updates_the_live_model(
-        self, monkeypatch, tmp_path: Path
-    ):
-        runtime = LaterTurnReaderUiRuntime()
-        runtime.finish.set()
-        resolver = SelectingResolver()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
-        adapter = OmpAdapter(
-            OmpAdapterConfig(cwd=str(tmp_path), model="openai/original"),
-            resolve_permission=resolver,
-            emit=(),
+        self, selection_adapter: tuple[OmpAdapter, SelectingResolver]
+    ) -> None:
+        adapter, resolver = selection_adapter
+        await run_turn(adapter, FakeAgentTools())
+        resolver.called.clear()
+        resolver.selection = ModelSelection(
+            model="openai/later", reasoning_effort="high"
         )
-        resolver.adapter = adapter
-        try:
-            await run_turn(adapter, FakeAgentTools())
-            assert not resolver.called.is_set()
-            await run_turn(adapter, FakeAgentTools())
-            assert resolver.called.is_set()
-            assert runtime.model == ("openai", "other")
-            assert requests_named(runtime, OmpCommandName.SET_MODEL)[-1] == {
-                "provider": "openai",
-                "modelId": "other",
-            }
-        finally:
-            await adapter.cleanup_all()
+
+        tools = FakeAgentTools()
+        await run_turn(adapter, tools, bootstrap=False)
+
+        assert resolver.called.is_set()
+        assert tools.turn.replied
+        state = await owned_room(adapter, "room-123").client.request(
+            OmpCommandName.GET_STATE
+        )
+        assert state["model"] == {"provider": "openai", "id": "later"}
+        assert state["thinkingLevel"] == "high"

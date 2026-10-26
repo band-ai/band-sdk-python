@@ -23,7 +23,7 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from tests.adapters.omp.kit import RecordingRuntime
+from tests.adapters.omp.models import RecordingRuntime
 
 
 class ReceiptRuntime(RecordingRuntime):

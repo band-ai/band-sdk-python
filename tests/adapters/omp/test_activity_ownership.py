@@ -16,17 +16,18 @@ from band.integrations.ompwire import OmpHostToolCall
 from band.runtime.activity import PERMISSION, REASONING, tool_call_activity
 from band.runtime.tools.types import BandTool
 from band.testing.activity import SHOWN_REASONING, shown_tool
-from tests.adapters.omp.activitykit import activity_turn
-from tests.adapters.omp.kit import (
+from tests.adapters.omp.activitykit import (
     EMIT_OFF,
     EMIT_ON,
     GatedPermissionResolver,
+    activity_turn,
     permission_request,
     tool_end,
     tool_start,
 )
 
 
+@pytest.mark.usefixtures("native_startup_ready")
 class TestActivityOwnership:
     @pytest.mark.parametrize(
         ("emit", "after_callback", "after_host_end", "expected_events"),

@@ -84,6 +84,10 @@ Apply [test conventions](../band-python-test-conventions/SKILL.md)
 the scenario. Show which complementary-branch gap this test closes and which
 complete interaction it proves.
 
+Apply "Test helpers and peers" to toolkit changes. Reuse resource fixtures;
+keep scenario actions and assertions visible in tests. Reject helper frameworks
+that simulate the behavior the E2E test claims to exercise.
+
 Write a concrete plan (not code yet). It must answer:
 
 1. **What real thing are we testing?** State the behaviour and what *correct* looks like,

@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import JsonValue
 
+from band.adapters import omp
 from band.adapters.omp import OmpAdapter
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.protocols import TurnResultAlreadyReported
@@ -26,7 +27,7 @@ from tests.adapters.omp.askkit import (
     ask_turn,
     room_ask_adapter,
 )
-from tests.adapters.omp.kit import (
+from tests.adapters.omp.custody import (
     claimed_workspace_rooms,
     occupied_room_ids,
     room_runtime,
@@ -79,6 +80,7 @@ class TestOmpRoomAsk:
             assert all(answer["customInput"] for answer in answers)
             assert "later" in str(answers[0]["customInput"])
 
+            prompts_before = await ask_frames(ask_adapter, OmpCommandName.PROMPT)
             session_changes = await ask_session_changes(ask_adapter)
             runtime = room_runtime(ask_adapter, "room-123")
             resumed = FakeAgentTools()
@@ -94,7 +96,7 @@ class TestOmpRoomAsk:
             assert resumed.messages_sent[0]["content"] == RESUMED_REPLY
             assert resumed.turn.replied
             prompts = await ask_frames(ask_adapter, OmpCommandName.PROMPT)
-            assert len(prompts) == 2
+            assert prompts[:-1] == prompts_before
             assert "Use SQLite for Dev." in str(prompts[-1]["message"])
             [opt_in] = await ask_frames(ask_adapter, OmpCommandName.SET_ASK_DIALOG)
             assert opt_in["enabled"] is True
@@ -118,14 +120,14 @@ class TestOmpRoomAsk:
         tools.send_message_error = error
         try:
             with (
-                caplog.at_level(logging.WARNING, logger=OmpAdapter.__module__),
+                caplog.at_level(logging.WARNING, logger=omp.__name__),
                 pytest.raises(TurnResultAlreadyReported),
             ):
                 await ask_turn(ask_adapter, tools)
             [warning] = [
                 record
                 for record in caplog.records
-                if record.name == OmpAdapter.__module__
+                if record.name.startswith(f"{omp.__name__}.")
             ]
             assert warning.levelno == logging.WARNING
             diagnostic = warning.getMessage()
@@ -176,11 +178,12 @@ class TestOmpRoomAsk:
             await asyncio.gather(running, return_exceptions=True)
             await ask_adapter.cleanup_all()
 
+    @pytest.mark.usefixtures("native_startup_ready")
     async def test_refused_dialog_releases_startup_without_prompting(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         observer = AskStartupObserver()
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", observer)
+        monkeypatch.setattr("band.adapters.omp.lifecycle.OmpRpcClient", observer)
         adapter = room_ask_adapter(tmp_path, REFUSED_DIALOG)
         tools = FakeAgentTools()
         try:

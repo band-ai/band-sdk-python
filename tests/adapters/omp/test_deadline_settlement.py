@@ -7,22 +7,19 @@ import pytest
 
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.testing import FakeAgentTools, reported_failures
-from tests.adapters.omp.kit import (
-    Launches,
+from tests.adapters.omp.lifecyclekit import Launches
+from tests.adapters.omp.resolution import (
     SelfRetiringResolver,
     SettlingResolver,
     UncancellingResolver,
     cross_deadline,
-    launches,
-    run_turn,
     settling_adapter,
     start_cleanup,
     timeout_reports,
 )
+from tests.adapters.omp.turns import run_turn
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
-
-__all__ = ["launches"]
 
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())

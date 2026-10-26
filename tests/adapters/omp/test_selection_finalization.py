@@ -11,17 +11,11 @@ from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.core.model_catalog import ModelSelection
 from band.integrations.ompprocess import OmpMcpServer
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import (
-    Launches,
-    RecordingRuntime,
-    launches,
-    retained_selection,
-    run_turn,
-)
-from tests.adapters.omp.lifecyclekit import HeldCloseRuntime, ObservedRoomGate
+from tests.adapters.omp.custody import retained_selection
+from tests.adapters.omp.lifecyclekit import HeldCloseRuntime, Launches, ObservedRoomGate
+from tests.adapters.omp.models import RecordingRuntime
 from tests.adapters.omp.selectionkit import ACCEPTED_MODEL, MODEL_PROVIDER
-
-__all__ = ["launches"]
+from tests.adapters.omp.turns import run_turn
 
 
 class TestSelectionFinalization:

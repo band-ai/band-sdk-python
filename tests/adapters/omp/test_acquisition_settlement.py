@@ -7,27 +7,22 @@ from pathlib import Path
 
 import pytest
 
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig
+from band.adapters.omp import OmpAdapterConfig
 from band.core.model_catalog import ModelSelection
 from band.integrations.omprpc import OmpRpcClient
 from band.testing import FakeAgentTools
-from tests.adapters.omp.kit import (
-    Launches,
-    RecordingRuntime,
-    claimed_workspace_rooms,
-    launches,
-    run_turn,
-    start_cleanup,
-)
-from tests.adapters.omp.lifecyclekit import SettlingStartRuntime
+from tests.adapters.omp.custody import claimed_workspace_rooms
+from tests.adapters.omp.lifecyclekit import Launches, SettlingStartRuntime
+from tests.adapters.omp.models import RecordingRuntime
+from tests.adapters.omp.resolution import CleanupObservedAdapter, start_cleanup
 from tests.adapters.omp.selectionkit import ACCEPTED_MODEL, MODEL_PROVIDER
+from tests.adapters.omp.turns import run_turn
 from tests.integrations.omprpc.cancellation import HeldCleanup
-from tests.integrations.omprpc.kit import OMP_PEER_COMMAND, SpawnBarrier
-
-__all__ = ["launches"]
+from tests.integrations.omprpc.spawn import OMP_PEER_COMMAND, SpawnBarrier
 
 
 class TestAcquisitionSettlement:
+    @pytest.mark.usefixtures("native_startup_ready")
     @pytest.mark.asyncio
     async def test_selection_during_cancelled_startup_configures_the_replacement(
         self,
@@ -39,8 +34,10 @@ class TestAcquisitionSettlement:
         spawn = SpawnBarrier(client.spawn_owned_process)
         client.spawn_owned_process = spawn.create
         cleanup = HeldCleanup(client)
-        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: client)
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        monkeypatch.setattr(
+            "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **kw: client
+        )
+        adapter = CleanupObservedAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         turn = asyncio.create_task(run_turn(adapter, FakeAgentTools()))
         try:
             await spawn.created.wait()
@@ -53,7 +50,7 @@ class TestAcquisitionSettlement:
             cleanup.release.set()
             with pytest.raises(asyncio.CancelledError):
                 await turn
-            monkeypatch.setattr("band.adapters.omp.OmpRpcClient", launches)
+            monkeypatch.setattr("band.adapters.omp.lifecycle.OmpRpcClient", launches)
             tools = FakeAgentTools()
             await run_turn(adapter, tools)
             assert launches.runtimes[0].models_at_prompt == (
@@ -74,7 +71,7 @@ class TestAcquisitionSettlement:
     ) -> None:
         runtime = SettlingStartRuntime(clear_cancel=clear_cancel)
         launches.runtime_factory = lambda: runtime
-        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        adapter = CleanupObservedAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         turn = asyncio.create_task(run_turn(adapter, FakeAgentTools()))
         try:
             await runtime.starting.arrived()

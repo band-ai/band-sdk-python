@@ -94,8 +94,8 @@ async def run_probe(mode: ControlMode | None) -> list[str]:
     client = HeldOmpClient()
     with (
         tempfile.TemporaryDirectory(prefix="band-stop-omp-") as workspace,
-        patch("band.adapters.omp.OmpRpcClient", return_value=client),
-        patch("band.adapters.omp.omp_mcp_ready", new=AsyncMock()),
+        patch("band.adapters.omp.lifecycle.OmpRpcClient", return_value=client),
+        patch("band.adapters.omp.lifecycle.omp_mcp_ready", new=AsyncMock()),
     ):
         adapter = OmpAdapter(OmpAdapterConfig(cwd=workspace))
         await adapter.on_started("Agent", "A coding agent")
