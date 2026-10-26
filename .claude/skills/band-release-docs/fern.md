@@ -6,8 +6,7 @@ changelog PR from the bundle, then opens one Fern docs PR updating the Python
 SDK pages the release made stale. Every push, PR, and close waits for the
 maintainer to review the diff and approve.
 
-`S` below is `.claude/skills/band-release-docs/scripts`; run each script with
-`uv run --script "$S/<name>.py"`.
+`S` below is `.claude/skills/band-release-docs/scripts`.
 
 ## Before starting
 
@@ -23,8 +22,7 @@ maintainer to review the diff and approve.
 
 ## Branches
 
-Changelog: `changelog/python-sdk-<tag>`. Docs: `docsrange.py`'s
-`DOCS_BRANCH_PREFIX` followed by the tag (`docs/python-sdk-<tag>`).
+Changelog: `changelog/python-sdk-<tag>`. Docs: `docs/python-sdk-<tag>`.
 
 For each branch, first run
 `gh pr list --repo thenvoi/fern --head <branch> --state all --json number,state,url`.
@@ -48,7 +46,7 @@ branches but keeps those of closed, unmerged PRs.
    `<fern>/docs-structure-summary.md`. Show every match and ask the maintainer
    whether to hold it back; the ledger requires that confirmation.
 4. Merge the entry:
-   `"$S/renderentry.py" release-notes.json --merge-into <worktree>/fern/changelog/sdks --drop <held index>... --pr-body pr-body.md`.
+   `uv run --script "$S/renderentry.py" release-notes.json --merge-into <worktree>/fern/changelog/sdks --drop <held index>... --pr-body pr-body.md`.
    It validates the entry against the [format reference](references/fern-changelog-format.md)
    and checks that every existing line of the date file survives in order.
 5. Show the diff. After approval: commit with no AI attribution (Fern's
@@ -60,9 +58,9 @@ branches but keeps those of closed, unmerged PRs.
 6. Range: list the docs PRs into two files with
    `gh pr list --repo thenvoi/fern --state merged --search 'head:docs/python-sdk-band-sdk-v' --json number,headRefName`
    and the same with `--state open`, then run
-   `"$S/docsrange.py" <tag> merged.json open.json`. It prints `baseline` and
+   `uv run --script "$S/docsrange.py" <tag> merged.json open.json`. It prints `baseline` and
    `supersede`. Build the review input with
-   `"$S/collectprs.py" <tag> --since <baseline> > review-prs.json`.
+   `uv run --script "$S/collectprs.py" <tag> --since <baseline> > review-prs.json`.
 7. Check out the released source: `git worktree add --detach <tmp>/sdk <tag>`.
    Then the branch check and Fern worktree on the docs branch.
 8. Nominate at most `MAX_REVIEWED_PAGES = 10` pages anywhere under

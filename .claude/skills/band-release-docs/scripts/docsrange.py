@@ -13,17 +13,15 @@ whose release that range already covers.
 from __future__ import annotations
 
 import argparse
-import json
-import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from collectprs import SDK_TAG_PREFIX, tag_version
+from collectprs import git, tag_version
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 from pydantic.alias_generators import to_camel
+from releasedata import SDK_TAG_PREFIX
 
-# Fern docs PRs for this SDK live on docs/python-sdk-<tag>.
 DOCS_BRANCH_PREFIX = "docs/python-sdk-"
 # A review never reaches further back than this many band-sdk releases.
 MAX_DOCS_RELEASES = 3
@@ -48,8 +46,18 @@ class DocsPr(BaseModel):
 DOCS_PRS = TypeAdapter(list[DocsPr])
 
 
-def docs_baseline(tag: str, tags: Sequence[str], merged: Sequence[DocsPr]) -> str:
-    """Return the newest documented release below ``tag``, floored ``MAX_DOCS_RELEASES`` back."""
+class DocsRange(BaseModel):
+    baseline: str
+    supersede: list[int]
+
+
+def docs_range(
+    tag: str, tags: Sequence[str], merged: Sequence[DocsPr], open_prs: Sequence[DocsPr]
+) -> DocsRange:
+    """Start after the newest documented release below ``tag``, at most ``MAX_DOCS_RELEASES`` back.
+
+    ``supersede`` lists the open docs PRs for releases strictly inside the range.
+    """
     version = tag_version(tag)
     if version is None:
         raise ValueError(f"{tag!r} is not a {SDK_TAG_PREFIX}X.Y.Z tag")
@@ -61,28 +69,19 @@ def docs_baseline(tag: str, tags: Sequence[str], merged: Sequence[DocsPr]) -> st
         raise ValueError(f"no {SDK_TAG_PREFIX}* release precedes {tag}")
     floor = earlier[min(MAX_DOCS_RELEASES, len(earlier)) - 1]
     documented = [
-        pr.release for pr in merged if pr.release and floor <= pr.release < version
+        release
+        for pr in merged
+        if (release := pr.release) and floor <= release < version
     ]
     baseline = max(documented, default=floor)
-    return f"{SDK_TAG_PREFIX}{'.'.join(map(str, baseline))}"
-
-
-def superseded(tag: str, baseline: str, open_prs: Sequence[DocsPr]) -> list[int]:
-    """Return the open docs PRs for releases strictly between ``baseline`` and ``tag``."""
-    low, high = tag_version(baseline), tag_version(tag)
-    if low is None or high is None:
-        raise ValueError("baseline and tag must be release tags")
-    return [pr.number for pr in open_prs if pr.release and low < pr.release < high]
-
-
-def sdk_tags(repo: Path) -> list[str]:
-    listing = subprocess.run(
-        ["git", "-C", str(repo), "tag", "--list", f"{SDK_TAG_PREFIX}*"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    return listing.split()
+    return DocsRange(
+        baseline=f"{SDK_TAG_PREFIX}{'.'.join(map(str, baseline))}",
+        supersede=[
+            pr.number
+            for pr in open_prs
+            if (release := pr.release) and baseline < release < version
+        ],
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -93,14 +92,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     args = parser.parse_args(argv)
 
+    tags = git(args.repo, "tag", "--list", f"{SDK_TAG_PREFIX}*").split()
     merged = DOCS_PRS.validate_json(args.merged.read_bytes())
     open_prs = DOCS_PRS.validate_json(args.open.read_bytes())
-    baseline = docs_baseline(args.tag, sdk_tags(args.repo), merged)
-    result = {
-        "baseline": baseline,
-        "supersede": superseded(args.tag, baseline, open_prs),
-    }
-    sys.stdout.write(json.dumps(result) + "\n")
+    found = docs_range(args.tag, tags, merged, open_prs)
+    sys.stdout.write(found.model_dump_json() + "\n")
     return 0
 
 

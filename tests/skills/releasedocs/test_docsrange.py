@@ -25,6 +25,10 @@ def prs(docsrange: ModuleType, *branches: tuple[int, str]) -> list[object]:
     ]
 
 
+def expected(docsrange: ModuleType, baseline: str, supersede: list[int]) -> object:
+    return docsrange.DocsRange(baseline=baseline, supersede=supersede)
+
+
 class TestDocsRange:
     def test_baseline_is_the_newest_documented_release_by_version(
         self, docsrange: ModuleType
@@ -35,7 +39,9 @@ class TestDocsRange:
             (2, "docs/python-sdk-band-sdk-v6.12.0"),
             (3, "docs/python-sdk-band-sdk-v6.10.0"),
         )
-        assert docsrange.docs_baseline(TAG, TAGS, merged) == "band-sdk-v6.12.0"
+        assert docsrange.docs_range(TAG, TAGS, merged, []) == expected(
+            docsrange, "band-sdk-v6.12.0", []
+        )
 
     def test_versions_compare_numerically(self, docsrange: ModuleType) -> None:
         tags = ["band-sdk-v6.9.0", "band-sdk-v6.10.0", "band-sdk-v6.11.0"]
@@ -44,9 +50,8 @@ class TestDocsRange:
             (1, "docs/python-sdk-band-sdk-v6.9.0"),
             (2, "docs/python-sdk-band-sdk-v6.10.0"),
         )
-        assert (
-            docsrange.docs_baseline("band-sdk-v6.11.0", tags, merged)
-            == "band-sdk-v6.10.0"
+        assert docsrange.docs_range("band-sdk-v6.11.0", tags, merged, []) == expected(
+            docsrange, "band-sdk-v6.10.0", []
         )
 
     @pytest.mark.parametrize(
@@ -58,13 +63,16 @@ class TestDocsRange:
         self, docsrange: ModuleType, merged: list[tuple[int, str]]
     ) -> None:
         floor = "band-sdk-v6.10.0"  # the third release before TAG
-        assert docsrange.docs_baseline(TAG, TAGS, prs(docsrange, *merged)) == floor
+        found = docsrange.docs_range(TAG, TAGS, prs(docsrange, *merged), [])
+        assert found == expected(docsrange, floor, [])
 
     def test_short_history_floors_at_the_first_release(
         self, docsrange: ModuleType
     ) -> None:
         tags = ["band-sdk-v1.0.0", "band-sdk-v1.1.0"]
-        assert docsrange.docs_baseline("band-sdk-v1.1.0", tags, []) == "band-sdk-v1.0.0"
+        assert docsrange.docs_range("band-sdk-v1.1.0", tags, [], []) == expected(
+            docsrange, "band-sdk-v1.0.0", []
+        )
 
     def test_supersede_holds_only_releases_inside_the_range(
         self, docsrange: ModuleType
@@ -77,7 +85,9 @@ class TestDocsRange:
             (13, "docs/python-sdk-band-sdk-v6.14.0"),
             (14, "docs/python-sdk-band-sdk-v6.13.0"),
         )
-        assert docsrange.superseded(TAG, "band-sdk-v6.10.0", open_prs) == [10, 11]
+        assert docsrange.docs_range(TAG, TAGS, [], open_prs) == expected(
+            docsrange, "band-sdk-v6.10.0", [10, 11]
+        )
 
     @pytest.mark.parametrize(
         "branch",
@@ -92,7 +102,6 @@ class TestDocsRange:
         self, docsrange: ModuleType, branch: str
     ) -> None:
         found = prs(docsrange, (20, branch))
-        assert (
-            docsrange.docs_baseline(TAG, TAGS, found),
-            docsrange.superseded(TAG, "band-sdk-v6.10.0", found),
-        ) == ("band-sdk-v6.10.0", [])
+        assert docsrange.docs_range(TAG, TAGS, found, found) == expected(
+            docsrange, "band-sdk-v6.10.0", []
+        )
