@@ -1,0 +1,164 @@
+"""Every report item must trace to the release and carry safe text before it is bundled."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+
+from tests.skills.releasedocs.samples import RELEASE_DATE, RELEASE_TAG, RELEASE_URL
+
+LOOSE_SHA = "a" * 40
+RELEASE_PRS = {
+    "tag": RELEASE_TAG,
+    "previous_tag": "band-sdk-v6.0.1",
+    "release_url": RELEASE_URL,
+    "release_date": RELEASE_DATE,
+    "pull_requests": [
+        {
+            "number": 101,
+            "sha": "b" * 40,
+            "title": "feat: retry sends",
+            "body": "",
+            "labels": [],
+            "files": ["src/band/send.py"],
+            "type": "feat",
+            "breaking": False,
+        }
+    ],
+    "loose_commits": [
+        {
+            "sha": LOOSE_SHA,
+            "subject": "docs: readme",
+            "files": ["README.md"],
+            "breaking": False,
+        }
+    ],
+    "excluded_internal": [102],
+}
+BREAKING_PR = RELEASE_PRS | {
+    "pull_requests": [RELEASE_PRS["pull_requests"][0] | {"breaking": True}]
+}
+PRODUCT_ARGS = [
+    "--product-name",
+    "Band Python SDK",
+    "--product-label",
+    "Python SDK",
+    "--product-tag",
+    "python",
+]
+
+
+def item(
+    sources: list[str], sentence: str = "Sends retry with backoff."
+) -> dict[str, object]:
+    return {
+        "category": "Added",
+        "label": "Send Retries",
+        "sentence": sentence,
+        "sources": sources,
+    }
+
+
+def documented(*items: dict[str, object]) -> dict[str, object]:
+    return {"status": "documented", "items": list(items), "breaking": None}
+
+
+def build(
+    builditems: ModuleType,
+    tmp_path: Path,
+    report: dict[str, object],
+    release: dict[str, object],
+) -> tuple[int, Path, Path]:
+    report_file, prs_file = tmp_path / "report.json", tmp_path / "release-prs.json"
+    report_file.write_text(json.dumps(report), encoding="utf-8")
+    prs_file.write_text(json.dumps(release), encoding="utf-8")
+    out, outputs = tmp_path / "bundle" / "release-notes.json", tmp_path / "outputs"
+    code = builditems.main(
+        [
+            str(report_file),
+            str(prs_file),
+            *PRODUCT_ARGS,
+            "--out",
+            str(out),
+            "--outputs",
+            str(outputs),
+        ]
+    )
+    return code, out, outputs
+
+
+class TestBuildItems:
+    @pytest.mark.parametrize(
+        ("report", "release"),
+        [
+            (documented(item(["999"])), RELEASE_PRS),
+            (documented(item([])), RELEASE_PRS),
+            (documented(item(["102"])), RELEASE_PRS),
+            (documented(item(["101"])), BREAKING_PR),
+            (documented(item(["101"], "Reads the ghp_ token.")), RELEASE_PRS),
+            (documented(item(["101"], "See https://example.com.")), RELEASE_PRS),
+        ],
+        ids=[
+            "unknown-source",
+            "no-source",
+            "internal-source",
+            "breaking-without-block",
+            "credential",
+            "url",
+        ],
+    )
+    def test_rejected_report_writes_nothing(
+        self,
+        builditems: ModuleType,
+        tmp_path: Path,
+        report: dict[str, object],
+        release: dict[str, object],
+    ) -> None:
+        code, out, outputs = build(builditems, tmp_path, report, release)
+        assert (code, out.exists(), outputs.exists()) == (1, False, False)
+
+    def test_traced_items_become_the_release_notes(
+        self, builditems: ModuleType, releasedata: ModuleType, tmp_path: Path
+    ) -> None:
+        report = documented(item(["101"]), item([LOOSE_SHA], "The readme is current."))
+        code, out, outputs = build(builditems, tmp_path, report, RELEASE_PRS)
+        assert code == 0
+        assert outputs.read_text(encoding="utf-8") == "has_entry=true\n"
+        assert releasedata.ReleaseNotes.model_validate_json(out.read_text()) == (
+            releasedata.ReleaseNotes(
+                tag=RELEASE_TAG,
+                previous_tag="band-sdk-v6.0.1",
+                release_url=RELEASE_URL,
+                release_date=RELEASE_DATE,
+                product={
+                    "name": "Band Python SDK",
+                    "label": "Python SDK",
+                    "tag": "python",
+                },
+                items=report["items"],
+                breaking=None,
+            )
+        )
+
+    def test_breaking_release_passes_with_its_block(
+        self, builditems: ModuleType, tmp_path: Path
+    ) -> None:
+        report = documented(item(["101"])) | {
+            "breaking": {"title": "Send Renamed", "markdown": "Send is now post."}
+        }
+        code, out, _ = build(builditems, tmp_path, report, BREAKING_PR)
+        assert (code, out.exists()) == (0, True)
+
+    def test_no_user_facing_changes_writes_no_entry(
+        self, builditems: ModuleType, tmp_path: Path
+    ) -> None:
+        report = {"status": "no_user_facing_changes", "items": [], "breaking": None}
+        code, out, outputs = build(builditems, tmp_path, report, RELEASE_PRS)
+        assert (code, out.exists(), outputs.read_text(encoding="utf-8")) == (
+            0,
+            False,
+            "has_entry=false\n",
+        )
