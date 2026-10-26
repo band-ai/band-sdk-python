@@ -1,4 +1,4 @@
-"""release-announce.yml reads only the outputs, flags, and files the scripts provide.
+"""release-announce.yml runs real scripts and reads only the outputs they write.
 
 A drifted output name makes a gate like ``proceed == 'true'`` silently false, so
 every release would skip announcing with a green run and no alert.
@@ -10,16 +10,37 @@ import ast
 import re
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
+import yaml
 
-from tests.paths import RELEASE_DOCS_SCRIPTS, REPO_ROOT
+from tests.paths import RELEASE_DOCS_SCRIPTS, RELEASE_DOCS_SKILL, REPO_ROOT
 
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-announce.yml"
 
 
 def workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
+
+
+SKILL_CHECKOUT = "/${{ env.SKILL }}/"
+
+
+def workflow() -> dict[str, Any]:
+    # BaseLoader keeps `on` a string key instead of YAML 1.1's boolean True.
+    return yaml.load(workflow_text(), Loader=yaml.BaseLoader)
+
+
+def all_steps() -> list[dict[str, Any]]:
+    return [step for job in workflow()["jobs"].values() for step in job["steps"]]
+
+
+def step_run(step: str) -> str:
+    """The ``run`` script of the step whose ``id`` is ``step``."""
+    steps = all_steps()
+    (run,) = [s["run"] for s in steps if s.get("id") == step]
+    return run
 
 
 def outputs_read(step: str) -> set[str]:
@@ -54,9 +75,28 @@ class TestAnnounceWorkflow:
     def test_gates_read_only_outputs_the_script_writes(
         self, step: str, script: str
     ) -> None:
+        assert f"$SKILL/scripts/{script}.py" in step_run(step)
         read = outputs_read(step)
         assert read
         assert read - outputs_written(script) == set()
+
+    def test_needs_gates_read_declared_job_outputs(self) -> None:
+        jobs = workflow()["jobs"]
+        read = set(re.findall(r"needs\.(\w+)\.outputs\.(\w+)", workflow_text()))
+        assert read
+        assert {
+            (job, key) for job, key in read if key not in jobs[job]["outputs"]
+        } == set()
+
+    def test_every_checkout_of_the_skill_fetches_it(self) -> None:
+        assert REPO_ROOT / workflow()["env"]["SKILL"] == RELEASE_DOCS_SKILL
+        sparse = [
+            step["with"]["sparse-checkout"]
+            for step in all_steps()
+            if "sparse-checkout" in step.get("with", {})
+        ]
+        assert sparse
+        assert set(sparse) == {SKILL_CHECKOUT}
 
     def test_announcement_targets_exist(self, announcement: ModuleType) -> None:
         targets = set(re.findall(r"--target ([\w-]+)", workflow_text()))
