@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 
 [[package]]
@@ -35,7 +35,7 @@ wheels = [
 
 [[package]]
 name = "band-client-rest"
-version = "0.0.41"
+version = "0.0.46"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -43,9 +43,9 @@ dependencies = [
     { name = "pydantic-core" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/85/f2/71f701fa2dad3f74de3936b0cc4ee1e5b748b60e738105f189aa40ef4362/band_client_rest-0.0.41.tar.gz", hash = "sha256:5596b7afe31a18c5af7f8c4a3da03e09d61538173c83a8bfbe65bc67e0b96dba", size = 148868, upload-time = "2026-09-24T20:09:24.768Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/20/e4/5a7a23a9e8d94ce293921485ec8ec6c2fef94bf9330d53484e1293d59d2a/band_client_rest-0.0.46.tar.gz", hash = "sha256:d5acc1828920e7adeadef1656d968a52a22688531c196c991a6681c90e63fba2", size = 150959, upload-time = "2026-10-08T14:46:13.282Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/1b/cc20abc2fb2bb2b4b14fe4d7d91c43dc7822d7ed70a6f1c63089172bcbe0/band_client_rest-0.0.41-py3-none-any.whl", hash = "sha256:933cd941b1dfe998f2ae5a650045a93c701c6935b3e08c52301280362a8277c5", size = 328750, upload-time = "2026-09-24T20:09:23.495Z" },
+    { url = "https://files.pythonhosted.org/packages/07/c3/4e4af60e88b6f0c80b100759963bfe18860ec25ff01ae96f6664cdb1252b/band_client_rest-0.0.46-py3-none-any.whl", hash = "sha256:3ef23367dbe3e0cb550666ee50e9f9bc7cdcb6974b49114144deb8f880d71fdc", size = 333122, upload-time = "2026-10-08T14:46:11.871Z" },
 ]
 
 [[package]]
@@ -65,7 +65,7 @@ requires-dist = [
 
 [[package]]
 name = "band-sdk"
-version = "5.1.0"
+version = "6.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "async-lru" },
@@ -80,9 +80,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "ruamel-yaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/23/399e01260779becc47663134162070391dde3b628ac65e3ff5062208e1b7/band_sdk-5.1.0.tar.gz", hash = "sha256:171edac56f1b179654b3445038a43b72fb7e25e71f04d08e1c1566ff5dbcfb6e", size = 860721, upload-time = "2026-10-13T12:31:27.2Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/49/49/0ade30bc4070f38529920372bc55bc13f617d7600258a124b5c15a8fd08b/band_sdk-6.0.1.tar.gz", hash = "sha256:cd9c827ba7977a14909b591ed4f057830f347410823df5a986cf8c05ec106e63", size = 907676, upload-time = "2026-10-20T11:41:42.783Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/b2/ba4cae6082d5e667488836ebd542c14239ab1e5383122e1c1cae9dae5168/band_sdk-5.1.0-py3-none-any.whl", hash = "sha256:abbebba8c20e98248dacc53bec1d82f070b821f9d52f3acf782e16ea9958a011", size = 939175, upload-time = "2026-10-13T12:31:25.058Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/1b/db5daf727d3ca756fbac3739d6f4c353d46353a4e8141bd0ceaa929c843b/band_sdk-6.0.1-py3-none-any.whl", hash = "sha256:5ddffba3ac2a28bc2222ae9489f94e2729127a5434f7bbc7a34e9b108472be3d", size = 993568, upload-time = "2026-10-20T11:41:40.747Z" },
 ]
 
 [[package]]
@@ -320,14 +320,15 @@ wheels = [
 
 [[package]]
 name = "phoenix-channels-python-client"
-version = "0.2.5"
+version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "pydantic" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/9a/cdce1b0d5dff02dd1177a4ec33faa783947d4c5d483c1b2f51aa8b1414fa/phoenix_channels_python_client-0.2.5.tar.gz", hash = "sha256:cf6f693a0168230468af9ffdbfc3e33f2cdc4f97ebc77a8b3639fb96d7ef1b67", size = 40550, upload-time = "2026-10-07T12:05:44.236Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/5b/bc55fb1ec0da1aec737844f40d75b70cc7f625b530caf6fd0248a6006f93/phoenix_channels_python_client-0.3.1.tar.gz", hash = "sha256:2b34a8a32b70bd75fdd5bb2f0b586bcb325c5095714b12c917cb7f42bf03e0d1", size = 63121, upload-time = "2026-10-19T11:07:34.327Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/af/0e/14f9da44b7314fe3dd8a31fa145fd84fa48c0a5cfd4f4beabc4e10231e82/phoenix_channels_python_client-0.2.5-py3-none-any.whl", hash = "sha256:2410854935d113c4a384647ee3e5aed7c456b36e905422f35267199c0fd12056", size = 29817, upload-time = "2026-10-07T12:05:43.003Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/e0/be3e15e23cd0a92da1e7e96ab72a064ae26b5ddde2f2341c056ce1b843c1/phoenix_channels_python_client-0.3.1-py3-none-any.whl", hash = "sha256:0f2a73a932d95ee6f0149b6d7c7e515a0065c1e4a0576c1aca00ac680b2f6b6b", size = 37880, upload-time = "2026-10-19T11:07:32.883Z" },
 ]
 
 [[package]]
