@@ -70,7 +70,9 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          open_pr="$(gh pr list --head "$DURATIONS_BRANCH" --state open --json number --jq '.[].number')"
+          # --head matches fork PRs by branch name too; only our own branch counts.
+          open_pr="$(gh pr list --head "$DURATIONS_BRANCH" --base main --state open \
+            --json number,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | .number')"
           git add -- "$DURATIONS_PATH"
           if git diff --cached --quiet; then
             # main already matches fresh timings, so an open PR is stale.
