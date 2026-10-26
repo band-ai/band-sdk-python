@@ -29,9 +29,11 @@ Changelog: `changelog/python-sdk-<tag>`. Docs: `docs/python-sdk-<tag>`.
 For each branch, first run
 `gh pr list --repo thenvoi/fern --head <branch> --state all --json number,state,url`.
 An open or merged PR stops that part and links it. Then run
-`git -C <fern> worktree prune`, remove with `git -C <fern> worktree remove --force`
-any worktree `git -C <fern> worktree list` still shows on the branch (an
-earlier run's, regenerated anyway), and create the worktree with
+`git -C <fern> worktree prune` and remove with `git -C <fern> worktree remove`
+any worktree `git -C <fern> worktree list` still shows on the branch. If git
+refuses because it holds changes, or the local branch has commits that are not
+on the remote, show them and ask before discarding them (`--force`): they may
+be the maintainer's hand edits. Then create the worktree with
 `git -C <fern> worktree add -B <branch> <worktree> origin/dev` (resetting a stale
 local branch). Push with
 `git -C <worktree> push --force-with-lease origin <branch>`: the branch tracks
@@ -48,7 +50,9 @@ closed PR may keep its branch or have it deleted.
    `https://github.com/band-ai/band-sdk-python/actions/workflows/release-announce.yml`.
 2. `git -C <fern> fetch --prune origin`, then the branch check and worktree
    above. Then list Fern's open PRs with
-   `gh pr list --repo thenvoi/fern --state open --limit 200 --json number,url,headRefName,files`.
+   `gh pr list --repo thenvoi/fern --state open --limit 200 --json number,url,headRefName,changedFiles,files`
+   (`files` stops at 100 per PR; for a PR with more `changedFiles`, list them
+   with `gh api repos/thenvoi/fern/pulls/<n>/files --paginate --jq '.[].filename'`).
    If one other than this release's own branch (or its `-rehearsal` twin)
    changes `fern/changelog/sdks/<release_date>.md` (`release_date` is in
    `<bundle>/release-notes.json`), stop and link it: both PRs would write that
@@ -89,7 +93,9 @@ closed PR may keep its branch or have it deleted.
    then stop and say so. Build the
    review input with
    `uv run --script "$S/collectprs.py" <tag> --since <baseline> > <tmp>/review-prs.json`.
-7. Check out the released source: `git worktree add --detach <tmp>/sdk <tag>`.
+7. Check out the released source: `git worktree add --detach <tmp>/sdk <tag>`
+   (first `git worktree remove --force <tmp>/sdk` if an earlier run left it; it
+   is a read-only checkout, removed again at the end).
    Then the branch check and Fern worktree on the docs branch.
 8. Nominate at most `MAX_REVIEWED_PAGES = 10` pages anywhere under
    `fern/docs/pages/integrations/sdks/` (including `tutorials/`). Start from

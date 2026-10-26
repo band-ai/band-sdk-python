@@ -84,7 +84,6 @@ class TestDocsRange:
             (10, "docs/python-sdk-band-sdk-v6.11.0"),
             (11, "docs/python-sdk-band-sdk-v6.12.0"),
             (12, "docs/python-sdk-band-sdk-v6.10.0"),
-            (13, "docs/python-sdk-band-sdk-v6.14.0"),
             (14, "docs/python-sdk-band-sdk-v6.13.0"),
         )
         assert docsrange.docs_range(TAG, EARLIER, [], open_prs) == expected(
@@ -109,7 +108,7 @@ class TestDocsRange:
         [
             (
                 "docs/python-sdk-band-sdk-v6.13.0",
-                "docs for band-sdk-v6.13.0 are already",
+                r"^docs for band-sdk-v6\.13\.0 are already merged$",
             ),
             ("docs/python-sdk-band-sdk-v6.14.0", "would roll their pages back"),
         ],
@@ -121,6 +120,13 @@ class TestDocsRange:
         merged = prs(docsrange, (1, "docs/python-sdk-band-sdk-v6.12.0"), (2, branch))
         with pytest.raises(ValueError, match=error):
             docsrange.docs_range(TAG, EARLIER, merged, [])
+
+    def test_review_older_than_an_open_docs_pr_is_refused(
+        self, docsrange: ModuleType
+    ) -> None:
+        open_prs = prs(docsrange, (30, "docs/python-sdk-band-sdk-v6.14.0"))
+        with pytest.raises(ValueError, match="band-sdk-v6.14.0 already covers"):
+            docsrange.docs_range(TAG, EARLIER, [], open_prs)
 
     @pytest.mark.parametrize(
         "branch",
@@ -146,7 +152,8 @@ class TestDocsRange:
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        for version in ("6.10.0", "6.11.0", "6.12.0"):
+        # git lists tags by name (6.10 before 6.8); the floor needs numeric order.
+        for version in ("6.8.0", "6.9.0", "6.10.0", "6.11.0", "6.12.0"):
             repo.commit(f"feat: {version}", {"src/band/a.py": version})
             repo.tag(f"band-sdk-v{version}")
         # A release on another line of history is not before TAG.

@@ -7,8 +7,9 @@
 Reads ``gh pr list --json number,headRefName`` output for merged and open Fern
 docs PRs. Writes ``{"baseline": <tag>, "supersede": [<PR number>...]}``: the
 review covers ``baseline..TAG``, and ``supersede`` lists the open docs PRs
-whose release that range already covers. It refuses a TAG older than a release
-whose docs PR is already merged, since that review would roll pages back.
+whose release that range already covers. It refuses a TAG whose docs PR is
+already merged, a TAG older than a release whose docs PR is merged (that review
+would roll pages back), and a TAG older than an open docs PR, which covers it.
 """
 
 from __future__ import annotations
@@ -75,6 +76,13 @@ def docs_range(
         raise ValueError(
             f"docs for {tag_name(newer[-1])} are already merged; "
             f"a review as of {tag} would roll their pages back"
+        )
+    pending = sorted(
+        release for pr in open_prs if (release := pr.release) and release > version
+    )
+    if pending:
+        raise ValueError(
+            f"the open docs PR for {tag_name(pending[-1])} already covers {tag}"
         )
     floor = sorted(earlier, reverse=True)[:MAX_DOCS_RELEASES][-1]
     documented = [
