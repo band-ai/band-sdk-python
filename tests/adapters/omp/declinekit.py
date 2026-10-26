@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from collections.abc import AsyncIterator
@@ -17,6 +16,7 @@ from band.integrations.ompwire import OmpCommandName, OmpFrameType
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import BandTool, ToolCallOutcome
 from band.testing import FakeAgentTools
+from tests.adapters.hold import Hold
 from tests.adapters.omp.declinepeer import DECLINE_TRANSCRIPT, DeclineScenario
 from tests.paths import REPO_ROOT
 
@@ -27,30 +27,19 @@ def custom_decline() -> str:
     return "Custom observation completed"
 
 
-class ConcurrentDeclineTools(FakeAgentTools):
-    def __init__(self) -> None:
-        super().__init__()
-        self.started = 0
-        self.both_started = asyncio.Event()
-
-    async def execute_tool_call_structured(
-        self, tool_name: str, arguments: dict[str, Any]
-    ) -> ToolCallOutcome:
-        self.started += 1
-        if self.started == 2:
-            self.both_started.set()
-        await self.both_started.wait()
-        return await super().execute_tool_call_structured(tool_name, arguments)
-
-
 class DeclineTools(FakeAgentTools):
-    def __init__(self, *, fail_decline: bool = False) -> None:
+    def __init__(
+        self, *, fail_decline: bool = False, decline_hold: Hold | None = None
+    ) -> None:
         super().__init__()
         self.fail_decline = fail_decline
+        self.decline_hold = decline_hold
 
     async def execute_tool_call_structured(
         self, tool_name: str, arguments: dict[str, Any]
     ) -> ToolCallOutcome:
+        if tool_name == BandTool.NO_REPLY and self.decline_hold is not None:
+            await self.decline_hold.wait()
         if tool_name == BandTool.NO_REPLY and self.fail_decline:
             return ToolCallOutcome(value="Decline rejected", ok=False)
         outcome = await super().execute_tool_call_structured(tool_name, arguments)
@@ -101,6 +90,17 @@ def stop_commands(tmp_path: Path) -> list[dict[str, Any]]:
         frame
         for frame in wire_frames(tmp_path)
         if frame["type"] == OmpCommandName.ABORT
+    ]
+
+
+def admitted_declines_before_stop(tmp_path: Path) -> list[str]:
+    frames = wire_frames(tmp_path)
+    stop = next(frame for frame in frames if frame["type"] == OmpCommandName.ABORT)
+    return [
+        frame["id"]
+        for frame in frames[: frames.index(stop)]
+        if frame["type"] == OmpFrameType.HOST_TOOL_CALL
+        and frame["toolName"] == BandTool.NO_REPLY
     ]
 
 

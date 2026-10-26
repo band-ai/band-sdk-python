@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pydantic import JsonValue
 
 from band.adapters.omp import OmpAdapter
-from band.integrations.omprpc.client import COMPLETION_TIMEOUT_S
+from band.integrations.omprpc.client import COMPLETION_TIMEOUT_S, OmpScheduler
 from band.integrations.ompwire import (
     OmpCommandName,
     OmpEvent,
@@ -65,6 +65,26 @@ class PendingRuntime:
         on_event: Callable[[OmpEvent], Awaitable[None]],
         on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+        schedule_admission: OmpScheduler | None = None,
+    ) -> None:
+        if schedule_admission is None:
+            await self._write_prompt(_message)
+        else:
+            await schedule_admission(lambda: self._write_prompt(_message))
+        await self._prompt_body(
+            _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+        )
+
+    async def _write_prompt(self, _message: str) -> None:
+        return None
+
+    async def _prompt_body(
+        self,
+        _message: str,
+        *,
+        on_event: Callable[[OmpEvent], Awaitable[None]],
+        on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
+        on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
     ) -> None:
         if not self.callbacks.done():
             self.callbacks.set_result(PromptCallbacks(on_event, on_tool, on_ui))
@@ -79,6 +99,9 @@ class PendingRuntime:
                     arguments={"content": "Background work finished"},
                 )
             )
+
+    def raise_if_retirement_unproven(self) -> None:
+        return None
 
     async def close(self) -> None:
         self.closed = True

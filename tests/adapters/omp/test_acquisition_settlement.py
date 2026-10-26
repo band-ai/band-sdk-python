@@ -13,9 +13,10 @@ from band.integrations.omprpc import OmpRpcClient
 from band.testing import FakeAgentTools
 from tests.adapters.omp.custody import claimed_workspace_rooms
 from tests.adapters.omp.lifecyclekit import Launches, SettlingStartRuntime
+from tests.adapters.omp.mailboxpeer import MODEL_PROVIDER
 from tests.adapters.omp.models import RecordingRuntime
 from tests.adapters.omp.resolution import CleanupObservedAdapter, start_cleanup
-from tests.adapters.omp.selectionkit import ACCEPTED_MODEL, MODEL_PROVIDER
+from tests.adapters.omp.selectionkit import ACCEPTED_MODEL
 from tests.adapters.omp.turns import run_turn
 from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.spawn import OMP_PEER_COMMAND, SpawnBarrier

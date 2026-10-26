@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from band.adapters.omp import OmpAdapter
 from band.integrations.omprpc import OmpRpcClient
+from band.integrations.omprpc.client import OmpScheduler
 from band.integrations.ompwire import (
     OmpEvent,
     OmpHostToolCall,
@@ -53,8 +54,15 @@ class RefreshClient(OmpRpcClient):
         on_event: Callable[[OmpEvent], Awaitable[None]],
         on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+        schedule_admission: OmpScheduler | None = None,
     ) -> None:
-        await super().prompt(message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+        await super().prompt(
+            message,
+            on_event=on_event,
+            on_tool=on_tool,
+            on_ui=on_ui,
+            schedule_admission=schedule_admission,
+        )
         self.state_requests_after_prompt = await state_request_count(self)
         if self.lose_refresh:
             await self.request(PeerCommand.DROP_STATE_RESPONSES)

@@ -62,10 +62,9 @@ class RecordingRuntime(PendingRuntime):
             return state
         return await super().request(command, **parameters)
 
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _write_prompt(self, _message: str) -> None:
         self.prompt_text = _message
         self.models_at_prompt += (self.model,)
-        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
 
 
 class SelectionGateRuntime(RecordingRuntime):
@@ -87,7 +86,7 @@ class SelectionGateRuntime(RecordingRuntime):
 
 
 class PermissionThenReplyRuntime(RecordingRuntime):
-    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+    async def _prompt_body(self, _message, *, on_event, on_tool, on_ui):
         await on_ui(
             OmpUIRequest(
                 id="ui",
@@ -96,7 +95,9 @@ class PermissionThenReplyRuntime(RecordingRuntime):
                 options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
             )
         )
-        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+        await super()._prompt_body(
+            _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+        )
 
 
 class SelectingResolver:

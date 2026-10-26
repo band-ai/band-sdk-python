@@ -202,17 +202,13 @@ class OmpTurnMixin(OmpAdapterContract):
         is_session_bootstrap: bool,
     ) -> None:
         room_id = room.room_id
-        async with self._room_gate(room_id):
+        async with self._locks.setdefault(room_id, asyncio.Lock()):
             if room.retained.closing:
                 raise asyncio.CancelledError
             task = asyncio.current_task()
             assert task is not None
             room.operation = task
-            if room.retiring:
-                room.retained.recover(
-                    generation=room.retained.generation,
-                    reason="Native model selection was interrupted",
-                )
+            await self._exclusive(room_id, partial(self._recover_room, room))
             deadline = asyncio.timeout(self.config.turn_timeout_s)
             try:
                 async with deadline:
@@ -319,30 +315,37 @@ class OmpTurnMixin(OmpAdapterContract):
                 return await self._permission(request, room_id, room.session_id, turn)
 
             await room.client.prompt(
-                prompt, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+                prompt,
+                on_event=on_event,
+                on_tool=on_tool,
+                on_ui=on_ui,
+                schedule_admission=partial(self._schedule_prompt, room),
             )
-            room.bootstrapped = True
-            # A lost post-prompt state response must not outlive completion.
-            try:
-                async with asyncio.timeout(room.client.completion_timeout_s):
-                    await self._refresh_state(room)
-            except TimeoutError as cause:
-                raise omprpc.OmpCompletionTimeout(
-                    "OMP post-turn state refresh timed out;"
-                    " the turn outcome is uncertain"
-                ) from cause
-            closing = "\n\n".join(turn.closing_text)
-            if (
-                Emit.THOUGHTS in self.features.emit
-                and not tools.turn.replied
-                and has_visible_content(closing)
-            ):
-                await send_event_safe(tools, closing, MessageType.THOUGHT)
-            await send_event_safe(
-                tools,
-                "OMP session",
-                MessageType.TASK,
-                metadata=self._session_task_metadata(room_id, room),
-            )
+            await self._exclusive(room_id, partial(self._finish_turn, room, turn))
         finally:
             turn.closed = True
+
+    async def _finish_turn(self, room: OmpRoom, turn: OmpTurn) -> None:
+        room_id, tools = room.room_id, turn.tools
+        room.bootstrapped = True
+        # A lost post-prompt state response must not outlive completion.
+        try:
+            async with asyncio.timeout(room.client.completion_timeout_s):
+                await self._refresh_state(room)
+        except TimeoutError as cause:
+            raise omprpc.OmpCompletionTimeout(
+                "OMP post-turn state refresh timed out; the turn outcome is uncertain"
+            ) from cause
+        closing = "\n\n".join(turn.closing_text)
+        if (
+            Emit.THOUGHTS in self.features.emit
+            and not tools.turn.replied
+            and has_visible_content(closing)
+        ):
+            await send_event_safe(tools, closing, MessageType.THOUGHT)
+        await send_event_safe(
+            tools,
+            "OMP session",
+            MessageType.TASK,
+            metadata=self._session_task_metadata(room_id, room),
+        )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from contextvars import Context, copy_context
+from dataclasses import dataclass
 from enum import StrEnum
 
 from band.integrations.omprpc.errors import BACKLOG_EXCEEDED, OmpProcessError
@@ -27,6 +27,14 @@ EVENT_BACKLOG_LIMIT = 256
 class OmpCallbackKind(StrEnum):
     TOOL = "tool"
     UI = "ui"
+
+
+@dataclass
+class PromptCallback:
+    """Keep request identity independent of scheduler execution tasks."""
+
+    identity: object
+    task: asyncio.Task[None] | None = None
 
 
 class CompletionAction(StrEnum):
@@ -59,14 +67,12 @@ class PromptRun:
         self.settled_sequence = 0
         self.last_assistant: OmpMessage | None = None
         self.rejected = False
-        self.callbacks: dict[tuple[OmpCallbackKind, str], asyncio.Task[None]] = {}
+        self.callbacks: dict[tuple[OmpCallbackKind, str], PromptCallback] = {}
         self.callback_tasks: set[asyncio.Task[None]] = set()
         self.event_worker: asyncio.Task[None] | None = None
         self.stop_after_tool_id: str | None = None
         self.stop_task: asyncio.Task[None] | None = None
         self.stopped = False
-        # Reader-spawned callbacks must reenter this prompt's occupancy, not start()'s.
-        self.context: Context = copy_context()
         self.result_owed = True
         self.terminal_seen = False
         self.awaiting_async = False

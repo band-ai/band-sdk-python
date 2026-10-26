@@ -1,13 +1,11 @@
-"""Own per-room RPC resources, selections and reentrant occupancy."""
+"""Own per-room RPC resources and selections."""
 
 from __future__ import annotations
 
 import asyncio
 import collections.abc
 from contextlib import ExitStack
-from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Self
 
 from band.converters.omp import OmpSessionState
 from band.core.model_catalog import ModelSelection
@@ -16,40 +14,6 @@ from band.integrations.ompprocess import OmpMcpServer
 from band.integrations.omprpc import OmpRpcClient
 
 OMP_SESSION_DIRECTORY = ".band-omp-sessions"
-_held_room_gates: ContextVar[frozenset[object]] = ContextVar(
-    "omp_held_room_gates", default=frozenset()
-)
-
-
-class RoomGate:
-    """Serialize different occupancies while nested and callback tasks reenter."""
-
-    def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-        self._owner: object | None = None
-        self._depth = 0
-
-    async def __aenter__(self) -> Self:
-        occupancy = self._owner
-        if occupancy is not None and occupancy in _held_room_gates.get():
-            self._depth += 1
-            return self
-        await self._lock.acquire()
-        occupancy = object()
-        self._owner = occupancy
-        self._depth = 1
-        _held_room_gates.set(_held_room_gates.get() | {occupancy})
-        return self
-
-    async def __aexit__(self, *_exc: object) -> None:
-        self._depth -= 1
-        if self._depth:
-            return
-        occupancy = self._owner
-        self._owner = None
-        if occupancy is not None:
-            _held_room_gates.set(_held_room_gates.get() - {occupancy})
-        self._lock.release()
 
 
 def _selection_after(

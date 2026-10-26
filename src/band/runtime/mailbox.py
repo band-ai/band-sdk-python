@@ -10,8 +10,8 @@ Mailbox jobs cannot wait on more work from the same mailbox, preventing
 cross-room wait cycles. Use ``cast`` for follow-up work that does not wait.
 Occupancy ("this prompt is active") is not the worker ("one mutation now"): a
 prompt waiter lives outside the mailbox so host-tool and UI jobs can run.
-Cancelling ``ask`` cancels the in-flight job so a hung start cannot pin the
-worker.
+Cancelling ``ask`` cancels the in-flight job and joins its settlement before
+returning cancellation to the caller.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ class RoomMailbox:
         if room.worker is me:
             return True
         current = room.current
-        return current is not None and _current_job.get() is current
+        return current is not None and current.running is me
 
     def cast(self, room_id: str, run: Callable[[], Awaitable[None]]) -> None:
         """Enqueue ``run`` and return immediately, or raise while closing."""
@@ -101,7 +101,8 @@ class RoomMailbox:
 
         Raises ``NestedMailboxAsk`` from a job in this mailbox to prevent
         cross-room wait cycles, and ``MailboxClosing`` while this room's worker
-        is draining. Cancelling the waiter cancels the in-flight job.
+        is draining. Cancelling the waiter cancels the in-flight job once and
+        waits for it to finish, including through repeated waiter cancellation.
         """
         self._reject_nested_wait(room_id)
         future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
@@ -110,6 +111,13 @@ class RoomMailbox:
             return await future
         except asyncio.CancelledError:
             self._abandon(job)
+            running = job.running
+            while running is not None and not running.done():
+                try:
+                    # wait does not forward repeated cancellation to job cleanup.
+                    await asyncio.wait({running})
+                except asyncio.CancelledError:
+                    continue
             raise
 
     async def close(self, room_id: str) -> None:
@@ -194,10 +202,11 @@ class RoomMailbox:
                 self._start_worker(room_id, room)
 
     async def _execute(self, room: MailboxRoom, job: MailboxJob) -> None:
-        if job.result is not None and job.result.cancelled():
-            return
-
         async def run_job() -> Any:
+            # An eager task can enter the job before create_task returns.
+            job.running = asyncio.current_task()
+            if job.result is not None and job.result.cancelled():
+                return None
             token = _current_job.set(job)
             try:
                 return await job.run()

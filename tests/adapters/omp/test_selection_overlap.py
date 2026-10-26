@@ -7,10 +7,9 @@ import asyncio
 import pytest
 
 from band.testing import FakeAgentTools
+from tests.adapters.omp.mailboxpeer import MODEL_PROVIDER, ORIGINAL_MODEL
 from tests.adapters.omp.selectionkit import (
     ACCEPTED_MODEL,
-    MODEL_PROVIDER,
-    ORIGINAL_MODEL,
     SELECTED_EFFORT,
 )
 from tests.adapters.omp.turns import run_turn

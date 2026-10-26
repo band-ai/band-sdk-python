@@ -31,12 +31,11 @@ from tests.adapters.omp.completion import (
 )
 from tests.adapters.omp.custody import owned_room
 from tests.adapters.omp.lifecyclekit import Launches
+from tests.adapters.omp.mailboxpeer import MODEL_PROVIDER, ORIGINAL_MODEL
 from tests.adapters.omp.modelpeer import NativeFault
 from tests.adapters.omp.models import SelectingResolver
 from tests.adapters.omp.runtime import AdapterFactory, PendingRuntime
 from tests.adapters.omp.selectionkit import (
-    MODEL_PROVIDER,
-    ORIGINAL_MODEL,
     SELECTED_EFFORT,
     OverlappingSelections,
     RollbackRuntime,

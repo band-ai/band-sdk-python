@@ -45,7 +45,9 @@ async def owned_rpc_turn(
     observed = []
 
     class OrderingClient(OmpRpcClient):
-        async def prompt(self, message, *, on_event, on_tool, on_ui):
+        async def prompt(
+            self, message, *, on_event, on_tool, on_ui, schedule_admission=None
+        ):
             async def event(frame):
                 if frame.type in {OmpEventType.TOOL_START, OmpEventType.TOOL_END}:
                     observed.append(frame.type)
@@ -60,7 +62,13 @@ async def owned_rpc_turn(
                 observed.append(request.method)
                 return await on_ui(request)
 
-            await super().prompt(message, on_event=event, on_tool=on_tool, on_ui=ui)
+            await super().prompt(
+                message,
+                on_event=event,
+                on_tool=on_tool,
+                on_ui=ui,
+                schedule_admission=schedule_admission,
+            )
 
     def client_factory(command, env=None, **kwargs):
         client = OrderingClient(

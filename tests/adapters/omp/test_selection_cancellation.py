@@ -12,7 +12,7 @@ from band.converters.omp import OmpSessionState
 from band.core.model_catalog import ModelSelection
 from band.integrations.ompwire import OmpCommandName
 from band.testing import FakeAgentTools
-from tests.adapters.omp.lifecyclekit import Launches, ObservedRoomGate
+from tests.adapters.omp.lifecyclekit import Launches, ObservedMailbox
 from tests.adapters.omp.models import RecordingRuntime, SelectionGateRuntime
 from tests.adapters.omp.turns import run_turn
 
@@ -87,8 +87,8 @@ class TestSelectionCancellation:
         runtime = SelectionGateRuntime()
         launches.runtime_factory = lambda: runtime
         adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
-        gate = ObservedRoomGate()
-        adapter._locks["room-123"] = gate
+        gate = ObservedMailbox()
+        adapter._mailbox = gate
         await run_turn(adapter, FakeAgentTools())
         runtime.held_command = OmpCommandName.GET_AVAILABLE_THINKING_LEVELS
         selecting = asyncio.create_task(

@@ -21,6 +21,8 @@ class TestMailboxLifecycleModel:
             Step.CAST,
             Step.SPAWN,
             Step.CANCEL_QUEUED_ASK,
+            Step.CANCEL_HANDOFF_ASK,
+            Step.CANCEL_HANDOFF_SPAWN,
             Step.CLOSE,
             Step.ASK,
             Step.REOPEN,

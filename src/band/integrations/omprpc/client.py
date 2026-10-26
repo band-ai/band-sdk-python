@@ -8,6 +8,7 @@ import os
 from binascii import Error as Base64Error
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, TypeVar, cast
 
 from pydantic import JsonValue, ValidationError
@@ -35,7 +36,12 @@ from band.integrations.omprpc.frames import (
     payload_json,
     ui_response_frame,
 )
-from band.integrations.omprpc.prompt import CompletionAction, OmpCallbackKind, PromptRun
+from band.integrations.omprpc.prompt import (
+    CompletionAction,
+    OmpCallbackKind,
+    PromptCallback,
+    PromptRun,
+)
 from band.integrations.omprpc.scope import OmpProcessScope
 from band.integrations.ompwire import (
     OMP_FRAME_BYTES,
@@ -59,6 +65,7 @@ from band.integrations.ompwire import (
     OmpResponse,
     OmpState,
     OmpToolResult,
+    OmpUIMethod,
     OmpUIRequest,
     OmpUIResponse,
     OmpWireModel,
@@ -67,6 +74,7 @@ from band.integrations.ompwire import (
 TModel = TypeVar("TModel", bound=OmpWireModel)
 CloseProcess = Callable[[], Coroutine[Any, Any, None]]
 JoinClose = Callable[[Awaitable[None]], Awaitable[None]]
+OmpScheduler = Callable[[Callable[[], Awaitable[None]]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +149,7 @@ class OmpRpcClient:
         self._write_lock = asyncio.Lock()
         self._prompt_lock = asyncio.Lock()
         self._write_tasks: set[asyncio.Task[None]] = set()
+        self.schedule_callback: OmpScheduler | None = None
 
     async def start(self) -> None:
         """Start the supplied command and require the native RPC protocol."""
@@ -254,11 +263,19 @@ class OmpRpcClient:
         on_event: Callable[[OmpEvent], Awaitable[None]],
         on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+        schedule_admission: OmpScheduler | None = None,
     ) -> None:
-        """Deliver a turn through its correlated result and actual native settlement."""
+        """Deliver a turn through its correlated result and native settlement.
+
+        ``schedule_admission`` serializes only the initial frame write; waiting
+        for acceptance and callbacks never holds that scheduler. It must await
+        the supplied writer exactly once, or raise to reject admission.
+        """
         async with self._prompt_lock:
             self._ensure_running()
-            await self._execute_prompt(message, on_event, on_tool, on_ui)
+            await self._execute_prompt(
+                message, on_event, on_tool, on_ui, schedule_admission
+            )
 
     def stop_after_tool(self, call_id: str) -> None:
         """Stop this prompt after acknowledging the successful host tool call."""
@@ -287,12 +304,15 @@ class OmpRpcClient:
         self._survivors.clear()
         return None
 
+    def raise_if_retirement_unproven(self) -> None:
+        """Reject release while callbacks from a failed retirement still survive."""
+        if error := self._retire_survivors():
+            raise error
+
     async def close(self) -> None:
         """Finish shared bounded cleanup before propagating caller cancellation."""
         if self._proc is None and self._spawn_task is None:
-            error = self._retire_survivors()
-            if error is not None:
-                raise error
+            self.raise_if_retirement_unproven()
             return
         self._begin_close()
         closing = self._close_task
@@ -331,6 +351,7 @@ class OmpRpcClient:
         request_id: str | None = None,
         allow_closing: bool = False,
         preceding_frame: dict[str, JsonValue] | None = None,
+        schedule_write: OmpScheduler | None = None,
         completion: bool = False,
     ) -> ReceivedResponse:
         if not allow_closing:
@@ -352,7 +373,11 @@ class OmpRpcClient:
             try:
                 async with deadline:
                     if preceding_frame is None:
-                        await self._write_frame(frame.root)
+                        write = partial(self._write_frame, frame.root)
+                        if schedule_write is None:
+                            await write()
+                        else:
+                            await schedule_write(write)
                     else:
                         await self._write_frames(preceding_frame, frame.root)
                     response = await future
@@ -395,12 +420,15 @@ class OmpRpcClient:
         on_event: Callable[[OmpEvent], Awaitable[None]],
         on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+        schedule_admission: OmpScheduler | None,
     ) -> None:
         turn = PromptRun(self._next_id(), on_event, on_tool, on_ui)
         self._turn = turn
         event_worker = asyncio.create_task(self._deliver_events(turn))
         turn.event_worker = event_worker
-        work = asyncio.create_task(self._complete_prompt(turn, message))
+        work = asyncio.create_task(
+            self._complete_prompt(turn, message, schedule_admission)
+        )
         guard = asyncio.create_task(self._guard_completion(turn, work))
         try:
             done, _ = await asyncio.wait(
@@ -513,10 +541,15 @@ class OmpRpcClient:
             changed.cancel()
             await asyncio.gather(changed, return_exceptions=True)
 
-    async def _complete_prompt(self, turn: PromptRun, message: str) -> None:
+    async def _complete_prompt(
+        self, turn: PromptRun, message: str, schedule_admission: OmpScheduler | None
+    ) -> None:
         try:
             accepted = await self._request_frame(
-                OmpCommandName.PROMPT, {"message": message}, request_id=turn.id
+                OmpCommandName.PROMPT,
+                {"message": message},
+                request_id=turn.id,
+                schedule_write=schedule_admission,
             )
         except OmpRpcError:
             turn.rejected = True
@@ -685,7 +718,10 @@ class OmpRpcClient:
                         "OMP host tool arrived without an active prompt"
                     )
                 self._start_callback(
-                    turn, OmpCallbackKind.TOOL, call.id, self._handle_tool(turn, call)
+                    turn,
+                    OmpCallbackKind.TOOL,
+                    call.id,
+                    partial(self._handle_tool, turn, call),
                 )
             case OmpFrameType.HOST_TOOL_CANCEL:
                 cancellation = OmpHostToolCancel.model_validate(payload)
@@ -699,7 +735,7 @@ class OmpRpcClient:
                     )
             case OmpFrameType.UI_REQUEST:
                 request = OmpUIRequest.model_validate(payload)
-                if request.method == "cancel":
+                if request.method == OmpUIMethod.CANCEL:
                     if request.targetId is None:
                         raise OmpProtocolError(
                             "OMP UI cancellation is missing targetId"
@@ -722,7 +758,10 @@ class OmpRpcClient:
                     write.add_done_callback(self._consume_task)
                     return
                 self._start_callback(
-                    turn, OmpCallbackKind.UI, request.id, self._handle_ui(turn, request)
+                    turn,
+                    OmpCallbackKind.UI,
+                    request.id,
+                    partial(self._handle_ui, turn, request),
                 )
             case event_type if event_type in _EVENT_TYPES:
                 event = OmpEvent.model_validate(payload)
@@ -771,53 +810,64 @@ class OmpRpcClient:
         turn: PromptRun,
         kind: OmpCallbackKind,
         request_id: str,
-        callback: Coroutine[object, object, None],
+        callback: Callable[[object], Awaitable[None]],
     ) -> None:
         if self._closing or turn.failure.done() or turn.stop_after_tool_id is not None:
-            callback.close()
             return
         key = (kind, request_id)
-        task = asyncio.create_task(callback, context=turn.context.copy())
         if key in turn.callbacks:
-            task.cancel()
             raise OmpProtocolError("OMP callback request id was reused")
-        turn.callbacks[key] = task
+        identity = object()
+        active = PromptCallback(identity)
+        turn.callbacks[key] = active
+        # An eager task may validate the identity before create_task returns.
+        task = asyncio.create_task(self._run_callback(partial(callback, identity)))
+        active.task = task
         turn.callback_tasks.add(task)
         task.add_done_callback(lambda done: self._callback_finished(turn, key, done))
 
+    async def _run_callback(self, run: Callable[[], Awaitable[None]]) -> None:
+        if self.schedule_callback is None:
+            await run()
+            return
+        await self.schedule_callback(run)
+
     def _callback_still_active(
-        self, turn: PromptRun, kind: OmpCallbackKind, request_id: str
+        self, turn: PromptRun, kind: OmpCallbackKind, request_id: str, identity: object
     ) -> bool:
-        return (
-            not self._closing
-            and turn.callbacks.get((kind, request_id)) is asyncio.current_task()
-        )
+        active = turn.callbacks.get((kind, request_id))
+        return not self._closing and active is not None and active.identity is identity
 
     @staticmethod
     def _cancel_callback(
         turn: PromptRun, kind: OmpCallbackKind, request_id: str
     ) -> None:
-        task = turn.callbacks.pop((kind, request_id), None)
-        if task is not None:
-            task.cancel()
+        callback = turn.callbacks.pop((kind, request_id), None)
+        if callback is not None and callback.task is not None:
+            callback.task.cancel()
 
     @staticmethod
     def _callback_finished(
         turn: PromptRun, key: tuple[OmpCallbackKind, str], task: asyncio.Task[None]
     ) -> None:
-        if turn.callbacks.get(key) is task:
+        active = turn.callbacks.get(key)
+        if active is not None and active.task is task:
             turn.callbacks.pop(key)
         turn.callback_tasks.discard(task)
         if not task.cancelled() and (error := task.exception()) is not None:
             turn.fail(error)
 
-    async def _handle_tool(self, turn: PromptRun, call: OmpHostToolCall) -> None:
+    async def _handle_tool(
+        self, turn: PromptRun, call: OmpHostToolCall, identity: object
+    ) -> None:
         if turn.stop_after_tool_id is not None:
             return
         result = await turn.on_tool(call)
         if turn.stop_after_tool_id not in (None, call.id):
             return
-        if not self._callback_still_active(turn, OmpCallbackKind.TOOL, call.id):
+        if not self._callback_still_active(
+            turn, OmpCallbackKind.TOOL, call.id, identity
+        ):
             return
         frame = OmpHostToolResult.from_tool(call.id, result).model_dump(mode="json")
         if turn.stop_after_tool_id == call.id:
@@ -836,11 +886,15 @@ class OmpRpcClient:
             return
         turn.stopped = True
 
-    async def _handle_ui(self, turn: PromptRun, request: OmpUIRequest) -> None:
+    async def _handle_ui(
+        self, turn: PromptRun, request: OmpUIRequest, identity: object
+    ) -> None:
         if turn.stop_after_tool_id is not None:
             return
         response = await turn.on_ui(request)
-        if not self._callback_still_active(turn, OmpCallbackKind.UI, request.id):
+        if not self._callback_still_active(
+            turn, OmpCallbackKind.UI, request.id, identity
+        ):
             return
         await self._write_frame(ui_response_frame(request.id, response))
 

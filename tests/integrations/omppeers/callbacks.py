@@ -10,6 +10,7 @@ from pydantic import JsonValue
 from band.integrations.ompwire import (
     OmpEventType,
     OmpFrameType,
+    OmpUIMethod,
 )
 from tests.integrations.ompframes import (
     Frame,
@@ -141,7 +142,7 @@ class CallbackPeer(RpcPeer):
                     {
                         "type": OmpFrameType.UI_REQUEST,
                         "id": "ui-cancel-orphan",
-                        "method": "cancel",
+                        "method": OmpUIMethod.CANCEL,
                     }
                 )
             case _:
@@ -221,7 +222,7 @@ class CallbackPeer(RpcPeer):
             {
                 "type": OmpFrameType.UI_REQUEST,
                 "id": "ui-cancel-frame",
-                "method": "cancel",
+                "method": OmpUIMethod.CANCEL,
                 "targetId": UI_CANCELLED_ID,
             }
         )

@@ -110,7 +110,7 @@ class ActivityRuntime(RecordingRuntime):
         self.on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]]
         self.on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]]
 
-    async def prompt(
+    async def _prompt_body(
         self,
         _message: str,
         *,
