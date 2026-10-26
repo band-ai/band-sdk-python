@@ -81,6 +81,7 @@ class TestTextSafety:
                 "1. Update:\n\n   ```python\n   cfg = {1}\n\n   x = <2>\n   ```",
             ),
             ("```\n{a}\n````\nthen {y}", "```\n{a}\n````\nthen \\{y\\}"),
+            ("Use `a or\n2. {b}` done {c}", "Use `a or\n2. {b}` done \\{c\\}"),
             (
                 "Use `old or\n- set {x} now\nthen` done.",
                 "Use `old or\n- set \\{x\\} now\nthen` done.",
@@ -100,6 +101,7 @@ class TestTextSafety:
             ("```python\nx = 1\n", True),
             ("```python\nx = 1\n~~~\n", True),
             ("```a`b\n\n{x}\n\n```\n", True),
+            ("~~~~\n~~~\nfrom band import Y\n", True),
             ("```python\nx = 1\n```\n", False),
             ("```\nx = 1\n````\n", False),
             ("1. Update:\n\n   ```python\n   x = 1\n   ```\n", False),
@@ -108,6 +110,7 @@ class TestTextSafety:
             "never-closed",
             "closed-by-the-other-character",
             "backtick-in-the-info-string",
+            "closed-by-a-shorter-run",
             "closed",
             "closed-by-a-longer-run",
             "indented-in-a-list",

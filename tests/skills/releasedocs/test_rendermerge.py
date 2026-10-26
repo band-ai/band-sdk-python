@@ -128,6 +128,8 @@ tags: ["fix", "python"]
 - **Python SDK:**
   - **Hotfix** — Fixed later today.
 """
+# Newer by number, older by string comparison.
+NEWER_MAJOR = NEWER_RELEASE.replace("6.1.1", "10.0.0")
 # A newer release filed above ours, then ours filed again.
 NEWER_ABOVE_OURS = NEWER_RELEASE + ANOTHER_PRODUCT_MERGED.split("---\n\n", 1)[1]
 PR_BODY = f"""## Summary
@@ -214,9 +216,15 @@ class TestMergeEntry:
         [
             (WITHOUT_SUBTITLE, "predate version subtitles"),
             (NEWER_RELEASE, "newest first"),
+            (NEWER_MAJOR, "newest first"),
             (NEWER_ABOVE_OURS, "already holds '## Python SDK 6.1.0'"),
         ],
-        ids=["without-subtitles", "newer-release", "re-run-below-a-newer-release"],
+        ids=[
+            "without-subtitles",
+            "newer-release",
+            "newer-major-release",
+            "re-run-below-a-newer-release",
+        ],
     )
     def test_unmergeable_date_file_is_left_unchanged(
         self,

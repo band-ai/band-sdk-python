@@ -21,12 +21,13 @@ URL_FINDING = "a URL"
 # A ``` or ~~~ fenced block, indented or not (as in a list item). As in
 # CommonMark, a backtick fence's info string holds no backtick, and a longer run
 # of the same character closes it.
-FENCE_OPENING = r"^[ \t]*(?P<fence>`{3,}(?=[^`\n]*$)|~{3,})"
+FENCE_OPENING = r"^[ \t]*(?P<fence>`{3,}(?=[^`\n]*$)|~{3,}(?!~))"
 FENCE = FENCE_OPENING + r"[^\n]*\n.*?^[ \t]*(?P=fence)(?:(?<=`)`*|(?<=~)~*)[ \t]*$"
 FENCE_PATTERN = re.compile(FENCE, re.DOTALL | re.MULTILINE)
 UNCLOSED_FENCE = re.compile(FENCE_OPENING, re.MULTILINE)
-# Like CommonMark's, a code span never crosses a blank line, list item, or heading.
-BLOCK_BREAK = r"\n[ \t]*(?:\n|(?:[-*+]|#{1,6}|\d+[.)])(?:[ \t]|$))"
+# Like CommonMark's, a code span never crosses a blank line, heading, or a list
+# item that can interrupt a paragraph (a bullet or `1.` with content).
+BLOCK_BREAK = r"\n[ \t]*(?:\n|#{1,6}(?:[ \t]|$)|(?:[-*+]|1[.)])[ \t]+\S)"
 # A fenced block, or an inline code span closed by a backtick run of equal length.
 CODE_PATTERN = re.compile(
     FENCE + rf"|(?<!`)(?P<ticks>`+)(?!`)(?:(?!{BLOCK_BREAK}).)+?(?<!`)(?P=ticks)(?!`)",
