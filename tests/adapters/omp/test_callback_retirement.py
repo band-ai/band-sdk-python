@@ -9,7 +9,12 @@ from pathlib import Path
 from band.integrations.omprpc.prompt import OmpCallbackKind
 from tests.adapters.omp.kit import checkpoint, run_turn, start_cleanup
 from tests.adapters.omp.mailboxkit import MailboxTools, mailbox_adapter, room_client
-from tests.adapters.omp.mailboxpeer import FIRST_CALLBACK, PeerCommand
+from tests.adapters.omp.mailboxpeer import (
+    FIRST_CALLBACK,
+    ORIGINAL_MODEL,
+    PeerCommand,
+    model_reply,
+)
 from tests.adapters.omp.retirementkit import (
     CallbackExit,
     ObservedScheduler,
@@ -41,11 +46,11 @@ class TestCallbackRetirement:
             resolver.settling.released.set()
             await asyncio.gather(turn, cleanup)
             assert resolver.finished.is_set()
-            assert tools.chat
+            assert tools.chat == [model_reply(ORIGINAL_MODEL)]
             assert not overlay.exists() and process.returncode is not None
             follow_up = MailboxTools()
             await run_turn(adapter, follow_up)
-            assert follow_up.chat
+            assert follow_up.chat == [model_reply(ORIGINAL_MODEL)]
         finally:
             resolver.settling.released.set()
             turn.cancel()
@@ -104,7 +109,7 @@ class TestCallbackRetirement:
             assert not overlay.exists() and process.returncode is not None
             follow_up = MailboxTools()
             await run_turn(adapter, follow_up)
-            assert follow_up.chat
+            assert follow_up.chat == [model_reply(ORIGINAL_MODEL)]
         finally:
             resolver.settling.released.set()
             tasks = [task for task in (turn, cleanup) if task is not None]

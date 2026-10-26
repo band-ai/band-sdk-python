@@ -19,7 +19,13 @@ from tests.adapters.omp.mailboxkit import (
     received_ui_responses,
     room_client,
 )
-from tests.adapters.omp.mailboxpeer import FIRST_CALLBACK, SECOND_CALLBACK, PeerCommand
+from tests.adapters.omp.mailboxpeer import (
+    FIRST_CALLBACK,
+    ORIGINAL_MODEL,
+    SECOND_CALLBACK,
+    PeerCommand,
+    model_reply,
+)
 from tests.integrations.omprpc.kit import owned_rpc_process
 
 
@@ -99,7 +105,8 @@ async def exercise_callback_retirement(tmp_path: Path) -> None:
         # Each replacement peer starts its callback sequence afresh.
         await run_turn(adapter, follow_up)
         assert room_client(adapter) is not client
-        assert follow_up.chat and old_tools.chat == []
+        assert follow_up.chat == [model_reply(ORIGINAL_MODEL)]
+        assert old_tools.chat == []
     finally:
         resolver.settling.released.set()
         turn.cancel()
