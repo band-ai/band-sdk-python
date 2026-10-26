@@ -35,7 +35,7 @@ PR_TABLE = {
 
 
 @pytest.fixture
-def release(repo: ThrowawayRepo, collectprs: ModuleType) -> ModuleType:
+def history(repo: ThrowawayRepo) -> ThrowawayRepo:
     """A history with interleaved band-mcp tags, a junk tag, and every PR shape."""
     repo.tag("band-sdk-v6.0.0")
     repo.commit("feat: earlier release work (#10)", {"src/band/early.py": ""})
@@ -59,7 +59,7 @@ def release(repo: ThrowawayRepo, collectprs: ModuleType) -> ModuleType:
     )
     repo.commit("fix: many generated files (#18)", LARGE_COMMIT_FILES)
     repo.tag(RELEASE_TAG)
-    return collectprs
+    return repo
 
 
 def collected(
@@ -79,14 +79,14 @@ def collected(
 
 class TestReleaseRange:
     def test_range_starts_at_the_previous_strict_sdk_tag(
-        self, release: ModuleType, repo: ThrowawayRepo
+        self, collectprs: ModuleType, history: ThrowawayRepo
     ) -> None:
-        assert collected(release, repo).previous_tag == PREVIOUS_TAG
+        assert collected(collectprs, history).previous_tag == PREVIOUS_TAG
 
     def test_user_facing_prs_are_kept_with_their_type(
-        self, release: ModuleType, repo: ThrowawayRepo
+        self, collectprs: ModuleType, history: ThrowawayRepo
     ) -> None:
-        prs = collected(release, repo).pull_requests
+        prs = collected(collectprs, history).pull_requests
         assert [(pr.number, pr.type) for pr in prs] == [
             (13, "refactor"),
             (16, "feat"),
@@ -95,16 +95,16 @@ class TestReleaseRange:
         ]
 
     def test_internal_and_release_prs_are_listed_by_number_only(
-        self, release: ModuleType, repo: ThrowawayRepo
+        self, collectprs: ModuleType, history: ThrowawayRepo
     ) -> None:
-        result = collected(release, repo)
+        result = collected(collectprs, history)
         assert result.excluded_internal == [12, 14, 15]
         assert RELEASE_PR_BODY not in result.model_dump_json()
 
     def test_breaking_comes_from_the_bang_or_the_footer(
-        self, release: ModuleType, repo: ThrowawayRepo
+        self, collectprs: ModuleType, history: ThrowawayRepo
     ) -> None:
-        prs = collected(release, repo).pull_requests
+        prs = collected(collectprs, history).pull_requests
         assert {pr.number: pr.breaking for pr in prs} == {
             13: False,
             16: True,
@@ -113,39 +113,47 @@ class TestReleaseRange:
         }
 
     def test_loose_commits_keep_only_user_facing_ones(
-        self, release: ModuleType, repo: ThrowawayRepo
+        self, collectprs: ModuleType, history: ThrowawayRepo
     ) -> None:
-        commits = collected(release, repo).loose_commits
+        commits = collected(collectprs, history).loose_commits
         assert [(c.subject, c.files) for c in commits] == [
             ("docs: fix the readme", ["README.md"])
         ]
 
     def test_large_commit_is_classified_from_every_file(
-        self, release: ModuleType, repo: ThrowawayRepo
+        self, collectprs: ModuleType, history: ThrowawayRepo
     ) -> None:
-        prs = {pr.number: pr for pr in collected(release, repo).pull_requests}
+        prs = {pr.number: pr for pr in collected(collectprs, history).pull_requests}
         assert sorted(prs[18].files) == sorted(LARGE_COMMIT_FILES)
 
     def test_exclude_paths_come_from_the_tagged_config(
-        self, release: ModuleType, repo: ThrowawayRepo
+        self, collectprs: ModuleType, history: ThrowawayRepo
     ) -> None:
-        (repo.root / release.RELEASE_PLEASE_CONFIG).write_text(
+        (history.root / collectprs.RELEASE_PLEASE_CONFIG).write_text(
             '{"packages": {".": {}}}', encoding="utf-8"
         )
-        result = collected(release, repo)
+        result = collected(collectprs, history)
         assert 11 not in [pr.number for pr in result.pull_requests]
         assert result.excluded_internal == [12, 14, 15]
 
     def test_since_spans_every_release_after_the_given_tag(
-        self, release: ModuleType, repo: ThrowawayRepo
+        self, collectprs: ModuleType, history: ThrowawayRepo
     ) -> None:
-        result = collected(release, repo, since="band-sdk-v6.0.0")
+        result = collected(collectprs, history, since="band-sdk-v6.0.0")
         assert (result.previous_tag, [pr.number for pr in result.pull_requests]) == (
             "band-sdk-v6.0.0",
             [10, 13, 16, 17, 18],
         )
 
     def test_release_date_is_the_utc_publish_date(
-        self, release: ModuleType, repo: ThrowawayRepo
+        self, collectprs: ModuleType, history: ThrowawayRepo
     ) -> None:
-        assert collected(release, repo).release_date == "2026-10-20"
+        assert collected(collectprs, history).release_date == "2026-10-20"
+
+    def test_release_without_an_earlier_sdk_tag_is_refused(
+        self, collectprs: ModuleType, repo: ThrowawayRepo
+    ) -> None:
+        repo.commit("feat: first release (#1)", {"src/band/first.py": ""})
+        repo.tag(RELEASE_TAG)
+        with pytest.raises(ValueError, match="precedes"):
+            collectprs.previous_sdk_tag(repo.root, RELEASE_TAG)

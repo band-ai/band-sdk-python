@@ -95,6 +95,7 @@ def repo(tmp_path: Path, collectprs: ModuleType) -> ThrowawayRepo:
 def peer() -> Iterator[WebhookPeer]:
     with webhook_peer() as running:
         yield running
+    assert running.replies == [], "a scripted reply was never requested"
 
 
 @pytest.fixture

@@ -42,8 +42,14 @@ class TestExtractReport:
         ) == releasedata.ChangelogReport.model_validate(REPORT)
 
     @pytest.mark.parametrize(
-        "messages",
-        [[INIT, ASSISTANT], [INIT, {"type": "result", "subtype": "error_max_turns"}]],
+        ("messages", "error"),
+        [
+            ([INIT, ASSISTANT], "no result message"),
+            (
+                [INIT, {"type": "result", "subtype": "error_max_turns"}],
+                "no structured_output",
+            ),
+        ],
         ids=["no-result", "no-structured-output"],
     )
     def test_missing_report_fails(
@@ -51,14 +57,26 @@ class TestExtractReport:
         extractreport: ModuleType,
         tmp_path: Path,
         messages: list[dict[str, object]],
+        error: str,
     ) -> None:
-        with pytest.raises(ValueError, match="no result message|no structured_output"):
+        with pytest.raises(ValueError, match=error):
             extractreport.extract_report(execution_file(tmp_path, messages))
 
+    @pytest.mark.parametrize(
+        "off_schema",
+        [
+            REPORT | {"items": []},
+            REPORT | {"items": [REPORT["items"][0] | {"label": "Two\nlines"}]},
+            REPORT | {"breaking": {"title": "Two\nlines", "markdown": "Gone."}},
+        ],
+        ids=["documented-without-items", "multi-line-label", "multi-line-title"],
+    )
     def test_off_schema_report_fails(
-        self, extractreport: ModuleType, tmp_path: Path
+        self,
+        extractreport: ModuleType,
+        tmp_path: Path,
+        off_schema: dict[str, object],
     ) -> None:
-        off_schema = REPORT | {"status": "documented", "items": []}
         result = {
             "type": "result",
             "subtype": "success",

@@ -23,6 +23,7 @@ class Reply:
 
 
 UNSCRIPTED = Reply(500, b"unscripted request")
+WEBHOOK_PATH = "/api/webhooks/1/token"
 # How often serve_forever checks for shutdown; bounds each test's teardown.
 SHUTDOWN_POLL_S = 0.01
 
@@ -69,7 +70,7 @@ class PeerServer(ThreadingHTTPServer):
     def __init__(self) -> None:
         super().__init__(("127.0.0.1", 0), PeerHandler)
         host, port = self.server_address[:2]
-        self.peer = WebhookPeer(url=f"http://{host!s}:{port}/api/webhooks/1/token")
+        self.peer = WebhookPeer(url=f"http://{host!s}:{port}{WEBHOOK_PATH}")
 
 
 @contextmanager

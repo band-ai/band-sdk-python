@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from types import ModuleType
 
+import pytest
+
 from tests.skills.releasedocs.samples import (
     RECONNECT,
     RELEASE_URL,
@@ -24,6 +26,31 @@ def release_items(make_item: Callable[..., object]) -> list[object]:
 
 
 class TestAnnouncement:
+    @pytest.mark.parametrize(
+        ("category", "heading"),
+        [
+            ("Added", "*What's new:*"),
+            ("Changed", "*What's new:*"),
+            ("Deprecated", "*What's new:*"),
+            ("Removed", "*What's new:*"),
+            ("Fixed", "*Fixes:*"),
+            ("Security", "*Fixes:*"),
+        ],
+    )
+    def test_every_category_lands_in_its_section(
+        self,
+        announcement: ModuleType,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        category: str,
+        heading: str,
+    ) -> None:
+        notes = make_notes([make_item(category, "Label", "Sentence.")])
+        lines = announcement.format_announcement(
+            notes, announcement.Target.SLACK_WEBHOOK
+        ).splitlines()
+        assert lines[2:4] == [heading, "• *Label* — Sentence."]
+
     def test_slack_post_groups_items_with_single_asterisks(
         self,
         announcement: ModuleType,
@@ -119,11 +146,8 @@ class TestAnnouncement:
             notes, announcement.Target.SLACK_WEBHOOK
         )
         kept = [line for line in discord.splitlines() if line.startswith("• ")]
+        # Ten items fit in 1863 characters; an eleventh would pass 2000.
         assert len(discord) <= announcement.DISCORD_MAX_CHARS
-        assert kept == [
-            f"• **Feature {index:02}** — {sentence}" for index in range(len(kept))
-        ]
-        assert discord.endswith(
-            f"…and {20 - len(kept)} more — full notes: {RELEASE_URL}"
-        )
+        assert kept == [f"• **Feature {index:02}** — {sentence}" for index in range(10)]
+        assert discord.endswith(f"…and 10 more — full notes: {RELEASE_URL}")
         assert slack.count("• ") == 20

@@ -28,9 +28,10 @@ class WebhookSettings(BaseSettings):
     discord_webhook_url: SecretStr | None = None
 
 
-def webhook_url(variable: str, prefixes: tuple[str, ...]) -> str:
-    """Return the webhook URL from ``variable``; it must start with one of ``prefixes``."""
-    secret: SecretStr | None = getattr(WebhookSettings(), variable.lower())
+def webhook_url(
+    variable: str, secret: SecretStr | None, prefixes: tuple[str, ...]
+) -> str:
+    """Return the URL ``variable`` holds; it must start with one of ``prefixes``."""
     if secret is None:
         raise ValueError(f"{variable} is required")
     url = secret.get_secret_value()
@@ -71,5 +72,6 @@ def send(
         raise RuntimeError(
             f"{service} webhook returned HTTP {exc.code}: {body}"
         ) from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"{service} webhook request failed: {exc.reason}") from exc
+    # URLError covers connect failures; a read timeout is a bare TimeoutError.
+    except OSError as exc:
+        raise RuntimeError(f"{service} webhook request failed: {exc}") from exc

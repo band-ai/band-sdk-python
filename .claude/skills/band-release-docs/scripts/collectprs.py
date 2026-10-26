@@ -147,9 +147,12 @@ def stop_reason(release: Release | None, *, live: bool) -> StopReason | None:
 
 
 def git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
-    ).stdout
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+        ).stdout
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"git {args[0]} failed: {exc.stderr.strip()}") from exc
 
 
 def previous_sdk_tag(repo: Path, tag: str) -> str:
@@ -291,14 +294,12 @@ def run(
     stop = stop_reason(release, live=live)
     if release is None or stop is not None:
         logger.info("Not announcing %s: %s", tag, stop)
-        append_outputs(outputs, proceed="false", has_changes="false", reason=str(stop))
+        append_outputs(outputs, proceed=False, has_changes=False, reason=str(stop))
         return None
     collected = collect(repo, tag, release=release, pr_meta=pr_meta, since=since)
     has_changes = collected.has_changes
     reason = "" if has_changes else StopReason.NO_CHANGES
-    append_outputs(
-        outputs, proceed="true", has_changes=str(has_changes).lower(), reason=reason
-    )
+    append_outputs(outputs, proceed=True, has_changes=has_changes, reason=reason)
     return collected
 
 
@@ -317,15 +318,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if tag_version(args.tag) is None:
         logger.error("%r is not a %sX.Y.Z tag", args.tag, SDK_TAG_PREFIX)
         return 2
-    collected = run(
-        args.repo,
-        args.tag,
-        live=args.live,
-        since=args.since,
-        outputs=args.outputs,
-        release_lookup=gh_release,
-        pr_meta=gh_pr_meta,
-    )
+    try:
+        collected = run(
+            args.repo,
+            args.tag,
+            live=args.live,
+            since=args.since,
+            outputs=args.outputs,
+            release_lookup=gh_release,
+            pr_meta=gh_pr_meta,
+        )
+    except (RuntimeError, ValueError) as exc:
+        logger.error("error: %s", exc)
+        return 1
     if collected is not None:
         sys.stdout.write(collected.model_dump_json(indent=2) + "\n")
     return 0

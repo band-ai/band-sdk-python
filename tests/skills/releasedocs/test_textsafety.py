@@ -13,16 +13,36 @@ class TestTextSafety:
         [
             ("Uses sk-ant-abc to call", ["sk-ant-"]),
             ("Token ghp_x and ghs_y", ["ghp_", "ghs_"]),
-            ("See https://example.com/docs.", ["https://example.com/docs."]),
-            ("Visit www.example.com", ["www.example.com"]),
+            ("Token github_pat_x", ["github_pat_"]),
             ("Posts to hooks.slack.com/services/T/B/x", ["hooks.slack.com/"]),
+            ("Posts to discord.com/api/webhooks/1/x", ["discord.com/api/webhooks/"]),
+            (
+                "Posts to discordapp.com/api/webhooks/1/x",
+                ["discordapp.com/api/webhooks/"],
+            ),
             ("Retries now back off between attempts.", []),
         ],
     )
-    def test_unsafe_findings_name_credentials_and_urls(
+    def test_unsafe_findings_name_credentials(
         self, textsafety: ModuleType, text: str, findings: list[str]
     ) -> None:
         assert textsafety.unsafe_findings(text) == findings
+
+    @pytest.mark.parametrize(
+        "text", ["See https://example.com/docs.", "Visit www.example.com"]
+    )
+    def test_unsafe_findings_name_a_url_without_its_text(
+        self, textsafety: ModuleType, text: str
+    ) -> None:
+        assert textsafety.unsafe_findings(text) == [textsafety.URL_FINDING]
+
+    def test_leaked_webhook_is_named_but_never_repeated(
+        self, textsafety: ModuleType
+    ) -> None:
+        secret = "https://hooks.slack.com/services/T0/B0/s3cr3tT0k3n"
+        findings = textsafety.unsafe_findings(f"Posts to {secret}")
+        assert findings == ["hooks.slack.com/", textsafety.URL_FINDING]
+        assert "s3cr3tT0k3n" not in " ".join(findings)
 
     def test_slack_shows_control_syntax_literally(self, textsafety: ModuleType) -> None:
         assert textsafety.slack_text("<!channel> & <https://x|y>") == (
@@ -49,6 +69,11 @@ class TestTextSafety:
                 "```python\nx = {1}\n```\nthen {y}",
                 "```python\nx = {1}\n```\nthen \\{y\\}",
             ),
+            (
+                "~~~python\nx = {1}\n~~~\nthen {y}",
+                "~~~python\nx = {1}\n~~~\nthen \\{y\\}",
+            ),
+            ("Use `x then {a}.\n\nLater `y`", "Use `x then \\{a\\}.\n\nLater `y`"),
             ("Retries back off.", "Retries back off."),
         ],
     )

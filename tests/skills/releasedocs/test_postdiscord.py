@@ -7,10 +7,10 @@ from types import ModuleType
 
 import pytest
 
-from tests.skills.releasedocs.webhookpeer import Received, WebhookPeer
+from tests.skills.releasedocs.webhookpeer import WEBHOOK_PATH, Received, WebhookPeer
 
 MESSAGE = "@everyone\n\n**Band Python SDK v6.1.0** is live!"
-WEBHOOK_PATH = "/api/webhooks/1/token"
+MESSAGE_ID = "1234567890"
 
 
 def posted(text: str, parse: list[str]) -> bytes:
@@ -27,10 +27,9 @@ class TestPostDiscord:
         mentions: bool,
         parse: list[str],
     ) -> None:
-        peer.reply(200, b'{"id": "1234567890"}')
+        peer.reply(200, json.dumps({"id": MESSAGE_ID}).encode())
         assert (
-            postdiscord.post_message(peer.url, MESSAGE, mentions=mentions)
-            == "1234567890"
+            postdiscord.post_message(peer.url, MESSAGE, mentions=mentions) == MESSAGE_ID
         )
         assert peer.received == [
             Received("POST", f"{WEBHOOK_PATH}?wait=true", posted(MESSAGE, parse))
@@ -40,9 +39,9 @@ class TestPostDiscord:
         self, postdiscord: ModuleType, peer: WebhookPeer
     ) -> None:
         peer.reply(204)
-        postdiscord.delete_message(peer.url, "1234567890")
+        postdiscord.delete_message(peer.url, MESSAGE_ID)
         assert peer.received == [
-            Received("DELETE", f"{WEBHOOK_PATH}/messages/1234567890", b"")
+            Received("DELETE", f"{WEBHOOK_PATH}/messages/{MESSAGE_ID}", b"")
         ]
 
     def test_non_2xx_answer_fails(
@@ -59,5 +58,5 @@ class TestPostDiscord:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("DISCORD_WEBHOOK_URL", peer.url)
-        assert postdiscord.main(["--delete", "1234567890"]) == 1
+        assert postdiscord.main(["--delete", MESSAGE_ID]) == 1
         assert peer.received == []

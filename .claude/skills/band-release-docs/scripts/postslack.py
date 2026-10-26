@@ -11,7 +11,7 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
-from webhooks import read_message, send, webhook_url
+from webhooks import WebhookSettings, read_message, send, webhook_url
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        url = webhook_url("SLACK_WEBHOOK_URL", SLACK_WEBHOOK_PREFIXES)
+        url = webhook_url(
+            "SLACK_WEBHOOK_URL",
+            WebhookSettings().slack_webhook_url,
+            SLACK_WEBHOOK_PREFIXES,
+        )
         post_message(url, read_message(args.message_file))
     except (RuntimeError, ValueError) as exc:
         logger.error("error: %s", exc)

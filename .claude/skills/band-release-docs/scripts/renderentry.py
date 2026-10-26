@@ -23,7 +23,7 @@ from pathlib import Path
 
 from releasedata import Category, Item, ReleaseNotes
 from textsafety import mdx_text, pr_body_text
-from validateentry import CATEGORY_TAGS, TAG_ORDER, validate
+from validateentry import CATEGORY_TAGS, TAG_ORDER, parse_tags, validate
 
 logger = logging.getLogger(__name__)
 
@@ -149,15 +149,7 @@ def merged_tags(lines: list[str], notes: ReleaseNotes) -> list[str]:
     start = body_start(lines)
     if start == 0:
         return entry_tags(notes)
-    fence_end = start - 1
-    existing = next(
-        (
-            re.findall(r'"([^"]*)"', match.group(1))
-            for line in lines[1:fence_end]
-            if (match := TAGS_LINE.match(line))
-        ),
-        [],
-    )
+    existing = parse_tags("\n".join(lines[1 : start - 1])) or []
     known = set(existing) | set(entry_tags(notes))
     products = [tag for tag in [*existing, notes.product.tag] if tag not in TAG_ORDER]
     return [tag for tag in TAG_ORDER if tag in known] + list(dict.fromkeys(products))
@@ -252,10 +244,25 @@ def check_merge(existing: str, merged: str, standalone: str) -> None:
         raise EntryError(f"the merge lost our lines: {missing}")
 
 
+def check_not_merged(existing: str, notes: ReleaseNotes) -> None:
+    """Refuse a date file that already holds this entry's items or breaking heading."""
+    ours = set(map(item_line, notes.items)) | set(breaking_block(notes)[:1])
+    present = sorted(ours & set(existing.splitlines()))
+    if present:
+        raise EntryError(
+            f"the date file already holds {present}; start again from a fresh worktree"
+        )
+
+
 def held_back(
     notes: ReleaseNotes, drop: Sequence[int]
 ) -> tuple[ReleaseNotes, list[Item]]:
     """Split ``notes`` into the notes to file and the items held back by index."""
+    unknown = sorted(set(drop) - set(range(len(notes.items))))
+    if unknown:
+        raise EntryError(
+            f"no item has index {unknown}; items are numbered 0 to {len(notes.items) - 1}"
+        )
     held = [item for index, item in enumerate(notes.items) if index in drop]
     kept = [item for index, item in enumerate(notes.items) if index not in drop]
     return notes.model_copy(update={"items": kept}), held
@@ -306,6 +313,7 @@ def merge_into(
     standalone = checked_standalone(kept)
     path = entry_path(directory, kept)
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    check_not_merged(existing, kept)
     merged = merge_entry(existing, kept) if existing else standalone
     check_merge(existing, merged, standalone)
     path.write_text(merged, encoding="utf-8", newline="")

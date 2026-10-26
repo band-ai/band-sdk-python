@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 SDK_TAG_PREFIX = "band-sdk-v"
 
@@ -86,13 +86,24 @@ class ReleasePrs(Frozen):
         return prs + [commit.sha for commit in self.loose_commits if commit.breaking]
 
 
+def single_line(text: str) -> str:
+    """Reject a line break, which would split the rendered list item or heading."""
+    if "\n" in text or "\r" in text:
+        raise ValueError("must be a single line")
+    return text
+
+
 class Item(Frozen):
     category: Category
     label: Annotated[
-        str, Field(min_length=1, description="Noun phrase naming the change")
+        str,
+        Field(min_length=1, description="Noun phrase naming the change, one line"),
+        AfterValidator(single_line),
     ]
     sentence: Annotated[
-        str, Field(min_length=1, description="The user-facing effect, one sentence")
+        str,
+        Field(min_length=1, description="The user-facing effect, one sentence"),
+        AfterValidator(single_line),
     ]
     sources: list[str] = Field(
         description="PR numbers (digits only) or loose commit SHAs from release-prs.json"
@@ -104,7 +115,7 @@ def in_categories(items: Sequence[Item], categories: set[Category]) -> list[Item
 
 
 class Breaking(Frozen):
-    title: Annotated[str, Field(min_length=1)]
+    title: Annotated[str, Field(min_length=1), AfterValidator(single_line)]
     markdown: Annotated[
         str,
         Field(

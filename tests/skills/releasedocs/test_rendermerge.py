@@ -38,6 +38,22 @@ tags: ["feature", "fix", "typescript", "python"]
 - **Python SDK:**
   - **Reconnect** — Rooms rejoin after a drop.
 """
+ANOTHER_PRODUCT_BREAKING_MERGED = """---
+tags: ["improvement", "breaking-change", "fix", "typescript", "python"]
+---
+
+## Python SDK: Platform Tool Names Now Prefixed
+
+Tools now carry a prefix.
+
+## Changed
+- **Python SDK:**
+  - **Tool Prefix** — Tool names start with a prefix.
+
+## Fixed
+- **TypeScript SDK:**
+  - **LangGraph Reliability** — Agents stay responsive across turns.
+"""
 BAND_MCP = """---
 tags: ["feature", "python"]
 ---
@@ -191,23 +207,33 @@ class TestMergeEntry:
         renderentry.merge_into(notes, tmp_path, [], tmp_path / "pr-body.md")
         assert date_file.read_text(encoding="utf-8") == merged
 
-    def test_breaking_block_follows_existing_breaking_blocks(
+    @pytest.mark.parametrize(
+        ("existing", "merged"),
+        [
+            (TWO_BREAKING, TWO_BREAKING_MERGED),
+            (ANOTHER_PRODUCT, ANOTHER_PRODUCT_BREAKING_MERGED),
+        ],
+        ids=["after-breaking-blocks", "before-the-categories"],
+    )
+    def test_breaking_block_joins_the_date_file(
         self,
         renderentry: ModuleType,
         releasedata: ModuleType,
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
+        existing: str,
+        merged: str,
     ) -> None:
         date_file = tmp_path / f"{RELEASE_DATE}.md"
-        date_file.write_text(TWO_BREAKING, encoding="utf-8", newline="")
+        date_file.write_text(existing, encoding="utf-8", newline="")
         breaking = releasedata.Breaking(
             title="Platform Tool Names Now Prefixed",
             markdown="Tools now carry a prefix.",
         )
         notes = make_notes([make_item(*TOOL_PREFIX)], breaking)
         renderentry.merge_into(notes, tmp_path, [], tmp_path / "pr-body.md")
-        assert date_file.read_text(encoding="utf-8") == TWO_BREAKING_MERGED
+        assert date_file.read_text(encoding="utf-8") == merged
 
     def test_new_date_file_is_the_standalone_entry(
         self,
@@ -274,3 +300,39 @@ class TestMergeEntry:
             renderentry.render_standalone(make_notes([make_item(*SEND_RETRIES)]))
         )
         assert body.read_text(encoding="utf-8") == PR_BODY_WITH_HOLDBACK
+
+    @pytest.mark.parametrize(
+        "drop",
+        [["2"], ["-1"], ["0", "1"]],
+        ids=["past-the-end", "negative", "every-item"],
+    )
+    def test_unusable_holdback_files_nothing(
+        self,
+        renderentry: ModuleType,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+        drop: list[str],
+    ) -> None:
+        notes = make_notes([make_item(*SEND_RETRIES), make_item(*RECONNECT)])
+        notes_file = tmp_path / "release-notes.json"
+        notes_file.write_text(notes.model_dump_json(), encoding="utf-8")
+        fern, body = tmp_path / "fern", tmp_path / "pr-body.md"
+        fern.mkdir()
+        argv = [str(notes_file), "--merge-into", str(fern), "--drop", *drop]
+        assert renderentry.main([*argv, "--pr-body", str(body)]) == 1
+        assert (list(fern.iterdir()), body.exists()) == ([], False)
+
+    def test_entry_already_in_the_date_file_is_not_merged_again(
+        self,
+        renderentry: ModuleType,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+    ) -> None:
+        notes = make_notes([make_item(*SEND_RETRIES), make_item(*RECONNECT)])
+        path = renderentry.merge_into(notes, tmp_path, [], tmp_path / "pr-body.md")
+        first = path.read_text(encoding="utf-8")
+        with pytest.raises(renderentry.EntryError, match="already holds"):
+            renderentry.merge_into(notes, tmp_path, [1], tmp_path / "pr-body.md")
+        assert path.read_text(encoding="utf-8") == first

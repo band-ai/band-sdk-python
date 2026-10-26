@@ -17,7 +17,8 @@ import urllib.parse
 from collections.abc import Sequence
 from pathlib import Path
 
-from webhooks import read_message, send, webhook_url
+from announcement import DISCORD_MENTION
+from webhooks import WebhookSettings, read_message, send, webhook_url
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ DISCORD_WEBHOOK_PREFIXES = (
 )
 # Release posts ping the channel; webhooks parse only user mentions by default.
 # `parse` also keeps user and role pings suppressed.
-CHANNEL_MENTIONS = {"parse": ["everyone"]}
+CHANNEL_MENTIONS = {"parse": [DISCORD_MENTION.removeprefix("@")]}
 NO_MENTIONS: dict[str, list[str]] = {"parse": []}
 
 
@@ -61,7 +62,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        url = webhook_url("DISCORD_WEBHOOK_URL", DISCORD_WEBHOOK_PREFIXES)
+        url = webhook_url(
+            "DISCORD_WEBHOOK_URL",
+            WebhookSettings().discord_webhook_url,
+            DISCORD_WEBHOOK_PREFIXES,
+        )
         if args.delete:
             delete_message(url, args.delete)
             logger.info("Deleted Discord message %s", args.delete)

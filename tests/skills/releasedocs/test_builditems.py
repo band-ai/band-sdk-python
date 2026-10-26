@@ -69,6 +69,14 @@ def documented(*items: dict[str, object]) -> dict[str, object]:
     return {"status": "documented", "items": list(items), "breaking": None}
 
 
+def breaking(
+    title: str = "Send Renamed", markdown: str = "Send is now post."
+) -> dict[str, object]:
+    return documented(item(["101"])) | {
+        "breaking": {"title": title, "markdown": markdown}
+    }
+
+
 def build(
     builditems: ModuleType,
     tmp_path: Path,
@@ -103,6 +111,8 @@ class TestBuildItems:
             (documented(item(["101"])), BREAKING_PR),
             (documented(item(["101"], "Reads the ghp_ token.")), RELEASE_PRS),
             (documented(item(["101"], "See https://example.com.")), RELEASE_PRS),
+            (breaking(title="See https://example.com"), BREAKING_PR),
+            (breaking(markdown="Set the ghp_ token."), BREAKING_PR),
         ],
         ids=[
             "unknown-source",
@@ -111,6 +121,8 @@ class TestBuildItems:
             "breaking-without-block",
             "credential",
             "url",
+            "url-in-breaking-title",
+            "credential-in-breaking-markdown",
         ],
     )
     def test_rejected_report_writes_nothing(
@@ -145,10 +157,7 @@ class TestBuildItems:
     def test_breaking_release_passes_with_its_block(
         self, builditems: ModuleType, tmp_path: Path
     ) -> None:
-        report = documented(item(["101"])) | {
-            "breaking": {"title": "Send Renamed", "markdown": "Send is now post."}
-        }
-        code, out, _ = build(builditems, tmp_path, report, BREAKING_PR)
+        code, out, _ = build(builditems, tmp_path, breaking(), BREAKING_PR)
         assert (code, out.exists()) == (0, True)
 
     def test_no_user_facing_changes_writes_no_entry(

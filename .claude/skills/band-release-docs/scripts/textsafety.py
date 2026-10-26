@@ -13,12 +13,16 @@ CREDENTIAL_PATTERNS = (
     "github_pat_",
     "hooks.slack.com/",
     "discord.com/api/webhooks/",
+    "discordapp.com/api/webhooks/",
 )
 URL_PATTERN = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
+URL_FINDING = "a URL"
 
-# A fenced block, or an inline code span closed by a backtick run of equal length.
+# A ``` or ~~~ fenced block, or an inline code span closed by a backtick run
+# of equal length; like CommonMark's, a span never crosses a blank line.
 CODE_PATTERN = re.compile(
-    r"^```[^\n]*\n.*?^```[ \t]*$|(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)",
+    r"^(?P<fence>```|~~~)[^\n]*\n.*?^(?P=fence)[ \t]*$"
+    r"|(?<!`)(?P<ticks>`+)(?!`)(?:(?!\n[ \t]*\n).)+?(?<!`)(?P=ticks)(?!`)",
     re.DOTALL | re.MULTILINE,
 )
 MDX_SPECIALS = re.compile(r"[{}<>]")
@@ -31,9 +35,12 @@ GITHUB_REFERENCE = re.compile(
 
 
 def unsafe_findings(text: str) -> list[str]:
-    """Name every credential pattern or URL found in ``text``."""
+    """Name each credential pattern found in ``text``, and whether it holds a URL.
+
+    The matched text itself is never returned: it may be the secret.
+    """
     credentials = [pattern for pattern in CREDENTIAL_PATTERNS if pattern in text]
-    return credentials + URL_PATTERN.findall(text)
+    return credentials + ([URL_FINDING] if URL_PATTERN.search(text) else [])
 
 
 def slack_text(text: str) -> str:

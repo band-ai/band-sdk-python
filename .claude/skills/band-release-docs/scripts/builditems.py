@@ -45,9 +45,7 @@ def report_problems(report: ChangelogReport, release: ReleasePrs) -> list[str]:
     if report.breaking is not None:
         texts += [report.breaking.title, report.breaking.markdown]
     problems += [
-        f"unsafe text {finding!r}"
-        for text in texts
-        for finding in unsafe_findings(text)
+        f"unsafe text: {finding}" for text in texts for finding in unsafe_findings(text)
     ]
     return problems
 
@@ -102,7 +100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(notes.model_dump_json(indent=2), encoding="utf-8")
     logger.info("%d item(s) built", len(notes.items) if notes else 0)
-    append_outputs(args.outputs, has_entry=str(notes is not None).lower())
+    append_outputs(args.outputs, has_entry=notes is not None)
     return 0
 
 
