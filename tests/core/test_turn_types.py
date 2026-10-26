@@ -14,29 +14,34 @@ from band.runtime.tools import ALL_TOOL_NAMES, TurnEffect, turn_effect
 
 CORE_EFFECTS = band_sdk_core.band_tool_effects()
 
+# Core tools this SDK does not offer yet. INT-1745 implements
+# band_get_room_activity and deletes this exception.
+PENDING_CORE_TOOLS = frozenset({"band_get_room_activity"})
 
-def test_effect_values_match_core() -> None:
-    core_values = {
-        member.wire_name
-        for name in dir(band_sdk_core.TurnEffect)
-        if isinstance(
-            member := getattr(band_sdk_core.TurnEffect, name), band_sdk_core.TurnEffect
+
+class TestTurnTypesMatchCore:
+    def test_effect_values_match_core(self) -> None:
+        core_values = {
+            member.wire_name
+            for name in dir(band_sdk_core.TurnEffect)
+            if isinstance(
+                member := getattr(band_sdk_core.TurnEffect, name),
+                band_sdk_core.TurnEffect,
+            )
+        }
+        assert {effect.value for effect in TurnEffect} == core_values
+
+    def test_band_tools_match_core(self) -> None:
+        assert ALL_TOOL_NAMES == set(CORE_EFFECTS) - PENDING_CORE_TOOLS
+
+    @pytest.mark.parametrize("tool_name", sorted(CORE_EFFECTS))
+    def test_turn_effect_matches_core(self, tool_name: str) -> None:
+        assert turn_effect(tool_name) == CORE_EFFECTS[tool_name].wire_name
+
+    @pytest.mark.parametrize("effect", list(TurnEffect))
+    def test_did_work_matches_core_verdict(self, effect: TurnEffect) -> None:
+        ledger = band_sdk_core.TurnLedger()
+        ledger.record(band_sdk_core.TurnEffect.from_wire_name(effect.value))
+        assert effect.did_work == (
+            ledger.verdict() == band_sdk_core.TurnVerdict.Complete
         )
-    }
-    assert {effect.value for effect in TurnEffect} == core_values
-
-
-def test_band_tools_match_core() -> None:
-    assert ALL_TOOL_NAMES == set(CORE_EFFECTS)
-
-
-@pytest.mark.parametrize("tool_name", sorted(CORE_EFFECTS))
-def test_turn_effect_matches_core(tool_name: str) -> None:
-    assert turn_effect(tool_name) == CORE_EFFECTS[tool_name].wire_name
-
-
-@pytest.mark.parametrize("effect", list(TurnEffect))
-def test_did_work_matches_core_verdict(effect: TurnEffect) -> None:
-    ledger = band_sdk_core.TurnLedger()
-    ledger.record(band_sdk_core.TurnEffect.from_wire_name(effect.value))
-    assert effect.did_work == (ledger.verdict() == band_sdk_core.TurnVerdict.Complete)
