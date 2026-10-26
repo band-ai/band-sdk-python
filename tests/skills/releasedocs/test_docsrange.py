@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-TAGS = [
-    "band-sdk-v6.8.0",
-    "band-sdk-v6.9.0",
-    "band-sdk-v6.10.0",
-    "band-sdk-v6.11.0",
-    "band-sdk-v6.12.0",
-    "band-sdk-v6.13.0",
-    "band-mcp-v0.9.0",
-    "band-sdk-v3.2.0-v3.2.1",
-]
+from tests.skills.releasedocs.gitrepo import ThrowawayRepo
+
+# The releases before TAG, by version.
+EARLIER = [(6, 8, 0), (6, 9, 0), (6, 10, 0), (6, 11, 0), (6, 12, 0)]
 TAG = "band-sdk-v6.13.0"
 
 
@@ -29,6 +25,13 @@ def expected(docsrange: ModuleType, baseline: str, supersede: list[int]) -> obje
     return docsrange.DocsRange(baseline=baseline, supersede=supersede)
 
 
+def gh_listing(path: Path, *branches: tuple[int, str]) -> Path:
+    """Write ``gh pr list --json number,headRefName`` output."""
+    rows = [{"number": number, "headRefName": name} for number, name in branches]
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    return path
+
+
 class TestDocsRange:
     def test_baseline_is_the_newest_documented_release_by_version(
         self, docsrange: ModuleType
@@ -39,20 +42,20 @@ class TestDocsRange:
             (2, "docs/python-sdk-band-sdk-v6.12.0"),
             (3, "docs/python-sdk-band-sdk-v6.10.0"),
         )
-        assert docsrange.docs_range(TAG, TAGS, merged, []) == expected(
+        assert docsrange.docs_range(TAG, EARLIER, merged, []) == expected(
             docsrange, "band-sdk-v6.12.0", []
         )
 
     def test_versions_compare_numerically(self, docsrange: ModuleType) -> None:
-        tags = ["band-sdk-v6.9.0", "band-sdk-v6.10.0", "band-sdk-v6.11.0"]
+        earlier = [(6, 9, 0), (6, 10, 0)]
         merged = prs(
             docsrange,
             (1, "docs/python-sdk-band-sdk-v6.9.0"),
             (2, "docs/python-sdk-band-sdk-v6.10.0"),
         )
-        assert docsrange.docs_range("band-sdk-v6.11.0", tags, merged, []) == expected(
-            docsrange, "band-sdk-v6.10.0", []
-        )
+        assert docsrange.docs_range(
+            "band-sdk-v6.11.0", earlier, merged, []
+        ) == expected(docsrange, "band-sdk-v6.10.0", [])
 
     @pytest.mark.parametrize(
         "merged",
@@ -63,14 +66,13 @@ class TestDocsRange:
         self, docsrange: ModuleType, merged: list[tuple[int, str]]
     ) -> None:
         floor = "band-sdk-v6.10.0"  # the third release before TAG
-        found = docsrange.docs_range(TAG, TAGS, prs(docsrange, *merged), [])
+        found = docsrange.docs_range(TAG, EARLIER, prs(docsrange, *merged), [])
         assert found == expected(docsrange, floor, [])
 
     def test_short_history_floors_at_the_first_release(
         self, docsrange: ModuleType
     ) -> None:
-        tags = ["band-sdk-v1.0.0", "band-sdk-v1.1.0"]
-        assert docsrange.docs_range("band-sdk-v1.1.0", tags, [], []) == expected(
+        assert docsrange.docs_range("band-sdk-v1.1.0", [(1, 0, 0)], [], []) == expected(
             docsrange, "band-sdk-v1.0.0", []
         )
 
@@ -85,9 +87,21 @@ class TestDocsRange:
             (13, "docs/python-sdk-band-sdk-v6.14.0"),
             (14, "docs/python-sdk-band-sdk-v6.13.0"),
         )
-        assert docsrange.docs_range(TAG, TAGS, [], open_prs) == expected(
+        assert docsrange.docs_range(TAG, EARLIER, [], open_prs) == expected(
             docsrange, "band-sdk-v6.10.0", [10, 11]
         )
+
+    @pytest.mark.parametrize(
+        "branch",
+        ["docs/python-sdk-band-sdk-v6.13.0", "docs/python-sdk-band-sdk-v6.14.0"],
+        ids=["this-release", "newer-release"],
+    )
+    def test_review_older_than_merged_docs_is_refused(
+        self, docsrange: ModuleType, branch: str
+    ) -> None:
+        merged = prs(docsrange, (1, "docs/python-sdk-band-sdk-v6.12.0"), (2, branch))
+        with pytest.raises(ValueError, match="already merged"):
+            docsrange.docs_range(TAG, EARLIER, merged, [])
 
     @pytest.mark.parametrize(
         "branch",
@@ -102,6 +116,55 @@ class TestDocsRange:
         self, docsrange: ModuleType, branch: str
     ) -> None:
         found = prs(docsrange, (20, branch))
-        assert docsrange.docs_range(TAG, TAGS, found, found) == expected(
+        assert docsrange.docs_range(TAG, EARLIER, found, found) == expected(
             docsrange, "band-sdk-v6.10.0", []
         )
+
+    def test_command_reads_gh_listings_and_earlier_tags_from_history(
+        self,
+        docsrange: ModuleType,
+        repo: ThrowawayRepo,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        for version in ("6.10.0", "6.11.0", "6.12.0"):
+            repo.commit(f"feat: {version}", {"src/band/a.py": version})
+            repo.tag(f"band-sdk-v{version}")
+        # A release on another line of history is not before TAG.
+        repo.git("switch", "--quiet", "--create", "side", "band-sdk-v6.11.0")
+        repo.commit("fix: side", {"src/band/b.py": "side"})
+        repo.tag("band-sdk-v6.12.5")
+        repo.git("switch", "--quiet", "main")
+        repo.commit("feat: 6.13.0", {"src/band/a.py": "6.13.0"})
+        repo.tag(TAG)
+        merged = gh_listing(tmp_path / "merged.json")
+        open_prs = gh_listing(
+            tmp_path / "open.json", (7, "docs/python-sdk-band-sdk-v6.12.0")
+        )
+        argv = [TAG, str(merged), str(open_prs), "--repo", str(repo.root)]
+        assert docsrange.main(argv) == 0
+        assert json.loads(capsys.readouterr().out) == {
+            "baseline": "band-sdk-v6.10.0",
+            "supersede": [7],
+        }
+
+    @pytest.mark.parametrize(
+        ("tag", "error"),
+        [("band-sdk-v1.0.0", "precedes"), ("v6.13.0", "is not a")],
+        ids=["first-release", "not-a-release-tag"],
+    )
+    def test_command_logs_why_there_is_no_range(
+        self,
+        docsrange: ModuleType,
+        repo: ThrowawayRepo,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        tag: str,
+        error: str,
+    ) -> None:
+        repo.commit("feat: first release", {"src/band/a.py": "1.0.0"})
+        repo.tag("band-sdk-v1.0.0")
+        listing = gh_listing(tmp_path / "prs.json")
+        argv = [tag, str(listing), str(listing), "--repo", str(repo.root)]
+        assert docsrange.main(argv) == 1
+        assert error in caplog.text

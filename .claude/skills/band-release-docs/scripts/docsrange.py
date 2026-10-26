@@ -7,31 +7,30 @@
 Reads ``gh pr list --json number,headRefName`` output for merged and open Fern
 docs PRs. Writes ``{"baseline": <tag>, "supersede": [<PR number>...]}``: the
 review covers ``baseline..TAG``, and ``supersede`` lists the open docs PRs
-whose release that range already covers.
+whose release that range already covers. It refuses a TAG older than a release
+whose docs PR is already merged, since that review would roll pages back.
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from collectprs import git, tag_version
-from pydantic import BaseModel, ConfigDict, TypeAdapter
-from pydantic.alias_generators import to_camel
+from collectprs import GhModel, earlier_sdk_tags, release_version, tag_version
+from pydantic import BaseModel, TypeAdapter
 from releasedata import SDK_TAG_PREFIX
+
+logger = logging.getLogger(__name__)
 
 DOCS_BRANCH_PREFIX = "docs/python-sdk-"
 # A review never reaches further back than this many band-sdk releases.
 MAX_DOCS_RELEASES = 3
 
 
-class DocsPr(BaseModel):
-    model_config = ConfigDict(
-        frozen=True, alias_generator=to_camel, validate_by_name=True
-    )
-
+class DocsPr(GhModel):
     number: int
     head_ref_name: str
 
@@ -51,31 +50,37 @@ class DocsRange(BaseModel):
     supersede: list[int]
 
 
+def tag_name(version: tuple[int, int, int]) -> str:
+    return f"{SDK_TAG_PREFIX}{'.'.join(map(str, version))}"
+
+
 def docs_range(
-    tag: str, tags: Sequence[str], merged: Sequence[DocsPr], open_prs: Sequence[DocsPr]
+    tag: str,
+    earlier: Sequence[tuple[int, int, int]],
+    merged: Sequence[DocsPr],
+    open_prs: Sequence[DocsPr],
 ) -> DocsRange:
     """Start after the newest documented release below ``tag``, at most ``MAX_DOCS_RELEASES`` back.
 
+    ``earlier`` holds the versions of the releases before ``tag``, at least one.
     ``supersede`` lists the open docs PRs for releases strictly inside the range.
     """
-    version = tag_version(tag)
-    if version is None:
-        raise ValueError(f"{tag!r} is not a {SDK_TAG_PREFIX}X.Y.Z tag")
-    earlier = sorted(
-        (found for name in tags if (found := tag_version(name)) and found < version),
-        reverse=True,
+    version = release_version(tag)
+    newer = sorted(
+        release for pr in merged if (release := pr.release) and release >= version
     )
-    if not earlier:
-        raise ValueError(f"no {SDK_TAG_PREFIX}* release precedes {tag}")
-    floor = earlier[min(MAX_DOCS_RELEASES, len(earlier)) - 1]
+    if newer:
+        raise ValueError(
+            f"docs for {tag_name(newer[-1])} are already merged; "
+            f"a review as of {tag} would roll their pages back"
+        )
+    floor = sorted(earlier, reverse=True)[:MAX_DOCS_RELEASES][-1]
     documented = [
-        release
-        for pr in merged
-        if (release := pr.release) and floor <= release < version
+        release for pr in merged if (release := pr.release) and release >= floor
     ]
     baseline = max(documented, default=floor)
     return DocsRange(
-        baseline=f"{SDK_TAG_PREFIX}{'.'.join(map(str, baseline))}",
+        baseline=tag_name(baseline),
         supersede=[
             pr.number
             for pr in open_prs
@@ -85,6 +90,7 @@ def docs_range(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tag")
     parser.add_argument("merged", type=Path, help="gh pr list --state merged output")
@@ -92,10 +98,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     args = parser.parse_args(argv)
 
-    tags = git(args.repo, "tag", "--list", f"{SDK_TAG_PREFIX}*").split()
     merged = DOCS_PRS.validate_json(args.merged.read_bytes())
     open_prs = DOCS_PRS.validate_json(args.open.read_bytes())
-    found = docs_range(args.tag, tags, merged, open_prs)
+    try:
+        release_version(args.tag)
+        earlier = earlier_sdk_tags(args.repo, args.tag).values()
+        found = docs_range(args.tag, list(earlier), merged, open_prs)
+    except (RuntimeError, ValueError) as exc:
+        logger.error("error: %s", exc)
+        return 1
     sys.stdout.write(found.model_dump_json() + "\n")
     return 0
 

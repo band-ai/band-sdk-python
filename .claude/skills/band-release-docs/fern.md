@@ -6,7 +6,9 @@ changelog PR from the bundle, then opens one Fern docs PR updating the Python
 SDK pages the release made stale. Every push, PR, and close waits for the
 maintainer to review the diff and approve.
 
-`S` below is `.claude/skills/band-release-docs/scripts`.
+`S` below is `.claude/skills/band-release-docs/scripts`, `<bundle>` is the
+directory holding the bundle, and `<tmp>` is a scratch directory outside this
+checkout.
 
 ## Before starting
 
@@ -26,46 +28,68 @@ Changelog: `changelog/python-sdk-<tag>`. Docs: `docs/python-sdk-<tag>`.
 
 For each branch, first run
 `gh pr list --repo thenvoi/fern --head <branch> --state all --json number,state,url`.
-An open or merged PR stops that part and links it. Otherwise create the
-worktree with `git -C <fern> worktree add -B <branch> <tmp> origin/dev`
-(resetting a stale local branch). Push with
+An open or merged PR stops that part and links it. A closed PR keeps its branch
+on the remote, so also run `git -C <fern> fetch origin <branch>`; the lease
+below compares against that ref. Then run `git -C <fern> worktree prune`,
+remove any worktree `git -C <fern> worktree list` still shows on the branch
+(an earlier run's), and create the worktree with
+`git -C <fern> worktree add -B <branch> <worktree> origin/dev` (resetting a stale
+local branch). Push with
 `git -C <worktree> push --force-with-lease origin <branch>`: the branch tracks
-`origin/dev`, so a bare push would target `dev`, and Fern deletes merged
-branches but keeps those of closed, unmerged PRs.
+`origin/dev`, so a bare push would target `dev`.
 
 ## Changelog
 
-1. Fetch the bundle: `gh release download <tag> --repo band-ai/band-sdk-python --dir <tmp>`.
+1. Fetch the bundle: `gh release download <tag> --repo band-ai/band-sdk-python --dir <bundle>`
+   (with `--bundle <dir>`, `<bundle>` is that directory).
    No bundle means the release had no user-facing changes or its run failed:
    stop, say so, and link
    `https://github.com/band-ai/band-sdk-python/actions/workflows/release-announce.yml`.
 2. `git -C <fern> fetch origin dev`, then the branch check and worktree above.
-3. Holdbacks: compare each item in `release-notes.json` (numbered from 0)
+   Then list the open changelog PRs with
+   `gh pr list --repo thenvoi/fern --state open --search 'head:changelog/' --json number,url,files`.
+   If one changes `fern/changelog/sdks/<release_date>.md` (`release_date` is in
+   `release-notes.json`), stop and link it: both PRs would write that date file,
+   so it merges first and this command runs again.
+3. Holdbacks: compare each item in `<bundle>/release-notes.json` (numbered from 0)
    against `<fern>/.changelog/held-items.yml` entries whose surfaces include
    `sdks`, and against features marked hidden or Enterprise-gated in
    `<fern>/docs-structure-summary.md`. Show every match and ask the maintainer
    whether to hold it back; the ledger requires that confirmation.
 4. Merge the entry:
-   `uv run --script "$S/renderentry.py" release-notes.json --merge-into <worktree>/fern/changelog/sdks --drop <held index>... --pr-body pr-body.md`.
-   It validates the entry against the [format reference](references/fern-changelog-format.md)
-   and checks that every existing line of the date file survives in order.
+   `uv run --script "$S/renderentry.py" <bundle>/release-notes.json --merge-into <worktree>/fern/changelog/sdks --drop <held index>... --pr-body <tmp>/pr-body.md`.
+   It validates the entry against the [format reference](references/fern-changelog-format.md),
+   puts this release's block above the date file's earlier ones (rule 0), and
+   checks that every existing line survives in order. It refuses, writing
+   nothing, when the date file:
+   - already holds this release's subtitle: it is filed in Fern `dev`, perhaps
+     under another branch name. Stop and link the date file.
+   - holds a newer release of this SDK: blocks go newest first. Stop and show
+     both; with `--out <tmp>/entry` instead of `--merge-into`, the maintainer
+     can place the block below the newer one by hand.
+   - has entries without `## <SDK> <version>` subtitles (filed before Fern's
+     rule 0): stop and show the file. Add those subtitles only with the
+     maintainer's approval, in a separate commit, then run this step again.
 5. Show the diff. After approval: commit with no AI attribution (Fern's
    `.claude/claude.md`), push as above, and
-   `gh pr create --repo thenvoi/fern --base dev --head <branch> --title "docs(changelog): Python SDK <tag>" --body-file pr-body.md`.
+   `gh pr create --repo thenvoi/fern --base dev --head <branch> --title "docs(changelog): Python SDK <tag>" --body-file <tmp>/pr-body.md`.
 
 ## Docs
 
-6. Range: list the docs PRs into two files with
+6. Range: `git fetch --tags origin`, then list the docs PRs into
+   `<tmp>/merged.json` with
    `gh pr list --repo thenvoi/fern --state merged --search 'head:docs/python-sdk-band-sdk-v' --json number,headRefName`
-   and the same with `--state open`, then run
-   `uv run --script "$S/docsrange.py" <tag> merged.json open.json`. It prints `baseline` and
-   `supersede`. Build the review input with
-   `uv run --script "$S/collectprs.py" <tag> --since <baseline> > review-prs.json`.
+   and into `<tmp>/open.json` with the same and `--state open`. Run
+   `uv run --script "$S/docsrange.py" <tag> <tmp>/merged.json <tmp>/open.json`. It prints `baseline` and
+   `supersede`, or refuses when a newer release's docs are already merged (a
+   review as of `<tag>` would roll them back): then stop and say so. Build the
+   review input with
+   `uv run --script "$S/collectprs.py" <tag> --since <baseline> > <tmp>/review-prs.json`.
 7. Check out the released source: `git worktree add --detach <tmp>/sdk <tag>`.
    Then the branch check and Fern worktree on the docs branch.
 8. Nominate at most `MAX_REVIEWED_PAGES = 10` pages anywhere under
    `fern/docs/pages/integrations/sdks/` (including `tutorials/`). Start from
-   the files, titles, and bodies in `review-prs.json` and search the pages for
+   the files, titles, and bodies in `<tmp>/review-prs.json` and search the pages for
    the names those PRs changed. Record each nomination as page, reason, and
    source PRs. Review each page against the released source in `<tmp>/sdk`,
    including every snippet's imports and names.

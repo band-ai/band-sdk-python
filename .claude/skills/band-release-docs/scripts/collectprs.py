@@ -58,6 +58,14 @@ def tag_version(tag: str) -> tuple[int, int, int] | None:
     return major, minor, patch
 
 
+def release_version(tag: str) -> tuple[int, int, int]:
+    """Parse ``tag``, refusing anything that is not a band-sdk release tag."""
+    version = tag_version(tag)
+    if version is None:
+        raise ValueError(f"{tag!r} is not a {SDK_TAG_PREFIX}X.Y.Z tag")
+    return version
+
+
 class GhModel(BaseModel):
     """A ``gh --json`` object; field names are the camelCase ``gh`` keys."""
 
@@ -157,14 +165,20 @@ def git(repo: Path, *args: str) -> str:
         raise RuntimeError(f"git {args[0]} failed: {exc.stderr.strip()}") from exc
 
 
-def previous_sdk_tag(repo: Path, tag: str) -> str:
-    """Return the highest band-sdk release tag reachable from before ``tag``."""
+def earlier_sdk_tags(repo: Path, tag: str) -> dict[str, tuple[int, int, int]]:
+    """Return the band-sdk release tags reachable from before ``tag``, by version."""
     merged = git(repo, "tag", "--merged", f"{tag}^", "--list", f"{SDK_TAG_PREFIX}*")
     versions = {
         name: version for name in merged.split() if (version := tag_version(name))
     }
     if not versions:
         raise ValueError(f"no {SDK_TAG_PREFIX}* release precedes {tag}")
+    return versions
+
+
+def previous_sdk_tag(repo: Path, tag: str) -> str:
+    """Return the highest band-sdk release tag reachable from before ``tag``."""
+    versions = earlier_sdk_tags(repo, tag)
     return max(versions, key=versions.__getitem__)
 
 
@@ -333,8 +347,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     args = parser.parse_args(argv)
 
-    if tag_version(args.tag) is None:
-        logger.error("%r is not a %sX.Y.Z tag", args.tag, SDK_TAG_PREFIX)
+    try:
+        release_version(args.tag)
+    except ValueError as exc:
+        logger.error("error: %s", exc)
         return 2
     try:
         collected = run(
