@@ -3,7 +3,8 @@
 # standalone Fern entry <release date>.md) to the GitHub Release.
 #
 # Claude only judges and writes: it reads release-prs.json through Read, Glob,
-# and Grep confined to a checkout holding only the skill, and returns one
+# and Grep confined to a checkout holding only the skill (plus the read-only
+# job token claude-code-action writes into .git/config), and returns one
 # structured report. The scripts in .claude/skills/band-release-docs/scripts
 # collect, validate, render, and post; model-written text moves only through
 # files and artifacts, never step outputs, env, or expressions in run scripts.
@@ -16,6 +17,7 @@
 #            deleted by the job, the Slack post by a Slack admin
 #   dry-run  run Claude and every gate; write the entry and the exact
 #            announcement text to the summary; attach and post nothing
+# In every mode a failed job alerts Slack, naming the mode.
 # Releases published by a band-publish dispatch carry no release event, so
 # announce them by dispatching this workflow.
 #
@@ -25,8 +27,7 @@
 # Re-announcing: a live run stops before Claude when the release already
 # carries release-notes.json. Delete that asset, then dispatch again.
 #
-# The changelog job's env holds the model, product, and Claude limits;
-# job-level timeout-minutes cannot read env, so each job carries a literal
+# Job-level timeout-minutes cannot read env, so each job carries a literal
 # 10-minute backstop (30 for changelog).
 
 name: release-announce
@@ -62,7 +63,7 @@ concurrency:
 env:
   TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
   MODE: ${{ inputs.mode || 'live' }}
-  SCRIPTS: .claude/skills/band-release-docs/scripts
+  SKILL: .claude/skills/band-release-docs
 
 jobs:
   collect:
@@ -102,7 +103,7 @@ jobs:
         run: |
           args=("$TAG" --outputs "$GITHUB_OUTPUT")
           if [[ "$MODE" == live ]]; then args+=(--live); fi
-          uv run --script "$SCRIPTS/collectprs.py" "${args[@]}" > release-prs.json
+          uv run --script "$SKILL/scripts/collectprs.py" "${args[@]}" > release-prs.json
 
       - name: Record why nothing is announced
         if: steps.collect.outputs.reason != ''
@@ -135,11 +136,12 @@ jobs:
       has_entry: ${{ steps.build.outputs.has_entry }}
     steps:
       # Exactly the skill: no AGENTS.md, CLAUDE.md, settings, or other skills
-      # (cone mode would add every root file).
+      # (cone mode would add every root file). The action still writes its
+      # contents:read token into .git/config.
       - name: Checkout the skill only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          sparse-checkout: /.claude/skills/band-release-docs/
+          sparse-checkout: /${{ env.SKILL }}/
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -153,7 +155,7 @@ jobs:
 
       - name: Emit the report schema
         id: schema
-        run: echo "schema=$(uv run --script "$SCRIPTS/reportschema.py")" >> "$GITHUB_OUTPUT"
+        run: echo "schema=$(uv run --script "$SKILL/scripts/reportschema.py")" >> "$GITHUB_OUTPUT"
 
       # --tools removes every other built-in tool; --restricted confines the
       # file tools to the working directory.
@@ -166,7 +168,7 @@ jobs:
           github_token: ${{ github.token }}
           allowed_bots: band-release-please-public
           prompt: >-
-            Follow .claude/skills/band-release-docs/changelog.md for release
+            Follow ${{ env.SKILL }}/changelog.md for release
             ${{ env.TAG }}. The release's PRs are in release-prs.json in the
             working directory.
           claude_args: >-
@@ -179,12 +181,12 @@ jobs:
       - name: Read the report
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
-        run: uv run --script "$SCRIPTS/extractreport.py" "$EXECUTION_FILE" --out report.json
+        run: uv run --script "$SKILL/scripts/extractreport.py" "$EXECUTION_FILE" --out report.json
 
       - name: Trace the items to the release
         id: build
         run: |
-          uv run --script "$SCRIPTS/builditems.py" report.json release-prs.json \
+          uv run --script "$SKILL/scripts/builditems.py" report.json release-prs.json \
             --product-name "$PRODUCT_NAME" --product-label "$PRODUCT_LABEL" \
             --product-tag "$PRODUCT_TAG" \
             --out bundle/release-notes.json --outputs "$GITHUB_OUTPUT"
@@ -192,7 +194,7 @@ jobs:
       - name: Render and validate the Fern entry
         if: steps.build.outputs.has_entry == 'true'
         run: |
-          uv run --script "$SCRIPTS/renderentry.py" bundle/release-notes.json --out bundle/
+          uv run --script "$SKILL/scripts/renderentry.py" bundle/release-notes.json --out bundle/
           cp release-prs.json bundle/
 
       - name: Upload the bundle
@@ -253,7 +255,7 @@ jobs:
       - name: Checkout the skill only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          sparse-checkout: /.claude/skills/band-release-docs/
+          sparse-checkout: /${{ env.SKILL }}/
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -270,14 +272,14 @@ jobs:
         run: |
           args=(--notes bundle/release-notes.json --target slack-webhook)
           if [[ "$MODE" == test ]]; then args+=(--test); fi
-          uv run --script "$SCRIPTS/announcement.py" "${args[@]}" > message.txt
+          uv run --script "$SKILL/scripts/announcement.py" "${args[@]}" > message.txt
           { echo '```'; cat message.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post to Slack
         if: env.MODE != 'dry-run'
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: uv run --script "$SCRIPTS/postslack.py" --message-file message.txt
+        run: uv run --script "$SKILL/scripts/postslack.py" --message-file message.txt
 
   discord:
     needs: bundle
@@ -287,7 +289,7 @@ jobs:
       - name: Checkout the skill only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          sparse-checkout: /.claude/skills/band-release-docs/
+          sparse-checkout: /${{ env.SKILL }}/
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -304,7 +306,7 @@ jobs:
         run: |
           args=(--notes bundle/release-notes.json --target discord)
           if [[ "$MODE" == test ]]; then args+=(--test); fi
-          uv run --script "$SCRIPTS/announcement.py" "${args[@]}" > message.txt
+          uv run --script "$SKILL/scripts/announcement.py" "${args[@]}" > message.txt
           { echo '```'; cat message.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post to Discord
@@ -315,7 +317,7 @@ jobs:
         run: |
           args=(--message-file message.txt)
           if [[ "$MODE" == test ]]; then args+=(--no-mentions); fi
-          message_id=$(uv run --script "$SCRIPTS/postdiscord.py" "${args[@]}")
+          message_id=$(uv run --script "$SKILL/scripts/postdiscord.py" "${args[@]}")
           echo "message_id=$message_id" >> "$GITHUB_OUTPUT"
           echo "Discord message id: \`$message_id\`" >> "$GITHUB_STEP_SUMMARY"
 
@@ -324,7 +326,7 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           MESSAGE_ID: ${{ steps.post.outputs.message_id }}
-        run: uv run --script "$SCRIPTS/postdiscord.py" --delete "$MESSAGE_ID"
+        run: uv run --script "$SKILL/scripts/postdiscord.py" --delete "$MESSAGE_ID"
 
   alert:
     needs: [collect, changelog, bundle, slack, discord]
@@ -335,7 +337,7 @@ jobs:
       - name: Checkout the skill only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          sparse-checkout: /.claude/skills/band-release-docs/
+          sparse-checkout: /${{ env.SKILL }}/
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -350,4 +352,4 @@ jobs:
         run: |
           failed=$(jq -r '[to_entries[] | select(.value.result == "failure") | .key] | join(", ")' <<< "$NEEDS")
           printf 'release-announce failed for %s (%s): %s\n%s\n' "$TAG" "$MODE" "$failed" "$RUN_URL" \
-            | uv run --script "$SCRIPTS/postslack.py"
+            | uv run --script "$SKILL/scripts/postslack.py"
