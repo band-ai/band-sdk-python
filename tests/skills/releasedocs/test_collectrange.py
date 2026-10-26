@@ -7,7 +7,11 @@ from types import ModuleType
 import pytest
 
 from tests.skills.releasedocs.gitrepo import ThrowawayRepo
-from tests.skills.releasedocs.samples import RELEASE_URL
+from tests.skills.releasedocs.samples import (
+    PREVIOUS_TAG,
+    PUBLISHED_RELEASE,
+    RELEASE_TAG,
+)
 
 # More files than ``gh pr view --json files`` returns, all internal but the last.
 LARGE_COMMIT_FILES = {
@@ -35,7 +39,7 @@ def release(repo: ThrowawayRepo, collectprs: ModuleType) -> ModuleType:
     """A history with interleaved band-mcp tags, a junk tag, and every PR shape."""
     repo.tag("band-sdk-v6.0.0")
     repo.commit("feat: earlier release work (#10)", {"src/band/early.py": ""})
-    repo.tag("band-sdk-v6.0.1")
+    repo.tag(PREVIOUS_TAG)
     repo.commit("feat: band-mcp only (#11)", {"packages/band-mcp/x.py": ""})
     repo.tag("band-mcp-v0.2.0")
     repo.commit("test: cover retry (#12)", {"tests/test_retry.py": ""})
@@ -54,7 +58,7 @@ def release(repo: ThrowawayRepo, collectprs: ModuleType) -> ModuleType:
         body="BREAKING CHANGE: the old config keys are gone.",
     )
     repo.commit("fix: many generated files (#18)", LARGE_COMMIT_FILES)
-    repo.tag("band-sdk-v6.1.0")
+    repo.tag(RELEASE_TAG)
     return collectprs
 
 
@@ -62,17 +66,11 @@ def collected(
     collectprs: ModuleType, repo: ThrowawayRepo, since: str | None = None
 ) -> object:
     release = collectprs.Release.model_validate(
-        {
-            "url": RELEASE_URL,
-            "publishedAt": "2026-10-21T01:30:00+02:00",
-            "isPrerelease": False,
-            "isDraft": False,
-            "assets": [],
-        }
+        PUBLISHED_RELEASE | {"publishedAt": "2026-10-21T01:30:00+02:00"}
     )
     return collectprs.collect(
         repo.root,
-        "band-sdk-v6.1.0",
+        RELEASE_TAG,
         release=release,
         pr_meta=lambda number: collectprs.PrMeta.model_validate(PR_TABLE[number]),
         since=since,
@@ -83,7 +81,7 @@ class TestReleaseRange:
     def test_range_starts_at_the_previous_strict_sdk_tag(
         self, release: ModuleType, repo: ThrowawayRepo
     ) -> None:
-        assert collected(release, repo).previous_tag == "band-sdk-v6.0.1"
+        assert collected(release, repo).previous_tag == PREVIOUS_TAG
 
     def test_user_facing_prs_are_kept_with_their_type(
         self, release: ModuleType, repo: ThrowawayRepo

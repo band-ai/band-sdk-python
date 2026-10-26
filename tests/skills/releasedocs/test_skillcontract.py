@@ -23,4 +23,3 @@ class TestSkillContract:
     def test_reference_names_the_validator_that_enforces_it(self) -> None:
         reference = (SKILL_DIR / REFERENCE).read_text(encoding="utf-8")
         assert "scripts/validateentry.py" in reference
-        assert (RELEASE_DOCS_SCRIPTS / "validateentry.py").is_file()

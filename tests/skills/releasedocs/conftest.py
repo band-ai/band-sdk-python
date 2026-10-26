@@ -9,7 +9,13 @@ from types import ModuleType
 import pytest
 
 from tests.skills.releasedocs.gitrepo import ThrowawayRepo
-from tests.skills.releasedocs.samples import RELEASE_DATE, RELEASE_TAG, RELEASE_URL
+from tests.skills.releasedocs.samples import (
+    PREVIOUS_TAG,
+    PRODUCT,
+    RELEASE_DATE,
+    RELEASE_TAG,
+    RELEASE_URL,
+)
 from tests.skills.releasedocs.scripts import release_scripts
 from tests.skills.releasedocs.webhookpeer import WebhookPeer, webhook_peer
 
@@ -112,12 +118,10 @@ def make_notes(releasedata: ModuleType) -> Callable[..., object]:
     def build(items: list[object], breaking: object = None) -> object:
         return releasedata.ReleaseNotes(
             tag=RELEASE_TAG,
-            previous_tag="band-sdk-v6.0.1",
+            previous_tag=PREVIOUS_TAG,
             release_url=RELEASE_URL,
             release_date=RELEASE_DATE,
-            product=releasedata.Product(
-                name="Band Python SDK", label="Python SDK", tag="python"
-            ),
+            product=PRODUCT,
             items=items,
             breaking=breaking,
         )

@@ -13,8 +13,7 @@ from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
 
-from collectprs import SDK_TAG_PREFIX
-from releasedata import Category, Item, ReleaseNotes
+from releasedata import Category, Item, ReleaseNotes, in_categories
 from textsafety import discord_text, slack_text
 
 logger = logging.getLogger(__name__)
@@ -57,11 +56,10 @@ def compose(
 ) -> str:
     """Build the message from ``items``, in section order."""
     mark = TARGET_MARKERS[target]
-    version = notes.tag.removeprefix(SDK_TAG_PREFIX)
     blocks = [*opening(target, test=test)]
-    blocks.append(f"{mark}{notes.product.name} v{version}{mark} is live!")
+    blocks.append(f"{mark}{notes.product.name} v{notes.version}{mark} is live!")
     for title, categories in SECTIONS:
-        listed = [item for item in items if item.category in categories]
+        listed = in_categories(items, categories)
         if listed:
             lines = [bullet(item, target) for item in listed]
             blocks.append("\n".join([f"{mark}{title}:{mark}", *lines]))

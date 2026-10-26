@@ -10,10 +10,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+SDK_TAG_PREFIX = "band-sdk-v"
 
 
 class Category(StrEnum):
@@ -96,6 +99,10 @@ class Item(Frozen):
     )
 
 
+def in_categories(items: Sequence[Item], categories: set[Category]) -> list[Item]:
+    return [item for item in items if item.category in categories]
+
+
 class Breaking(Frozen):
     title: Annotated[str, Field(min_length=1)]
     markdown: Annotated[
@@ -145,5 +152,9 @@ class ReleaseNotes(Frozen):
     items: list[Item]
     breaking: Breaking | None
 
+    @property
+    def version(self) -> str:
+        return self.tag.removeprefix(SDK_TAG_PREFIX)
+
     def items_in(self, categories: set[Category]) -> list[Item]:
-        return [item for item in self.items if item.category in categories]
+        return in_categories(self.items, categories)

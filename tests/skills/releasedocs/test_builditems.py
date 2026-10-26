@@ -8,12 +8,18 @@ from types import ModuleType
 
 import pytest
 
-from tests.skills.releasedocs.samples import RELEASE_DATE, RELEASE_TAG, RELEASE_URL
+from tests.skills.releasedocs.samples import (
+    PREVIOUS_TAG,
+    PRODUCT,
+    RELEASE_DATE,
+    RELEASE_TAG,
+    RELEASE_URL,
+)
 
 LOOSE_SHA = "a" * 40
 RELEASE_PRS = {
     "tag": RELEASE_TAG,
-    "previous_tag": "band-sdk-v6.0.1",
+    "previous_tag": PREVIOUS_TAG,
     "release_url": RELEASE_URL,
     "release_date": RELEASE_DATE,
     "pull_requests": [
@@ -42,12 +48,9 @@ BREAKING_PR = RELEASE_PRS | {
     "pull_requests": [RELEASE_PRS["pull_requests"][0] | {"breaking": True}]
 }
 PRODUCT_ARGS = [
-    "--product-name",
-    "Band Python SDK",
-    "--product-label",
-    "Python SDK",
-    "--product-tag",
-    "python",
+    *("--product-name", PRODUCT["name"]),
+    *("--product-label", PRODUCT["label"]),
+    *("--product-tag", PRODUCT["tag"]),
 ]
 
 
@@ -130,14 +133,10 @@ class TestBuildItems:
         assert releasedata.ReleaseNotes.model_validate_json(out.read_text()) == (
             releasedata.ReleaseNotes(
                 tag=RELEASE_TAG,
-                previous_tag="band-sdk-v6.0.1",
+                previous_tag=PREVIOUS_TAG,
                 release_url=RELEASE_URL,
                 release_date=RELEASE_DATE,
-                product={
-                    "name": "Band Python SDK",
-                    "label": "Python SDK",
-                    "tag": "python",
-                },
+                product=PRODUCT,
                 items=report["items"],
                 breaking=None,
             )

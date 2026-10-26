@@ -17,9 +17,7 @@ import urllib.parse
 from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic import SecretStr, ValidationError
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from webhooks import read_message, send
+from webhooks import read_message, send, webhook_url
 
 logger = logging.getLogger(__name__)
 
@@ -31,21 +29,6 @@ DISCORD_WEBHOOK_PREFIXES = (
 # `parse` also keeps user and role pings suppressed.
 CHANNEL_MENTIONS = {"parse": ["everyone"]}
 NO_MENTIONS: dict[str, list[str]] = {"parse": []}
-
-
-class DiscordSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        extra="ignore", case_sensitive=False, env_ignore_empty=True
-    )
-
-    discord_webhook_url: SecretStr
-
-
-def validate_webhook_url(url: str) -> None:
-    if not url.startswith(DISCORD_WEBHOOK_PREFIXES):
-        raise ValueError(
-            f"DISCORD_WEBHOOK_URL must start with {DISCORD_WEBHOOK_PREFIXES[0]}"
-        )
 
 
 def post_message(webhook_url: str, text: str, *, mentions: bool = True) -> str:
@@ -78,18 +61,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        webhook_url = DiscordSettings().discord_webhook_url.get_secret_value()
-        validate_webhook_url(webhook_url)
+        url = webhook_url("DISCORD_WEBHOOK_URL", DISCORD_WEBHOOK_PREFIXES)
         if args.delete:
-            delete_message(webhook_url, args.delete)
+            delete_message(url, args.delete)
             logger.info("Deleted Discord message %s", args.delete)
             return 0
         message_id = post_message(
-            webhook_url, read_message(args.message_file), mentions=not args.no_mentions
+            url, read_message(args.message_file), mentions=not args.no_mentions
         )
-    except ValidationError:
-        logger.error("error: DISCORD_WEBHOOK_URL is required")
-        return 1
     except (RuntimeError, ValueError) as exc:
         logger.error("error: %s", exc)
         return 1

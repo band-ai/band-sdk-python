@@ -26,12 +26,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
-from releasedata import LooseCommit, PullRequest, ReleasePrs
+from releasedata import SDK_TAG_PREFIX, LooseCommit, PullRequest, ReleasePrs
 from stepoutputs import append_outputs
 
 logger = logging.getLogger(__name__)
 
-SDK_TAG_PREFIX = "band-sdk-v"
 SDK_TAG_PATTERN = re.compile(rf"^{SDK_TAG_PREFIX}(\d+)\.(\d+)\.(\d+)$")
 # Changes confined to these never reach SDK users.
 INTERNAL_PATHS = ("tests/", ".github/", ".claude/")

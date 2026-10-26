@@ -90,7 +90,9 @@ def render_standalone(notes: ReleaseNotes) -> str:
     return "\n".join(frontmatter) + "\n\n" + body + "\n"
 
 
-def check_standalone(notes: ReleaseNotes, text: str) -> None:
+def checked_standalone(notes: ReleaseNotes) -> str:
+    """Render the standalone entry and fail unless it passes the validator."""
+    text = render_standalone(notes)
     with tempfile.TemporaryDirectory() as scratch:
         path = entry_path(Path(scratch), notes)
         path.write_text(text, encoding="utf-8", newline="")
@@ -104,6 +106,7 @@ def check_standalone(notes: ReleaseNotes, text: str) -> None:
         )
     if violations:
         raise EntryError("\n".join(violations))
+    return text
 
 
 @dataclass(frozen=True)
@@ -143,9 +146,10 @@ def is_category(section: Section) -> bool:
 
 
 def merged_tags(lines: list[str], notes: ReleaseNotes) -> list[str]:
-    if body_start(lines) == 0:
+    start = body_start(lines)
+    if start == 0:
         return entry_tags(notes)
-    fence_end = body_start(lines) - 1
+    fence_end = start - 1
     existing = next(
         (
             re.findall(r'"([^"]*)"', match.group(1))
@@ -160,9 +164,10 @@ def merged_tags(lines: list[str], notes: ReleaseNotes) -> list[str]:
 
 
 def with_tags(lines: list[str], tags: list[str]) -> list[str]:
-    if body_start(lines) == 0:
+    start = body_start(lines)
+    if start == 0:
         return [FRONTMATTER_FENCE, tags_line(tags), FRONTMATTER_FENCE, "", *lines]
-    fence_end = body_start(lines) - 1
+    fence_end = start - 1
     head = [
         tags_line(tags) if TAGS_LINE.match(line) else line for line in lines[:fence_end]
     ]
@@ -285,8 +290,7 @@ def pr_body(notes: ReleaseNotes, held: list[Item]) -> str:
 
 
 def write_standalone(notes: ReleaseNotes, directory: Path) -> Path:
-    text = render_standalone(notes)
-    check_standalone(notes, text)
+    text = checked_standalone(notes)
     path = entry_path(directory, notes)
     directory.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="")
@@ -299,8 +303,7 @@ def merge_into(
     kept, held = held_back(notes, drop)
     if not kept.items:
         raise EntryError("every item is held back; there is no entry to file")
-    standalone = render_standalone(kept)
-    check_standalone(kept, standalone)
+    standalone = checked_standalone(kept)
     path = entry_path(directory, kept)
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     merged = merge_entry(existing, kept) if existing else standalone

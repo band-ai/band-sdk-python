@@ -11,26 +11,11 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic import SecretStr, ValidationError
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from webhooks import read_message, send
+from webhooks import read_message, send, webhook_url
 
 logger = logging.getLogger(__name__)
 
-SLACK_WEBHOOK_PREFIX = "https://hooks.slack.com/services/"
-
-
-class SlackSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        extra="ignore", case_sensitive=False, env_ignore_empty=True
-    )
-
-    slack_webhook_url: SecretStr
-
-
-def validate_webhook_url(url: str) -> None:
-    if not url.startswith(SLACK_WEBHOOK_PREFIX):
-        raise ValueError(f"SLACK_WEBHOOK_URL must start with {SLACK_WEBHOOK_PREFIX}")
+SLACK_WEBHOOK_PREFIXES = ("https://hooks.slack.com/services/",)
 
 
 def post_message(webhook_url: str, text: str) -> None:
@@ -44,12 +29,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        webhook_url = SlackSettings().slack_webhook_url.get_secret_value()
-        validate_webhook_url(webhook_url)
-        post_message(webhook_url, read_message(args.message_file))
-    except ValidationError:
-        logger.error("error: SLACK_WEBHOOK_URL is required")
-        return 1
+        url = webhook_url("SLACK_WEBHOOK_URL", SLACK_WEBHOOK_PREFIXES)
+        post_message(url, read_message(args.message_file))
     except (RuntimeError, ValueError) as exc:
         logger.error("error: %s", exc)
         return 1

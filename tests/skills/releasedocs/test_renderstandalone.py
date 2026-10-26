@@ -8,6 +8,7 @@ from types import ModuleType
 
 from tests.skills.releasedocs.samples import (
     LEGACY_TOOLS,
+    PRODUCT,
     RECONNECT,
     RELEASE_DATE,
     SEND_RETRIES,
@@ -71,8 +72,8 @@ class TestStandaloneEntry:
         violations = validateentry.validate(
             path,
             surface="sdks",
-            product_label="Python SDK",
-            product_tag="python",
+            product_label=PRODUCT["label"],
+            product_tag=PRODUCT["tag"],
             release_date=RELEASE_DATE,
         )
         assert violations == []

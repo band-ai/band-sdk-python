@@ -8,12 +8,35 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from pydantic import SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 REQUEST_TIMEOUT_S = 30.0
 # Discord's Cloudflare edge answers urllib's default agent with HTTP 403
 # ("error code: 1010"), so every request names itself.
 USER_AGENT = (
     "band-sdk-python-release-docs (+https://github.com/band-ai/band-sdk-python)"
 )
+
+
+class WebhookSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    slack_webhook_url: SecretStr | None = None
+    discord_webhook_url: SecretStr | None = None
+
+
+def webhook_url(variable: str, prefixes: tuple[str, ...]) -> str:
+    """Return the webhook URL from ``variable``; it must start with one of ``prefixes``."""
+    secret: SecretStr | None = getattr(WebhookSettings(), variable.lower())
+    if secret is None:
+        raise ValueError(f"{variable} is required")
+    url = secret.get_secret_value()
+    if not url.startswith(prefixes):
+        raise ValueError(f"{variable} must start with {prefixes[0]}")
+    return url
 
 
 def read_message(path: Path | None) -> str:

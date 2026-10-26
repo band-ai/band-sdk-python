@@ -8,16 +8,13 @@ from types import ModuleType
 import pytest
 
 from tests.skills.releasedocs.gitrepo import ThrowawayRepo
-from tests.skills.releasedocs.samples import RELEASE_TAG, RELEASE_URL
+from tests.skills.releasedocs.samples import (
+    PREVIOUS_TAG,
+    PUBLISHED_RELEASE,
+    RELEASE_TAG,
+)
 
-PUBLISHED = {
-    "url": RELEASE_URL,
-    "publishedAt": "2026-10-20T10:00:00Z",
-    "isPrerelease": False,
-    "isDraft": False,
-    "assets": [],
-}
-ANNOUNCED = PUBLISHED | {"assets": [{"name": "release-notes.json"}]}
+ANNOUNCED = PUBLISHED_RELEASE | {"assets": [{"name": "release-notes.json"}]}
 
 
 def release_of(collectprs: ModuleType, fields: dict[str, object] | None) -> object:
@@ -47,7 +44,7 @@ def gate(
 
 @pytest.fixture
 def tagged(repo: ThrowawayRepo) -> ThrowawayRepo:
-    repo.tag("band-sdk-v6.0.1")
+    repo.tag(PREVIOUS_TAG)
     repo.commit("feat: retry sends (#20)", {"src/band/send.py": ""})
     repo.tag(RELEASE_TAG)
     return repo
@@ -58,8 +55,8 @@ class TestReleaseGate:
         ("fields", "reason"),
         [
             (None, "NOT_VISIBLE"),
-            (PUBLISHED | {"isDraft": True}, "DRAFT"),
-            (PUBLISHED | {"isPrerelease": True}, "PRERELEASE"),
+            (PUBLISHED_RELEASE | {"isDraft": True}, "DRAFT"),
+            (PUBLISHED_RELEASE | {"isPrerelease": True}, "PRERELEASE"),
             (ANNOUNCED, "ANNOUNCED"),
         ],
     )
@@ -90,12 +87,12 @@ class TestReleaseGate:
     def test_internal_only_release_has_no_changes(
         self, collectprs: ModuleType, repo: ThrowawayRepo, tmp_path: Path
     ) -> None:
-        repo.tag("band-sdk-v6.0.1")
+        repo.tag(PREVIOUS_TAG)
         repo.commit("test: more coverage (#21)", {"tests/test_send.py": ""})
         repo.commit("ci: faster lanes", {".github/workflows/ci.yml": ""})
         repo.tag(RELEASE_TAG)
         outputs = tmp_path / "outputs"
-        collected = gate(collectprs, repo, outputs, PUBLISHED, live=True)
+        collected = gate(collectprs, repo, outputs, PUBLISHED_RELEASE, live=True)
         assert collected.excluded_internal == [21]
         assert outputs.read_text(encoding="utf-8") == (
             "proceed=true\nhas_changes=false\n"
