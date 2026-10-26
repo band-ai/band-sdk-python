@@ -185,7 +185,9 @@ class TestBuildItems:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        leaky = item([], "Reads sk-ant-s3cr3t.") | {"label": "Key sk-ant-s3cr3t"}
+        leaky = item(["sk-ant-s3cr3t"], "Reads sk-ant-s3cr3t.") | {
+            "label": "Key sk-ant-s3cr3t"
+        }
         code, _, _ = build(builditems, tmp_path, documented(leaky), RELEASE_PRS)
         assert code == 1
         assert "s3cr3t" not in caplog.text

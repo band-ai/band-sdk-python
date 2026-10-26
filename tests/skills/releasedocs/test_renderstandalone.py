@@ -146,17 +146,21 @@ class TestStandaloneEntry:
             r"  - **Agent\<T\> Support** — Pass \{x\} or `capabilities={Capability.MEMORY}`."
         )
 
-    def test_entry_failing_the_validator_is_not_written(
+    @pytest.mark.parametrize(
+        "markdown",
+        ["## Action Required\nRename.", "Rename.\n\n```python\nfrom band import Y\n"],
+        ids=["validator-violation", "unclosed-fence"],
+    )
+    def test_rejected_entry_is_not_written(
         self,
         renderentry: ModuleType,
         releasedata: ModuleType,
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
+        markdown: str,
     ) -> None:
-        breaking = releasedata.Breaking(
-            title="Renamed", markdown="## Action Required\nRename."
-        )
+        breaking = releasedata.Breaking(title="Renamed", markdown=markdown)
         notes = make_notes([make_item(*TOOL_PREFIX)], breaking)
         notes_file = tmp_path / "release-notes.json"
         notes_file.write_text(notes.model_dump_json(), encoding="utf-8")

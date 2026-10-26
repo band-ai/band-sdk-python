@@ -118,6 +118,18 @@ tags: ["fix", "python"]
 - **Python SDK:**
   - **Earlier Fix** — Fixed earlier today.
 """
+NEWER_RELEASE = """---
+tags: ["fix", "python"]
+---
+
+## Python SDK 6.1.1
+
+## Fixed
+- **Python SDK:**
+  - **Hotfix** — Fixed later today.
+"""
+# A newer release filed above ours, then ours filed again.
+NEWER_ABOVE_OURS = NEWER_RELEASE + ANOTHER_PRODUCT_MERGED.split("---\n\n", 1)[1]
 PR_BODY = f"""## Summary
 
 Python SDK band-sdk-v6.1.0 changelog entry.
@@ -197,7 +209,32 @@ class TestMergeEntry:
         renderentry.merge_into(notes, tmp_path, [], tmp_path / "pr-body.md")
         assert date_file.read_text(encoding="utf-8") == EARLIER_RELEASE_BREAKING_MERGED
 
-    def test_date_file_without_subtitles_is_refused(
+    @pytest.mark.parametrize(
+        ("existing", "error"),
+        [
+            (WITHOUT_SUBTITLE, "predate version subtitles"),
+            (NEWER_RELEASE, "newest first"),
+            (NEWER_ABOVE_OURS, "already holds '## Python SDK 6.1.0'"),
+        ],
+        ids=["without-subtitles", "newer-release", "re-run-below-a-newer-release"],
+    )
+    def test_unmergeable_date_file_is_left_unchanged(
+        self,
+        renderentry: ModuleType,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+        existing: str,
+        error: str,
+    ) -> None:
+        date_file = tmp_path / f"{RELEASE_DATE}.md"
+        date_file.write_text(existing, encoding="utf-8", newline="")
+        notes = make_notes([make_item(*SEND_RETRIES), make_item(*RECONNECT)])
+        with pytest.raises(renderentry.EntryError, match=error):
+            renderentry.merge_into(notes, tmp_path, [], tmp_path / "pr-body.md")
+        assert date_file.read_text(encoding="utf-8") == existing
+
+    def test_unwritable_pr_body_leaves_the_date_file_unchanged(
         self,
         renderentry: ModuleType,
         make_item: Callable[..., object],
@@ -205,11 +242,11 @@ class TestMergeEntry:
         tmp_path: Path,
     ) -> None:
         date_file = tmp_path / f"{RELEASE_DATE}.md"
-        date_file.write_text(WITHOUT_SUBTITLE, encoding="utf-8", newline="")
+        date_file.write_text(EARLIER_RELEASE, encoding="utf-8", newline="")
         notes = make_notes([make_item(*SEND_RETRIES)])
-        with pytest.raises(renderentry.EntryError, match="predate version subtitles"):
-            renderentry.merge_into(notes, tmp_path, [], tmp_path / "pr-body.md")
-        assert date_file.read_text(encoding="utf-8") == WITHOUT_SUBTITLE
+        with pytest.raises(FileNotFoundError):
+            renderentry.merge_into(notes, tmp_path, [], tmp_path / "no-dir" / "b.md")
+        assert date_file.read_text(encoding="utf-8") == EARLIER_RELEASE
 
     def test_new_date_file_is_the_standalone_entry(
         self,

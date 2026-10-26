@@ -33,10 +33,9 @@ def report_problems(report: ChangelogReport, release: ReleasePrs) -> list[str]:
         if not item.sources
     ]
     problems += [
-        f"item {index} cites {source!r}, which is not in this release"
+        f"item {index} cites a source that is not in this release"
         for index, item in enumerate(report.items)
-        for source in item.sources
-        if source not in known
+        if not set(item.sources) <= known
     ]
     if release.breaking_sources and report.breaking is None:
         problems.append(

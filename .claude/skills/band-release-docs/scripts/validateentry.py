@@ -76,6 +76,11 @@ def parse_tags(block: str) -> list[str] | None:
     return re.findall(r'"([^"]*)"', match.group(1))
 
 
+def release_subtitle(product_label: str, release_version: str) -> str:
+    """The title of the `## <label> <version>` line that opens a release block."""
+    return f"{product_label} {release_version}"
+
+
 def check_filename(path: Path, release_date: str | None, report: Report) -> None:
     if not FILENAME_RE.match(path.name):
         report.add(
@@ -288,7 +293,7 @@ def validate(
     block, body_start = split_frontmatter(text)
     body_lines = text.splitlines()[body_start - 1 :]
     subtitle = (
-        f"{product_label} {release_version}"
+        release_subtitle(product_label, release_version)
         if surface in TAGGED_SURFACES and product_label and release_version
         else None
     )

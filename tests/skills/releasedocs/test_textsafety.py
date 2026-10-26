@@ -80,6 +80,11 @@ class TestTextSafety:
                 "1. Update:\n\n   ```python\n   cfg = {1}\n\n   x = <2>\n   ```",
                 "1. Update:\n\n   ```python\n   cfg = {1}\n\n   x = <2>\n   ```",
             ),
+            ("```\n{a}\n````\nthen {y}", "```\n{a}\n````\nthen \\{y\\}"),
+            (
+                "Use `old or\n- set {x} now\nthen` done.",
+                "Use `old or\n- set \\{x\\} now\nthen` done.",
+            ),
             ("Use C:\\{name} now", "Use C:\\\\\\{name\\} now"),
             ("Retries back off.", "Retries back off."),
         ],
@@ -88,6 +93,30 @@ class TestTextSafety:
         self, textsafety: ModuleType, text: str, escaped: str
     ) -> None:
         assert textsafety.mdx_text(text) == escaped
+
+    @pytest.mark.parametrize(
+        ("text", "unclosed"),
+        [
+            ("```python\nx = 1\n", True),
+            ("```python\nx = 1\n~~~\n", True),
+            ("```a`b\n\n{x}\n\n```\n", True),
+            ("```python\nx = 1\n```\n", False),
+            ("```\nx = 1\n````\n", False),
+            ("1. Update:\n\n   ```python\n   x = 1\n   ```\n", False),
+        ],
+        ids=[
+            "never-closed",
+            "closed-by-the-other-character",
+            "backtick-in-the-info-string",
+            "closed",
+            "closed-by-a-longer-run",
+            "indented-in-a-list",
+        ],
+    )
+    def test_unclosed_fence_is_detected(
+        self, textsafety: ModuleType, text: str, unclosed: bool
+    ) -> None:
+        assert textsafety.has_unclosed_fence(text) is unclosed
 
     @pytest.mark.parametrize(
         ("text", "inert"),

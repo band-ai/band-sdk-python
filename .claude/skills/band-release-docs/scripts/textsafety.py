@@ -18,13 +18,18 @@ CREDENTIAL_PATTERNS = (
 URL_PATTERN = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
 URL_FINDING = "a URL"
 
-# A ``` or ~~~ fenced block, indented or not (as in a list item).
-FENCE = r"^[ \t]*(?P<fence>```|~~~)[^\n]*\n.*?^[ \t]*(?P=fence)[ \t]*$"
+# A ``` or ~~~ fenced block, indented or not (as in a list item). As in
+# CommonMark, a backtick fence's info string holds no backtick, and a longer run
+# of the same character closes it.
+FENCE_OPENING = r"^[ \t]*(?P<fence>`{3,}(?=[^`\n]*$)|~{3,})"
+FENCE = FENCE_OPENING + r"[^\n]*\n.*?^[ \t]*(?P=fence)(?:(?<=`)`*|(?<=~)~*)[ \t]*$"
 FENCE_PATTERN = re.compile(FENCE, re.DOTALL | re.MULTILINE)
-# A fenced block, or an inline code span closed by a backtick run of equal
-# length; like CommonMark's, a span never crosses a blank line.
+UNCLOSED_FENCE = re.compile(FENCE_OPENING, re.MULTILINE)
+# Like CommonMark's, a code span never crosses a blank line, list item, or heading.
+BLOCK_BREAK = r"\n[ \t]*(?:\n|(?:[-*+]|#{1,6}|\d+[.)])(?:[ \t]|$))"
+# A fenced block, or an inline code span closed by a backtick run of equal length.
 CODE_PATTERN = re.compile(
-    FENCE + r"|(?<!`)(?P<ticks>`+)(?!`)(?:(?!\n[ \t]*\n).)+?(?<!`)(?P=ticks)(?!`)",
+    FENCE + rf"|(?<!`)(?P<ticks>`+)(?!`)(?:(?!{BLOCK_BREAK}).)+?(?<!`)(?P=ticks)(?!`)",
     re.DOTALL | re.MULTILINE,
 )
 # A backslash is escaped too, or it would cancel the escape that follows it.
@@ -64,6 +69,11 @@ def mdx_text(text: str) -> str:
 def without_fenced_code(text: str) -> str:
     """Blank every fenced block's body, keeping its fences and the line count."""
     return FENCE_PATTERN.sub(blank_fence_body, text)
+
+
+def has_unclosed_fence(text: str) -> bool:
+    """Whether a fence never closes, so CommonMark renders the rest of the file as code."""
+    return UNCLOSED_FENCE.search(FENCE_PATTERN.sub("", text)) is not None
 
 
 def blank_fence_body(fence: re.Match[str]) -> str:

@@ -22,8 +22,19 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from releasedata import Category, Item, ReleaseNotes
-from textsafety import mdx_text, pr_body_text, without_fenced_code
-from validateentry import CATEGORY_TAGS, TAG_ORDER, parse_tags, validate
+from textsafety import (
+    has_unclosed_fence,
+    mdx_text,
+    pr_body_text,
+    without_fenced_code,
+)
+from validateentry import (
+    CATEGORY_TAGS,
+    TAG_ORDER,
+    parse_tags,
+    release_subtitle,
+    validate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +44,7 @@ BREAKING_TAG = CATEGORY_TAGS[Category.REMOVED][0]
 FRONTMATTER_FENCE = "---"
 TAGS_LINE = re.compile(r"^tags:\s*\[(.*)\]\s*$")
 # A release block's opening line, `## <SDK> <version>`, for any SDK.
-RELEASE_SUBTITLE = re.compile(r"^## .+ \d+\.\d+\.\d+\s*$")
+RELEASE_SUBTITLE = re.compile(r"^## (?P<label>.+) (?P<version>\d+\.\d+\.\d+)\s*$")
 
 
 class EntryError(ValueError):
@@ -83,7 +94,7 @@ def category_block(notes: ReleaseNotes, category: Category) -> list[str]:
 
 
 def subtitle(notes: ReleaseNotes) -> str:
-    return f"## {notes.product.label} {notes.version}"
+    return f"## {release_subtitle(notes.product.label, notes.version)}"
 
 
 def render_standalone(notes: ReleaseNotes) -> str:
@@ -98,6 +109,8 @@ def render_standalone(notes: ReleaseNotes) -> str:
 def checked_standalone(notes: ReleaseNotes) -> str:
     """Render the standalone entry and fail unless it passes the validator."""
     text = render_standalone(notes)
+    if has_unclosed_fence(text):
+        raise EntryError("a code fence in the breaking block is never closed")
     with tempfile.TemporaryDirectory() as scratch:
         path = entry_path(Path(scratch), notes)
         # The vendored validator reads `#` and `- ` lines inside code fences as
@@ -123,8 +136,8 @@ def body_start(lines: list[str]) -> int:
     return lines.index(FRONTMATTER_FENCE, 1) + 1
 
 
-def body(lines: list[str]) -> list[str]:
-    """The lines after the frontmatter, without leading blank lines."""
+def entry_body(lines: list[str]) -> list[str]:
+    """Return the lines after the frontmatter, without leading blank lines."""
     rest = lines[body_start(lines) :]
     first = next((index for index, line in enumerate(rest) if line.strip()), len(rest))
     return rest[first:]
@@ -140,18 +153,41 @@ def merged_tags(lines: list[str], notes: ReleaseNotes) -> list[str]:
     return [tag for tag in TAG_ORDER if tag in known] + list(dict.fromkeys(products))
 
 
+def version_key(version: str) -> tuple[int, ...]:
+    return tuple(map(int, version.split(".")))
+
+
+def newer_releases(lines: list[str], notes: ReleaseNotes) -> list[str]:
+    """This product's release subtitles in ``lines`` newer than ``notes``."""
+    ours = version_key(notes.version)
+    matches = [RELEASE_SUBTITLE.match(line) for line in lines]
+    return [
+        match.group(0)
+        for match in matches
+        if match
+        and match["label"] == notes.product.label
+        and version_key(match["version"]) > ours
+    ]
+
+
 def check_mergeable(existing: list[str], notes: ReleaseNotes) -> None:
-    """Refuse a file that already holds this release, or whose releases have no subtitle."""
+    """Refuse a file that holds this release or a newer one, or has no subtitles."""
     if subtitle(notes) in existing:
         raise EntryError(
             f"the date file already holds '{subtitle(notes)}'; "
             "start again from a fresh worktree"
         )
-    earlier = body(existing)
+    earlier = entry_body(existing)
     if earlier and not RELEASE_SUBTITLE.match(earlier[0]):
         raise EntryError(
             "the date file's entries predate version subtitles; "
             "add their '## <SDK> <version>' subtitle first"
+        )
+    newer = newer_releases(existing, notes)
+    if newer:
+        raise EntryError(
+            f"the date file already holds the newer {newer}; releases are listed "
+            "newest first, so add this block below them by hand"
         )
 
 
@@ -160,8 +196,8 @@ def merge_entry(existing: str, notes: ReleaseNotes, standalone: str) -> str:
     lines = existing.splitlines()
     tags = merged_tags(lines, notes)
     frontmatter = [FRONTMATTER_FENCE, tags_line(tags), FRONTMATTER_FENCE]
-    ours = body(standalone.splitlines())
-    return "\n".join([*frontmatter, "", *ours, "", *body(lines)]) + "\n"
+    ours = entry_body(standalone.splitlines())
+    return "\n".join([*frontmatter, "", *ours, "", *entry_body(lines)]) + "\n"
 
 
 def is_subsequence(needles: list[str], haystack: list[str]) -> bool:
@@ -175,7 +211,7 @@ def check_merge(existing: str, merged: str, standalone: str) -> None:
     after = merged.splitlines()
     if not is_subsequence(before, after):
         raise EntryError("the merge dropped or reordered an existing line")
-    ours = [line for line in body(standalone.splitlines()) if line.strip()]
+    ours = [line for line in entry_body(standalone.splitlines()) if line.strip()]
     missing = [line for line in ours if line not in after]
     if missing:
         raise EntryError(f"the merge lost our lines: {missing}")
@@ -243,8 +279,9 @@ def merge_into(
     check_mergeable(existing.splitlines(), kept)
     merged = merge_entry(existing, kept, standalone) if existing else standalone
     check_merge(existing, merged, standalone)
-    path.write_text(merged, encoding="utf-8", newline="")
+    # The PR body goes first so a bad --pr-body path leaves the date file untouched.
     body.write_text(pr_body(kept, held), encoding="utf-8", newline="")
+    path.write_text(merged, encoding="utf-8", newline="")
     return path
 
 

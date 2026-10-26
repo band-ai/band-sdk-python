@@ -2,8 +2,8 @@
 
 Single source of truth for entries written into a Fern docs repo's
 `fern/changelog/<surface>/` directory. `scripts/validateentry.py` enforces
-every rule below mechanically; prose here explains intent, the script decides
-pass/fail. When they disagree, the script is a bug — fix it, don't hand-wave the
+every rule below mechanically for one release block; prose here explains
+intent, the script decides pass/fail. When they disagree, the script is a bug — fix it, don't hand-wave the
 entry through.
 
 Derived from the 74 published entries in `thenvoi/fern` (`fern/changelog/**`),
@@ -130,5 +130,9 @@ python <this-skill>/scripts/validateentry.py <entry file> \
   --surface sdks --product-label "Python SDK" --product-tag python \
   --release-date <YYYY-MM-DD> --release-version <X.Y.Z>
 ```
+
+It checks one release block, so run it on the standalone entry, as
+`renderentry.py` does. A date file holding several releases fails it; the merge
+keeps the earlier blocks unchanged and refuses to put a release above a newer one.
 
 Run it before `fern check`, and never open the PR while either one fails.
