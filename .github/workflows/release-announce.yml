@@ -25,8 +25,9 @@
 # Re-announcing: a live run stops before Claude when the release already
 # carries release-notes.json. Delete that asset, then dispatch again.
 #
-# Limits live in env below; job-level timeout-minutes cannot read env, so each
-# job carries a literal 10-minute backstop (30 for changelog).
+# The changelog job's env holds the model, product, and Claude limits;
+# job-level timeout-minutes cannot read env, so each job carries a literal
+# 10-minute backstop (30 for changelog).
 
 name: release-announce
 
@@ -61,14 +62,7 @@ concurrency:
 env:
   TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
   MODE: ${{ inputs.mode || 'live' }}
-  ANTHROPIC_MODEL: ${{ inputs.model || vars.ANTHROPIC_MODEL || 'sonnet' }}
-  PRODUCT_NAME: Band Python SDK
-  PRODUCT_LABEL: Python SDK
-  PRODUCT_TAG: python
   SCRIPTS: .claude/skills/band-release-docs/scripts
-  CHANGELOG_MAX_TURNS: 30
-  CHANGELOG_MAX_BUDGET_USD: 3
-  CHANGELOG_TIMEOUT_MINUTES: 20
 
 jobs:
   collect:
@@ -129,6 +123,14 @@ jobs:
     if: needs.collect.outputs.proceed == 'true' && needs.collect.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      ANTHROPIC_MODEL: ${{ inputs.model || vars.ANTHROPIC_MODEL || 'sonnet' }}
+      PRODUCT_NAME: Band Python SDK
+      PRODUCT_LABEL: Python SDK
+      PRODUCT_TAG: python
+      CHANGELOG_MAX_TURNS: 30
+      CHANGELOG_MAX_BUDGET_USD: 3
+      CHANGELOG_TIMEOUT_MINUTES: 20
     outputs:
       has_entry: ${{ steps.build.outputs.has_entry }}
     steps:
@@ -217,11 +219,11 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Runs in every mode so slack and discord can simply need it; only live
+  # attaches.
   bundle:
     needs: changelog
-    # Job-level if cannot read env; inputs.mode is empty on workflow_run, so
-    # automatic runs attach.
-    if: needs.changelog.outputs.has_entry == 'true' && inputs.mode != 'dry-run'
+    if: needs.changelog.outputs.has_entry == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -244,13 +246,7 @@ jobs:
         run: echo "Test mode, so the bundle stays a workflow artifact." >> "$GITHUB_STEP_SUMMARY"
 
   slack:
-    needs: [changelog, bundle]
-    # Without a status function a skipped bundle (dry-run) would skip this
-    # job too; a failed bundle still blocks posting.
-    if: >-
-      ${{ !cancelled() && needs.changelog.outputs.has_entry == 'true' &&
-      (needs.bundle.result == 'success' ||
-       (needs.bundle.result == 'skipped' && inputs.mode == 'dry-run')) }}
+    needs: bundle
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -284,11 +280,7 @@ jobs:
         run: uv run --script "$SCRIPTS/postslack.py" --message-file message.txt
 
   discord:
-    needs: [changelog, bundle]
-    if: >-
-      ${{ !cancelled() && needs.changelog.outputs.has_entry == 'true' &&
-      (needs.bundle.result == 'success' ||
-       (needs.bundle.result == 'skipped' && inputs.mode == 'dry-run')) }}
+    needs: bundle
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
