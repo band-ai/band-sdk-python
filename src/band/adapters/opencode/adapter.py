@@ -230,7 +230,8 @@ class McpRegistration:
 
     client: OpencodeClientProtocol
     url: str
-    headers: dict[str, str]
+    # Kept out of repr: it carries the Band MCP server's bearer token.
+    headers: dict[str, str] = field(repr=False)
 
 
 class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):

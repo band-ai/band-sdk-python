@@ -32,9 +32,10 @@ MCP_SERVERS_KEY = "mcpServers"
 # The ``type`` of an in-process server the SDK itself serves.
 SDK_SERVER_TYPE = "sdk"
 REMOVAL_FAILED_LOG = "Could not remove Claude MCP config directory %s"
+DISCARD_FAILED_LOG = "Could not delete Claude MCP config file %s"
 REPLACED_DIRECTORY_LOG = (
-    "Claude MCP config directory %s is no longer private to this user; "
-    "writing to a new one"
+    "Claude MCP config directory %s is no longer the one this process "
+    "created; writing to a new one"
 )
 
 
@@ -47,16 +48,17 @@ class McpConfigFiles:
     """One ``<room_id>.json`` per room in a directory private to this user.
 
     The directory is created on the first write (``mkdtemp``: mode ``0700`` on
-    POSIX; on Windows under the user's own temp directory), created afresh
-    once it is no longer private (a temp reaper removed it while the agent
-    idled, and another user may have taken its name), and removed by
-    ``remove()``; ``discard()`` deletes a disposed room's file. A room's file
-    is replaced whole for each CLI start, so a failed write never leaves a
+    POSIX; on Windows under the user's own temp directory) and reused only
+    while it is still that directory (a temp reaper may remove it while the
+    agent idles, and something else may then take its name); ``remove()``
+    deletes it and ``discard()`` a disposed room's file. A room's file is
+    replaced whole for each CLI start, so a failed write never leaves a
     partial file behind.
     """
 
     def __init__(self) -> None:
         self._directory: Path | None = None
+        self._identity: DirectoryIdentity | None = None
 
     def write(self, room_id: str, servers: Mapping[str, Any]) -> Path:
         """Write ``room_id``'s MCP servers; return the file's path."""
@@ -73,9 +75,15 @@ class McpConfigFiles:
         return path
 
     def discard(self, room_id: str) -> None:
-        """Delete ``room_id``'s file, if one was written."""
-        if self._directory is not None:
-            (self._directory / self._file_name(room_id)).unlink(missing_ok=True)
+        """Delete ``room_id``'s file, if one was written; one that cannot be
+        deleted now goes with ``remove()``."""
+        if self._directory is None:
+            return
+        path = self._directory / self._file_name(room_id)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(DISCARD_FAILED_LOG, path, exc_info=True)
 
     def remove(self) -> None:
         """Delete the directory and every file in it."""
@@ -96,26 +104,25 @@ class McpConfigFiles:
 
     def _ensure_directory(self) -> Path:
         directory = self._directory
-        if directory is not None and _is_private_directory(directory):
+        if directory is not None and _identity(directory) == self._identity:
             return directory
         if directory is not None and os.path.lexists(directory):
-            # Reaped and then taken by another user, or no longer ours alone.
             logger.warning(REPLACED_DIRECTORY_LOG, directory)
-        self._directory = Path(tempfile.mkdtemp(prefix=MCP_CONFIG_DIR_PREFIX))
-        return self._directory
+        created = Path(tempfile.mkdtemp(prefix=MCP_CONFIG_DIR_PREFIX))
+        self._directory, self._identity = created, _identity(created)
+        return created
 
 
-def _is_private_directory(path: Path) -> bool:
-    """Whether ``path`` is a directory only this user can open, as ``mkdtemp``
-    made it."""
+# A directory's device, inode and owner.
+DirectoryIdentity = tuple[int, int, int]
+
+
+def _identity(path: Path) -> DirectoryIdentity | None:
+    """``path``'s identity while it is a directory itself, not a link to one."""
     try:
         status = path.lstat()
     except FileNotFoundError:
-        return False
+        return None
     if not stat.S_ISDIR(status.st_mode):
-        return False
-    if os.name == "nt":
-        # The user's own temp directory, which other users cannot write.
-        return True
-    # Only the permission bits: a setgid parent passes its setgid bit down.
-    return status.st_uid == os.getuid() and status.st_mode & 0o077 == 0
+        return None
+    return status.st_dev, status.st_ino, status.st_uid

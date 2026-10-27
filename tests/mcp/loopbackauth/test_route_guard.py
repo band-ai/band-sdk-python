@@ -6,6 +6,7 @@ from http import HTTPStatus
 
 import pytest
 
+from band.integrations.mcp.local_server import LOCAL_MCP_AUTH_SCHEME
 from tests.mcp.loopbackauth.kit import (
     HEALTH,
     MULTI_ROOM_HTTP,
@@ -27,33 +28,55 @@ GUARDED_ROUTES = {
     "multi-room-sse": MULTI_ROOM_SSE,
 }
 
+
+def accepted(status: HTTPStatus) -> tuple[HTTPStatus, None]:
+    """An answer that lets the request through, with no challenge."""
+    return status, None
+
+
+# A refusal names the scheme a client can retry with.
+REFUSED = (HTTPStatus.UNAUTHORIZED, LOCAL_MCP_AUTH_SCHEME)
+
 CASES = [
-    pytest.param(Credential.VALID, ROOM_HTTP, HTTPStatus.OK, id="valid-room-http"),
-    pytest.param(Credential.VALID, ROOM_SSE, HTTPStatus.OK, id="valid-room-sse"),
     pytest.param(
-        Credential.VALID, SSE_MESSAGE, HTTPStatus.ACCEPTED, id="valid-sse-message"
+        Credential.VALID, ROOM_HTTP, accepted(HTTPStatus.OK), id="valid-room-http"
     ),
     pytest.param(
-        Credential.VALID, MULTI_ROOM_HTTP, HTTPStatus.OK, id="valid-multi-room-http"
+        Credential.VALID, ROOM_SSE, accepted(HTTPStatus.OK), id="valid-room-sse"
     ),
     pytest.param(
-        Credential.VALID, MULTI_ROOM_SSE, HTTPStatus.OK, id="valid-multi-room-sse"
+        Credential.VALID,
+        SSE_MESSAGE,
+        accepted(HTTPStatus.ACCEPTED),
+        id="valid-sse-message",
+    ),
+    pytest.param(
+        Credential.VALID,
+        MULTI_ROOM_HTTP,
+        accepted(HTTPStatus.OK),
+        id="valid-multi-room-http",
+    ),
+    pytest.param(
+        Credential.VALID,
+        MULTI_ROOM_SSE,
+        accepted(HTTPStatus.OK),
+        id="valid-multi-room-sse",
     ),
     pytest.param(
         Credential.LOWERCASE_SCHEME,
         ROOM_HTTP,
-        HTTPStatus.OK,
+        accepted(HTTPStatus.OK),
         id="lowercase-scheme-room-http",
     ),
     *(
-        pytest.param(
-            credential, route, HTTPStatus.UNAUTHORIZED, id=f"{credential}-{name}"
-        )
+        pytest.param(credential, route, REFUSED, id=f"{credential}-{name}")
         for credential in REFUSED_CREDENTIALS
         for name, route in GUARDED_ROUTES.items()
     ),
     *(
-        pytest.param(credential, HEALTH, HTTPStatus.OK, id=f"{credential}-health")
+        pytest.param(
+            credential, HEALTH, accepted(HTTPStatus.OK), id=f"{credential}-health"
+        )
         for credential in Credential
     ),
 ]
@@ -61,14 +84,14 @@ CASES = [
 
 class TestRouteGuard:
     @pytest.mark.timeout(90)
-    @pytest.mark.parametrize(("credential", "route", "expected_status"), CASES)
+    @pytest.mark.parametrize(("credential", "route", "expected"), CASES)
     async def test_route_answers_the_credential(
         self,
         credential: Credential,
         route: Route,
-        expected_status: HTTPStatus,
+        expected: tuple[HTTPStatus, str | None],
     ) -> None:
         async with guarded_servers() as guarded:
-            status = await guarded.status(route, credential)
+            answer = await guarded.answer(route, credential)
 
-        assert status == expected_status
+        assert answer == expected

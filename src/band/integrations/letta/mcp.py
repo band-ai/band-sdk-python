@@ -132,6 +132,10 @@ class LettaMCPBridge:
         )
 
     @property
+    def _self_hosted(self) -> bool:
+        return self._config.mode == "self_host"
+
+    @property
     def silent_reporting_tools(self) -> frozenset[str]:
         """Tools not reported as tool_call/tool_result execution events.
 
@@ -206,7 +210,7 @@ class LettaMCPBridge:
                         effective_name,
                         server.id,
                     )
-                    if self._config.mode == "self_host":
+                    if self._self_hosted:
                         # The row may carry an earlier process's token, and
                         # Letta's read-back of headers is not relied on.
                         await self._point_registration_at(client, server.id, server_url)
@@ -367,7 +371,7 @@ class LettaMCPBridge:
             existing_url,
             server_url,
         )
-        if self._config.mode == "self_host" and self._config.server_name is None:
+        if self._self_hosted and self._config.server_name is None:
             return None
         raise RuntimeError(
             f"MCP registration {name!r} points at "

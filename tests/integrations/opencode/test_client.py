@@ -15,6 +15,7 @@ from urllib.parse import quote
 import httpx
 import pytest
 
+from band.integrations.mcp.local_server import local_mcp_auth_headers
 from band.integrations.opencode import ApprovalReply
 from band.integrations.opencode.client import HttpOpencodeClient
 from tests.integrations.opencode.fakeserver import FakeOpencodeServer
@@ -223,7 +224,7 @@ class TestHttpOpencodeClient:
     ) -> None:
         client = make_client(fake_server)
         try:
-            headers = {"Authorization": "Bearer band-token"}
+            headers = local_mcp_auth_headers("band-token")
             await client.register_mcp_server(
                 name="band", url="http://127.0.0.1:9999/sse", headers=headers
             )

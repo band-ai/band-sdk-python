@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from band.integrations.mcp.engine import MCPToolRegistration
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_AUTH_HEADER,
+    LOCAL_MCP_CHALLENGE_HEADER,
     LOCAL_MCP_HEALTH_PATH,
     LOCAL_MCP_HOST,
     LOCAL_MCP_HTTP_PATH,
@@ -179,8 +180,18 @@ class GuardedServers:
         credential: Credential,
         body: dict[str, Any] | None = None,
     ) -> int:
-        """The status ``route`` answers ``credential`` with; a streamed
-        response is closed once its status arrives."""
+        """The status ``route`` answers ``credential`` with."""
+        status, _ = await self.answer(route, credential, body)
+        return status
+
+    async def answer(
+        self,
+        route: Route,
+        credential: Credential,
+        body: dict[str, Any] | None = None,
+    ) -> tuple[int, str | None]:
+        """The status and auth challenge ``route`` answers ``credential``
+        with; a streamed response is closed once its head arrives."""
         async with self.http.stream(
             route.method,
             self.url(route),
@@ -190,7 +201,10 @@ class GuardedServers:
             ],
             json=body if body is not None else route.body,
         ) as response:
-            return response.status_code
+            return (
+                response.status_code,
+                response.headers.get(LOCAL_MCP_CHALLENGE_HEADER),
+            )
 
 
 def _guarded_server(recorded: list[str], *, room_bound: bool) -> LocalMCPServer:

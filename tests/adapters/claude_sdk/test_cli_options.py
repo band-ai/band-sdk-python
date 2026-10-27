@@ -140,7 +140,7 @@ class TestCliOptions:
         assert options.thinking.get("display") == display
 
     @pytest.mark.parametrize(
-        "flag", ["mcp-config", "effort", "settings", "dangerously-skip-permissions"]
+        "flag", [MCP_CONFIG_FLAG, "effort", "settings", "dangerously-skip-permissions"]
     )
     def test_extra_args_cannot_replace_adapter_owned_flags(self, flag: str) -> None:
         with pytest.raises(ValueError, match="adapter-owned CLI flags"):

@@ -66,6 +66,8 @@ LOCAL_MCP_HEALTH_PATH = "/healthz"
 LOCAL_MCP_ROOMS_PATH = "/rooms"
 LOCAL_MCP_AUTH_HEADER = "Authorization"
 LOCAL_MCP_AUTH_SCHEME = "Bearer"
+# The header a 401 names the expected scheme in.
+LOCAL_MCP_CHALLENGE_HEADER = "WWW-Authenticate"
 # How a refused request's route is logged: room ids and unserved paths masked.
 REDACTED_ROOM = "<room>"
 UNKNOWN_ROUTE = "<unknown>"
@@ -132,7 +134,7 @@ def _refusal(scope: Scope) -> ASGIApp:
     return PlainTextResponse(
         "Unauthorized",
         status_code=HTTP_401_UNAUTHORIZED,
-        headers={"WWW-Authenticate": LOCAL_MCP_AUTH_SCHEME},
+        headers={LOCAL_MCP_CHALLENGE_HEADER: LOCAL_MCP_AUTH_SCHEME},
     )
 
 
