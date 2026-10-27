@@ -4,10 +4,7 @@ services:
       context: ..
       dockerfile: band-bridge/Dockerfile
     env_file: .env
-    # REQUIRED: uncomment and set `command` to your entry point that
-    # registers handlers.  Without this, the container exits immediately
-    # with a usage message.
-    # command: ["python", "run.py"]
+    # The default entrypoint reads BAND_BRIDGE_AGENTS from the env file.
     ports:
       - "8080:8080"
     healthcheck:

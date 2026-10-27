@@ -90,17 +90,22 @@ def build_runner(
     forwarder: Forwarder | None = None,
     link: MagicMock | None = None,
     shutdown_event: asyncio.Event | None = None,
+    messages_only: bool = False,
+    max_concurrent_forwards: int = 32,
 ) -> tuple[AgentRunner, FakeForwarder, MagicMock]:
     fwd = forwarder if forwarder is not None else FakeForwarder()
     lnk = link if link is not None else make_link_mock()
     runner = AgentRunner(
-        agent_config=make_http_agent(agent_id=agent_id),
+        agent_config=make_http_agent(agent_id=agent_id).model_copy(
+            update={"messages_only": messages_only}
+        ),
         ws_url="wss://test",
         rest_url="https://test",
         forwarder=fwd,
         reconnect=ReconnectConfig(),
         shutdown_event=shutdown_event or asyncio.Event(),
         link=lnk,
+        max_concurrent_forwards=max_concurrent_forwards,
     )
     return runner, fwd, lnk  # type: ignore[return-value]
 
@@ -137,28 +142,6 @@ def rehydrating_runner(
     return runner, link
 
 
-class OrderTrackingForwarder:
-    """Forwarder that records start/end of each forward, with a delay.
-
-    Lets us observe whether forwards serialize or overlap by examining the
-    order of (start, end) events across calls.
-    """
-
-    def __init__(self, delay: float = 0.05) -> None:
-        self._delay = delay
-        self.events: list[tuple[str, str]] = []  # (kind, msg_id)
-        self.closed = False
-
-    async def forward(self, payload: dict[str, Any]) -> None:
-        msg_id = (payload.get("payload") or {}).get("id", "?")
-        self.events.append(("start", msg_id))
-        await asyncio.sleep(self._delay)
-        self.events.append(("end", msg_id))
-
-    async def close(self) -> None:
-        self.closed = True
-
-
 def control_signal(
     mode: str, *, scope: str, room_id: str | None, **kw: Any
 ) -> AgentControlPayload:
@@ -183,7 +166,7 @@ class HangingForwarder:
     async def forward(self, payload: dict[str, Any]) -> None:
         if self.hang:
             self.started.set()
-            await asyncio.sleep(120)
+            await asyncio.Event().wait()
         self.forwarded.append(payload)
 
     async def close(self) -> None:
@@ -202,7 +185,7 @@ class MultiRoomHangingForwarder:
         room_id = payload.get("room_id")
         if room_id in self.started:
             self.started[room_id].set()
-            await asyncio.sleep(120)
+            await asyncio.Event().wait()
         self.forwarded.append(payload)
 
     async def close(self) -> None:
@@ -222,3 +205,62 @@ async def drain_control_tasks(runner: Any) -> None:
     tasks = tuple(runner._control_tasks)
     if tasks:
         await asyncio.gather(*tasks)
+
+
+class GatedForwarder:
+    """Hold selected forwards and expose their actual ordering."""
+
+    def __init__(self, held: tuple[str, ...]) -> None:
+        self.started = {key: asyncio.Event() for key in held}
+        self.release = {key: asyncio.Event() for key in held}
+        self.events: list[tuple[str, str]] = []
+
+    async def forward(self, payload: dict[str, Any]) -> None:
+        key = payload["payload"]["id"]
+        self.events.append(("start", key))
+        if key in self.started:
+            self.started[key].set()
+            await self.release[key].wait()
+        self.events.append(("end", key))
+
+    async def close(self) -> None:
+        return
+
+
+class SettlingForwarder:
+    """Hold cancellation cleanup so ownership can be observed before settlement."""
+
+    def __init__(self, held: str) -> None:
+        self.held = held
+        self.started = asyncio.Event()
+        self.settling = asyncio.Event()
+        self.release_cleanup = asyncio.Event()
+        self.events: list[tuple[str, str]] = []
+
+    async def forward(self, payload: dict[str, Any]) -> None:
+        key = payload["payload"]["id"]
+        self.events.append(("start", key))
+        if key == self.held:
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.settling.set()
+                await self.release_cleanup.wait()
+        self.events.append(("end", key))
+
+    async def close(self) -> None:
+        return
+
+
+async def accept_event(
+    runner: AgentRunner, event: object, accepted: asyncio.Event
+) -> None:
+    """Signal entry; the runner registers before its first suspension."""
+    accepted.set()
+    await runner._safe_handle_event(event)
+
+
+def retained_rooms(runner: AgentRunner) -> set[str | None]:
+    """Project room bookkeeping for lifecycle assertions."""
+    return set(runner._forwards._rooms)

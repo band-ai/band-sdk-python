@@ -43,7 +43,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 USER appuser
 
-# Override this CMD in your docker-compose.yml or Dockerfile
-# to point to your own entry point that registers handlers.
-# Example: CMD ["python", "run.py"]
+# The bridge reads BAND_BRIDGE_AGENTS; no handler registration is needed.
 CMD ["python", "-m", "bridge_core"]

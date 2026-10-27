@@ -3,18 +3,111 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
+
+import pytest
 
 from tests.bridge.conftest import FakeForwarder
 from tests.bridge.kit import (
+    GatedForwarder,
     HangingForwarder,
+    SettlingForwarder,
+    accept_event,
     await_cancelled,
     build_runner,
     control_signal,
     make_message_event,
+    retained_rooms,
 )
 
 
 class TestControlCancelsInFlightForward:
+    @pytest.mark.parametrize("concurrency", [1, 32])
+    async def test_interrupt_cancels_holder_and_room_waiter(
+        self, concurrency: int
+    ) -> None:
+        forwarder = GatedForwarder(("a",))
+        runner, _, _ = build_runner(
+            forwarder=forwarder, max_concurrent_forwards=concurrency
+        )
+        async with asyncio.TaskGroup() as group, AsyncExitStack() as cleanup:
+            cleanup.callback(forwarder.release["a"].set)
+            a = group.create_task(runner._safe_handle_event(make_message_event("a")))
+            await forwarder.started["a"].wait()
+            accepted = asyncio.Event()
+            b = group.create_task(
+                accept_event(runner, make_message_event("b"), accepted)
+            )
+            await accepted.wait()
+            await runner._control.handle(
+                control_signal("interrupt", scope="room", room_id="r1")
+            )
+            await await_cancelled(a)
+            await await_cancelled(b)
+            assert forwarder.events == [("start", "a")]
+            assert retained_rooms(runner) == set()
+            await runner._safe_handle_event(make_message_event("fresh"))
+        assert forwarder.events == [
+            ("start", "a"),
+            ("start", "fresh"),
+            ("end", "fresh"),
+        ]
+
+    async def test_interrupt_cancels_waiter_for_global_capacity(self) -> None:
+        forwarder = GatedForwarder(("a",))
+        runner, _, _ = build_runner(forwarder=forwarder, max_concurrent_forwards=1)
+        async with asyncio.TaskGroup() as group, AsyncExitStack() as cleanup:
+            cleanup.callback(forwarder.release["a"].set)
+            a = group.create_task(
+                runner._safe_handle_event(make_message_event("a", "r1"))
+            )
+            await forwarder.started["a"].wait()
+            accepted = asyncio.Event()
+            b = group.create_task(
+                accept_event(runner, make_message_event("b", "r2"), accepted)
+            )
+            await accepted.wait()
+            await runner._control.handle(
+                control_signal("interrupt", scope="room", room_id="r2")
+            )
+            await await_cancelled(b)
+            assert retained_rooms(runner) == {"r1"}
+            assert forwarder.events == [("start", "a")]
+            forwarder.release["a"].set()
+            await a
+            await runner._safe_handle_event(make_message_event("fresh", "r2"))
+        assert forwarder.events == [
+            ("start", "a"),
+            ("end", "a"),
+            ("start", "fresh"),
+            ("end", "fresh"),
+        ]
+        assert retained_rooms(runner) == set()
+
+    async def test_new_work_waits_for_cancelled_handler_cleanup(self) -> None:
+        forwarder = SettlingForwarder("a")
+        runner, _, _ = build_runner(forwarder=forwarder)
+        async with asyncio.TaskGroup() as group, AsyncExitStack() as cleanup:
+            cleanup.callback(forwarder.release_cleanup.set)
+            a = group.create_task(runner._safe_handle_event(make_message_event("a")))
+            await forwarder.started.wait()
+            await runner._control.handle(
+                control_signal("interrupt", scope="room", room_id="r1")
+            )
+            await forwarder.settling.wait()
+            accepted = asyncio.Event()
+            b = group.create_task(
+                accept_event(runner, make_message_event("b"), accepted)
+            )
+            await accepted.wait()
+            assert retained_rooms(runner) == {"r1"}
+            assert forwarder.events == [("start", "a")]
+            forwarder.release_cleanup.set()
+            await await_cancelled(a)
+            await b
+        assert forwarder.events == [("start", "a"), ("start", "b"), ("end", "b")]
+        assert retained_rooms(runner) == set()
+
     async def test_interrupt_cancels_in_flight_forward(self) -> None:
         fwd = HangingForwarder()
         runner, _, _ = build_runner(forwarder=fwd)
@@ -95,4 +188,4 @@ class TestControlCancelsInFlightForward:
 
         assert isinstance(fwd, FakeForwarder)
         assert fwd.forwarded == []
-        assert "r1" not in runner._active_room_tasks
+        assert retained_rooms(runner) == set()

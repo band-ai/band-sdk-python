@@ -1,59 +1,60 @@
-"""Regression: a burst of events must not fan unbounded concurrent forwards. With ``max_concurrent_forwards=N``, at most N forwards run at once even if N+K tasks are spawned together."""
+"""Agent-wide capacity limits forwards without admitting same-room waiters."""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from contextlib import AsyncExitStack
 
 from tests.bridge.kit import (
+    GatedForwarder,
+    accept_event,
     build_runner,
     make_message_event,
 )
 
 
 class TestAgentRunnerConcurrencyCap:
-    """Regression: a burst of events must not fan unbounded concurrent
-    forwards. With ``max_concurrent_forwards=N``, at most N forwards run at
-    once even if N+K tasks are spawned together.
-    """
-
     async def test_semaphore_caps_in_flight_forwards(self) -> None:
-        in_flight = 0
-        peak = 0
-        gate = asyncio.Event()
-
-        class _BlockingForwarder:
-            async def forward(self, payload: dict[str, Any]) -> None:
-                nonlocal in_flight, peak
-                in_flight += 1
-                peak = max(peak, in_flight)
-                try:
-                    await gate.wait()
-                finally:
-                    in_flight -= 1
-
-            async def close(self) -> None:
-                return
-
-        fwd = _BlockingForwarder()
-        runner, _, _ = build_runner(forwarder=fwd)  # type: ignore[arg-type]
-        runner._forward_semaphore = asyncio.Semaphore(3)
-
-        # Fire 10 forwards on distinct rooms so per-room locks don't serialize
-        # them — only the semaphore can.
-        tasks = [
-            asyncio.create_task(
-                runner._safe_handle_event(
-                    make_message_event(message_id=f"m{i}", room_id=f"r{i}")
-                )
+        forwarder = GatedForwarder(("a", "b", "c"))
+        runner, _, _ = build_runner(forwarder=forwarder, max_concurrent_forwards=2)
+        async with asyncio.TaskGroup() as group, AsyncExitStack() as cleanup:
+            for release in forwarder.release.values():
+                cleanup.callback(release.set)
+            group.create_task(runner._safe_handle_event(make_message_event("a", "r1")))
+            await forwarder.started["a"].wait()
+            group.create_task(runner._safe_handle_event(make_message_event("b", "r2")))
+            await forwarder.started["b"].wait()
+            accepted = asyncio.Event()
+            group.create_task(
+                accept_event(runner, make_message_event("c", "r3"), accepted)
             )
-            for i in range(10)
-        ]
-        # Let the event loop start them all.
-        for _ in range(5):
-            await asyncio.sleep(0)
+            await accepted.wait()
+            assert forwarder.events == [("start", "a"), ("start", "b")]
+            forwarder.release["a"].set()
+            await forwarder.started["c"].wait()
+            assert forwarder.events == [
+                ("start", "a"),
+                ("start", "b"),
+                ("end", "a"),
+                ("start", "c"),
+            ]
 
-        assert peak == 3, f"expected peak=3, saw {peak}"
-
-        gate.set()
-        await asyncio.gather(*tasks)
+    async def test_room_waiter_does_not_block_another_room(self) -> None:
+        forwarder = GatedForwarder(("a", "b"))
+        runner, _, _ = build_runner(forwarder=forwarder, max_concurrent_forwards=2)
+        async with asyncio.TaskGroup() as group, AsyncExitStack() as cleanup:
+            for release in forwarder.release.values():
+                cleanup.callback(release.set)
+            group.create_task(runner._safe_handle_event(make_message_event("a", "r1")))
+            await forwarder.started["a"].wait()
+            queued = asyncio.Event()
+            group.create_task(
+                accept_event(runner, make_message_event("queued", "r1"), queued)
+            )
+            await queued.wait()
+            accepted = asyncio.Event()
+            group.create_task(
+                accept_event(runner, make_message_event("b", "r2"), accepted)
+            )
+            await accepted.wait()
+            assert forwarder.events == [("start", "a"), ("start", "b")]

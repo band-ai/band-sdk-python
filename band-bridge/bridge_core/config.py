@@ -18,11 +18,22 @@ import json
 import os
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 
 class HTTPTarget(BaseModel):
     """Forward events via HTTP POST to a plain URL."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    bearer_token: SecretStr | None = None
+
+    @field_validator("bearer_token")
+    @classmethod
+    def validate_bearer_token(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and not value.get_secret_value().strip():
+            raise ValueError("HTTPTarget.bearer_token must be non-empty")
+        return value
 
     type: Literal["http"] = "http"
     url: str
@@ -48,6 +59,8 @@ class HTTPTarget(BaseModel):
 
 class AgentCoreTarget(BaseModel):
     """Forward events via ``bedrock-agentcore:InvokeAgentRuntime``."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["agentcore"] = "agentcore"
     runtime_arn: str
@@ -91,9 +104,12 @@ class AgentConfig(BaseModel):
     ``api_key``) and forwards every event it receives to ``target``.
     """
 
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     agent_id: str
     api_key: str = Field(repr=False)
     target: Target
+    messages_only: bool = False
 
     @field_validator("agent_id")
     @classmethod
@@ -112,6 +128,8 @@ class AgentConfig(BaseModel):
 
 class BridgeConfig(BaseModel):
     """Bridge process configuration."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     agents: list[AgentConfig]
     ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"

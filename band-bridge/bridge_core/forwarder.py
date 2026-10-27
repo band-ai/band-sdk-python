@@ -16,7 +16,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
-from .config import AgentCoreTarget, HTTPTarget, Target
+from bridge_core.config import AgentCoreTarget, HTTPTarget, Target
 
 if TYPE_CHECKING:
     import httpx
@@ -53,6 +53,11 @@ class HTTPForwarder:
         self._target = target
         self._client = httpx_client
         self._owns_client = httpx_client is None
+        self._headers = (
+            {"Authorization": f"Bearer {target.bearer_token.get_secret_value()}"}
+            if target.bearer_token is not None
+            else {}
+        )
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -70,7 +75,12 @@ class HTTPForwarder:
 
     async def forward(self, payload: dict[str, Any]) -> None:
         client = self._get_client()
-        response = await client.post(self._target.url, json=payload)
+        response = await client.post(
+            self._target.url,
+            json=payload,
+            headers=self._headers,
+            timeout=self._target.timeout,
+        )
         response.raise_for_status()
 
     async def close(self) -> None:
