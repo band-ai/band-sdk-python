@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
@@ -119,7 +120,12 @@ def fernstate(scripts: Callable[[str], ModuleType]) -> ModuleType:
 
 @pytest.fixture
 def checkpatch(scripts: Callable[[str], ModuleType]) -> ModuleType:
-    return scripts("checkpatch")
+    """The edit check, once its MDX reader can run; CI installs it for every test job."""
+    module = scripts("checkpatch")
+    reader = module.MDX_READER.parent
+    if shutil.which("node") is None or not (reader / "node_modules").is_dir():
+        pytest.fail(f"Install Node.js, then the MDX reader: {module.INSTALL_READER}")
+    return module
 
 
 @pytest.fixture

@@ -260,6 +260,24 @@ class TestAnnounceWorkflow:
             if arg.startswith("--permission")
         } == permissions
 
+    def test_mdx_reader_installs_without_scripts_after_the_review(self) -> None:
+        install = step_position("fern", has_id("mdx-reader"))
+        assert step_position("fern", uses(CLAUDE_ACTION)) < install
+        assert install < step_position("fern", has_id("patch"))
+        assert (
+            step_run("mdx-reader") == 'npm ci --ignore-scripts --prefix "$SCRIPTS/mdx"'
+        )
+
+    def test_edit_check_step_outlasts_its_reader_timeout(
+        self, scripts: Callable[[str], ModuleType]
+    ) -> None:
+        """A stalled check fails in the step's time, leaving the job time to
+        file the changelog; the reader's own timeout reports why first."""
+        patch = job("fern")["steps"][step_position("fern", has_id("patch"))]
+        minutes = int(patch["timeout-minutes"])
+        assert scripts("checkpatch").READER_TIMEOUT_SECONDS < minutes * 60
+        assert minutes < int(job("fern")["timeout-minutes"])
+
     def test_write_token_follows_the_edit_check_and_skips_dry_run(self) -> None:
         write = step_position("fern", has_id("fern-write"))
         assert step_position("fern", has_id("patch")) < write

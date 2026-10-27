@@ -57,6 +57,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-packages --locked --extra dev
 
+      - name: Install the release-docs MDX reader
+        run: npm ci --ignore-scripts --prefix .claude/skills/band-release-docs/scripts/mdx
+
       - name: Store unit-test durations
         run: |
           uv run --all-packages pytest \

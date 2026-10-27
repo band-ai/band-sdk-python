@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -25,18 +27,31 @@ PRISTINE = {
     OUTSIDE: "# Rooms\n",
     PAGES_META: "{}\n",
 }
-# Keeps the existing import, JSX tag, and allowed link, and adds an allowed
-# link, an allowed autolink, a relative link, an allowed reference
+# Keeps the frontmatter and the existing import, JSX tag, and allowed link,
+# and adds an allowed bare URL, a relative link, an allowed reference
 # definition, and a snippet whose code imports, exports, links, and escapes a
 # backtick.
 ALLOWED_EDIT = DOCS_PAGE_TEXT.replace(
     "Create an agent with `Agent.create()`.",
-    "Create an agent with `Agent.start({})`; see https://github.com/band-ai/band-sdk-python,"
-    " <https://docs.band.ai/sdks>, and the [overview](../overview#agents).\n\n"
+    "Create an agent with `Agent.start({})`; see https://github.com/band-ai/band-sdk-python"
+    " and the [overview](../overview#agents).\n\n"
     '```python\nimport asyncio\nURL = "http://localhost:4000"\n```\n\n'
     "```bash\nexport BAND_API_KEY=key\necho \\`date\\`\n```\n\n"
     "[ref]: https://docs.band.ai/sdks",
 )
+CONSTRUCTS = (
+    'import { Note } from "@components";',
+    "<Note>Read this.</Note>",
+    "{props.version}",
+)
+# Page text that must never reach the logs.
+PRIVATE = "private-page-text"
+# MDX reads `<` as JSX, so it cannot parse a page holding an autolink.
+AUTOLINK = "<https://docs.band.ai/sdks>"
+# Keeps node from ever exiting. NODE_OPTIONS splits on spaces, so it has none.
+STALL = "setInterval(()=>{},1e9)"
+# An escaped YAML string Fern renders as the page's edit link.
+ESCAPED_EDIT_LINK = 'edit-this-page-url: "\\x68ttps://evil.example/x"\n'
 
 
 @pytest.fixture
@@ -51,6 +66,11 @@ def run(checkpatch: ModuleType, trees: tuple[Path, Path], tmp_path: Path) -> int
     pristine, edited = trees
     argv = [str(pristine), str(edited), "--out", str(tmp_path / "patch.json")]
     return checkpatch.main([*argv, "--outputs", str(tmp_path / "outputs")])
+
+
+def before_the_reader(script: str) -> str:
+    """Return ``NODE_OPTIONS`` that make node run ``script`` before the reader."""
+    return f"--import=data:text/javascript,{script}"
 
 
 def make_symlink(pristine: Path, edited: Path) -> None:
@@ -227,24 +247,145 @@ class TestCheckPatch:
         assert read_outputs(tmp_path / "outputs")["mergeable"] == "true"
 
     @pytest.mark.parametrize(
+        "added",
+        [
+            "Use `C:\\` for the path.",
+            "Wrapped `code\nspan` here.",
+            "Type \\`x\\` here.",
+            "- [a]: https://docs.band.ai/sdks\n\nSee [the docs][a].",
+            "- Run it:\n\n  ```bash\n  open [x](//evil.example)\n  ```",
+            "[repo](https://github.com/band-ai/x/../band-sdk-python)",
+            "[repo](https://github.com/band-ai/./band-sdk-python)",
+            "[org](https://github.com/band-ai/.)",
+        ],
+        ids=[
+            "code-span-ending-in-a-backslash",
+            "wrapped-code-span",
+            "escaped-backticks",
+            "definition-in-a-list-item",
+            "fence-in-a-list-item",
+            "dot-segment-inside-an-allowed-path",
+            "single-dot-segment-inside-an-allowed-path",
+            "trailing-single-dot-segment",
+        ],
+    )
+    def test_adding_code_or_an_allowed_link_stays_mergeable(
+        self,
+        checkpatch: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+        added: str,
+    ) -> None:
+        write_tree(trees[1], {OTHER_PAGE: f"# Overview\n\n{added}\n"})
+        assert run(checkpatch, trees, tmp_path) == 0
+        assert read_outputs(tmp_path / "outputs")["mergeable"] == "true"
+
+    @pytest.mark.parametrize(
+        "removed", CONSTRUCTS, ids=["import", "jsx-tag", "mdx-expression"]
+    )
+    def test_removing_a_construct_stays_mergeable(
+        self,
+        checkpatch: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+        removed: str,
+    ) -> None:
+        kept = [construct for construct in CONSTRUCTS if construct != removed]
+        write_tree(trees[0], {OTHER_PAGE: "\n\n".join(CONSTRUCTS) + "\n"})
+        write_tree(trees[1], {OTHER_PAGE: "\n\n".join(kept) + "\n"})
+        assert run(checkpatch, trees, tmp_path) == 0
+        assert read_outputs(tmp_path / "outputs")["mergeable"] == "true"
+
+    def test_editing_a_page_mdx_could_not_parse_files_the_pr_unmergeable(
+        self, checkpatch: ModuleType, trees: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        write_tree(trees[0], {OTHER_PAGE: f"# Overview\n\n{AUTOLINK}\n"})
+        write_tree(trees[1], {OTHER_PAGE: "# Overview\n\nhttps://docs.band.ai/sdks\n"})
+        assert run(checkpatch, trees, tmp_path) == 0
+        assert json.loads((tmp_path / "patch.json").read_text("utf-8")) == {
+            "files": [OTHER_PAGE],
+            "content_violations": [
+                {"path": OTHER_PAGE, "kind": checkpatch.ContentViolation.UNPARSED}
+            ],
+        }
+
+    @pytest.mark.parametrize(
+        ("variable", "value"),
+        [
+            ("PATH", os.devnull),
+            (
+                "NODE_OPTIONS",
+                before_the_reader(f"process.stderr.write('{PRIVATE}');process.exit(3)"),
+            ),
+            ("NODE_OPTIONS", before_the_reader("process.stdout.write('x')")),
+        ],
+        ids=["node-missing", "reader-exits-non-zero", "reader-writes-malformed-output"],
+    )
+    def test_reader_failure_stops_the_filing_without_logging_pages(
+        self,
+        checkpatch: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        capfd: pytest.CaptureFixture[str],
+        variable: str,
+        value: str,
+    ) -> None:
+        write_tree(trees[0], {OTHER_PAGE: f"---\ntitle: {PRIVATE}\n---\n\nOne.\n"})
+        write_tree(trees[1], {OTHER_PAGE: f"---\ntitle: {PRIVATE}\n---\n\nTwo.\n"})
+        monkeypatch.setenv(variable, value)
+        assert run(checkpatch, trees, tmp_path) == 1
+        assert (
+            read_outputs(tmp_path / "outputs"),
+            (tmp_path / "patch.json").exists(),
+        ) == ({}, False)
+        assert [record.levelno for record in caplog.records] == [logging.ERROR]
+        assert PRIVATE not in caplog.text
+        assert PRIVATE not in "".join(capfd.readouterr())
+
+    def test_a_stalled_reader_fails_without_quoting_pages(
+        self, checkpatch: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NODE_OPTIONS", before_the_reader(STALL))
+        with pytest.raises(checkpatch.ReaderError) as raised:
+            checkpatch.read_pages([PRIVATE], timeout=0)
+        assert PRIVATE not in str(raised.value)
+
+    def test_no_edits_need_no_reader(
+        self,
+        checkpatch: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("PATH", os.devnull)
+        assert run(checkpatch, trees, tmp_path) == 0
+        assert read_outputs(tmp_path / "outputs") == {
+            "changed": "0",
+            "mergeable": "true",
+        }
+
+    @pytest.mark.parametrize(
         ("edit", "kinds"),
         [
-            (DOCS_PAGE_TEXT + 'import { Secret } from "@x";\n', ["IMPORT"]),
+            (DOCS_PAGE_TEXT + '\nimport { Secret } from "@x";\n', ["IMPORT"]),
             (DOCS_PAGE_TEXT + "<Callout>Run it.</Callout>\n", ["JSX"]),
+            (DOCS_PAGE_TEXT + "<Tabs>\nMore.\n</Tabs>\n", ["JSX"]),
             (DOCS_PAGE_TEXT.replace("<Tabs>", "<Tabs onClick={go}>"), ["JSX"]),
             (DOCS_PAGE_TEXT + '{globalThis.fetch("/x")}\n', ["JSX"]),
             (
                 DOCS_PAGE_TEXT + "\\`<Evil src={x} />\\`\n",
-                ["JSX", "ESCAPED_BACKTICK"],
+                ["JSX"],
             ),
             (
                 DOCS_PAGE_TEXT + "\\`[x](https://evil.example)\\`\n",
-                ["LINK", "ESCAPED_BACKTICK"],
+                ["LINK"],
             ),
             (
                 DOCS_PAGE_TEXT
                 + "Use `C:\\` then [docs](https://evil.example) and `x`.\n",
-                ["ESCAPED_BACKTICK"],
+                ["LINK"],
             ),
             (DOCS_PAGE_TEXT + "See https://band.ai.example.com/x.\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "See www.example.com.\n", ["LINK"]),
@@ -259,41 +400,79 @@ class TestCheckPatch:
                 DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/%2E%2e/evil)\n",
                 ["LINK"],
             ),
-            (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/x/..)\n", ["LINK"]),
-            (DOCS_PAGE_TEXT + "[docs]: http://evil.example\n", ["LINK"]),
+            (
+                DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/./../evil)\n",
+                ["LINK"],
+            ),
+            (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/..)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/..?x)\n", ["LINK"]),
+            (
+                DOCS_PAGE_TEXT + "[pkg](https://pypi.org/project/band-sdk/..#a)\n",
+                ["LINK"],
+            ),
+            (DOCS_PAGE_TEXT + "\n[d]: http://evil.example\n\nSee [d].\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "[the guide](\n//evil.example/x)\n", ["LINK"]),
-            (DOCS_PAGE_TEXT + "[g]:\n//evil.example/x\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "\n[g]:\n//evil.example/x\n\nSee [g].\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "- [a]: //evil.example\n\nSee [docs][a].\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "> [a]: //evil.example\n\nSee [docs][a].\n", ["LINK"]),
             (
-                DOCS_PAGE_TEXT + "[a\\]b]: //evil.example\n\nSee [docs][a\\]b].\n",
+                DOCS_PAGE_TEXT + "\n[a\\]b]: //evil.example\n\nSee [docs][a\\]b].\n",
                 ["LINK"],
             ),
             (
                 DOCS_PAGE_TEXT + "Intro `one\n***\n[x](//evil.example) two` end.\n",
-                ["WRAPPED_CODE"],
+                ["LINK"],
             ),
             (
                 DOCS_PAGE_TEXT + "Intro `one\n---\n[x](//evil.example) two` end.\n",
-                ["WRAPPED_CODE"],
+                ["LINK"],
             ),
             (
                 DOCS_PAGE_TEXT + "Intro `one\n> [x](//evil.example) two` end.\n",
-                ["WRAPPED_CODE"],
+                ["LINK"],
             ),
             (
                 DOCS_PAGE_TEXT + "Intro `one\n___\n<Danger /> two` end.\n",
-                ["WRAPPED_CODE"],
+                ["JSX"],
             ),
             (
                 DOCS_PAGE_TEXT
                 + "- item\n  ```\n  code\n[x](https://evil.example/)\n    ```\n",
-                ["INDENTED_FENCE"],
+                ["LINK"],
+            ),
+            (
+                DOCS_PAGE_TEXT + "Intro `one\n    ***\n[x](//evil.example) two` end.\n",
+                ["LINK"],
+            ),
+            (
+                DOCS_PAGE_TEXT + "Intro\n    ```\n```\n[x](//evil.example)\n```\n",
+                ["LINK"],
+            ),
+            (DOCS_PAGE_TEXT + "![logo](//evil.example/logo.png)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[x](java&#9;script:alert(1))\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[x](/\\evil.example)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[x](https://evil.example//docs.band.ai/x)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[x](https://[evil.example/x)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + f"{AUTOLINK}\n", ["UNPARSED"]),
+            (
+                DOCS_PAGE_TEXT.replace("---\n\n", ESCAPED_EDIT_LINK + "---\n\n"),
+                ["FRONTMATTER"],
+            ),
+            (
+                DOCS_PAGE_TEXT.replace(
+                    "---\n\n", 'logo:\n  light: "//evil.example/l.png"\n---\n\n'
+                ),
+                ["FRONTMATTER"],
+            ),
+            (
+                DOCS_PAGE_TEXT.replace("---\n\n", ESCAPED_EDIT_LINK + "---x\n\n"),
+                ["UNPARSED"],
             ),
         ],
         ids=[
             "import",
             "jsx-tag",
+            "another-copy-of-an-existing-jsx-tag",
             "jsx-attribute",
             "mdx-expression",
             "jsx-in-escaped-backticks",
@@ -309,7 +488,10 @@ class TestCheckPatch:
             "backslash-escaped-colon",
             "path-escaping-link",
             "percent-encoded-path-escape",
+            "single-dot-before-a-path-escape",
             "trailing-path-escape",
+            "path-escape-before-a-query",
+            "path-escape-before-a-fragment",
             "reference-definition",
             "link-split-across-lines",
             "reference-split-across-lines",
@@ -321,6 +503,17 @@ class TestCheckPatch:
             "code-span-into-a-blockquote",
             "jsx-in-a-code-span-across-a-break",
             "list-item-fence-hiding-a-link",
+            "code-span-across-an-indented-thematic-break",
+            "indented-fence-closer-after-a-paragraph",
+            "foreign-image",
+            "tab-inside-a-scheme",
+            "backslash-read-as-a-slash",
+            "allowed-site-in-a-foreign-path",
+            "malformed-host",
+            "not-mdx",
+            "frontmatter-edit-link",
+            "frontmatter-logo",
+            "frontmatter-micromark-does-not-close",
         ],
     )
     def test_content_breach_files_the_pr_unmergeable(

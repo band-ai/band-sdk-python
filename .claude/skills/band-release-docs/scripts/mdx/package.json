@@ -1,0 +1,17 @@
+{
+  "name": "band-release-docs-mdx",
+  "private": true,
+  "description": "Reads Fern docs pages with the MDX parser for checkpatch.py.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "remark-frontmatter": "5.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-mdx": "3.1.0",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5",
+    "unist-util-visit": "5.0.0"
+  }
+}

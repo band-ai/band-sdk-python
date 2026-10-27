@@ -4,32 +4,33 @@
 # ///
 """Check the docs review's edits to the Fern tree before anything is pushed.
 
-Compares the edited tree with a pristine copy. A path violation (a created,
-deleted, or renamed file, a symlink, a file outside the docs pages, a
-non-UTF-8 file, or too many pages) fails the command: nothing may be filed. A
-content violation (a new import, a new JSX tag, a link outside the allowed
-sites or one these checks cannot read, a new escaped backtick, code span
-wrapped across lines, or indented code fence, too many changed lines) only marks the docs PR
-do-not-merge. Writes the changed pages and content violations to ``--out`` and
-appends ``changed`` and ``mergeable`` to ``--outputs``. Logs counts and
-violation kinds only: the pages are private.
+Compares the edited tree with a pristine copy. A ``PathViolation`` fails the
+command: nothing may be filed. A ``ContentViolation`` only marks the docs PR
+do-not-merge. MDX's own parser reads the pages (``mdx/readmdx.mjs`` under
+Node; ``npm ci --ignore-scripts`` there first), so a construct counts exactly
+where it renders. Writes the changed pages and content violations to ``--out``
+and appends ``changed`` and ``mergeable`` to ``--outputs``. Fails, writing
+nothing, when the reader cannot read the pages. Logs counts and violation
+kinds only: the pages are private.
 """
 
 from __future__ import annotations
 
 import argparse
 import difflib
-import html
+import json
 import logging
 import re
+import subprocess
 from collections import Counter
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
+from pydantic import TypeAdapter, ValidationError
 from releasedata import MAX_REVIEWED_PAGES, Frozen, is_docs_page
 from stepoutputs import append_outputs
-from textsafety import CODE_PATTERN, URL_PATTERN, without_fenced_code
 
 logger = logging.getLogger(__name__)
 
@@ -41,23 +42,17 @@ ALLOWED_LINK_PREFIXES = (
     "https://github.com/band-ai/",
     "https://pypi.org/project/band-sdk/",
 )
-IMPORT_LINE = re.compile(r"^\s*(?:import|export)\b")
-# A whole MDX/JSX tag with its attributes, or an MDX `{expression}`;
-# `<https://...>` autolinks are not tags.
-MDX_CONSTRUCT = re.compile(r"<(?![\w+.-]+:)/?[A-Za-z][^>]*>|\{[^{}]*\}?")
-# A reference definition's start, in the one form these checks read.
-DEFINITION = r"^[ \t]*\[[^\]]+\]:"
-DEFINITION_START = re.compile(DEFINITION)
-# A Markdown link or reference-definition target, which may follow a line break.
-LINK_TARGET = re.compile(
-    rf"\]\(\s*<?([^)\s>]+)|{DEFINITION}\s*<?([^\s>]+)", re.MULTILINE
-)
+MDX_READER = Path(__file__).resolve().parent / "mdx" / "readmdx.mjs"
+INSTALL_READER = f"npm ci --ignore-scripts --prefix {MDX_READER.parent}"
+# Real pages read in well under a second, but micromark is quadratic on some
+# long lines, so a crafted page could otherwise stall the release job.
+READER_TIMEOUT_SECONDS = 60
 SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
-# CommonMark's backslash escapes: any ASCII punctuation character.
-BACKSLASH_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
-ESCAPED_BACKTICK = "\\`"
-# A fence inside a list item or blockquote; FENCE pairs fences by indent alone.
-INDENTED_FENCE = re.compile(r"^[ \t]+(?:`{3,}|~{3,})")
+# Browsers read an escaped dot in a path as a dot segment.
+ESCAPED_DOT = re.compile("%2e", re.IGNORECASE)
+# Browsers drop whitespace and controls from a URL and read a backslash as a
+# slash, so `java&#9;script:` or `/\host` can leave the page.
+UNREADABLE_TARGET = re.compile(r"[\x00-\x20\x7f\\]")
 
 
 class PathViolation(StrEnum):
@@ -73,9 +68,8 @@ class ContentViolation(StrEnum):
     IMPORT = "adds an import or export"
     JSX = "adds or changes a JSX tag or MDX expression"
     LINK = "links outside the allowed sites"
-    ESCAPED_BACKTICK = "escapes a backtick, which hides code spans from these checks"
-    WRAPPED_CODE = "wraps a code span across lines, which hides it from these checks"
-    INDENTED_FENCE = "indents a code fence, which can hide prose from these checks"
+    FRONTMATTER = "changes the page's frontmatter"
+    UNPARSED = "is not MDX these checks can read"
     TOO_LONG = f"changes more than {MAX_CHANGED_LINES} lines"
 
 
@@ -180,149 +174,110 @@ def changed_line_count(before: str, after: str) -> int:
     )
 
 
-def without_escaped_backticks(text: str) -> str:
-    """An escaped backtick renders as text, so it never opens a code span."""
-    return text.replace(ESCAPED_BACKTICK, "'")
+class ReaderError(RuntimeError):
+    """The MDX reader could not read the pages; says why without their text."""
 
 
-def prose_lines(text: str) -> list[str]:
-    """The page's lines outside code blocks and inline code."""
-    return CODE_PATTERN.sub("", without_escaped_backticks(text)).splitlines()
+class Page(Frozen):
+    """What MDX renders from a page outside code, and its raw frontmatter."""
+
+    frontmatter: str | None
+    targets: list[str]
+    tags: list[str]
+    expressions: list[str]
+    imports: list[str]
 
 
-def added_prose(before: str, after: str) -> list[str]:
-    return list((Counter(prose_lines(after)) - Counter(prose_lines(before))).elements())
+READER_OUTPUT = TypeAdapter(list[Page | None])
 
 
-def adds_escaped_backtick(before: str, after: str) -> bool:
-    """Whether a new line outside fenced code holds an escaped backtick.
+def read_pages(
+    texts: list[str], timeout: float = READER_TIMEOUT_SECONDS
+) -> list[Page | None]:
+    """Read each page with MDX: None marks a page MDX cannot parse.
 
-    ``prose_lines`` cannot tell an escaped backtick from a backslash closing a
-    code span, so content between two spans could escape every check.
+    Raise ``ReaderError`` when the reader fails or outlives ``timeout``
+    seconds; its stderr and output may quote the pages, so neither reaches
+    the error. Start no reader for no pages, so an edit-free run never
+    needs it.
     """
-
-    def lines(text: str) -> Counter[str]:
-        return Counter(without_fenced_code(text).splitlines())
-
-    return any(ESCAPED_BACKTICK in line for line in lines(after) - lines(before))
-
-
-def wrapped_code_spans(text: str) -> Counter[str]:
-    """Inline code spans crossing a line break.
-
-    A block break CommonMark ends the paragraph at (a thematic break, a setext
-    underline, a blockquote) leaves such a span unclosed, rendering its text.
-    """
-    return Counter(
-        span[0]
-        for span in CODE_PATTERN.finditer(without_escaped_backticks(text))
-        if span["ticks"] and "\n" in span[0]
-    )
-
-
-def adds_indented_fence(before: str, after: str) -> bool:
-    """Whether a new line opens or closes an indented code fence.
-
-    The block-stripping pattern ignores list and blockquote containers, so such
-    a fence can swallow following top-level prose that still renders.
-    """
-    added = Counter(after.splitlines()) - Counter(before.splitlines())
-    return any(INDENTED_FENCE.match(line) for line in added)
-
-
-def adds_wrapped_code_span(before: str, after: str) -> bool:
-    return bool(wrapped_code_spans(after) - wrapped_code_spans(before))
-
-
-def mdx_constructs(text: str) -> Counter[str]:
-    """Tags and expressions outside code; import lines have their own rule."""
-    kept = "\n".join(line for line in prose_lines(text) if not IMPORT_LINE.match(line))
-    return Counter(MDX_CONSTRUCT.findall(kept))
+    if not texts:
+        return []
+    try:
+        result = subprocess.run(
+            ["node", str(MDX_READER)],
+            input=json.dumps(texts),
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+            timeout=timeout,
+        )
+    except OSError:
+        raise ReaderError("could not start node") from None
+    except subprocess.TimeoutExpired:
+        raise ReaderError(f"did not finish within {timeout} seconds") from None
+    if result.returncode:
+        raise ReaderError(f"exited with code {result.returncode}")
+    try:
+        return READER_OUTPUT.validate_json(result.stdout)
+    except ValidationError:
+        raise ReaderError("wrote output this check cannot read") from None
 
 
 def is_allowed_url(url: str) -> bool:
-    """An absolute URL on an allowed site, with no step out of its path."""
-    path = url.lower().replace("%2e", ".")
-    return (
-        url.startswith(ALLOWED_LINK_PREFIXES)
-        and "/../" not in path
-        and not path.endswith("/..")
-    )
-
-
-def link_destination(target: str) -> str:
-    """The href MDX renders: character references and backslash escapes resolved."""
-    return BACKSLASH_ESCAPE.sub(r"\1", html.unescape(target))
+    """Tell whether a URL with a host resolves to a path on an allowed site."""
+    try:
+        path = urlsplit(url).path
+    except ValueError:
+        return False
+    # Resolving an absolute path drops its dot segments as browsers do; the
+    # leading `/.` keeps a path starting with `//` from naming another host.
+    resolved = urljoin(url, "/." + ESCAPED_DOT.sub(".", path))
+    return resolved.startswith(ALLOWED_LINK_PREFIXES)
 
 
 def is_allowed_target(target: str) -> bool:
     """A link target: a relative path or anchor, or an allowed URL."""
-    href = link_destination(target)
-    if href.startswith("//") or SCHEME.match(href):
-        return is_allowed_url(href)
+    if UNREADABLE_TARGET.search(target):
+        return False
+    if target.startswith("//") or SCHEME.match(target):
+        return is_allowed_url(target)
     return True
 
 
-def links(text: str) -> tuple[set[str], set[str]]:
-    """The bare URLs and the link targets in the page's prose."""
-    prose = "\n".join(prose_lines(text))
-    targets = {t for match in LINK_TARGET.findall(prose) for t in match if t}
-    return set(URL_PATTERN.findall(prose)), targets
+def adds(before: list[str], after: list[str]) -> bool:
+    """Tell whether ``after`` holds some item more times than ``before`` does."""
+    return bool(Counter(after) - Counter(before))
 
 
-def adds_unread_definition(before: str, after: str) -> bool:
-    """Whether a new line holds a reference definition ``LINK_TARGET`` cannot read.
-
-    A definition inside a list item or blockquote, or with an escaped bracket
-    in its label, still renders a link.
-    """
-    return any(
-        "]:" in line and not DEFINITION_START.match(line)
-        for line in added_prose(before, after)
-    )
-
-
-def new_links_allowed(before: str, after: str) -> bool:
-    """Every URL and link target the edit adds is allowed; existing ones stay."""
-    (urls_before, targets_before), (urls, targets) = links(before), links(after)
-    return (
-        all(map(is_allowed_url, urls - urls_before))
-        and all(map(is_allowed_target, targets - targets_before))
-        and not adds_unread_definition(before, after)
-    )
-
-
-def page_violations(path: str, before: str, after: str) -> tuple[list[Finding], int]:
-    """The content violations in one page's edit, and its changed-line count."""
-    count = changed_line_count(before, after)
-    added = added_prose(before, after)
+def page_violations(path: str, old: Page | None, new: Page | None) -> list[Finding]:
+    """List the content violations in one page's edit."""
+    if old is None or new is None:
+        return [Finding(path=path, kind=ContentViolation.UNPARSED)]
     kinds = []
-    if any(IMPORT_LINE.match(line) for line in added):
+    if old.frontmatter != new.frontmatter:
+        kinds.append(ContentViolation.FRONTMATTER)
+    if adds(old.imports, new.imports):
         kinds.append(ContentViolation.IMPORT)
-    if mdx_constructs(after) - mdx_constructs(before):
+    if adds(old.tags + old.expressions, new.tags + new.expressions):
         kinds.append(ContentViolation.JSX)
-    if not new_links_allowed(before, after):
+    if not all(map(is_allowed_target, set(new.targets) - set(old.targets))):
         kinds.append(ContentViolation.LINK)
-    if adds_escaped_backtick(before, after):
-        kinds.append(ContentViolation.ESCAPED_BACKTICK)
-    if adds_wrapped_code_span(before, after):
-        kinds.append(ContentViolation.WRAPPED_CODE)
-    if adds_indented_fence(before, after):
-        kinds.append(ContentViolation.INDENTED_FENCE)
-    return [Finding(path=path, kind=kind) for kind in kinds], count
+    return [Finding(path=path, kind=kind) for kind in kinds]
 
 
 def check_patch(pristine: Path, edited: Path) -> PatchCheck:
     files = changed_pages(pristine, edited)
-    violations: list[Finding] = []
-    total = 0
-    for path in files:
-        before = (pristine / path).read_text("utf-8")
-        after = (edited / path).read_text("utf-8")
-        found, count = page_violations(path, before, after)
-        violations += found
-        total += count
-    if total > MAX_CHANGED_LINES:
+    before = [(pristine / path).read_text("utf-8") for path in files]
+    after = [(edited / path).read_text("utf-8") for path in files]
+    pages = read_pages(before + after)
+    olds, news = pages[: len(files)], pages[len(files) :]
+    violations = [
+        finding
+        for path, old, new in zip(files, olds, news, strict=True)
+        for finding in page_violations(path, old, new)
+    ]
+    if sum(map(changed_line_count, before, after)) > MAX_CHANGED_LINES:
         violations.append(Finding(path=".", kind=ContentViolation.TOO_LONG))
     return PatchCheck(files=files, content_violations=violations)
 
@@ -346,6 +301,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             len(exc.findings),
             exc,
         )
+        return 1
+    except ReaderError as exc:
+        logger.error("The MDX reader %s (installed by: %s)", exc, INSTALL_READER)
         return 1
     args.out.write_text(check.model_dump_json(indent=2), encoding="utf-8")
     append_outputs(
