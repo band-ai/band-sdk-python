@@ -1,56 +1,48 @@
-"""Two events in the same room must serialize through the forwarder; two events in different rooms must overlap."""
+"""Room forwards serialize within a room and overlap across rooms."""
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 
 from tests.bridge.kit import (
-    OrderTrackingForwarder,
+    GatedForwarder,
+    Mark,
+    accept_event,
     build_runner,
     make_message_event,
 )
 
 
 class TestAgentRunnerPerRoomSerialization:
-    """Two events in the same room must serialize through the forwarder;
-    two events in different rooms must overlap.
-
-    """
-
     async def test_same_room_serializes(self) -> None:
-        fwd = OrderTrackingForwarder(delay=0.05)
-        runner, _, _ = build_runner(forwarder=fwd)
-
-        e1 = make_message_event(message_id="m1", room_id="room-X")
-        e2 = make_message_event(message_id="m2", room_id="room-X")
-
-        await asyncio.gather(
-            runner._safe_handle_event(e1),
-            runner._safe_handle_event(e2),
-        )
-
-        # With per-room serialization, one fully completes before the other
-        # starts. Reject any interleaving.
-        assert fwd.events in (
-            [("start", "m1"), ("end", "m1"), ("start", "m2"), ("end", "m2")],
-            [("start", "m2"), ("end", "m2"), ("start", "m1"), ("end", "m1")],
-        ), f"Expected serial ordering, got: {fwd.events}"
+        forwarder = GatedForwarder(("a", "b"))
+        runner, _, _ = build_runner(forwarder=forwarder)
+        async with asyncio.TaskGroup() as group, AsyncExitStack() as cleanup:
+            for release in forwarder.release.values():
+                cleanup.callback(release.set)
+            group.create_task(runner._safe_handle_event(make_message_event("a")))
+            await forwarder.started["a"].wait()
+            accepted = asyncio.Event()
+            group.create_task(accept_event(runner, make_message_event("b"), accepted))
+            await accepted.wait()
+            assert forwarder.events == [(Mark.START, "a")]
+            forwarder.release["a"].set()
+            await forwarder.started["b"].wait()
+            assert forwarder.events == [
+                (Mark.START, "a"),
+                (Mark.END, "a"),
+                (Mark.START, "b"),
+            ]
 
     async def test_different_rooms_overlap(self) -> None:
-        fwd = OrderTrackingForwarder(delay=0.05)
-        runner, _, _ = build_runner(forwarder=fwd)
-
-        e1 = make_message_event(message_id="m1", room_id="room-A")
-        e2 = make_message_event(message_id="m2", room_id="room-B")
-
-        await asyncio.gather(
-            runner._safe_handle_event(e1),
-            runner._safe_handle_event(e2),
-        )
-
-        # With different rooms, both forwards overlap: both start before
-        # either ends.
-        kinds = [e[0] for e in fwd.events]
-        assert kinds == ["start", "start", "end", "end"], (
-            f"Expected overlapping ordering, got: {fwd.events}"
-        )
+        forwarder = GatedForwarder(("a", "b"))
+        runner, _, _ = build_runner(forwarder=forwarder)
+        async with asyncio.TaskGroup() as group, AsyncExitStack() as cleanup:
+            for release in forwarder.release.values():
+                cleanup.callback(release.set)
+            group.create_task(runner._safe_handle_event(make_message_event("a", "r1")))
+            await forwarder.started["a"].wait()
+            group.create_task(runner._safe_handle_event(make_message_event("b", "r2")))
+            await forwarder.started["b"].wait()
+            assert forwarder.events == [(Mark.START, "a"), (Mark.START, "b")]

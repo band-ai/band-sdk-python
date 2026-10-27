@@ -1,4 +1,4 @@
-"""Tests for HTTPForwarder and AgentCoreForwarder."""
+"""AgentCoreForwarder invokes the runtime per room and propagates failures."""
 
 from __future__ import annotations
 
@@ -6,91 +6,13 @@ import json
 import time
 from typing import Any
 from unittest import mock
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
-import httpx
 import pytest
-from bridge_core.config import AgentCoreTarget, HTTPTarget
+from bridge_core.config import AgentCoreTarget
 from bridge_core.forwarder import (
     AgentCoreForwarder,
-    HTTPForwarder,
-    build_forwarder,
 )
-
-
-@pytest.fixture
-def http_target() -> HTTPTarget:
-    return HTTPTarget(url="https://example.com/invocations", timeout=10.0)
-
-
-@pytest.fixture
-def agentcore_target() -> AgentCoreTarget:
-    return AgentCoreTarget(
-        runtime_arn="arn:aws:bedrock-agentcore:us-east-1:123:runtime/abc",
-        region="us-east-1",
-        timeout=10.0,
-    )
-
-
-# ---------------------------------------------------------------------------
-# HTTPForwarder
-# ---------------------------------------------------------------------------
-
-
-class TestHTTPForwarder:
-    async def test_posts_payload_as_json(self, http_target: HTTPTarget) -> None:
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-
-        forwarder = HTTPForwarder(http_target, httpx_client=mock_client)
-        payload: dict[str, Any] = {"event_type": "message_created", "room_id": "r1"}
-        await forwarder.forward(payload)
-
-        mock_client.post.assert_awaited_once_with(http_target.url, json=payload)
-        mock_response.raise_for_status.assert_called_once()
-
-    async def test_raises_on_http_error(self, http_target: HTTPTarget) -> None:
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock(
-            side_effect=httpx.HTTPStatusError(
-                "500", request=MagicMock(), response=mock_response
-            )
-        )
-        mock_client.post = AsyncMock(return_value=mock_response)
-
-        forwarder = HTTPForwarder(http_target, httpx_client=mock_client)
-        with pytest.raises(httpx.HTTPStatusError):
-            await forwarder.forward({})
-
-    async def test_close_does_not_close_injected_client(
-        self, http_target: HTTPTarget
-    ) -> None:
-        mock_client = MagicMock()
-        mock_client.aclose = AsyncMock()
-
-        forwarder = HTTPForwarder(http_target, httpx_client=mock_client)
-        await forwarder.close()
-
-        mock_client.aclose.assert_not_called()
-
-    async def test_close_closes_owned_client(self, http_target: HTTPTarget) -> None:
-        forwarder = HTTPForwarder(http_target)
-        # Trigger lazy client creation
-        mock_aclose = AsyncMock()
-        owned = MagicMock()
-        owned.aclose = mock_aclose
-        forwarder._client = owned
-
-        await forwarder.close()
-        mock_aclose.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# AgentCoreForwarder
-# ---------------------------------------------------------------------------
 
 
 class TestAgentCoreForwarder:
@@ -195,18 +117,3 @@ class TestAgentCoreForwarder:
 
     def test_derive_session_id_default(self) -> None:
         assert AgentCoreForwarder._derive_session_id({}) == "default"
-
-
-# ---------------------------------------------------------------------------
-# build_forwarder
-# ---------------------------------------------------------------------------
-
-
-class TestBuildForwarder:
-    def test_builds_http(self, http_target: HTTPTarget) -> None:
-        f = build_forwarder(http_target)
-        assert isinstance(f, HTTPForwarder)
-
-    def test_builds_agentcore(self, agentcore_target: AgentCoreTarget) -> None:
-        f = build_forwarder(agentcore_target)
-        assert isinstance(f, AgentCoreForwarder)

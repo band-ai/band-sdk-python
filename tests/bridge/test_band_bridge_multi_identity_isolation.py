@@ -36,7 +36,7 @@ class TestBandBridgeMultiIdentityIsolation:
         # Simulate the same message being delivered on a2's WS subscription
         # (which would happen if a1 sent it in a room where both participate).
         msg = make_message_event(sender_id="a1", message_id="m1")
-        await runners_by_id["a2"]._handle_event(msg)
+        await runners_by_id["a2"]._safe_handle_event(msg)
 
         # a2's forwarder received it. The bridge does NOT filter self-messages
         # by sender_id (that's the SDK's job inside the container).

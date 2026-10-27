@@ -43,11 +43,11 @@ from band.platform.event import (
 )
 from band.platform.link import BandLink
 from band.runtime.messages import PlatformMessage
-
-from .config import AgentConfig, BridgeConfig, ReconnectConfig
-from .control import ControlSignalHandler
-from .forwarder import Forwarder, build_forwarder
-from .health import HealthServer
+from bridge_core.config import AgentConfig, BridgeConfig, ReconnectConfig
+from bridge_core.control import ControlSignalHandler
+from bridge_core.dispatch import RoomForwards, RoomWork
+from bridge_core.forwarder import Forwarder, build_forwarder
+from bridge_core.health import HealthServer
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +98,8 @@ class AgentRunner:
             shutdown_event: Shared shutdown signal (cancels the loop).
             link: Pre-built BandLink (test injection). If None, one is
                 constructed from agent_config and the URLs.
-            max_concurrent_forwards: Cap on concurrent in-flight forwards for
-                this agent. Tasks are still cheaply created per event; only
-                this many can be inside the forward path at once.
+            max_concurrent_forwards: Cap on target calls across rooms. Tasks
+                waiting for their room do not occupy forwarding capacity.
         """
         self._config = agent_config
         self._forwarder = forwarder
@@ -108,14 +107,7 @@ class AgentRunner:
         self._shutdown_event = shutdown_event
         self._connected_event = asyncio.Event()
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()
-        # In-flight forward tasks per room, so a control signal (interrupt/stop)
-        # can cancel whatever forwards are currently live for a room. Tracked as
-        # a set because same-room events serialize on the per-room lock: while
-        # one task forwards, others wait on that lock, and all of them must be
-        # cancellable — otherwise interrupt cancels a queued waiter while the
-        # running forward keeps going. Populated by _safe_handle_event at the
-        # top of processing, discarded in its finally.
-        self._active_room_tasks: dict[str, set[asyncio.Task[None]]] = {}
+        self._forwards = RoomForwards(max_concurrent_forwards)
         # Control-signal handling (interrupt/stop/play) lives in its own type;
         # it delegates cancel/nudge/room-list back to this runner but owns the
         # correlation-id dedup and routing (see control.py).
@@ -125,15 +117,6 @@ class AgentRunner:
         # cancelled on close() and to keep a strong ref (create_task alone
         # doesn't).
         self._control_tasks: set[asyncio.Task[None]] = set()
-        # Per-room locks: events for the same room are forwarded sequentially
-        # so the container always sees a settled history (its own prior reply
-        # is already posted before the next invocation reads room context).
-        # Different rooms are unaffected — they forward in parallel.
-        self._room_locks: dict[str, asyncio.Lock] = {}
-        # Back-pressure on forward fan-out: a burst of WS events (or a slow
-        # target) would otherwise pile up unbounded tasks and fan an equal
-        # number of HTTP/AgentCore calls at the backend.
-        self._forward_semaphore = asyncio.Semaphore(max_concurrent_forwards)
         self._link = link or BandLink(
             agent_id=agent_config.agent_id,
             api_key=agent_config.api_key,
@@ -440,44 +423,20 @@ class AgentRunner:
         )
 
     async def _safe_handle_event(self, event: object) -> None:
-        # Track this task among the in-flight forwards for its room so a control
-        # signal (interrupt/stop) can cancel it — whether it's the one holding
-        # the per-room lock and forwarding, or a same-room task still waiting on
-        # that lock. Room-less events (e.g. contact events) aren't tracked —
-        # there's nothing room-scoped to cancel for them.
         room_id = getattr(event, "room_id", None)
-        task = asyncio.current_task()
-        if room_id and task is not None:
-            self._active_room_tasks.setdefault(room_id, set()).add(task)
-        try:
-            # Semaphore caps concurrent in-flight forwards per agent. Holding
-            # it across ``_handle_event`` (which includes the per-room lock +
-            # the forwarder call) is the point — bursts wait here instead of
-            # stacking up inside the forwarder.
-            async with self._forward_semaphore:
-                await self._handle_event(event)
-        except Exception:
-            logger.warning(
-                "Agent %s: error handling event %s",
-                self._config.agent_id,
-                type(event).__name__,
-                exc_info=True,
-            )
-        finally:
-            if room_id:
-                tasks = self._active_room_tasks.get(room_id)
-                if tasks is not None:
-                    tasks.discard(task)
-                    if not tasks:
-                        self._active_room_tasks.pop(room_id, None)
+        with self._forwards.accepted(room_id) as room:
+            try:
+                await self._handle_event(event, room)
+            except Exception:
+                logger.warning(
+                    "Agent %s: error handling event %s",
+                    self._config.agent_id,
+                    type(event).__name__,
+                    exc_info=True,
+                )
 
-    async def _handle_event(self, event: object) -> None:
-        """Manage room subscriptions; forward forwardable events.
-
-        Subscription management for room_added / room_removed / room_deleted
-        is WS plumbing — we need to subscribe/unsubscribe at the Phoenix
-        channel level. The event itself is also forwarded to the agent.
-        """
+    async def _handle_event(self, event: object, room: RoomWork) -> None:
+        """Manage subscriptions and forward the event through its accepted room scope."""
         if isinstance(event, RoomAddedEvent) and event.room_id:
             logger.info("Agent %s: room added %s", self._config.agent_id, event.room_id)
             try:
@@ -529,16 +488,16 @@ class AgentRunner:
             )
             return
 
-        # Serialize forwards per room so events from the same room don't race
-        # the container's history fetch. Without this, two messages arriving
-        # in quick succession invoke the container twice in parallel; both
-        # invocations fetch room context before either has posted its reply,
-        # both LLMs see un-answered mentions, and both respond — leading to
-        # duplicate messages in the room.
-        room_id = payload.get("room_id")
-        room_lock = self._lock_for_room(room_id)
+        if self._config.messages_only and not isinstance(event, MessageEvent):
+            logger.debug(
+                "Agent %s: not forwarding event %s (messages_only)",
+                self._config.agent_id,
+                type(event).__name__,
+            )
+            return
+
         forward_succeeded = False
-        async with room_lock:
+        async with self._forwards.ready(room):
             try:
                 await self._forwarder.forward(payload)
                 forward_succeeded = True
@@ -555,27 +514,6 @@ class AgentRunner:
         # next WS redelivery or rehydration sweep.
         if msg_id and forward_succeeded:
             self._remember_processed_message(msg_id)
-
-        # Evict the per-room lock once the room is gone so ``_room_locks`` does
-        # not grow unbounded over a long-lived bridge that cycles through many
-        # ephemeral rooms. Done after the forward above releases the lock; a
-        # later straggler event for the same room just creates a fresh one.
-        if isinstance(event, (RoomRemovedEvent, RoomDeletedEvent)) and room_id:
-            self._room_locks.pop(room_id, None)
-
-    def _lock_for_room(self, room_id: str | None) -> asyncio.Lock:
-        """Return the asyncio.Lock for a room id, creating one on first use.
-
-        Events without a room_id (e.g. contact events) share a single
-        ``_global`` lock — they're rare and not in the demo path; keeping
-        them serial is the safe default.
-        """
-        key = room_id or "_global"
-        lock = self._room_locks.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._room_locks[key] = lock
-        return lock
 
     def _serialize_event(self, event: object) -> dict[str, Any] | None:
         """Convert a typed PlatformEvent into a JSON payload for forwarding.
@@ -610,45 +548,23 @@ class AgentRunner:
     # --- Control signals (interrupt/stop/play) ---
     #
     # Signal routing/dedup lives in ControlSignalHandler (control.py); it calls
-    # back into the operations below, which touch this runner's forwarding
-    # state (the per-room task registry) and the /next nudge path.
+    # back into the operations below, which reach room work through
+    # RoomForwards (dispatch.py) and the /next nudge path.
 
     def _spawn_play_nudge(self, room_ids: list[str]) -> None:
-        """Fire ``play`` /next nudges as tracked background tasks.
-
-        Runs off BandLink's control lane so a following interrupt/stop isn't
-        queued behind the nudge's /next + forward. Each spawned forward still
-        lands in ``_active_room_tasks`` (via ``_safe_handle_event``), so a
-        later interrupt/stop can cancel it. Tasks are tracked in ``_control_tasks``
-        and cancelled on ``close()``.
-        """
+        """Run PLAY nudges off the control lane so later signals are not blocked."""
         for room_id in room_ids:
             task = asyncio.create_task(self._nudge_room(room_id))
             self._control_tasks.add(task)
             task.add_done_callback(self._control_tasks.discard)
 
     def _cancel_active_forward(self, room_id: str) -> None:
-        """Cancel all in-flight forward tasks for a room, if any.
+        """Cancel accepted room work, retaining its gates until handlers settle.
 
-        Cancels both the task currently forwarding and any same-room tasks
-        still queued on the per-room lock, so a signal can't leave a waiter
-        behind to run the moment the cancelled forward releases the lock.
-
-        Best-effort: this stops the bridge from waiting and releases the room
-        lock immediately. It does not guarantee the remote invocation itself
-        stops — ``AgentCoreForwarder``'s underlying boto3 call runs in a
-        thread and isn't killed by cancelling the awaiting task (see
-        ``forwarder.py``); that is a pre-existing, documented limitation of
-        that transport, not something this signal can fix.
+        Remote work can outlive local cancellation: AgentCore's boto3 call
+        runs in a thread that cancellation cannot kill.
         """
-        tasks = self._active_room_tasks.get(room_id)
-        if not tasks:
-            return
-        cancelled = 0
-        for task in tuple(tasks):
-            if not task.done():
-                task.cancel()
-                cancelled += 1
+        cancelled = self._forwards.cancel(room_id)
         if cancelled:
             logger.info(
                 "Agent %s: cancelled %d in-flight forward(s) for room %s",

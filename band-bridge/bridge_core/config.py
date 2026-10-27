@@ -17,16 +17,31 @@ from __future__ import annotations
 import json
 import os
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 
-class HTTPTarget(BaseModel):
+class StrictConfig(BaseModel):
+    """Reject unknown keys without echoing input, which may carry secrets."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+
+class HTTPTarget(StrictConfig):
     """Forward events via HTTP POST to a plain URL."""
 
     type: Literal["http"] = "http"
     url: str
     timeout: float = 120.0
+    bearer_token: SecretStr | None = None
 
     @field_validator("url")
     @classmethod
@@ -36,6 +51,11 @@ class HTTPTarget(BaseModel):
             raise ValueError("HTTPTarget.url must be non-empty")
         if not (v.startswith(("http://", "https://"))):
             raise ValueError("HTTPTarget.url must start with http:// or https://")
+        try:
+            urlsplit(v)
+        except ValueError:
+            # urlsplit's message quotes the netloc, including any password.
+            raise ValueError("HTTPTarget.url is not a valid URL") from None
         return v
 
     @field_validator("timeout")
@@ -45,8 +65,29 @@ class HTTPTarget(BaseModel):
             raise ValueError("HTTPTarget.timeout must be positive")
         return v
 
+    @field_validator("bearer_token")
+    @classmethod
+    def validate_bearer_token(cls, value: SecretStr | None) -> SecretStr | None:
+        # An illegal header value makes httpx raise with the token in its message.
+        if value is None:
+            return value
+        token = value.get_secret_value()
+        if not (token and token.isascii() and token.isprintable() and " " not in token):
+            raise ValueError(
+                "HTTPTarget.bearer_token must be non-empty printable ASCII "
+                "without whitespace"
+            )
+        return value
 
-class AgentCoreTarget(BaseModel):
+    @model_validator(mode="after")
+    def validate_single_credential(self) -> HTTPTarget:
+        # httpx applies URL userinfo as Basic auth, replacing the bearer header.
+        if self.bearer_token is not None and "@" in urlsplit(self.url).netloc:
+            raise ValueError("HTTPTarget.url must not carry userinfo with bearer_token")
+        return self
+
+
+class AgentCoreTarget(StrictConfig):
     """Forward events via ``bedrock-agentcore:InvokeAgentRuntime``."""
 
     type: Literal["agentcore"] = "agentcore"
@@ -84,7 +125,7 @@ Target = Annotated[
 ]
 
 
-class AgentConfig(BaseModel):
+class AgentConfig(StrictConfig):
     """One agent identity in the bridge.
 
     The bridge opens a Band WS subscription as ``agent_id`` (authed with
@@ -94,6 +135,7 @@ class AgentConfig(BaseModel):
     agent_id: str
     api_key: str = Field(repr=False)
     target: Target
+    messages_only: bool = False
 
     @field_validator("agent_id")
     @classmethod
@@ -110,7 +152,7 @@ class AgentConfig(BaseModel):
         return v
 
 
-class BridgeConfig(BaseModel):
+class BridgeConfig(StrictConfig):
     """Bridge process configuration."""
 
     agents: list[AgentConfig]
@@ -118,10 +160,9 @@ class BridgeConfig(BaseModel):
     rest_url: str = "https://app.band.ai"
     health_port: int = 8080
     health_host: str = "0.0.0.0"
-    # Per-agent cap on concurrent in-flight forwards. One asyncio task is
-    # spawned per WS event; without a cap, a burst of events (or a slow target)
-    # can pile up thousands of tasks waiting on the per-room lock or the
-    # target's I/O, and fan a flood of HTTP/AgentCore calls at the backend.
+    # Per-agent cap on concurrent target calls across rooms, so a burst of
+    # events cannot fan a flood of HTTP/AgentCore calls at the backend. Tasks
+    # queued behind their room's lock do not hold capacity.
     max_concurrent_forwards: int = 32
 
     @field_validator("max_concurrent_forwards")
