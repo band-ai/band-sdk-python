@@ -51,6 +51,11 @@ class HTTPTarget(StrictConfig):
             raise ValueError("HTTPTarget.url must be non-empty")
         if not (v.startswith(("http://", "https://"))):
             raise ValueError("HTTPTarget.url must start with http:// or https://")
+        try:
+            urlsplit(v)
+        except ValueError:
+            # urlsplit's message quotes the netloc, including any password.
+            raise ValueError("HTTPTarget.url is not a valid URL") from None
         return v
 
     @field_validator("timeout")

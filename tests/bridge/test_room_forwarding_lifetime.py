@@ -21,10 +21,17 @@ from tests.bridge.kit import (
 
 class TestRoomForwardingLifetime:
     @pytest.mark.parametrize(
-        "messages_only, expected_events",
+        "messages_only, expected_while_c_holds, expected_events",
         [
             (
                 False,
+                [
+                    (Mark.START, "a"),
+                    (Mark.END, "a"),
+                    (Mark.START, "r1"),
+                    (Mark.END, "r1"),
+                    (Mark.START, "c"),
+                ],
                 [
                     (Mark.START, "a"),
                     (Mark.END, "a"),
@@ -38,6 +45,7 @@ class TestRoomForwardingLifetime:
             ),
             (
                 True,
+                [(Mark.START, "a"), (Mark.END, "a"), (Mark.START, "c")],
                 [
                     (Mark.START, "a"),
                     (Mark.END, "a"),
@@ -50,7 +58,10 @@ class TestRoomForwardingLifetime:
         ],
     )
     async def test_teardown_cannot_split_room_serialization(
-        self, messages_only: bool, expected_events: list[tuple[str, str]]
+        self,
+        messages_only: bool,
+        expected_while_c_holds: list[tuple[str, str]],
+        expected_events: list[tuple[str, str]],
     ) -> None:
         forwarder = GatedForwarder(("a", "c"))
         runner, _, _ = build_runner(forwarder=forwarder, messages_only=messages_only)
@@ -81,10 +92,7 @@ class TestRoomForwardingLifetime:
                 accept_event(runner, make_message_event(message_id="d"), d_entered)
             )
             await d_entered.wait()
-            assert (
-                forwarder.events
-                == expected_events[: expected_events.index((Mark.START, "c")) + 1]
-            )
+            assert forwarder.events == expected_while_c_holds
             forwarder.release["c"].set()
             await asyncio.gather(a, c, d)
         assert forwarder.events == expected_events

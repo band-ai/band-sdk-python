@@ -67,6 +67,16 @@ class TestHTTPTarget:
     def test_accepts_single_credential(self, url: str, token: str | None) -> None:
         assert HTTPTarget(url=url, bearer_token=token).url == url
 
+    @pytest.mark.parametrize("token", [None, "private-bearer"])
+    def test_rejects_unparseable_url_without_echoing_it(
+        self, token: str | None
+    ) -> None:
+        with pytest.raises(ValueError, match="not a valid URL") as error:
+            HTTPTarget(
+                url="https://user:s3cr3t\uff03pw@host.example", bearer_token=token
+            )
+        assert "s3cr3t" not in str(error.value)
+
     def test_rejects_url_userinfo_with_bearer(self) -> None:
         with pytest.raises(ValueError, match="userinfo") as error:
             HTTPTarget(

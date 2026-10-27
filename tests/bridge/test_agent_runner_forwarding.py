@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+from band.client.streaming.client import WireEvent
 from band.platform.event import (
     ContactAddedEvent,
     ParticipantRemovedEvent,
@@ -77,8 +78,8 @@ class TestAgentRunnerForwarding:
     @pytest.mark.parametrize(
         "messages_only, expected_types",
         [
-            (True, ["message_created"]),
-            (False, ["participant_added", "message_created"]),
+            (True, [WireEvent.MESSAGE_CREATED]),
+            (False, [WireEvent.PARTICIPANT_ADDED, WireEvent.MESSAGE_CREATED]),
         ],
     )
     async def test_message_filter_preserves_message_delivery(
