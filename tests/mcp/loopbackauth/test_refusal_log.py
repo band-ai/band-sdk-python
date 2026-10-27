@@ -1,5 +1,5 @@
-"""Refused requests are logged on the 1st and 10th per redacted route, with
-room ids and unserved paths masked."""
+"""Refused requests are logged on the 1st, 10th, 100th, ... per redacted
+route, with room ids and unserved paths masked."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 import pytest
+from starlette.types import Message, Receive, Scope, Send
 
 from band.integrations.mcp import local_server
 from band.integrations.mcp.local_server import (
@@ -17,8 +18,10 @@ from band.integrations.mcp.local_server import (
     REDACTED_ROOM,
     REFUSAL_LOG,
     UNKNOWN_ROUTE,
+    BearerTokenGuard,
 )
 from tests.mcp.loopbackauth.kit import (
+    AUTH_TOKEN,
     CRAFTED_PATH,
     CRAFTED_ROOM_PATH,
     MULTI_ROOM_HTTP,
@@ -39,11 +42,36 @@ ROOM_HTTP_PER_ROOM = [
     replace(ROOM_HTTP, path=f"{LOCAL_MCP_ROOMS_PATH}/room-{n}{LOCAL_MCP_HTTP_PATH}")
     for n in range(REFUSALS)
 ]
+# Enough refusals to pass the 100th without reaching the 1000th.
+MANY_REFUSALS = 120
 
 
 def first_and_tenth(logged_route: str) -> list[tuple[str, int]]:
     """The refusals of one route that are logged."""
     return [(logged_route, 1), (logged_route, REFUSALS)]
+
+
+async def unreachable_app(scope: Scope, receive: Receive, send: Send) -> None:
+    """The guarded app, which no refused request may reach."""
+    raise AssertionError("a refused request reached the guarded app")
+
+
+async def refuse_unauthenticated(guard: BearerTokenGuard) -> None:
+    """Send ``guard`` one tokenless HTTP request to its served route."""
+
+    async def receive() -> Message:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: Message) -> None:
+        pass
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": LOCAL_MCP_HTTP_PATH,
+        "headers": [],
+    }
+    await guard(scope, receive, send)
 
 
 class TestRefusalLog:
@@ -99,4 +127,24 @@ class TestRefusalLog:
 
         assert [r.getMessage() for r in caplog.records if r.name == GUARD_LOGGER] == [
             REFUSAL_LOG % (SERVER_NAME, route, count) for route, count in logged
+        ]
+
+    async def test_refusals_past_the_tenth_are_logged_at_each_power_of_ten(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger=GUARD_LOGGER)
+        guard = BearerTokenGuard(
+            unreachable_app,
+            token=AUTH_TOKEN,
+            open_paths=frozenset(),
+            routes=frozenset({LOCAL_MCP_HTTP_PATH}),
+            server_name=SERVER_NAME,
+        )
+
+        for _ in range(MANY_REFUSALS):
+            await refuse_unauthenticated(guard)
+
+        assert [r.getMessage() for r in caplog.records if r.name == GUARD_LOGGER] == [
+            REFUSAL_LOG % (SERVER_NAME, LOCAL_MCP_HTTP_PATH, count)
+            for count in (1, 10, 100)
         ]
