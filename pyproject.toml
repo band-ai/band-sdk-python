@@ -597,6 +597,10 @@ ignore-missing-imports = [
     "nooa.*",
     "nest_asyncio",
 ]
+# The release-docs skill scripts run as standalone files and import their
+# siblings by plain module name, as Python resolves them from the script's
+# own directory.
+search-path = ["src", ".claude/skills/band-release-docs/scripts"]
 # Disable the default **/.[!/.]*/** exclude so pyrefly works inside
 # .claude/worktrees/ (git worktree paths contain a hidden directory).
 disable-project-excludes-heuristics = true
