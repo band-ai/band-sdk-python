@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from band.platform.event import (
@@ -13,6 +15,8 @@ from band.platform.event import (
 )
 from tests.bridge.conftest import FakeForwarder
 from tests.bridge.kit import (
+    GatedForwarder,
+    Mark,
     build_runner,
     make_message_event,
     make_participant_added_event,
@@ -99,3 +103,20 @@ class TestAgentRunnerForwarding:
         runner, forwarder, _ = build_runner(messages_only=True)
         await runner._safe_handle_event(event)
         assert forwarder.forwarded == []
+
+    async def test_message_only_skip_does_not_wait_behind_room_work(self) -> None:
+        forwarder = GatedForwarder(("held",))
+        runner, _, _ = build_runner(
+            forwarder=forwarder, messages_only=True, max_concurrent_forwards=1
+        )
+        held = asyncio.create_task(
+            runner._safe_handle_event(make_message_event("held", "r1"))
+        )
+        try:
+            await forwarder.started["held"].wait()
+            await runner._safe_handle_event(make_participant_added_event("r1"))
+            await runner._safe_handle_event(make_participant_added_event("r2"))
+            assert forwarder.events == [(Mark.START, "held")]
+        finally:
+            forwarder.release["held"].set()
+            await held

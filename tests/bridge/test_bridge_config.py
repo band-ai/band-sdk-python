@@ -45,3 +45,10 @@ class TestBridgeConfig:
                 ],
                 health_port=99999,
             )
+
+    def test_rejects_unknown_field_without_echoing_it(self) -> None:
+        secret = "private-value"
+        agent = {"agent_id": "a", "api_key": "k", "target": {"url": "https://x/y"}}
+        with pytest.raises(ValueError, match="extra_forbidden") as error:
+            BridgeConfig.model_validate({"agents": [agent], "helth_host": secret})
+        assert secret not in str(error.value)

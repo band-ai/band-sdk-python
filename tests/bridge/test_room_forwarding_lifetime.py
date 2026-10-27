@@ -9,6 +9,7 @@ import pytest
 
 from tests.bridge.kit import (
     GatedForwarder,
+    Mark,
     accept_event,
     await_cancelled,
     build_runner,
@@ -25,25 +26,25 @@ class TestRoomForwardingLifetime:
             (
                 False,
                 [
-                    ("start", "a"),
-                    ("end", "a"),
-                    ("start", "r1"),
-                    ("end", "r1"),
-                    ("start", "c"),
-                    ("end", "c"),
-                    ("start", "d"),
-                    ("end", "d"),
+                    (Mark.START, "a"),
+                    (Mark.END, "a"),
+                    (Mark.START, "r1"),
+                    (Mark.END, "r1"),
+                    (Mark.START, "c"),
+                    (Mark.END, "c"),
+                    (Mark.START, "d"),
+                    (Mark.END, "d"),
                 ],
             ),
             (
                 True,
                 [
-                    ("start", "a"),
-                    ("end", "a"),
-                    ("start", "c"),
-                    ("end", "c"),
-                    ("start", "d"),
-                    ("end", "d"),
+                    (Mark.START, "a"),
+                    (Mark.END, "a"),
+                    (Mark.START, "c"),
+                    (Mark.END, "c"),
+                    (Mark.START, "d"),
+                    (Mark.END, "d"),
                 ],
             ),
         ],
@@ -80,7 +81,7 @@ class TestRoomForwardingLifetime:
                 accept_event(runner, make_message_event(message_id="d"), d_entered)
             )
             await d_entered.wait()
-            assert ("start", "d") not in forwarder.events
+            assert (Mark.START, "d") not in forwarder.events
             forwarder.release["c"].set()
             await asyncio.gather(a, c, d)
         assert forwarder.events == expected_events
@@ -112,9 +113,12 @@ class TestRoomForwardingLifetime:
             await a
         assert retained_rooms(runner) == set()
 
-    @pytest.mark.parametrize("failure", [None, RuntimeError("forward failed")])
+    @pytest.mark.parametrize(
+        "failure, expected_ids",
+        [(None, ["m1", "followup"]), (RuntimeError("forward failed"), ["followup"])],
+    )
     async def test_settled_work_releases_room_without_a_membership_event(
-        self, failure: Exception | None
+        self, failure: Exception | None, expected_ids: list[str]
     ) -> None:
         runner, forwarder, _ = build_runner()
         forwarder.forward_side_effect = failure
@@ -122,5 +126,5 @@ class TestRoomForwardingLifetime:
         assert retained_rooms(runner) == set()
         forwarder.forward_side_effect = None
         await runner._safe_handle_event(make_message_event("followup"))
-        assert forwarder.forwarded[-1]["payload"]["id"] == "followup"
+        assert [p["payload"]["id"] for p in forwarder.forwarded] == expected_ids
         assert retained_rooms(runner) == set()

@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack
 
 from tests.bridge.kit import (
     GatedForwarder,
+    Mark,
     accept_event,
     build_runner,
     make_message_event,
@@ -25,10 +26,14 @@ class TestAgentRunnerPerRoomSerialization:
             accepted = asyncio.Event()
             group.create_task(accept_event(runner, make_message_event("b"), accepted))
             await accepted.wait()
-            assert forwarder.events == [("start", "a")]
+            assert forwarder.events == [(Mark.START, "a")]
             forwarder.release["a"].set()
             await forwarder.started["b"].wait()
-            assert forwarder.events == [("start", "a"), ("end", "a"), ("start", "b")]
+            assert forwarder.events == [
+                (Mark.START, "a"),
+                (Mark.END, "a"),
+                (Mark.START, "b"),
+            ]
 
     async def test_different_rooms_overlap(self) -> None:
         forwarder = GatedForwarder(("a", "b"))
@@ -40,4 +45,4 @@ class TestAgentRunnerPerRoomSerialization:
             await forwarder.started["a"].wait()
             group.create_task(runner._safe_handle_event(make_message_event("b", "r2")))
             await forwarder.started["b"].wait()
-            assert forwarder.events == [("start", "a"), ("start", "b")]
+            assert forwarder.events == [(Mark.START, "a"), (Mark.START, "b")]

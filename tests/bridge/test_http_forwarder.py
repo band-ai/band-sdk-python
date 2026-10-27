@@ -41,7 +41,9 @@ class TestHTTPForwarder:
         assert str(requests[0].url) == target.url
         assert json.loads(requests[0].content) == payload
         assert requests[0].headers.get("Authorization") == expected_authorization
-        assert requests[0].extensions["timeout"]["read"] == target.timeout
+        assert requests[0].extensions["timeout"] == dict.fromkeys(
+            ("connect", "read", "write", "pool"), target.timeout
+        )
 
     @pytest.mark.parametrize("status", [401, 500, 503])
     async def test_propagates_unsuccessful_response(self, status: int) -> None:
@@ -69,12 +71,18 @@ class TestHTTPForwarder:
             with pytest.raises(error_type):
                 await forwarder.forward({})
 
-    async def test_closes_owned_client_idempotently(self) -> None:
-        forwarder = HTTPForwarder(HTTPTarget(url="https://example.com"))
-        client = forwarder._get_client()
+    async def test_owned_client_closes_idempotently_and_reopens(
+        self, httpx_mock: HTTPXMock
+    ) -> None:
+        target = HTTPTarget(url="https://example.com/invocations")
+        httpx_mock.add_response(url=target.url, is_reusable=True)
+        forwarder = HTTPForwarder(target)
+        await forwarder.forward({})
         await forwarder.close()
         await forwarder.close()
-        assert client.is_closed
+        await forwarder.forward({})
+        await forwarder.close()
+        assert len(httpx_mock.get_requests()) == 2
 
     async def test_owned_client_authenticates_each_request(
         self, httpx_mock: HTTPXMock

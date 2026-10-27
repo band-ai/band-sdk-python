@@ -11,6 +11,7 @@ from tests.bridge.conftest import FakeForwarder
 from tests.bridge.kit import (
     GatedForwarder,
     HangingForwarder,
+    Mark,
     accept_event,
     await_cancelled,
     build_runner,
@@ -43,13 +44,13 @@ class TestControlCancelsInFlightForward:
             )
             await await_cancelled(a)
             await await_cancelled(b)
-            assert forwarder.events == [("start", "a")]
+            assert forwarder.events == [(Mark.START, "a")]
             assert retained_rooms(runner) == set()
             await runner._safe_handle_event(make_message_event("fresh"))
         assert forwarder.events == [
-            ("start", "a"),
-            ("start", "fresh"),
-            ("end", "fresh"),
+            (Mark.START, "a"),
+            (Mark.START, "fresh"),
+            (Mark.END, "fresh"),
         ]
 
     async def test_interrupt_cancels_waiter_for_global_capacity(self) -> None:
@@ -71,15 +72,15 @@ class TestControlCancelsInFlightForward:
             )
             await await_cancelled(b)
             assert retained_rooms(runner) == {"r1"}
-            assert forwarder.events == [("start", "a")]
+            assert forwarder.events == [(Mark.START, "a")]
             forwarder.release["a"].set()
             await a
             await runner._safe_handle_event(make_message_event("fresh", "r2"))
         assert forwarder.events == [
-            ("start", "a"),
-            ("end", "a"),
-            ("start", "fresh"),
-            ("end", "fresh"),
+            (Mark.START, "a"),
+            (Mark.END, "a"),
+            (Mark.START, "fresh"),
+            (Mark.END, "fresh"),
         ]
         assert retained_rooms(runner) == set()
 
@@ -100,11 +101,15 @@ class TestControlCancelsInFlightForward:
             )
             await accepted.wait()
             assert retained_rooms(runner) == {"r1"}
-            assert forwarder.events == [("start", "a")]
+            assert forwarder.events == [(Mark.START, "a")]
             forwarder.release_cleanup["a"].set()
             await await_cancelled(a)
             await b
-        assert forwarder.events == [("start", "a"), ("start", "b"), ("end", "b")]
+        assert forwarder.events == [
+            (Mark.START, "a"),
+            (Mark.START, "b"),
+            (Mark.END, "b"),
+        ]
         assert retained_rooms(runner) == set()
 
     async def test_interrupt_cancels_in_flight_forward(self) -> None:

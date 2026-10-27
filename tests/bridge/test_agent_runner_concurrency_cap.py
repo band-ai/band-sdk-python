@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack
 
 from tests.bridge.kit import (
     GatedForwarder,
+    Mark,
     accept_event,
     build_runner,
     make_message_event,
@@ -14,7 +15,7 @@ from tests.bridge.kit import (
 
 
 class TestAgentRunnerConcurrencyCap:
-    async def test_semaphore_caps_in_flight_forwards(self) -> None:
+    async def test_capacity_limits_forwards_across_rooms(self) -> None:
         forwarder = GatedForwarder(("a", "b", "c"))
         runner, _, _ = build_runner(forwarder=forwarder, max_concurrent_forwards=2)
         async with asyncio.TaskGroup() as group, AsyncExitStack() as cleanup:
@@ -29,14 +30,14 @@ class TestAgentRunnerConcurrencyCap:
                 accept_event(runner, make_message_event("c", "r3"), accepted)
             )
             await accepted.wait()
-            assert forwarder.events == [("start", "a"), ("start", "b")]
+            assert forwarder.events == [(Mark.START, "a"), (Mark.START, "b")]
             forwarder.release["a"].set()
             await forwarder.started["c"].wait()
             assert forwarder.events == [
-                ("start", "a"),
-                ("start", "b"),
-                ("end", "a"),
-                ("start", "c"),
+                (Mark.START, "a"),
+                (Mark.START, "b"),
+                (Mark.END, "a"),
+                (Mark.START, "c"),
             ]
 
     async def test_room_waiter_does_not_block_another_room(self) -> None:
@@ -57,4 +58,4 @@ class TestAgentRunnerConcurrencyCap:
                 accept_event(runner, make_message_event("b", "r2"), accepted)
             )
             await accepted.wait()
-            assert forwarder.events == [("start", "a"), ("start", "b")]
+            assert forwarder.events == [(Mark.START, "a"), (Mark.START, "b")]

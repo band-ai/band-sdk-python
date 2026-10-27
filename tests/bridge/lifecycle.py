@@ -9,8 +9,6 @@ from enum import StrEnum, auto
 from bridge_core.dispatch import RoomForwards
 from hypothesis import strategies as st
 
-from tests.bridge.kit import held_rooms
-
 
 class Step(StrEnum):
     ACCEPT_A = auto()
@@ -53,7 +51,7 @@ class ForwardingLifecycle:
                 await self.cancel("b")
             case Step.DRAIN:
                 await self.drain()
-        assert held_rooms(self.forwards) == {
+        assert self.forwards.active_rooms() == {
             job.room_id
             for job in self.jobs
             if job.task is not None and not job.task.done()
@@ -91,7 +89,7 @@ class ForwardingLifecycle:
             job.release.set()
         await self.join([job.task for job in self.jobs if job.task is not None])
         assert self.running == set()
-        assert held_rooms(self.forwards) == set()
+        assert self.forwards.active_rooms() == set()
 
     async def close(self) -> None:
         for job in self.jobs:

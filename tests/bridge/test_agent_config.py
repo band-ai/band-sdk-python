@@ -59,13 +59,6 @@ class TestAgentConfig:
                     "bearer_tokn": "private-bearer",
                 }
             },
-            {
-                "target": {
-                    "type": "agentcore",
-                    "runtime_arn": "arn:x",
-                    "regoin": "private-bearer",
-                }
-            },
         ],
     )
     def test_rejects_unknown_option_without_echoing_it(

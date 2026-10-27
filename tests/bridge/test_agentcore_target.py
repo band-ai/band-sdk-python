@@ -26,8 +26,8 @@ class TestAgentCoreTarget:
                 runtime_arn="arn:aws:bedrock-agentcore:us-east-1:1:runtime/a", region=""
             )
 
-    def test_rejects_misspelled_option(self) -> None:
-        with pytest.raises(ValueError, match="extra_forbidden"):
-            AgentCoreTarget.model_validate(
-                {"runtime_arn": "arn:x", "regoin": "us-east-1"}
-            )
+    def test_rejects_misspelled_option_without_echoing_it(self) -> None:
+        secret = "private-value"
+        with pytest.raises(ValueError, match="extra_forbidden") as error:
+            AgentCoreTarget.model_validate({"runtime_arn": "arn:x", "regoin": secret})
+        assert secret not in str(error.value)

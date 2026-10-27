@@ -47,6 +47,10 @@ class RoomForwards:
         async with room.lock, self._capacity:
             yield
 
+    def active_rooms(self) -> frozenset[str | None]:
+        """Rooms that currently own accepted work."""
+        return frozenset(self._rooms)
+
     def cancel(self, room_id: str) -> int:
         """Cancel the room's running and queued tasks without discarding ownership."""
         room = self._rooms.get(room_id)

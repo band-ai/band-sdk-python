@@ -30,15 +30,40 @@ class TestHTTPTarget:
         with pytest.raises(ValueError, match="positive"):
             HTTPTarget(url="https://x/y", timeout=0)
 
+    @pytest.mark.parametrize("token", ["", "   "])
+    def test_rejects_blank_bearer(self, token: str) -> None:
+        with pytest.raises(ValueError, match="printable ASCII"):
+            HTTPTarget(url="https://example.com", bearer_token=token)
+
     @pytest.mark.parametrize(
-        "token",
-        ["", "   ", "private-bearer\n", " private-bearer", "private bearer", "bearé"],
+        "token, secret",
+        [
+            ("private-bearer\n", "private-bearer"),
+            (" private-bearer", "private-bearer"),
+            ("private bearer", "private bearer"),
+            ("private-béarer", "private-béarer"),
+        ],
     )
-    def test_rejects_bearer_that_is_not_a_header_token(self, token: str) -> None:
+    def test_rejects_bearer_that_is_not_a_header_token_without_echoing_it(
+        self, token: str, secret: str
+    ) -> None:
         with pytest.raises(ValueError, match="printable ASCII") as error:
             HTTPTarget(url="https://example.com", bearer_token=token)
-        if token.strip():
-            assert token.strip() not in str(error.value)
+        assert secret not in str(error.value)
+
+    def test_accepts_token68_bearer(self) -> None:
+        token = "aaa.bbb-ccc_dd~e+f/g=="
+        target = HTTPTarget(url="https://example.com", bearer_token=token)
+        assert target.bearer_token is not None
+        assert target.bearer_token.get_secret_value() == token
+
+    def test_rejects_url_userinfo_with_bearer(self) -> None:
+        with pytest.raises(ValueError, match="userinfo") as error:
+            HTTPTarget(
+                url="https://user:pass@example.com", bearer_token="private-bearer"
+            )
+        assert "pass" not in str(error.value)
+        assert "private-bearer" not in str(error.value)
 
     def test_redacts_bearer(self) -> None:
         target = HTTPTarget(url="https://example.com", bearer_token="private-bearer")

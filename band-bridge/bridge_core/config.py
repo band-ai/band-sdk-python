@@ -17,14 +17,26 @@ from __future__ import annotations
 import json
 import os
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 
-class HTTPTarget(BaseModel):
-    """Forward events via HTTP POST to a plain URL."""
+class StrictConfig(BaseModel):
+    """Reject unknown keys without echoing input, which may carry secrets."""
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+
+class HTTPTarget(StrictConfig):
+    """Forward events via HTTP POST to a plain URL."""
 
     type: Literal["http"] = "http"
     url: str
@@ -62,11 +74,16 @@ class HTTPTarget(BaseModel):
             )
         return value
 
+    @model_validator(mode="after")
+    def validate_single_credential(self) -> HTTPTarget:
+        # httpx applies URL userinfo as Basic auth, replacing the bearer header.
+        if self.bearer_token is not None and "@" in urlsplit(self.url).netloc:
+            raise ValueError("HTTPTarget.url must not carry userinfo with bearer_token")
+        return self
 
-class AgentCoreTarget(BaseModel):
+
+class AgentCoreTarget(StrictConfig):
     """Forward events via ``bedrock-agentcore:InvokeAgentRuntime``."""
-
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["agentcore"] = "agentcore"
     runtime_arn: str
@@ -103,14 +120,12 @@ Target = Annotated[
 ]
 
 
-class AgentConfig(BaseModel):
+class AgentConfig(StrictConfig):
     """One agent identity in the bridge.
 
     The bridge opens a Band WS subscription as ``agent_id`` (authed with
     ``api_key``) and forwards every event it receives to ``target``.
     """
-
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     agent_id: str
     api_key: str = Field(repr=False)
@@ -132,10 +147,8 @@ class AgentConfig(BaseModel):
         return v
 
 
-class BridgeConfig(BaseModel):
+class BridgeConfig(StrictConfig):
     """Bridge process configuration."""
-
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     agents: list[AgentConfig]
     ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"

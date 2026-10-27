@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import UTC, datetime
+from enum import StrEnum
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from bridge_core.bridge import AgentRunner
 from bridge_core.config import ReconnectConfig
-from bridge_core.dispatch import RoomForwards
 from bridge_core.forwarder import Forwarder
 
 from band.client.streaming import AgentControlPayload
@@ -208,6 +208,13 @@ async def drain_control_tasks(runner: Any) -> None:
         await asyncio.gather(*tasks)
 
 
+class Mark(StrEnum):
+    """Ordering tags a gated forward records."""
+
+    START = "start"
+    END = "end"
+
+
 class GatedForwarder:
     """Hold selected forwards, optionally through cancellation cleanup, and record ordering."""
 
@@ -222,7 +229,7 @@ class GatedForwarder:
 
     async def forward(self, payload: dict[str, Any]) -> None:
         key = payload["payload"]["id"]
-        self.events.append(("start", key))
+        self.events.append((Mark.START, key))
         if key in self.started:
             self.started[key].set()
             try:
@@ -231,7 +238,7 @@ class GatedForwarder:
                 if key in self.settling:
                     self.settling[key].set()
                     await self.release_cleanup[key].wait()
-        self.events.append(("end", key))
+        self.events.append((Mark.END, key))
 
     async def close(self) -> None:
         return
@@ -245,10 +252,5 @@ async def accept_event(
     await runner._safe_handle_event(event)
 
 
-def held_rooms(forwards: RoomForwards) -> set[str | None]:
-    """Project room bookkeeping for lifecycle assertions."""
-    return set(forwards._rooms)
-
-
-def retained_rooms(runner: AgentRunner) -> set[str | None]:
-    return held_rooms(runner._forwards)
+def retained_rooms(runner: AgentRunner) -> frozenset[str | None]:
+    return runner._forwards.active_rooms()
