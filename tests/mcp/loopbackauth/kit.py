@@ -195,12 +195,12 @@ class GuardedServers:
     session_ids: list[str]
     recorded: list[str]
 
-    def url(self, route: Route) -> str:
+    def url(self, route: Route, scheme: str = "http") -> str:
         server = (
             self.room_bound if route.served is Served.ROOM_BOUND else self.multi_room
         )
         path = route.path.format(session_id=self.session_ids[0])
-        return f"http://{LOCAL_MCP_HOST}:{server.port}{path}"
+        return f"{scheme}://{LOCAL_MCP_HOST}:{server.port}{path}"
 
     async def status(
         self,

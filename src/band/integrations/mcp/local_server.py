@@ -128,7 +128,8 @@ def _is_power_of_ten(count: int) -> bool:
 
 
 def _refusal(scope: Scope) -> ASGIApp:
-    """How an unauthorized request of ``scope``'s type is refused."""
+    """How an unauthorized request of ``scope``'s type is refused; a close
+    before accept never reaches the client as a close code."""
     if scope["type"] == "websocket":
         return WebSocketClose(code=WS_1008_POLICY_VIOLATION)
     return PlainTextResponse(
@@ -141,7 +142,8 @@ def _refusal(scope: Scope) -> ASGIApp:
 class BearerTokenGuard:
     """ASGI middleware refusing every request outside ``open_paths`` that
     lacks ``Authorization: Bearer <token>``: HTTP with 401, a websocket
-    handshake by closing it with 1008 (policy violation).
+    upgrade by closing it before it is accepted, which the server answers
+    with an HTTP 403 handshake rejection.
 
     Websockets are guarded too: the SSE message endpoint is a raw ASGI mount
     that would otherwise receive an unauthenticated upgrade. Only lifespan

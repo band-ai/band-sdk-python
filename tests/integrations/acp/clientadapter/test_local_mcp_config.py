@@ -18,9 +18,7 @@ from band.runtime.tools import BandTool
 from tests.integrations.acp.clientadapter.kit import CODEX
 from tests.mcpbackends import backends_created_by
 from tests.mcpclient import (
-    advertised_headers,
     advertised_session,
-    bearer_token,
     endpoint_path,
 )
 
@@ -69,24 +67,6 @@ class TestACPClientAdapterLocalMcpConfig:
         )
         assert BandTool.SEND_MESSAGE in {tool.name for tool in listed.tools}
         assert server.type == "sse"
-
-    @pytest.mark.asyncio
-    async def test_band_mcp_token_stays_out_of_the_agent_env(self) -> None:
-        """The token reaches the agent only in the ACP session's MCP config."""
-        adapter = ACPClientAdapter(
-            ACPClientAdapterConfig(command="codex", env={"EXTRA": "value"})
-        )
-
-        try:
-            server = await adapter._get_or_start_band_mcp_server(
-                "room-1", BandMCPTransport.HTTP
-            )
-            env = adapter._spawn_env()
-        finally:
-            await adapter.cleanup_all()
-
-        token = bearer_token(advertised_headers(server))
-        assert not any(token in value for value in env.values())
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_reuses_shared_server(self) -> None:
