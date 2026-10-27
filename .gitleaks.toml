@@ -1,0 +1,33 @@
+# Exact historical SHA256 provenance values; retain every default secret rule.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Verified source and compiled-fixture SHA256 digests"
+regexTarget = "secret"
+regexes = [
+  # contracts/agent-runtime/evidence/contract-band-spec.json:17
+  '''^326765bae57522d73bc8083370d3309c3ddd7635f9d8678449bad9dbf70ff8f1$''',
+  # contracts/agent-runtime/evidence/contract-band-spec.json:20
+  '''^71ca0b318783ddd5dd7a63b488ca3243fe90b7b2e3d44d1b95dcd2694f360b9f$''',
+  # contracts/contract-lab/evidence/skills-validation.json:46
+  '''^c4e440f2f2a5405b6dc352312b3d0c300c58ff8a8d9f9fe58a9a730014701554$''',
+  # contracts/engines/band-v1/SOURCE.json:45
+  '''^74287fad423cfd8e515850889fd36dba0684336938f05f476099882fdd16d84f$''',
+  # contracts/spec/conformance/replies-adversarial/evidence/validation.json:35
+  '''^7eb6565efe9539b70104be64f89d5d209bcb79a6169c2d394b2e188438ec1567$''',
+  # contracts/spec/conformance/replies-adversarial/evidence/validation.json:49
+  '''^9efd558fb58ea278205582ef9c8be744ac591ff75d8610ad4e8f2625465744b0$''',
+  # contracts/spec/conformance/replies-adversarial/evidence/validation.json:118
+  '''^18f2ab546a0f6135e098b4de2b642014634083787bd4434879c42295431c3dce$''',
+  # contracts/spec/conformance/replies-adversarial/evidence/u-validation.json:184
+  '''^3a59470749818e04543b651c5045f967db3487d3f10439ee8a11442552c75da5$''',
+  # contracts/spec/conformance/replies-adversarial/evidence/u-validation.json:208
+  '''^c501b8010085219e1f40b55801a2cf1422e84e11b7bfefaa0515580c291f8197$''',
+  # contracts/spec/conformance/replies-adversarial/evidence/u-validation.json:247
+  '''^8a094ccd33938f1304aa6c4891b23a8747f209197a8f2dd57d7ce9434729e5dc$''',
+  # src/remote_agent/band/assets/provenance.json:9
+  '''^9f7df06e71a2b1911cc77175d0a4d722809231e36695462004aac1038fe02baf$''',
+  # src/remote_agent/band/assets/provenance.json:17
+  '''^b7ae9c52e3002a9d5199b3547fba0014bf818c4751e62fbd01e7b6defaf242e9$''',
+]
