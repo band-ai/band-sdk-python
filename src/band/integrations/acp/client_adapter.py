@@ -23,6 +23,7 @@ from acp.exceptions import RequestError
 from acp.schema import (
     AcpMcpServer,
     ClientCapabilities,
+    HttpHeader,
     HttpMcpServer,
     McpServerStdio,
     NewSessionResponse,
@@ -1198,14 +1199,19 @@ class ACPClientAdapter(
         self, backend: BandMCPBackend, transport: BandMCPTransport, room_id: str
     ) -> LocalMcpServerConfig:
         url = backend.endpoint(transport, room_id)
+        # Sent over the ACP stdio connection, never the agent's argv or env.
+        headers = [
+            HttpHeader(name=name, value=value)
+            for name, value in backend.headers.items()
+        ]
         match transport:
             case BandMCPTransport.SSE:
                 return SseMcpServer(
-                    type="sse", name=BAND_MCP_SERVER_NAME, url=url, headers=[]
+                    type="sse", name=BAND_MCP_SERVER_NAME, url=url, headers=headers
                 )
             case BandMCPTransport.HTTP:
                 return HttpMcpServer(
-                    type="http", name=BAND_MCP_SERVER_NAME, url=url, headers=[]
+                    type="http", name=BAND_MCP_SERVER_NAME, url=url, headers=headers
                 )
 
     def _canonical_tool_name(self, name: str) -> str:

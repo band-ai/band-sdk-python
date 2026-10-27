@@ -50,8 +50,11 @@ from band.integrations.acp.model_selection import (
 )
 from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.integrations.acp.session_config import SessionConfigOption, find_select
-from band.integrations.mcp import BandMCPTransport
-from tests.mcpclient import advertised_server, call_advertised_tool, mcp_session
+from tests.mcpclient import (
+    advertised_server,
+    advertised_session,
+    call_advertised_tool,
+)
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[
@@ -477,8 +480,7 @@ class FakeACPAgent:
                     raw_input=arguments,
                 ),
             )
-            config = agent.mcp_server(sid, "band")
-            async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
+            async with advertised_session(agent.mcp_server(sid, "band")) as client:
                 result = await client.call_tool(tool_name, arguments)
             assert result.isError, "the MCP boundary must reject these arguments"
             await agent.emit(
@@ -659,8 +661,7 @@ class FakeACPAgent:
 
     async def list_mcp_tools(self, *, session_id: str, server: str) -> list[Tool]:
         """The tools a session's MCP server lists."""
-        config = self.mcp_server(session_id, server)
-        async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
+        async with advertised_session(self.mcp_server(session_id, server)) as client:
             return (await client.list_tools()).tools
 
     # -- acp.Agent protocol ------------------------------------------------------

@@ -94,7 +94,11 @@ class TestSetup:
 
         expected = adapter._agent_mcp_server_name("agent-123")
         assert fake_client.registered_mcp_servers == [
-            {"name": expected, "url": fake_backend.endpoint(BandMCPTransport.SSE)}
+            {
+                "name": expected,
+                "url": fake_backend.endpoint(BandMCPTransport.SSE),
+                "headers": fake_backend.headers,
+            }
         ]
 
         await adapter.on_cleanup("room-1")
@@ -143,6 +147,7 @@ class TestSetup:
             {
                 "name": adapter._mcp_server_name,
                 "url": fake_backend.endpoint(BandMCPTransport.SSE),
+                "headers": fake_backend.headers,
             },
         ]
         assert starts.requested[0].additional_tools == [(EchoInput, echo_tool)]
@@ -202,6 +207,7 @@ class TestSetup:
             {
                 "name": adapter._mcp_server_name,
                 "url": fake_backend.endpoint(BandMCPTransport.SSE),
+                "headers": fake_backend.headers,
             }
         ]
         assert fake_client.prompt_calls[0]["tools"] == {

@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+from http import HTTPStatus
 
 import pytest
+from letta_client import NotFoundError
 
 from band.adapters.letta import (
     LettaAdapterConfig,
     LettaMCPConfig,
 )
+from band.integrations.letta.mcp import API_FAILURE_WITH_STATUS
 from tests.adapters.lettakit import (
     make_mock_mcp_server,
 )
 from tests.adapters.lettamcp.kit import (
-    _stale_tool_error,
+    letta_not_found,
+    registered_configs,
     registered_on_a_dead_fake_server,
     registered_on_real_server,
     registered_urls,
@@ -34,11 +38,10 @@ class TestSelfHostedMCPCrash:
 
             await bridge.ensure_ready(client)
 
-            live_url = registered_urls(client)[-1]
             assert client.mcp_servers.update.await_args.args == ("mcp-server-1",)
             assert client.mcp_servers.create.await_count == 1
             assert (bridge.server_id, bridge.tool_ids) == ("mcp-server-1", ["t1"])
-            assert await serves_band_tools(live_url)
+            assert await serves_band_tools(registered_configs(client)[-1])
 
     @pytest.mark.asyncio
     async def test_a_released_crashed_server_is_replaced_before_registering(
@@ -50,7 +53,7 @@ class TestSelfHostedMCPCrash:
 
             await bridge.ensure_ready(client)
 
-            assert await serves_band_tools(registered_urls(client)[-1])
+            assert await serves_band_tools(registered_configs(client)[-1])
 
     @pytest.mark.asyncio
     async def test_a_released_crashed_server_keeps_its_fixed_name_registration(
@@ -72,7 +75,7 @@ class TestSelfHostedMCPCrash:
 
             assert client.mcp_servers.create.await_count == 1
             assert bridge.server_id == "mcp-server-1"
-            assert await serves_band_tools(registered_urls(client)[-1])
+            assert await serves_band_tools(registered_configs(client)[-1])
 
     @pytest.mark.asyncio
     async def test_a_transient_repoint_failure_is_retried_on_the_same_row(
@@ -100,10 +103,14 @@ class TestSelfHostedMCPCrash:
     @pytest.mark.asyncio
     async def test_a_repoint_of_a_deleted_row_registers_afresh(self) -> None:
         bridge, client = await registered_on_a_dead_fake_server()
-        client.mcp_servers.update.side_effect = _stale_tool_error("no such server")
+        client.mcp_servers.update.side_effect = letta_not_found("no such server")
 
-        with backends_created_by(), pytest.raises(Exception, match="no such server"):
+        with backends_created_by(), pytest.raises(RuntimeError) as raised:
             await bridge.ensure_ready(client)
+        assert API_FAILURE_WITH_STATUS.format(
+            name=NotFoundError.__name__, status=HTTPStatus.NOT_FOUND
+        ) in str(raised.value)
+        assert "no such server" not in str(raised.value)
         assert bridge.server_id is None
 
         client.mcp_servers.update.side_effect = None
