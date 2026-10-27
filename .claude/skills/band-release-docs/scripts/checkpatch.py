@@ -48,6 +48,7 @@ LINK_TARGET = re.compile(
     r"\]\(\s*<?([^)\s>]+)|^[ \t]*\[[^\]]+\]:\s*<?([^\s>]+)", re.MULTILINE
 )
 SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
+ESCAPED_BACKTICK = "\\`"
 
 
 class PathViolation(StrEnum):
@@ -168,8 +169,11 @@ def changed_line_count(before: str, after: str) -> int:
 
 
 def prose_lines(text: str) -> list[str]:
-    """The page's lines outside code blocks and inline code."""
-    return CODE_PATTERN.sub("", text).splitlines()
+    """The page's lines outside code blocks and inline code.
+
+    An escaped backtick renders as text, so it never opens a code span.
+    """
+    return CODE_PATTERN.sub("", text.replace(ESCAPED_BACKTICK, "'")).splitlines()
 
 
 def added_prose(before: str, after: str) -> list[str]:
