@@ -14,6 +14,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.types import LATEST_PROTOCOL_VERSION
 from pydantic import BaseModel
+from starlette.types import ASGIApp, Message, Scope
 
 from band.integrations.mcp.engine import MCPToolRegistration
 from band.integrations.mcp.local_server import (
@@ -25,6 +26,7 @@ from band.integrations.mcp.local_server import (
     LOCAL_MCP_MESSAGE_PATH,
     LOCAL_MCP_ROOMS_PATH,
     LOCAL_MCP_SSE_PATH,
+    BearerTokenGuard,
     LocalMCPServer,
     local_mcp_auth_headers,
 )
@@ -122,6 +124,32 @@ HEALTH = Route(Served.ROOM_BOUND, "GET", LOCAL_MCP_HEALTH_PATH)
 CRAFTED_TEXT = "caller-chosen-text"
 CRAFTED_ROOM_PATH = Route(Served.ROOM_BOUND, "GET", f"{_ROOM_PREFIX}/{CRAFTED_TEXT}")
 CRAFTED_PATH = Route(Served.MULTI_ROOM, "GET", f"/{CRAFTED_TEXT}")
+
+
+def bare_guard(app: ASGIApp, route: str) -> BearerTokenGuard:
+    """A guard in front of ``app`` requiring ``AUTH_TOKEN`` on ``route``,
+    driven in-process without a server."""
+    return BearerTokenGuard(
+        app,
+        token=AUTH_TOKEN,
+        open_paths=frozenset(),
+        routes=frozenset({route}),
+        server_name=SERVER_NAME,
+    )
+
+
+async def drive(guard: BearerTokenGuard, scope: Scope) -> list[Message]:
+    """The messages ``guard`` sends back to one request of ``scope``."""
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        raise AssertionError("the guard or its app read the request")
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    await guard(scope, receive, send)
+    return sent
 
 
 class RecordInput(BaseModel):

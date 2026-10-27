@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import logging
 import traceback
+from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from letta_client import UnprocessableEntityError
+from letta_client import APIConnectionError, UnprocessableEntityError
 
 from band.adapters.letta import (
     LettaAdapter,
@@ -56,6 +57,47 @@ async def reject_echoing_the_config(*_: Any, **submitted: Any) -> None:
         ),
         body=body,
     )
+
+
+LETTA_DOWN = "letta down"
+
+
+async def fail_to_connect(*_: Any, **__: Any) -> None:
+    """Fail a create or update the way an unreachable Letta does: an API
+    error with no HTTP status."""
+    raise APIConnectionError(request=httpx.Request("POST", LETTA_MCP_SERVERS_URL))
+
+
+async def fail_outside_the_api(*_: Any, **__: Any) -> None:
+    """Fail a create or update with an error that is not a Letta API error."""
+    raise ConnectionError(LETTA_DOWN)
+
+
+Rejection = Callable[..., Awaitable[None]]
+# How each kind of failed write is reported: the message's tail, and the
+# cause chained to it (only an error that cannot echo the token is kept).
+REJECTIONS = [
+    pytest.param(
+        reject_echoing_the_config,
+        ": UnprocessableEntityError (HTTP 422)",
+        None,
+        id="api-error-with-status",
+    ),
+    pytest.param(
+        fail_to_connect, ": APIConnectionError", None, id="api-error-no-status"
+    ),
+    pytest.param(
+        fail_outside_the_api,
+        f": {LETTA_DOWN}",
+        repr(ConnectionError(LETTA_DOWN)),
+        id="non-api-error",
+    ),
+]
+
+
+def chained_cause(error: BaseException) -> str | None:
+    """The cause chained to ``error``, as its repr."""
+    return None if error.__cause__ is None else repr(error.__cause__)
 
 
 def reported(error: BaseException) -> str:
@@ -550,12 +592,17 @@ class TestSelfHostedMCPLifecycle:
         )
 
     @pytest.mark.asyncio
-    async def test_a_rejected_registration_never_reports_the_echoed_token(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(("rejection", "tail", "cause"), REJECTIONS)
+    async def test_a_rejected_registration_is_reported_without_the_token(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        rejection: Rejection,
+        tail: str,
+        cause: str | None,
     ) -> None:
         caplog.set_level(logging.DEBUG)
         client = letta_registering_one_tool()
-        client.mcp_servers.create.side_effect = reject_echoing_the_config
+        client.mcp_servers.create.side_effect = rejection
         bridge = LettaAdapter()._mcp
 
         with (
@@ -564,16 +611,22 @@ class TestSelfHostedMCPLifecycle:
         ):
             await bridge.ensure_ready(client)
 
-        assert str(failed.value).endswith(": UnprocessableEntityError (HTTP 422)")
+        assert str(failed.value).endswith(tail)
+        assert chained_cause(failed.value) == cause
         assert FAKE_AUTH_TOKEN not in caplog.text + reported(failed.value)
 
     @pytest.mark.asyncio
-    async def test_a_rejected_repoint_never_reports_the_echoed_token(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(("rejection", "tail", "cause"), REJECTIONS)
+    async def test_a_rejected_repoint_is_reported_without_the_token(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        rejection: Rejection,
+        tail: str,
+        cause: str | None,
     ) -> None:
         caplog.set_level(logging.DEBUG)
         bridge, client = await registered_on_a_dead_fake_server()
-        client.mcp_servers.update.side_effect = reject_echoing_the_config
+        client.mcp_servers.update.side_effect = rejection
 
         with (
             backends_created_by(),
@@ -581,7 +634,8 @@ class TestSelfHostedMCPLifecycle:
         ):
             await bridge.ensure_ready(client)
 
-        assert str(failed.value).endswith(": UnprocessableEntityError (HTTP 422)")
+        assert str(failed.value).endswith(tail)
+        assert chained_cause(failed.value) == cause
         assert FAKE_AUTH_TOKEN not in caplog.text + reported(failed.value)
 
     @pytest.mark.asyncio

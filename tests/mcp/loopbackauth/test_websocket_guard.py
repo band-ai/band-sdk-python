@@ -8,17 +8,14 @@ import pytest
 from starlette.status import WS_1008_POLICY_VIOLATION
 from starlette.types import Message, Receive, Scope, Send
 
-from band.integrations.mcp.local_server import (
-    LOCAL_MCP_MESSAGE_PATH,
-    BearerTokenGuard,
-)
+from band.integrations.mcp.local_server import LOCAL_MCP_MESSAGE_PATH
 from tests.mcp.loopbackauth.kit import (
     ACCEPTED_CREDENTIALS,
-    AUTH_TOKEN,
     REFUSED_CREDENTIALS,
-    SERVER_NAME,
     Credential,
+    bare_guard,
     credential_headers,
+    drive,
 )
 
 REACHED = {"type": "websocket.accept"}
@@ -44,23 +41,8 @@ def websocket_scope(credential: Credential) -> dict[str, Any]:
 
 async def upgrade(credential: Credential) -> list[Message]:
     """What the guard sends back to an upgrade presenting ``credential``."""
-    guard = BearerTokenGuard(
-        accepting_app,
-        token=AUTH_TOKEN,
-        open_paths=frozenset(),
-        routes=frozenset({LOCAL_MCP_MESSAGE_PATH}),
-        server_name=SERVER_NAME,
-    )
-    sent: list[Message] = []
-
-    async def receive() -> Message:
-        return {"type": "websocket.connect"}
-
-    async def send(message: Message) -> None:
-        sent.append(message)
-
-    await guard(websocket_scope(credential), receive, send)
-    return sent
+    guard = bare_guard(accepting_app, LOCAL_MCP_MESSAGE_PATH)
+    return await drive(guard, websocket_scope(credential))
 
 
 class TestWebsocketGuard:

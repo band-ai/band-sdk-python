@@ -54,7 +54,7 @@ from band.integrations.mcp.engine import (
 )
 from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import AgentTools
-from tests.integrations.acp.codexacpkit import EchoInput
+from tests.integrations.mcp.localserver.kit import EchoInput
 from tests.runtime.conftest import make_participant
 from tests.toolkit.timeouts import backstop_timeout
 

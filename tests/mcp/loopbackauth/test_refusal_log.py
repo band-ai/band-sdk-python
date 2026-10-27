@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 import pytest
-from starlette.types import Message, Receive, Scope, Send
+from starlette.types import Receive, Scope, Send
 
 from band.integrations.mcp import local_server
 from band.integrations.mcp.local_server import (
@@ -18,10 +18,8 @@ from band.integrations.mcp.local_server import (
     REDACTED_ROOM,
     REFUSAL_LOG,
     UNKNOWN_ROUTE,
-    BearerTokenGuard,
 )
 from tests.mcp.loopbackauth.kit import (
-    AUTH_TOKEN,
     CRAFTED_PATH,
     CRAFTED_ROOM_PATH,
     MULTI_ROOM_HTTP,
@@ -30,6 +28,8 @@ from tests.mcp.loopbackauth.kit import (
     SERVER_NAME,
     Credential,
     Route,
+    bare_guard,
+    drive,
     guarded_servers,
 )
 
@@ -51,27 +51,23 @@ def first_and_tenth(logged_route: str) -> list[tuple[str, int]]:
     return [(logged_route, 1), (logged_route, REFUSALS)]
 
 
+# A tokenless request to the bare guard's route.
+UNAUTHENTICATED = {
+    "type": "http",
+    "method": "POST",
+    "path": LOCAL_MCP_HTTP_PATH,
+    "headers": [],
+}
+
+
 async def unreachable_app(scope: Scope, receive: Receive, send: Send) -> None:
     """The guarded app, which no refused request may reach."""
     raise AssertionError("a refused request reached the guarded app")
 
 
-async def refuse_unauthenticated(guard: BearerTokenGuard) -> None:
-    """Send ``guard`` one tokenless HTTP request to its served route."""
-
-    async def receive() -> Message:
-        return {"type": "http.request", "body": b"", "more_body": False}
-
-    async def send(message: Message) -> None:
-        pass
-
-    scope = {
-        "type": "http",
-        "method": "POST",
-        "path": LOCAL_MCP_HTTP_PATH,
-        "headers": [],
-    }
-    await guard(scope, receive, send)
+def guard_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The messages the guard logged."""
+    return [r.getMessage() for r in caplog.records if r.name == GUARD_LOGGER]
 
 
 class TestRefusalLog:
@@ -125,7 +121,7 @@ class TestRefusalLog:
             for route in routes:
                 await guarded.status(route, Credential.WRONG_TOKEN)
 
-        assert [r.getMessage() for r in caplog.records if r.name == GUARD_LOGGER] == [
+        assert guard_warnings(caplog) == [
             REFUSAL_LOG % (SERVER_NAME, route, count) for route, count in logged
         ]
 
@@ -133,18 +129,12 @@ class TestRefusalLog:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         caplog.set_level(logging.WARNING, logger=GUARD_LOGGER)
-        guard = BearerTokenGuard(
-            unreachable_app,
-            token=AUTH_TOKEN,
-            open_paths=frozenset(),
-            routes=frozenset({LOCAL_MCP_HTTP_PATH}),
-            server_name=SERVER_NAME,
-        )
+        guard = bare_guard(unreachable_app, LOCAL_MCP_HTTP_PATH)
 
         for _ in range(MANY_REFUSALS):
-            await refuse_unauthenticated(guard)
+            await drive(guard, UNAUTHENTICATED)
 
-        assert [r.getMessage() for r in caplog.records if r.name == GUARD_LOGGER] == [
+        assert guard_warnings(caplog) == [
             REFUSAL_LOG % (SERVER_NAME, LOCAL_MCP_HTTP_PATH, count)
             for count in (1, 10, 100)
         ]

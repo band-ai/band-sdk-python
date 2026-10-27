@@ -262,8 +262,8 @@ class ClaudeCLIOptions(BaseAdapterConfig):
             load without changing ``cwd`` or ``setting_sources``.
         add_dirs: Additional directories Claude may access (``--add-dir``).
         env: Extra environment variables for the CLI process only; the host's
-            ``os.environ`` is left untouched. ``BAND_MCP_TOKEN_ENV`` is
-            reserved for the Band MCP server's token.
+            ``os.environ`` is left untouched. ``BAND_MCP_TOKEN`` is reserved
+            for the Band MCP server's token.
         extra_args: Additional CLI flags by bare name, ``{"flag": "value"}``
             or ``{"flag": None}`` for a bare flag. Flags in
             ``RESERVED_CLI_FLAGS`` are rejected.
