@@ -182,3 +182,6 @@ scripts/config.yaml
 
 # Local Claude Code settings (machine-specific, not shared)
 .claude/settings.local.json
+
+# The release-docs MDX reader's packages (npm ci installs them)
+node_modules/

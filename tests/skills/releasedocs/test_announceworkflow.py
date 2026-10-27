@@ -260,6 +260,12 @@ class TestAnnounceWorkflow:
             if arg.startswith("--permission")
         } == permissions
 
+    def test_mdx_reader_installs_without_scripts_after_the_review(self) -> None:
+        install = step_position("fern", has_id("mdx-reader"))
+        assert step_position("fern", uses(CLAUDE_ACTION)) < install
+        assert install < step_position("fern", has_id("patch"))
+        assert step_run("mdx-reader").startswith("npm ci --ignore-scripts ")
+
     def test_write_token_follows_the_edit_check_and_skips_dry_run(self) -> None:
         write = step_position("fern", has_id("fern-write"))
         assert step_position("fern", has_id("patch")) < write

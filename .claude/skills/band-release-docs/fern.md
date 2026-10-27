@@ -115,6 +115,7 @@ closed PR may keep its branch or have it deleted.
     copy both trees without `.git`
     (`rsync -a --exclude .git <tmp>/base/ <tmp>/pristine/` and
     `rsync -a --exclude .git <worktree>/ <tmp>/edited/`), run
+    `npm ci --ignore-scripts --prefix "$S/mdx"` and
     `uv run --script "$S/checkpatch.py" <tmp>/pristine <tmp>/edited --out <tmp>/patch.json`,
     then `git -C <fern> worktree remove --force <tmp>/base`. A path violation
     stops the docs PR; list each content violation under `## Do not merge` in

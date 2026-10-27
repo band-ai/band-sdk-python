@@ -58,3 +58,18 @@ updates:
       github-actions:
         patterns:
           - "*"
+
+  # The release-docs MDX reader: the parser the Fern docs edit check trusts.
+  - package-ecosystem: "npm"
+    directory: "/.claude/skills/band-release-docs/scripts/mdx"
+    target-branch: "main"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    labels:
+      - "dependencies"
+    groups:
+      mdx-reader:
+        patterns:
+          - "*"

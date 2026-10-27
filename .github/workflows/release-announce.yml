@@ -693,6 +693,15 @@ jobs:
           uv run --script "$SCRIPTS/extractreport.py" "$EXECUTION_FILE" \
             --kind docs --out "$RUNNER_TEMP/docs-report.json"
 
+      # No install scripts run, and npm ci replaces any node_modules already
+      # there; the locked packages only parse the pages. Without them the
+      # check fails, so no docs PR is filed.
+      - name: Install the MDX reader
+        id: mdx-reader
+        if: steps.docs-report.outcome == 'success'
+        continue-on-error: true
+        run: npm ci --ignore-scripts --prefix "$SCRIPTS/mdx"
+
       - name: Check the docs edits
         id: patch
         if: steps.docs-report.outcome == 'success'

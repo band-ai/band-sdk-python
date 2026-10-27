@@ -51,5 +51,6 @@ carries its dependencies inline. Data shapes live in `scripts/releasedata.py`.
 | `withhold.py` | Drops the PRs a held item or the ledger cites from the docs review input; fails closed |
 | `fernstate.py` | Records the Fern PR state a filing depends on and decides file, reuse, or skip |
 | `checkpatch.py` | Checks the docs review's edits against a pristine Fern tree |
+| `mdx/readmdx.mjs` | Reads pages with MDX's own parser for `checkpatch.py` (Node; `npm ci --ignore-scripts` in `mdx/` first) |
 | `docsreport.py` | The docs review's report model and the docs PR body |
 | `filefern.py` | Commits, pushes, and opens the Fern PRs, waits for their checks, merges or closes |

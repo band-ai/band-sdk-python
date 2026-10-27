@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["markdown-it-py>=3,<5", "pydantic>=2.12,<3"]
+# dependencies = ["pydantic>=2.12,<3"]
 # ///
 """Check the docs review's edits to the Fern tree before anything is pushed.
 
@@ -9,8 +9,9 @@ deleted, or renamed file, a symlink, a file outside the docs pages, a
 non-UTF-8 file, or too many pages) fails the command: nothing may be filed. A
 content violation (a new import, a new JSX tag or MDX expression, a link
 outside the allowed sites, too many changed lines) only marks the docs PR
-do-not-merge. Pages are parsed the way MDX reads Markdown, so a construct
-counts wherever MDX would render it. Writes the changed pages and content
+do-not-merge, as does a page MDX cannot parse. MDX's own parser reads the
+pages (``mdx/readmdx.mjs`` under Node; ``npm ci`` there first), so a construct
+counts exactly where it renders. Writes the changed pages and content
 violations to ``--out`` and appends ``changed`` and ``mergeable`` to
 ``--outputs``. Logs counts and violation kinds only: the pages are private.
 """
@@ -19,19 +20,18 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import json
 import logging
 import re
+import subprocess
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
 
-from markdown_it import MarkdownIt
-from markdown_it.rules_block import StateBlock, lheading, paragraph, reference
-from markdown_it.token import Token
+from pydantic import TypeAdapter
 from releasedata import MAX_REVIEWED_PAGES, Frozen, is_docs_page
 from stepoutputs import append_outputs
-from textsafety import URL_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -43,17 +43,11 @@ ALLOWED_LINK_PREFIXES = (
     "https://github.com/band-ai/",
     "https://pypi.org/project/band-sdk/",
 )
-IMPORT_LINE = re.compile(r"^\s*(?:import|export)\b")
-# A whole MDX/JSX tag with its attributes, or an MDX `{expression}`;
-# `<https://...>` autolinks are not tags.
-MDX_CONSTRUCT = re.compile(r"<(?![\w+.-]+:)/?[A-Za-z][^>]*>|\{[^{}]*\}?")
+MDX_READER = Path(__file__).resolve().parent / "mdx" / "readmdx.mjs"
 SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
 # Browsers drop whitespace and controls from a URL and read a backslash as a
 # slash, so `java&#9;script:` or `/\host` can leave the page.
 UNREADABLE_TARGET = re.compile(r"[\x00-\x20\x7f\\]")
-CODE_TOKENS = frozenset({"code_inline", "fence"})
-BREAK_TOKENS = frozenset({"softbreak", "hardbreak"})
-BlockRule = Callable[[StateBlock, int, int, bool], bool]
 
 
 class PathViolation(StrEnum):
@@ -69,6 +63,7 @@ class ContentViolation(StrEnum):
     IMPORT = "adds an import or export"
     JSX = "adds or changes a JSX tag or MDX expression"
     LINK = "links outside the allowed sites"
+    UNPARSED = "is not MDX these checks can read"
     TOO_LONG = f"changes more than {MAX_CHANGED_LINES} lines"
 
 
@@ -173,86 +168,28 @@ def changed_line_count(before: str, after: str) -> int:
     )
 
 
-def interruptible(rule: BlockRule) -> BlockRule:
-    """Let a deeply indented line end the block, as MDX does without indented code.
-
-    markdown-it still reads such a line as a lazy continuation, so a code span
-    could hide text MDX renders after a thematic break or fence.
-    """
-
-    def run(state: StateBlock, start: int, end: int, silent: bool) -> bool:
-        indents = state.sCount
-        state.sCount = [min(indent, state.blkIndent + 3) for indent in indents]
-        try:
-            return rule(state, start, end, silent)
-        finally:
-            state.sCount = indents
-
-    return run
-
-
-class MdxParser(MarkdownIt):
-    """CommonMark as MDX reads it: no HTML or indented code, and every link kept."""
-
-    def __init__(self) -> None:
-        super().__init__("commonmark", {"html": False})
-        self.disable("code")
-        for name, rule in (
-            ("paragraph", paragraph),
-            ("lheading", lheading),
-            ("reference", reference),
-        ):
-            self.block.ruler.at(name, interruptible(rule))
-
-    def validateLink(self, url: str) -> bool:
-        """Keep every link, so the allowed-site check sees it."""
-        return True
-
-    def normalizeLink(self, url: str) -> str:
-        """Keep the decoded target unencoded, as the allowed-site check reads it."""
-        return url
-
-
-PARSER = MdxParser()
-
-
 class Page(Frozen):
-    """What a page renders outside code: its prose lines and link targets."""
+    """What MDX renders from a page outside code."""
 
-    prose: list[str]
-    targets: frozenset[str]
-
-
-def read_page(text: str) -> Page:
-    prose: list[str] = []
-    targets: set[str] = set()
-
-    def visit(tokens: list[Token]) -> None:
-        for token in tokens:
-            if token.type in CODE_TOKENS:
-                continue
-            if token.type == "text":
-                prose.append(token.content)
-            elif token.type in BREAK_TOKENS:
-                prose.append("\n")
-            if (target := token.attrGet("href") or token.attrGet("src")) is not None:
-                targets.add(str(target))
-            visit(token.children or [])
-            if token.type == "inline":
-                prose.append("\n")
-
-    visit(PARSER.parse(text))
-    return Page(prose="".join(prose).splitlines(), targets=frozenset(targets))
+    targets: list[str]
+    tags: list[str]
+    expressions: list[str]
+    imports: list[str]
 
 
-def added_prose(before: Page, after: Page) -> list[str]:
-    return list((Counter(after.prose) - Counter(before.prose)).elements())
+PAGES = TypeAdapter(list[Page | None])
 
 
-def mdx_constructs(page: Page) -> Counter[str]:
-    """Tags and expressions outside code; import lines have their own rule."""
-    kept = "\n".join(line for line in page.prose if not IMPORT_LINE.match(line))
-    return Counter(MDX_CONSTRUCT.findall(kept))
+def read_pages(texts: list[str]) -> list[Page | None]:
+    """Each page as MDX parses it, or None when MDX cannot."""
+    result = subprocess.run(
+        ["node", str(MDX_READER)],
+        input=json.dumps(texts),
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+    )
+    return PAGES.validate_json(result.stdout)
 
 
 def is_allowed_url(url: str) -> bool:
@@ -274,42 +211,36 @@ def is_allowed_target(target: str) -> bool:
     return True
 
 
-def bare_urls(page: Page) -> set[str]:
-    return set(URL_PATTERN.findall("\n".join(page.prose)))
+def adds(before: list[str], after: list[str]) -> bool:
+    return bool(Counter(after) - Counter(before))
 
 
-def new_links_allowed(before: Page, after: Page) -> bool:
-    """Every URL and link target the edit adds is allowed; existing ones stay."""
-    return all(map(is_allowed_url, bare_urls(after) - bare_urls(before))) and all(
-        map(is_allowed_target, after.targets - before.targets)
-    )
-
-
-def page_violations(path: str, before: str, after: str) -> tuple[list[Finding], int]:
-    """The content violations in one page's edit, and its changed-line count."""
-    count = changed_line_count(before, after)
-    old, new = read_page(before), read_page(after)
+def page_violations(path: str, old: Page | None, new: Page | None) -> list[Finding]:
+    """The content violations in one page's edit."""
+    if old is None or new is None:
+        return [Finding(path=path, kind=ContentViolation.UNPARSED)]
     kinds = []
-    if any(IMPORT_LINE.match(line) for line in added_prose(old, new)):
+    if adds(old.imports, new.imports):
         kinds.append(ContentViolation.IMPORT)
-    if mdx_constructs(new) - mdx_constructs(old):
+    if adds(old.tags + old.expressions, new.tags + new.expressions):
         kinds.append(ContentViolation.JSX)
-    if not new_links_allowed(old, new):
+    if not all(map(is_allowed_target, set(new.targets) - set(old.targets))):
         kinds.append(ContentViolation.LINK)
-    return [Finding(path=path, kind=kind) for kind in kinds], count
+    return [Finding(path=path, kind=kind) for kind in kinds]
 
 
 def check_patch(pristine: Path, edited: Path) -> PatchCheck:
     files = changed_pages(pristine, edited)
-    violations: list[Finding] = []
-    total = 0
-    for path in files:
-        before = (pristine / path).read_text("utf-8")
-        after = (edited / path).read_text("utf-8")
-        found, count = page_violations(path, before, after)
-        violations += found
-        total += count
-    if total > MAX_CHANGED_LINES:
+    before = [(pristine / path).read_text("utf-8") for path in files]
+    after = [(edited / path).read_text("utf-8") for path in files]
+    pages = read_pages(before + after)
+    olds, news = pages[: len(files)], pages[len(files) :]
+    violations = [
+        finding
+        for path, old, new in zip(files, olds, news, strict=True)
+        for finding in page_violations(path, old, new)
+    ]
+    if sum(map(changed_line_count, before, after)) > MAX_CHANGED_LINES:
         violations.append(Finding(path=".", kind=ContentViolation.TOO_LONG))
     return PatchCheck(files=files, content_violations=violations)
 
