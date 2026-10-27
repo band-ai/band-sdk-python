@@ -464,8 +464,6 @@ class AgentRunner:
                     exc_info=True,
                 )
 
-        skip_event = self._config.messages_only and not isinstance(event, MessageEvent)
-
         # Dedup message events by message id (reconnect may redeliver).
         # Check only — recording the id happens after a successful forward so
         # that a failed forward stays retryable through WS redelivery or
@@ -490,6 +488,7 @@ class AgentRunner:
             )
             return
 
+        skip_event = self._config.messages_only and not isinstance(event, MessageEvent)
         forward_succeeded = False
         async with self._forwards.ready(room):
             try:
