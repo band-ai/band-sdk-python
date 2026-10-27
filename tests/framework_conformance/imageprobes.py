@@ -123,7 +123,7 @@ class ReadRoomFileTools:
 async def _probe_claude_sdk() -> bool:
     """claude_sdk's tools are its room-bound Band MCP backend, dialed over HTTP."""
     from tests.mcpclient import (  # noqa: PLC0415 -- imports mcp, a claude_sdk extra absent from the standard dev-crewai/dev-parlant lane venvs
-        mcp_session,
+        backend_session,
         started_backend,
     )
 
@@ -133,7 +133,7 @@ async def _probe_claude_sdk() -> bool:
             tool_definitions=[TOOL_DEFINITIONS[BandTool.READ_ROOM_FILE]],
             get_tools={"room-1": ReadRoomFileTools()}.get,
         ) as backend,
-        mcp_session(backend.endpoint(BandMCPTransport.HTTP, "room-1")) as session,
+        backend_session(backend, BandMCPTransport.HTTP, "room-1") as session,
     ):
         result = await session.call_tool(BandTool.READ_ROOM_FILE, {"file_id": "file-1"})
 

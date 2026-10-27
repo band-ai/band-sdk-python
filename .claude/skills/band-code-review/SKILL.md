@@ -1,8 +1,7 @@
 ---
 name: band-code-review
-description: Run the team's six-angle review of a PR or branch when explicitly requested. Verify findings and existing feedback, publish one review, and optionally simplify and fix root causes with --fix for up to --cycles N rounds. Use band-here-is-a-review for supplied feedback alone.
+description: Run the team's six-angle review of a PR or branch only when a user explicitly asks for it; never on Claude's own initiative. Verify findings and existing feedback, publish one review, and optionally simplify and fix root causes with --fix for up to --cycles N rounds. Use band-here-is-a-review for supplied feedback alone.
 argument-hint: "[target] [--fix] [--cycles N]"
-disable-model-invocation: true
 ---
 
 # Code Review

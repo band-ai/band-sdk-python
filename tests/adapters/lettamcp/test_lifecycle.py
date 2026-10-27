@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import traceback
+from collections.abc import Awaitable, Callable
+from http import HTTPStatus
+from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from letta_client import APIConnectionError, UnprocessableEntityError
 
 from band.adapters.letta import (
     LettaAdapter,
@@ -14,6 +21,7 @@ from band.adapters.letta import (
 )
 from band.converters.letta import LettaSessionState
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.integrations.letta.mcp import API_FAILURE_WITH_STATUS
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.lettakit import (
@@ -25,8 +33,81 @@ from tests.adapters.lettakit import (
     make_mock_tool_page,
     make_platform_message,
 )
-from tests.adapters.lettamcp.kit import _stale_tool_error
-from tests.mcpbackends import FakeBandMCPBackend, backends_created_by, hold_backend
+from tests.adapters.lettamcp.kit import (
+    LETTA_MCP_SERVERS_URL,
+    letta_not_found,
+    letta_registering_one_tool,
+    registered_on_a_dead_fake_server,
+)
+from tests.mcpbackends import (
+    FAKE_AUTH_TOKEN,
+    FakeBandMCPBackend,
+    backends_created_by,
+    hold_backend,
+)
+
+
+async def reject_echoing_the_config(*_: Any, **submitted: Any) -> None:
+    """Refuse a create or update the way Letta's 422 does: echoing what it
+    was sent."""
+    body = {"detail": [{"msg": "invalid", "input": submitted}]}
+    raise UnprocessableEntityError(
+        f"Error code: 422 - {body}",
+        response=httpx.Response(
+            422, request=httpx.Request("POST", LETTA_MCP_SERVERS_URL)
+        ),
+        body=body,
+    )
+
+
+LETTA_DOWN = "letta down"
+
+
+async def fail_to_connect(*_: Any, **__: Any) -> None:
+    """Fail a create or update the way an unreachable Letta does: an API
+    error with no HTTP status."""
+    raise APIConnectionError(request=httpx.Request("POST", LETTA_MCP_SERVERS_URL))
+
+
+async def fail_outside_the_api(*_: Any, **__: Any) -> None:
+    """Fail a create or update with an error that is not a Letta API error."""
+    raise ConnectionError(LETTA_DOWN)
+
+
+Rejection = Callable[..., Awaitable[None]]
+# How each kind of failed write is reported: the message's tail, and the
+# cause chained to it (only an error that cannot echo the token is kept).
+REJECTIONS = [
+    pytest.param(
+        reject_echoing_the_config,
+        ": "
+        + API_FAILURE_WITH_STATUS.format(
+            name=UnprocessableEntityError.__name__,
+            status=HTTPStatus.UNPROCESSABLE_ENTITY,
+        ),
+        None,
+        id="api-error-with-status",
+    ),
+    pytest.param(
+        fail_to_connect, ": APIConnectionError", None, id="api-error-no-status"
+    ),
+    pytest.param(
+        fail_outside_the_api,
+        f": {LETTA_DOWN}",
+        repr(ConnectionError(LETTA_DOWN)),
+        id="non-api-error",
+    ),
+]
+
+
+def chained_cause(error: BaseException) -> str | None:
+    """The cause chained to ``error``, as its repr."""
+    return None if error.__cause__ is None else repr(error.__cause__)
+
+
+def reported(error: BaseException) -> str:
+    """``error`` as ``logger.exception`` prints it, cause chain included."""
+    return "".join(traceback.format_exception(error))
 
 
 class TestSelfHostedMCPLifecycle:
@@ -245,6 +326,56 @@ class TestSelfHostedMCPLifecycle:
             )
 
     @pytest.mark.asyncio
+    async def test_adopted_fixed_name_row_is_rewritten_with_current_headers(
+        self,
+    ) -> None:
+        """A row an earlier process registered at this same URL still carries
+        that process's bearer token, so adopting it rewrites its config."""
+        bridge = LettaAdapter(
+            config=LettaAdapterConfig(mcp=LettaMCPConfig(server_name="band-compose"))
+        )._mcp
+        backend = await hold_backend(bridge.backend)
+        url = bridge.advertised_url(backend.local_server.port)
+        client = letta_registering_one_tool()
+        client.mcp_servers.list.return_value = [
+            make_mock_mcp_server("mcp-earlier", name="band-compose", url=url)
+        ]
+
+        await bridge.ensure_ready(client)
+
+        client.mcp_servers.create.assert_not_awaited()
+        client.mcp_servers.update.assert_awaited_once_with(
+            "mcp-earlier",
+            config={
+                "mcp_server_type": "sse",
+                "server_url": url,
+                "custom_headers": backend.headers,
+            },
+        )
+        assert bridge.server_id == "mcp-earlier"
+
+    @pytest.mark.asyncio
+    async def test_adopted_external_row_keeps_the_operators_config(self) -> None:
+        """External mode sends no headers, so rewriting the shared row would
+        wipe any the operator registered it with."""
+        url = "http://localhost:8002/sse"
+        bridge = LettaAdapter(
+            config=LettaAdapterConfig(
+                mcp=LettaMCPConfig(mode="external", server_url=url)
+            )
+        )._mcp
+        client = letta_registering_one_tool()
+        client.mcp_servers.list.return_value = [
+            make_mock_mcp_server("mcp-shared", name="band", url=url)
+        ]
+
+        await bridge.ensure_ready(client)
+
+        client.mcp_servers.create.assert_not_awaited()
+        client.mcp_servers.update.assert_not_awaited()
+        assert bridge.server_id == "mcp-shared"
+
+    @pytest.mark.asyncio
     async def test_register_uses_fresh_name_when_stale_url_is_ephemeral(self) -> None:
         adapter = LettaAdapter()
         mock_client = AsyncMock()
@@ -325,7 +456,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.tool_ids = ["t-dead"]
 
         # First attach 404s (stale); after re-register it succeeds.
-        stale = _stale_tool_error("Tool with id=t-dead not found in organization")
+        stale = letta_not_found("Tool with id=t-dead not found in organization")
         mock_client.agents.tools.attach.side_effect = [stale, None]
         mock_client.agents.create.return_value = make_mock_agent("agent-1")
         # Re-registration mints a fresh server exposing a live tool id.
@@ -360,7 +491,7 @@ class TestSelfHostedMCPLifecycle:
         # A sibling room, live before the recovery, wired to the old ids.
         adapter._rooms["other"] = RoomContext(agent_id="agent-other")
 
-        stale = _stale_tool_error("Tool with id=t-dead not found in organization")
+        stale = letta_not_found("Tool with id=t-dead not found in organization")
         mock_client.agents.tools.attach.side_effect = [stale, None]
         mock_client.agents.create.return_value = make_mock_agent("agent-new")
         mock_client.mcp_servers.list.return_value = []
@@ -464,6 +595,53 @@ class TestSelfHostedMCPLifecycle:
             adapter._mcp.advertised_url(50001)
             == "http://host.docker.internal:50001/mcp"
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("rejection", "tail", "cause"), REJECTIONS)
+    async def test_a_rejected_registration_is_reported_without_the_token(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        rejection: Rejection,
+        tail: str,
+        cause: str | None,
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        client = letta_registering_one_tool()
+        client.mcp_servers.create.side_effect = rejection
+        bridge = LettaAdapter()._mcp
+
+        with (
+            backends_created_by(),
+            pytest.raises(RuntimeError) as failed,
+        ):
+            await bridge.ensure_ready(client)
+
+        assert str(failed.value).endswith(tail)
+        assert chained_cause(failed.value) == cause
+        assert FAKE_AUTH_TOKEN not in caplog.text + reported(failed.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("rejection", "tail", "cause"), REJECTIONS)
+    async def test_a_rejected_repoint_is_reported_without_the_token(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        rejection: Rejection,
+        tail: str,
+        cause: str | None,
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        bridge, client = await registered_on_a_dead_fake_server()
+        client.mcp_servers.update.side_effect = rejection
+
+        with (
+            backends_created_by(),
+            pytest.raises(RuntimeError) as failed,
+        ):
+            await bridge.ensure_ready(client)
+
+        assert str(failed.value).endswith(tail)
+        assert chained_cause(failed.value) == cause
+        assert FAKE_AUTH_TOKEN not in caplog.text + reported(failed.value)
 
     @pytest.mark.asyncio
     async def test_discovery_failure_leaves_registration_not_ready(self) -> None:

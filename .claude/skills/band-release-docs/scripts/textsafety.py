@@ -82,6 +82,11 @@ def blank_fence_body(fence: re.Match[str]) -> str:
     return "\n".join([lines[0], *[""] * (len(lines) - 2), lines[-1]])
 
 
+def or_none(lines: list[str]) -> list[str]:
+    """A PR body section's lines, or its placeholder when it has none."""
+    return lines or ["None."]
+
+
 def pr_body_text(text: str) -> str:
     """Wrap mentions, issue numbers, and issue links so GitHub leaves them inert."""
     return outside_code(text, lambda plain: GITHUB_REFERENCE.sub(r"`\g<0>`", plain))

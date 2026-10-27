@@ -4,8 +4,9 @@
 # ///
 """Data shapes exchanged between the release-notes scripts and the CI model.
 
-``release-prs.json`` (collector -> model), the model's structured report, and
-``release-notes.json`` (the bundle every renderer reads) are defined here once.
+``release-prs.json`` (collector -> model), the model's structured reports, and
+``release-notes.json`` (the bundle every renderer reads) are defined here once,
+with the Fern repository facts every filing script shares.
 """
 
 from __future__ import annotations
@@ -14,9 +15,50 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Self
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 
 SDK_TAG_PREFIX = "band-sdk-v"
+SDK_REPO_NAME = "band-sdk-python"
+SDK_REPO_URL = f"https://github.com/band-ai/{SDK_REPO_NAME}"
+# The repository's name before its rename; its PR numbers carried over.
+FORMER_SDK_REPO_NAME = "thenvoi-sdk-python"
+
+FERN_REPO = "thenvoi/fern"
+FERN_BASE = "dev"
+CHANGELOG_BRANCH_PREFIX = "changelog/python-sdk-"
+DOCS_BRANCH_PREFIX = "docs/python-sdk-"
+# Test mode files on these twins, so a rehearsal never touches the real branches.
+REHEARSAL_SUFFIX = "-rehearsal"
+# Paths inside the Fern repository.
+CHANGELOG_DIR = "fern/changelog/sdks"
+HELD_ITEMS = ".changelog/held-items.yml"
+DOCS_STRUCTURE = "docs-structure-summary.md"
+# The only files a docs review may change: existing pages under this directory.
+DOCS_PAGES_DIR = "fern/docs/pages/integrations/sdks"
+DOCS_PAGE_SUFFIX = ".mdx"
+MAX_REVIEWED_PAGES = 10
+
+
+def fern_branch(prefix: str, tag: str, *, rehearsal: bool) -> str:
+    return f"{prefix}{tag}{REHEARSAL_SUFFIX if rehearsal else ''}"
+
+
+def is_docs_page(path: str) -> bool:
+    """Whether ``path`` (relative to the Fern root, ``/``-separated) is a docs page."""
+    parts = path.split("/")
+    return (
+        path.startswith(f"{DOCS_PAGES_DIR}/")
+        and path.endswith(DOCS_PAGE_SUFFIX)
+        and ".." not in parts
+        and "" not in parts
+    )
 
 
 class Category(StrEnum):
@@ -93,6 +135,12 @@ def single_line(text: str) -> str:
     return text
 
 
+def shape_errors(exc: ValidationError) -> str:
+    """Each error's location and message, never its input, which may be private."""
+    errors = exc.errors(include_input=False, include_url=False)
+    return "\n".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in errors)
+
+
 class Item(Frozen):
     category: Category
     label: Annotated[
@@ -144,6 +192,17 @@ class ChangelogReport(Frozen):
         if not documented and self.breaking is not None:
             raise ValueError("no_user_facing_changes carries no breaking block")
         return self
+
+
+class HoldbacksReport(Frozen):
+    """The structured output the holdbacks review returns."""
+
+    held: list[Annotated[int, Field(ge=0)]] = Field(
+        description="Indexes (from 0) of release-notes.json items to hold back"
+    )
+    hold_breaking: bool = Field(
+        description="Whether the breaking block describes a held feature"
+    )
 
 
 class Product(Frozen):

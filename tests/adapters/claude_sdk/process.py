@@ -11,8 +11,7 @@ from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from band.integrations.claude_sdk import transport
-from band.runtime.tools import BAND_MCP_SERVER_NAME
-from tests.adapters.roompeer import CLEANUP_FAILURE
+from tests.adapters.roompeer import CLEANUP_FAILURE, MCP_CONFIG_ARG
 from tests.paths import ROOM_PEER
 
 PROBE = """
@@ -74,8 +73,11 @@ class WorkspacePeer(WorkspaceProcess):
             str(ROOM_PEER),
             *self.arguments,
         ]
-        if server := self._options.mcp_servers.get(BAND_MCP_SERVER_NAME):
-            command.extend(["--band-url", str(server["url"])])
+        # The MCP servers exactly as the SDK passes them to the real CLI.
+        sdk_argv = SubprocessCLITransport._build_command(self)
+        if MCP_CONFIG_ARG in sdk_argv:
+            at = sdk_argv.index(MCP_CONFIG_ARG)
+            command.extend(sdk_argv[at : at + 2])
         return command
 
 

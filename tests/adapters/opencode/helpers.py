@@ -466,8 +466,12 @@ class FakeOpencodeClient:
     async def abort_session(self, session_id: str) -> None:
         self.aborted_sessions.append(session_id)
 
-    async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]:
-        self.registered_mcp_servers.append({"name": name, "url": url})
+    async def register_mcp_server(
+        self, *, name: str, url: str, headers: dict[str, str]
+    ) -> dict[str, Any]:
+        self.registered_mcp_servers.append(
+            {"name": name, "url": url, "headers": headers}
+        )
         status = (
             self._register_mcp_statuses.pop(0)
             if self._register_mcp_statuses

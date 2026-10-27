@@ -41,6 +41,38 @@ _MCP_URL_PATHS: dict[str, str] = {
 }
 
 
+# How a failed Letta API call is described: its class and HTTP status only.
+API_FAILURE_WITH_STATUS = "{name} (HTTP {status})"
+
+
+def _echoes_request(error: Exception) -> bool:
+    """Whether ``error`` is a Letta API error, whose text carries the response
+    ``body``, which can echo the submitted config and its bearer token."""
+    return hasattr(error, "body")
+
+
+def _status_code(error: Exception) -> int | None:
+    """The HTTP status a Letta API error carries, if any."""
+    return getattr(error, "status_code", None)
+
+
+def _registration_failure(error: Exception) -> str:
+    """``error``, described without a Letta API error's text."""
+    if not _echoes_request(error):
+        return str(error)
+    status = _status_code(error)
+    name = type(error).__name__
+    if status is None:
+        return name
+    return API_FAILURE_WITH_STATUS.format(name=name, status=status)
+
+
+def _safe_cause(error: Exception) -> Exception | None:
+    """``error`` to chain, or ``None`` for a Letta API error: a logged
+    traceback prints the whole chain."""
+    return None if _echoes_request(error) else error
+
+
 async def bounded_teardown(
     operation: Awaitable[Any], *, timeout_s: float, action: str
 ) -> bool:
@@ -104,6 +136,10 @@ class LettaMCPBridge:
         return backend is None or (
             backend.is_running and self._last_server_url == self._served_url(backend)
         )
+
+    @property
+    def _self_hosted(self) -> bool:
+        return self._config.mode == "self_host"
 
     @property
     def silent_reporting_tools(self) -> frozenset[str]:
@@ -180,6 +216,10 @@ class LettaMCPBridge:
                         effective_name,
                         server.id,
                     )
+                    if self._self_hosted:
+                        # The row may carry an earlier process's token, and
+                        # Letta's read-back of headers is not relied on.
+                        await self._point_registration_at(client, server.id, server_url)
             if server is None:
                 server = await self._create(client, effective_name, server_url)
 
@@ -196,12 +236,13 @@ class LettaMCPBridge:
             self.server_id = server_id
             self._last_server_url = server_url
             logger.info("Discovered %d MCP tools: %s", len(self.tool_ids), tool_names)
-        except Exception as e:
-            logger.error("Failed to register MCP server: %s", e)
+        except Exception as e:  # noqa: BLE001 -- re-raised, chained only when its text cannot echo the token
+            failure = _registration_failure(e)
+            logger.error("Failed to register MCP server: %s", failure)
             raise RuntimeError(
                 f"MCP server registration failed. Ensure the Band MCP server "
-                f"is reachable by Letta at {server_url}: {e}"
-            ) from e
+                f"is reachable by Letta at {server_url}: {failure}"
+            ) from _safe_cause(e)
 
     async def release(self, client: Any) -> None:
         """Relinquish the local tool-path cache without deregistering from Letta.
@@ -281,9 +322,19 @@ class LettaMCPBridge:
             host = self._config.bind_host
         return f"http://{host}:{port}{_MCP_URL_PATHS[self._config.transport]}"
 
-    def _registration_config(self, server_url: str) -> dict[str, str]:
-        """The config Letta stores on a registration, on create and update alike."""
-        return {"mcp_server_type": self._config.transport, "server_url": server_url}
+    def _registration_config(self, server_url: str) -> dict[str, Any]:
+        """The config Letta stores on a registration, on create and update alike.
+
+        A self-hosted registration carries the Band MCP server's bearer
+        headers; external mode starts no backend and sends none.
+        """
+        config: dict[str, Any] = {
+            "mcp_server_type": self._config.transport,
+            "server_url": server_url,
+        }
+        if (backend := self.backend.current) is not None:
+            config["custom_headers"] = backend.headers
+        return config
 
     def _served_url(self, backend: BandMCPBackend) -> str:
         return self.advertised_url(backend.local_server.port)
@@ -326,7 +377,7 @@ class LettaMCPBridge:
             existing_url,
             server_url,
         )
-        if self._config.mode == "self_host" and self._config.server_name is None:
+        if self._self_hosted and self._config.server_name is None:
             return None
         raise RuntimeError(
             f"MCP registration {name!r} points at "
@@ -353,10 +404,13 @@ class LettaMCPBridge:
             await client.mcp_servers.update(
                 server_id, config=self._registration_config(server_url)
             )
-        except Exception as error:
-            if getattr(error, "status_code", None) == HTTPStatus.NOT_FOUND:
+        except Exception as error:  # noqa: BLE001 -- re-raised, chained only when its text cannot echo the token
+            if _status_code(error) == HTTPStatus.NOT_FOUND:
                 self._forget_registration()
-            raise
+            raise RuntimeError(
+                f"Repointing MCP server registration {server_id} failed: "
+                f"{_registration_failure(error)}"
+            ) from _safe_cause(error)
         self._last_server_url = server_url
         logger.info("Repointed MCP server registration %s at %s", server_id, server_url)
 
