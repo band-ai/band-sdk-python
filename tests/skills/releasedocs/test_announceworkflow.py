@@ -24,6 +24,8 @@ SKILL_CHECKOUT = "/${{ env.SKILL }}/"
 CLAUDE_ACTION = "anthropics/claude-code-action"
 TOKEN_ACTION = "actions/create-github-app-token"
 UPLOAD_ACTION = "actions/upload-artifact"
+# The artifact holding the unfiltered release notes, shared between jobs.
+FULL_NOTES = "release-notes-full"
 # The jobs that read private Fern content.
 FERN_JOBS = ("holdbacks", "fern")
 REVOKE = "gh api --method DELETE /installation/token"
@@ -164,7 +166,7 @@ class TestAnnounceWorkflow:
 
     def test_changelog_shares_the_full_notes_and_prints_no_entry(self) -> None:
         (upload,) = [s for s in job("changelog")["steps"] if uses(UPLOAD_ACTION)(s)]
-        assert upload["with"]["name"] == "release-notes-full"
+        assert upload["with"]["name"] == FULL_NOTES
         summary = job("changelog")["steps"][-1]["run"]
         assert ("cat " in summary, "/band-release-docs" in summary) == (False, False)
 
@@ -184,6 +186,15 @@ class TestAnnounceWorkflow:
         assert step_position(name, lambda s: s.get("run") == REVOKE) < claude
         step = job(name)["steps"][claude]
         assert "fern-" not in json.dumps(step)
+
+    @pytest.mark.parametrize("name", FERN_JOBS)
+    def test_fern_jobs_refuse_debug_logging_before_anything_runs(
+        self, name: str
+    ) -> None:
+        """Debug logging prints step outputs, such as Claude's report, to the log."""
+        first = job(name)["steps"][0]
+        assert first["if"] == "runner.debug == '1'"
+        assert first["run"].rstrip().endswith("exit 1")
 
     def test_fern_git_directory_is_gone_before_the_docs_review(self) -> None:
         drop = step_position("fern", lambda s: s.get("run") == "rm -rf fern/.git")
@@ -295,7 +306,7 @@ class TestAnnounceWorkflow:
         (download,) = [
             s
             for s in job("fern")["steps"]
-            if s.get("with", {}).get("name") == "release-notes-full"
+            if s.get("with", {}).get("name") == FULL_NOTES
         ]
         assert download["with"]["path"] == "${{ runner.temp }}/full"
 

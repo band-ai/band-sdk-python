@@ -15,8 +15,9 @@
 # fern/.git deleted, before Claude runs, and the write token is minted only
 # after every check passed (never in dry-run). No Fern content (pages, the
 # held-items ledger, diffs, model reasons) reaches an artifact, log, or
-# summary: the Fern jobs upload only the public bundle, Claude steps pin
-# show_full_output and step debug off, and scripts log counts and PR links.
+# summary: the Fern jobs upload only the public bundle and refuse to run with
+# debug logging (which prints step outputs, such as Claude's report), Claude
+# steps pin show_full_output off, and scripts log counts and PR links.
 # holdbacks runs before anything is attached or posted and fails closed.
 #
 # Triggers: a successful release-event band-publish run for a band-sdk-v*
@@ -251,6 +252,13 @@ jobs:
       has_entry: ${{ steps.holdbacks.outputs.has_entry }}
       held: ${{ steps.holdbacks.outputs.held }}
     steps:
+      # Debug logging would print step outputs (Fern content) to the public log.
+      - name: Refuse debug logging
+        if: runner.debug == '1'
+        run: |
+          echo "::error::Debug logging would print Fern content to this public log; re-run without it."
+          exit 1
+
       - name: Checkout the skill only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -511,6 +519,13 @@ jobs:
       changelog_pr: ${{ steps.file.outputs.changelog_pr }}
       docs_pr: ${{ steps.file.outputs.docs_pr }}
     steps:
+      # Debug logging would print step outputs (Fern content) to the public log.
+      - name: Refuse debug logging
+        if: runner.debug == '1'
+        run: |
+          echo "::error::Debug logging would print Fern content to this public log; re-run without it."
+          exit 1
+
       - name: Checkout with full history and tags
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

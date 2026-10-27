@@ -8,7 +8,8 @@ Compares the edited tree with a pristine copy. A path violation (a created,
 deleted, or renamed file, a symlink, a file outside the docs pages, a
 non-UTF-8 file, or too many pages) fails the command: nothing may be filed. A
 content violation (a new import, a new JSX tag, a link outside the allowed
-sites, a new escaped backtick, too many changed lines) only marks the docs PR
+sites or one these checks cannot read, a new escaped backtick or code span
+wrapped across lines, too many changed lines) only marks the docs PR
 do-not-merge. Writes the changed pages and content violations to ``--out`` and
 appends ``changed`` and ``mergeable`` to ``--outputs``. Logs counts and
 violation kinds only: the pages are private.
@@ -44,9 +45,12 @@ IMPORT_LINE = re.compile(r"^\s*(?:import|export)\b")
 # A whole MDX/JSX tag with its attributes, or an MDX `{expression}`;
 # `<https://...>` autolinks are not tags.
 MDX_CONSTRUCT = re.compile(r"<(?![\w+.-]+:)/?[A-Za-z][^>]*>|\{[^{}]*\}?")
+# A reference definition's start, in the one form these checks read.
+DEFINITION = r"^[ \t]*\[[^\]]+\]:"
+DEFINITION_START = re.compile(DEFINITION)
 # A Markdown link or reference-definition target, which may follow a line break.
 LINK_TARGET = re.compile(
-    r"\]\(\s*<?([^)\s>]+)|^[ \t]*\[[^\]]+\]:\s*<?([^\s>]+)", re.MULTILINE
+    rf"\]\(\s*<?([^)\s>]+)|{DEFINITION}\s*<?([^\s>]+)", re.MULTILINE
 )
 SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
 # CommonMark's backslash escapes: any ASCII punctuation character.
@@ -68,6 +72,7 @@ class ContentViolation(StrEnum):
     JSX = "adds or changes a JSX tag or MDX expression"
     LINK = "links outside the allowed sites"
     ESCAPED_BACKTICK = "escapes a backtick, which hides code spans from these checks"
+    WRAPPED_CODE = "wraps a code span across lines, which hides it from these checks"
     TOO_LONG = f"changes more than {MAX_CHANGED_LINES} lines"
 
 
@@ -197,6 +202,24 @@ def adds_escaped_backtick(before: str, after: str) -> bool:
     return any(ESCAPED_BACKTICK in line for line in lines(after) - lines(before))
 
 
+def wrapped_code_spans(text: str) -> Counter[str]:
+    """Inline code spans crossing a line break.
+
+    A block break CommonMark ends the paragraph at (a thematic break, a setext
+    underline, a blockquote) leaves such a span unclosed, rendering its text.
+    """
+    text = text.replace(ESCAPED_BACKTICK, "'")
+    return Counter(
+        span[0]
+        for span in CODE_PATTERN.finditer(text)
+        if span["ticks"] and "\n" in span[0]
+    )
+
+
+def adds_wrapped_code_span(before: str, after: str) -> bool:
+    return bool(wrapped_code_spans(after) - wrapped_code_spans(before))
+
+
 def mdx_constructs(text: str) -> Counter[str]:
     """Tags and expressions outside code; import lines have their own rule."""
     kept = "\n".join(line for line in prose_lines(text) if not IMPORT_LINE.match(line))
@@ -233,11 +256,25 @@ def links(text: str) -> tuple[set[str], set[str]]:
     return set(URL_PATTERN.findall(prose)), targets
 
 
+def adds_unread_definition(before: str, after: str) -> bool:
+    """Whether a new line holds a reference definition ``LINK_TARGET`` cannot read.
+
+    A definition inside a list item or blockquote, or with an escaped bracket
+    in its label, still renders a link.
+    """
+    return any(
+        "]:" in line and not DEFINITION_START.match(line)
+        for line in added_prose(before, after)
+    )
+
+
 def new_links_allowed(before: str, after: str) -> bool:
     """Every URL and link target the edit adds is allowed; existing ones stay."""
     (urls_before, targets_before), (urls, targets) = links(before), links(after)
-    return all(map(is_allowed_url, urls - urls_before)) and all(
-        map(is_allowed_target, targets - targets_before)
+    return (
+        all(map(is_allowed_url, urls - urls_before))
+        and all(map(is_allowed_target, targets - targets_before))
+        and not adds_unread_definition(before, after)
     )
 
 
@@ -254,6 +291,8 @@ def page_violations(path: str, before: str, after: str) -> tuple[list[Finding], 
         kinds.append(ContentViolation.LINK)
     if adds_escaped_backtick(before, after):
         kinds.append(ContentViolation.ESCAPED_BACKTICK)
+    if adds_wrapped_code_span(before, after):
+        kinds.append(ContentViolation.WRAPPED_CODE)
     return [Finding(path=path, kind=kind) for kind in kinds], count
 
 

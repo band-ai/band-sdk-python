@@ -164,5 +164,5 @@ class TestHoldbacks:
         entries = holdbacks.load_ledger(inputs.ledger)
         assert holdbacks.held_reasons(notes, [1, 2], entries) == {
             1: f"{LEDGER_ID}: {LEDGER_REASON}",
-            2: holdbacks.FLAGGED_BY_REVIEW,
+            2: holdbacks.NO_LEDGER_HOLD,
         }

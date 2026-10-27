@@ -18,7 +18,13 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from holdbacks import HoldbacksError, LedgerEntry, load_ledger, read_model
+from holdbacks import (
+    HoldbacksError,
+    LedgerEntry,
+    add_held_argument,
+    load_ledger,
+    read_model,
+)
 from releasedata import ReleaseNotes, ReleasePrs
 
 logger = logging.getLogger(__name__)
@@ -54,9 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("review", type=Path, help="collectprs.py's review range")
     parser.add_argument("notes", type=Path, help="the full release-notes.json")
     parser.add_argument("--ledger", type=Path, required=True)
-    parser.add_argument(
-        "--held", type=int, nargs="*", default=[], help="held item indexes"
-    )
+    add_held_argument(parser)
     args = parser.parse_args(argv)
 
     try:

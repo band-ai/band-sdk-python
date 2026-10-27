@@ -28,8 +28,9 @@ enforced by `scripts/validateentry.py`; guides link to it rather than restate it
 ## Holdbacks
 
 Only Fern's held-items ledger holds a feature across releases. When a Fern
-changelog PR marks an item "flagged by the holdbacks review", the hold came
-from the review alone and lasts one release: add the feature to the ledger.
+changelog PR says no ledger entry holds an item now, either the review alone
+held it, which lasts one release (add the feature to the ledger), or its entry
+was released since the review (file the item by hand).
 
 ## Scripts
 

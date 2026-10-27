@@ -17,10 +17,13 @@ from tests.skills.releasedocs.samples import DOCS_PAGE, DOCS_PAGE_TEXT
 PAGES = "fern/docs/pages/integrations/sdks"
 OTHER_PAGE = f"{PAGES}/overview.mdx"
 OUTSIDE = "fern/docs/pages/platform/rooms.mdx"
+# A file among the pages that is not a page.
+PAGES_META = f"{PAGES}/_meta.json"
 PRISTINE = {
     DOCS_PAGE: DOCS_PAGE_TEXT,
     OTHER_PAGE: "# Overview\n",
     OUTSIDE: "# Rooms\n",
+    PAGES_META: "{}\n",
 }
 # Keeps the existing import, JSX tag, and allowed link, and adds an allowed
 # link, an allowed autolink, a relative link, and a snippet whose code
@@ -80,6 +83,10 @@ class TestCheckPatch:
                 {"OUTSIDE"},
             ),
             (
+                lambda _, edited: write_tree(edited, {PAGES_META: '{"x": 1}\n'}),
+                {"OUTSIDE"},
+            ),
+            (
                 lambda _, edited: write_tree(edited, {f"{PAGES}/new.mdx": "x"}),
                 {"CREATED"},
             ),
@@ -100,6 +107,7 @@ class TestCheckPatch:
         ],
         ids=[
             "outside",
+            "non-page-beside-the-pages",
             "new-file",
             "deletion",
             "rename",
@@ -127,6 +135,18 @@ class TestCheckPatch:
             (tmp_path / "patch.json").exists(),
         ) == ({}, False)
 
+    def test_pages_up_to_the_cap_are_filed(
+        self,
+        checkpatch: ModuleType,
+        releasedata: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+    ) -> None:
+        pages = [f"{PAGES}/p{n}.mdx" for n in range(releasedata.MAX_REVIEWED_PAGES)]
+        write_tree(trees[0], dict.fromkeys(pages, "before\n"))
+        write_tree(trees[1], dict.fromkeys(pages, "after\n"))
+        assert run(checkpatch, trees, tmp_path) == 0
+
     def test_more_pages_than_the_cap_stops_the_filing(
         self,
         checkpatch: ModuleType,
@@ -144,26 +164,57 @@ class TestCheckPatch:
         ]
         assert run(checkpatch, trees, tmp_path) == 1
 
-    def test_more_lines_than_the_cap_files_the_pr_unmergeable(
-        self, checkpatch: ModuleType, trees: tuple[Path, Path], tmp_path: Path
+    @pytest.mark.parametrize(
+        ("extra", "violations"),
+        [(0, []), (1, ["TOO_LONG"])],
+        ids=["at-the-cap", "past-the-cap"],
+    )
+    @pytest.mark.parametrize(
+        "pages", [[DOCS_PAGE], [DOCS_PAGE, OTHER_PAGE]], ids=["one-page", "two-pages"]
+    )
+    def test_changed_lines_are_capped_across_pages(
+        self,
+        checkpatch: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+        pages: list[str],
+        extra: int,
+        violations: list[str],
     ) -> None:
-        lines = range(checkpatch.MAX_CHANGED_LINES + 1)
+        lines = [f"Line {n}.\n" for n in range(checkpatch.MAX_CHANGED_LINES + extra)]
         write_tree(
             trees[1],
-            {DOCS_PAGE: DOCS_PAGE_TEXT + "".join(f"Line {n}.\n" for n in lines)},
+            {
+                page: PRISTINE[page] + "".join(lines[index :: len(pages)])
+                for index, page in enumerate(pages)
+            },
         )
         assert run(checkpatch, trees, tmp_path) == 0
         check = json.loads((tmp_path / "patch.json").read_text("utf-8"))
         assert [finding["kind"] for finding in check["content_violations"]] == [
-            checkpatch.ContentViolation.TOO_LONG
+            checkpatch.ContentViolation[kind] for kind in violations
         ]
 
-    def test_editing_beside_an_existing_outside_link_stays_mergeable(
-        self, checkpatch: ModuleType, trees: tuple[Path, Path], tmp_path: Path
+    @pytest.mark.parametrize(
+        "existing",
+        [
+            "[LangGraph](https://langchain-ai.github.io/langgraph/) runs graphs.",
+            "Type \\`x\\` here.",
+            "Wrapped `code\nspan` here.",
+        ],
+        ids=["outside-link", "escaped-backtick", "wrapped-code-span"],
+    )
+    def test_editing_beside_an_existing_construct_stays_mergeable(
+        self,
+        checkpatch: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+        existing: str,
     ) -> None:
-        line = "[LangGraph](https://langchain-ai.github.io/langgraph/) runs graphs"
-        write_tree(trees[0], {OTHER_PAGE: f"# Overview\n\n{line}.\n"})
-        write_tree(trees[1], {OTHER_PAGE: f"# Overview\n\n{line} well.\n"})
+        write_tree(trees[0], {OTHER_PAGE: f"# Overview\n\n{existing}\n\nMore.\n"})
+        write_tree(
+            trees[1], {OTHER_PAGE: f"# Overview\n\n{existing}\n\nMore, edited.\n"}
+        )
         assert run(checkpatch, trees, tmp_path) == 0
         assert read_outputs(tmp_path / "outputs")["mergeable"] == "true"
 
@@ -204,6 +255,28 @@ class TestCheckPatch:
             (DOCS_PAGE_TEXT + "[docs]: http://evil.example\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "[the guide](\n//evil.example/x)\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "[g]:\n//evil.example/x\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "- [a]: //evil.example\n\nSee [docs][a].\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "> [a]: //evil.example\n\nSee [docs][a].\n", ["LINK"]),
+            (
+                DOCS_PAGE_TEXT + "[a\\]b]: //evil.example\n\nSee [docs][a\\]b].\n",
+                ["LINK"],
+            ),
+            (
+                DOCS_PAGE_TEXT + "Intro `one\n***\n[x](//evil.example) two` end.\n",
+                ["WRAPPED_CODE"],
+            ),
+            (
+                DOCS_PAGE_TEXT + "Intro `one\n---\n[x](//evil.example) two` end.\n",
+                ["WRAPPED_CODE"],
+            ),
+            (
+                DOCS_PAGE_TEXT + "Intro `one\n> [x](//evil.example) two` end.\n",
+                ["WRAPPED_CODE"],
+            ),
+            (
+                DOCS_PAGE_TEXT + "Intro `one\n___\n<Danger /> two` end.\n",
+                ["WRAPPED_CODE"],
+            ),
         ],
         ids=[
             "import",
@@ -227,6 +300,13 @@ class TestCheckPatch:
             "reference-definition",
             "link-split-across-lines",
             "reference-split-across-lines",
+            "definition-in-a-list-item",
+            "definition-in-a-blockquote",
+            "definition-with-an-escaped-bracket",
+            "code-span-across-a-thematic-break",
+            "code-span-across-a-setext-underline",
+            "code-span-into-a-blockquote",
+            "jsx-in-a-code-span-across-a-break",
         ],
     )
     def test_content_breach_files_the_pr_unmergeable(

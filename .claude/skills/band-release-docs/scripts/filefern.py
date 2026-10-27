@@ -43,6 +43,7 @@ from fernstate import (
     action,
 )
 from holdbacks import (
+    add_held_argument,
     held_reasons,
     load_ledger,
     refuse_held_breaking,
@@ -91,6 +92,11 @@ class Outcome(StrEnum):
 
 
 SETTLED = {Outcome.NOTHING, Outcome.ALREADY_MERGED, Outcome.MERGED, Outcome.CLOSED}
+
+
+class Part(StrEnum):
+    CHANGELOG = "changelog"
+    DOCS = "docs"
 
 
 class ChecksState(StrEnum):
@@ -183,18 +189,10 @@ class Filer:
 
     def push(self, branch: str, message: str) -> str:
         name, email = COMMITTER
+        git(self.fern, "config", "user.name", name)
+        git(self.fern, "config", "user.email", email)
         git(self.fern, "add", "--all")
-        git(
-            self.fern,
-            "-c",
-            f"user.name={name}",
-            "-c",
-            f"user.email={email}",
-            "commit",
-            "--quiet",
-            "--message",
-            message,
-        )
+        git(self.fern, "commit", "--quiet", "--message", message)
         git(
             self.fern,
             "push",
@@ -321,6 +319,7 @@ class Filer:
                     "--comment",
                     f"Superseded by #{docs_pr}",
                 )
+                logger.info("closed #%d: superseded by #%d", number, docs_pr)
 
     def file_changelog(
         self, branch: str, changelog: ChangelogInput, existing: BranchPr | None
@@ -437,15 +436,15 @@ def file_all(
     state: FernState,
     changelog: ChangelogInput | None,
     docs: DocsInput | None,
-) -> dict[str, PartResult]:
+) -> dict[Part, PartResult]:
     return {
-        "changelog": run_part(
+        Part.CHANGELOG: run_part(
             filer,
             state.changelog_pr,
             partial(filer.new_changelog, state.changelog_branch, changelog),
             ignore_merge,
         ),
-        "docs": run_part(
+        Part.DOCS: run_part(
             filer,
             state.docs_pr,
             partial(filer.new_docs, state.docs_branch, docs),
@@ -455,14 +454,14 @@ def file_all(
 
 
 def record_results(
-    results: dict[str, PartResult], outputs: Path | None, summary: Path | None
+    results: dict[Part, PartResult], outputs: Path | None, summary: Path | None
 ) -> None:
     for part, result in results.items():
         logger.info("%s: %s %s", part, result.outcome, result.url)
     append_outputs(
         outputs,
-        changelog_pr=results["changelog"].url,
-        docs_pr=results["docs"].url,
+        changelog_pr=results[Part.CHANGELOG].url,
+        docs_pr=results[Part.DOCS].url,
     )
     if summary is not None:
         with summary.open("a", encoding="utf-8") as out:
@@ -516,9 +515,7 @@ def main(
     parser.add_argument(
         "--release-prs", type=Path, help="the release's release-prs.json, with --notes"
     )
-    parser.add_argument(
-        "--held", type=int, nargs="*", default=[], help="held item indexes"
-    )
+    add_held_argument(parser)
     parser.add_argument(
         "--docs-check", type=Path, help="checkpatch.py's output; omit to file no docs"
     )

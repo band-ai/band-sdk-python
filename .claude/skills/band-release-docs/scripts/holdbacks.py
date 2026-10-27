@@ -42,10 +42,11 @@ logger = logging.getLogger(__name__)
 SDK_REPO_NAMES = {SDK_REPO_NAME, FORMER_SDK_REPO_NAME}
 # A ledger source: `<repo>#<number>`, the repo optionally owner-qualified.
 LEDGER_SOURCE = re.compile(r"^(?:[\w.-]+/)?(?P<repo>[\w.-]+)#(?P<number>\d+)$")
-# Only ledger holds persist: a review-only hold must be added to the ledger
-# by hand, or the next release's docs review may document the feature.
-FLAGGED_BY_REVIEW = (
-    f"flagged by the holdbacks review; add it to {HELD_ITEMS} to keep it held"
+# Only ledger holds persist. A held index no entry explains came from the
+# review alone, or from an entry released since: the filing cannot tell which.
+NO_LEDGER_HOLD = (
+    f"held when the release was reviewed, but no {HELD_ITEMS} entry holds it"
+    " now; add one to keep it held, or file it by hand if it has shipped"
 )
 HELD_BREAKING = "the breaking change is held; file this release by hand"
 
@@ -160,14 +161,20 @@ def refuse_held_breaking(release: ReleasePrs, entries: Sequence[LedgerEntry]) ->
 def held_reasons(
     notes: ReleaseNotes, held: Sequence[int], entries: Sequence[LedgerEntry]
 ) -> dict[int, str]:
-    """Explain each held index with its ledger entry, or as the review's flag."""
+    """Explain each held index with its ledger entry, or as held without one."""
     matches = ledger_matches(notes, entries)
     return {
         index: f"{entry.id}: {entry.reason}"
         if (entry := matches.get(index))
-        else FLAGGED_BY_REVIEW
+        else NO_LEDGER_HOLD
         for index in held
     }
+
+
+def add_held_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--held", type=int, nargs="*", default=[], help="held item indexes"
+    )
 
 
 def kept_items(notes: ReleaseNotes, held: Sequence[int]) -> ReleaseNotes:
