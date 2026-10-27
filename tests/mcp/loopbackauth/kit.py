@@ -16,6 +16,7 @@ from mcp.types import LATEST_PROTOCOL_VERSION
 from pydantic import BaseModel
 from starlette.types import ASGIApp, Message, Scope
 
+from band.integrations.mcp import BandMCPTransport
 from band.integrations.mcp.engine import MCPToolRegistration
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_AUTH_HEADER,
@@ -24,12 +25,12 @@ from band.integrations.mcp.local_server import (
     LOCAL_MCP_HOST,
     LOCAL_MCP_HTTP_PATH,
     LOCAL_MCP_MESSAGE_PATH,
-    LOCAL_MCP_ROOMS_PATH,
     LOCAL_MCP_SSE_PATH,
     BearerTokenGuard,
     LocalMCPServer,
     local_mcp_auth_headers,
 )
+from tests.mcpclient import endpoint_path, room_path
 
 AUTH_TOKEN = "loopback-auth-test-token"
 SERVER_NAME = "loopback-auth-test"
@@ -106,15 +107,14 @@ INITIALIZE = {
     },
 }
 
-_ROOM_PREFIX = f"{LOCAL_MCP_ROOMS_PATH}/{ROOM}"
 ROOM_HTTP = Route(
-    Served.ROOM_BOUND, "POST", f"{_ROOM_PREFIX}{LOCAL_MCP_HTTP_PATH}", INITIALIZE
+    Served.ROOM_BOUND, "POST", endpoint_path(BandMCPTransport.HTTP, ROOM), INITIALIZE
 )
-ROOM_SSE = Route(Served.ROOM_BOUND, "GET", f"{_ROOM_PREFIX}{LOCAL_MCP_SSE_PATH}")
+ROOM_SSE = Route(Served.ROOM_BOUND, "GET", endpoint_path(BandMCPTransport.SSE, ROOM))
 SSE_MESSAGE = Route(
     Served.ROOM_BOUND,
     "POST",
-    f"{_ROOM_PREFIX}{LOCAL_MCP_MESSAGE_PATH}?session_id={{session_id}}",
+    room_path(ROOM, f"{LOCAL_MCP_MESSAGE_PATH}?session_id={{session_id}}"),
     {"jsonrpc": "2.0", "id": 2, "method": "ping"},
 )
 MULTI_ROOM_HTTP = Route(Served.MULTI_ROOM, "POST", LOCAL_MCP_HTTP_PATH, INITIALIZE)
@@ -122,7 +122,7 @@ MULTI_ROOM_SSE = Route(Served.MULTI_ROOM, "GET", LOCAL_MCP_SSE_PATH)
 HEALTH = Route(Served.ROOM_BOUND, "GET", LOCAL_MCP_HEALTH_PATH)
 # Paths neither server serves, carrying caller-chosen text.
 CRAFTED_TEXT = "caller-chosen-text"
-CRAFTED_ROOM_PATH = Route(Served.ROOM_BOUND, "GET", f"{_ROOM_PREFIX}/{CRAFTED_TEXT}")
+CRAFTED_ROOM_PATH = Route(Served.ROOM_BOUND, "GET", room_path(ROOM, f"/{CRAFTED_TEXT}"))
 CRAFTED_PATH = Route(Served.MULTI_ROOM, "GET", f"/{CRAFTED_TEXT}")
 
 

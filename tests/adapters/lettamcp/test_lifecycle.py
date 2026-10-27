@@ -32,7 +32,8 @@ from tests.adapters.lettakit import (
     make_platform_message,
 )
 from tests.adapters.lettamcp.kit import (
-    _stale_tool_error,
+    LETTA_MCP_SERVERS_URL,
+    letta_not_found,
     letta_registering_one_tool,
     registered_on_a_dead_fake_server,
 )
@@ -42,8 +43,6 @@ from tests.mcpbackends import (
     backends_created_by,
     hold_backend,
 )
-
-LETTA_MCP_SERVERS_URL = "http://letta.test/v1/mcp-servers/"
 
 
 async def reject_echoing_the_config(*_: Any, **submitted: Any) -> None:
@@ -451,7 +450,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.tool_ids = ["t-dead"]
 
         # First attach 404s (stale); after re-register it succeeds.
-        stale = _stale_tool_error("Tool with id=t-dead not found in organization")
+        stale = letta_not_found("Tool with id=t-dead not found in organization")
         mock_client.agents.tools.attach.side_effect = [stale, None]
         mock_client.agents.create.return_value = make_mock_agent("agent-1")
         # Re-registration mints a fresh server exposing a live tool id.
@@ -486,7 +485,7 @@ class TestSelfHostedMCPLifecycle:
         # A sibling room, live before the recovery, wired to the old ids.
         adapter._rooms["other"] = RoomContext(agent_id="agent-other")
 
-        stale = _stale_tool_error("Tool with id=t-dead not found in organization")
+        stale = letta_not_found("Tool with id=t-dead not found in organization")
         mock_client.agents.tools.attach.side_effect = [stale, None]
         mock_client.agents.create.return_value = make_mock_agent("agent-new")
         mock_client.mcp_servers.list.return_value = []

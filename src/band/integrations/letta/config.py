@@ -57,8 +57,8 @@ class LettaMCPConfig(BaseAdapterConfig):
       via ``host.docker.internal``, which is what ``advertised_host`` names.
       The registration stores the server's bearer token in its
       ``custom_headers``, readable through the Letta API by anyone in the
-      same Letta organization; the token is minted per process and stops
-      working when the process exits.
+      same Letta organization; the token is minted each time the adapter
+      starts and stops working when the process exits.
     - ``external``: register a separately-run Band MCP server (e.g. band-mcp)
       at ``server_url``.  Required for Letta Cloud, which cannot reach a
       laptop-local server.

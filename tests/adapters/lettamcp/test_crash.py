@@ -14,7 +14,7 @@ from tests.adapters.lettakit import (
     make_mock_mcp_server,
 )
 from tests.adapters.lettamcp.kit import (
-    _stale_tool_error,
+    letta_not_found,
     registered_configs,
     registered_on_a_dead_fake_server,
     registered_on_real_server,
@@ -100,10 +100,12 @@ class TestSelfHostedMCPCrash:
     @pytest.mark.asyncio
     async def test_a_repoint_of_a_deleted_row_registers_afresh(self) -> None:
         bridge, client = await registered_on_a_dead_fake_server()
-        client.mcp_servers.update.side_effect = _stale_tool_error("no such server")
+        client.mcp_servers.update.side_effect = letta_not_found("no such server")
 
-        with backends_created_by(), pytest.raises(Exception, match="no such server"):
+        with backends_created_by(), pytest.raises(RuntimeError) as raised:
             await bridge.ensure_ready(client)
+        assert "NotFoundError (HTTP 404)" in str(raised.value)
+        assert "no such server" not in str(raised.value)
         assert bridge.server_id is None
 
         client.mcp_servers.update.side_effect = None

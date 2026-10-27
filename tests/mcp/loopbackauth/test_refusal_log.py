@@ -10,11 +10,9 @@ from dataclasses import replace
 import pytest
 from starlette.types import Receive, Scope, Send
 
-from band.integrations.mcp import local_server
+from band.integrations.mcp import BandMCPTransport, local_server
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HTTP_PATH,
-    LOCAL_MCP_ROOMS_PATH,
-    LOCAL_MCP_SSE_PATH,
     REDACTED_ROOM,
     REFUSAL_LOG,
     UNKNOWN_ROUTE,
@@ -32,14 +30,15 @@ from tests.mcp.loopbackauth.kit import (
     drive,
     guarded_servers,
 )
+from tests.mcpclient import endpoint_path
 
 GUARD_LOGGER = local_server.logger.name
 REFUSALS = 10
-ROOM_HTTP_LOGGED = f"{LOCAL_MCP_ROOMS_PATH}/{REDACTED_ROOM}{LOCAL_MCP_HTTP_PATH}"
-ROOM_SSE_LOGGED = f"{LOCAL_MCP_ROOMS_PATH}/{REDACTED_ROOM}{LOCAL_MCP_SSE_PATH}"
+ROOM_HTTP_LOGGED = endpoint_path(BandMCPTransport.HTTP, REDACTED_ROOM)
+ROOM_SSE_LOGGED = endpoint_path(BandMCPTransport.SSE, REDACTED_ROOM)
 # One room route per refusal, each in its own room.
 ROOM_HTTP_PER_ROOM = [
-    replace(ROOM_HTTP, path=f"{LOCAL_MCP_ROOMS_PATH}/room-{n}{LOCAL_MCP_HTTP_PATH}")
+    replace(ROOM_HTTP, path=endpoint_path(BandMCPTransport.HTTP, f"room-{n}"))
     for n in range(REFUSALS)
 ]
 # Enough refusals to pass the 100th without reaching the 1000th.

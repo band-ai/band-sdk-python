@@ -21,8 +21,6 @@ from band.integrations.mcp import (
 )
 from band.integrations.mcp.engine import RoomToolResolver
 from band.integrations.mcp.local_server import (
-    LOCAL_MCP_AUTH_HEADER,
-    LOCAL_MCP_AUTH_SCHEME,
     LOCAL_MCP_HTTP_PATH,
     LOCAL_MCP_ROOMS_PATH,
     LOCAL_MCP_SSE_PATH,
@@ -47,13 +45,6 @@ _TRANSPORT_PATHS: dict[BandMCPTransport, str] = {
 }
 
 
-def bearer_token(headers: Mapping[str, str]) -> str:
-    """The bearer token a Band MCP server's ``headers`` present."""
-    scheme, _, token = headers[LOCAL_MCP_AUTH_HEADER].partition(" ")
-    assert scheme == LOCAL_MCP_AUTH_SCHEME, scheme
-    return token
-
-
 def endpoint_path(
     transport: BandMCPTransport = BandMCPTransport.HTTP, room_id: str | None = None
 ) -> str:
@@ -61,7 +52,12 @@ def endpoint_path(
     one, or ``room_id``'s on a room-bound server."""
     if room_id is None:
         return _TRANSPORT_PATHS[transport]
-    return f"{LOCAL_MCP_ROOMS_PATH}/{room_id}{_TRANSPORT_PATHS[transport]}"
+    return room_path(room_id, _TRANSPORT_PATHS[transport])
+
+
+def room_path(room_id: str, path: str) -> str:
+    """``path`` under ``room_id``'s mount on a room-bound server."""
+    return f"{LOCAL_MCP_ROOMS_PATH}/{room_id}{path}"
 
 
 @asynccontextmanager

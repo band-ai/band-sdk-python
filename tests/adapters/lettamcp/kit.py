@@ -7,6 +7,9 @@ from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
+from letta_client import NotFoundError
+
 from band.adapters.letta import (
     LettaAdapter,
     LettaAdapterConfig,
@@ -22,13 +25,19 @@ from tests.adapters.lettakit import (
 from tests.mcpbackends import hold_backend
 from tests.mcpclient import served_tool_names
 
+LETTA_MCP_SERVERS_URL = "http://letta.test/v1/mcp-servers/"
 
-def _stale_tool_error(message: str) -> Exception:
-    """A 404 ApiError-shaped exception, as letta-client raises when a tool id
-    no longer exists in the organization."""
-    err = Exception(message)
-    err.status_code = 404  # type: ignore[attr-defined]
-    return err
+
+def letta_not_found(message: str) -> NotFoundError:
+    """The 404 letta-client raises when a tool id or MCP server row no longer
+    exists in the organization."""
+    return NotFoundError(
+        message,
+        response=httpx.Response(
+            404, request=httpx.Request("PATCH", LETTA_MCP_SERVERS_URL)
+        ),
+        body={"detail": message},
+    )
 
 
 def letta_registering_one_tool() -> AsyncMock:

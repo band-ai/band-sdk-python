@@ -128,8 +128,7 @@ def _is_power_of_ten(count: int) -> bool:
 
 
 def _refusal(scope: Scope) -> ASGIApp:
-    """How an unauthorized request of ``scope``'s type is refused; a close
-    before accept never reaches the client as a close code."""
+    """How an unauthorized request of ``scope``'s type is refused."""
     if scope["type"] == "websocket":
         return WebSocketClose(code=WS_1008_POLICY_VIOLATION)
     return PlainTextResponse(
