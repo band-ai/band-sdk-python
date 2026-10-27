@@ -170,11 +170,12 @@ def room_briefing(transcript: RoomTranscript) -> str:
         "Mentions — pass these exact handles in the `mentions` argument of the "
         "Band send-message tool: " + (", ".join(handles) or "none available") + ".",
         (
-            "Never type a mention marker into the message content yourself. The "
-            "`@[[…]]` form you may see in stored history is Band's internal "
-            "rendering, not input syntax: writing it produces literal text in the "
-            "room. Address people through `mentions` and write content in plain "
-            "prose."
+            "Every reader sees each mention as a chip with the participant's name, "
+            "drawn where the content holds that participant's `@[[id]]` token (the form "
+            "stored history shows) or else in front of the message. Typed @names or "
+            "@handles stay plain text, so never write them into the content, and never "
+            "follow a mention with that person's name: address people through "
+            "`mentions` and write content in plain prose."
         ),
         "",
         *CONTRACTS[transcript.attention].briefing,

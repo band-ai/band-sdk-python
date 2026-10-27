@@ -133,7 +133,8 @@ class TestBriefing:
 
         assert "@alexander.zaikman/jery" in briefing
         assert "@alexander.zaikman" in briefing
-        assert "Never type a mention marker into the message content" in briefing
+        assert "chip with the participant's name" in briefing
+        assert "never follow a mention with that person's name" in briefing
 
     async def test_it_orders_the_monitoring_loop_and_reaches_the_model(
         self, room: Any
