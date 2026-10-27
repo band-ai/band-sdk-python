@@ -30,4 +30,6 @@ regexes = [
   '''^9f7df06e71a2b1911cc77175d0a4d722809231e36695462004aac1038fe02baf$''',
   # src/remote_agent/band/assets/provenance.json:17
   '''^b7ae9c52e3002a9d5199b3547fba0014bf818c4751e62fbd01e7b6defaf242e9$''',
+  # Fixed actor identity in tests/contracts/author/platform.py
+  '''^7386ba04-2699-44bd-bbc3-8747df269b2b$''',
 ]
