@@ -31,14 +31,15 @@ class TestToolInputModels:
 
     def test_send_message_schema_says_mentions_are_shown_to_every_reader(self) -> None:
         """The tool text is the model's only account of what a mention does: it must
-        say the platform renders the mentioned names, and that content carries no
-        @handles, or the model writes the recipient's name a second time."""
+        say the platform renders the mentioned names as chips, that an inline handle is
+        one, and that a name is never repeated next to it -- or the model writes the
+        recipient's name a second time."""
         properties = SendMessageInput.model_json_schema()["properties"]
         mentions = properties["mentions"]["description"]
         assert "handle" in mentions and "id" not in mentions.lower().split()
-        assert "in front of the message" in mentions
-        assert "never write an @handle" in mentions
-        assert "without @handles" in properties["content"]["description"]
+        assert "chip with the participant's name" in mentions
+        assert "never follow a mention with that person's name" in mentions
+        assert "@[[id]] token" in properties["content"]["description"]
 
     def test_send_room_file_input_requires_mentions(self) -> None:
         """band_send_room_file posts a message to attach the file, so its

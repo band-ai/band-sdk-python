@@ -20,10 +20,11 @@ from band.core.types import EventMessageType
 # repeats the recipient's name in the content.
 MENTION_IDENTIFIERS = (
     "Each entry is a participant's handle exactly as the room lists it: @<username> "
-    "for users, @<username>/<agent-name> for agents. The platform shows every "
-    "mentioned participant's name in front of the message for every reader, so never "
-    "write an @handle or @name in the content, and never repeat a recipient's name "
-    "after it: address through mentions and write the content in plain prose."
+    "for users, @<username>/<agent-name> for agents. Every reader sees each mention as "
+    "a chip with the participant's name, drawn where the content holds that "
+    "participant's @[[id]] token (the form stored history shows) or else in front of "
+    "the message. Typed @names or @handles stay plain text, so never write them into "
+    "the content, and never follow a mention with that person's name."
 )
 
 
@@ -44,13 +45,16 @@ class SendMessageInput(BaseModel):
     """Send a message to the chat room.
 
     Use this to respond to users or other agents. The message is delivered to the
-    participants listed in mentions (at least one), and every reader sees their names in
-    front of the content; the content itself carries no @handles.
+    participants listed in mentions (at least one); every reader sees the mentioned names
+    as chips, so the content never repeats them.
     """
 
     content: str = Field(
         ...,
-        description="The message content to send: plain prose, without @handles or @names.",
+        description=(
+            "The message content to send: plain prose. A participant's @[[id]] token "
+            "places that mention's chip inline; never type an @name or @handle."
+        ),
     )
     mentions: list[str] = Field(
         ...,

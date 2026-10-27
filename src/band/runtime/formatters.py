@@ -272,8 +272,9 @@ def build_participants_message(participants: list[dict]) -> str:
         "IMPORTANT: In band_send_message mentions, always use the exact "
         "handle shown above (e.g. '@john' for users, '@john/weather-agent' "
         "for agents), NOT the display name. Handles are lowercase with no spaces. "
-        "Every reader sees the mentioned participants' names in front of your "
-        "message, so never write an @handle or a recipient's name into the content."
+        "Every reader sees each mention as a chip with the participant's name, so "
+        "never repeat a mentioned name next to its chip and never type an @name or "
+        "@handle into the content: it stays plain text."
     )
 
     return "\n".join(lines)
