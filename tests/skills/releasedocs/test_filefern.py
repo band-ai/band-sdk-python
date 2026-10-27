@@ -176,8 +176,14 @@ class TestFileFern:
             == f"band-release-bot <release-bot@band.ai>\ndocs(changelog): Python SDK {RELEASE_TAG}"
         )
 
+    @pytest.mark.parametrize(
+        "held",
+        [(1, 2), (2,)],
+        ids=["held-by-holdbacks", "held-by-the-ledger-since-holdbacks-ran"],
+    )
     def test_held_items_are_left_out_and_explained_in_the_pr(
         self,
+        held: tuple[int, ...],
         releasedata: ModuleType,
         filefern: ModuleType,
         fernstate: ModuleType,
@@ -198,7 +204,7 @@ class TestFileFern:
             make_item(*RECONNECT, sources=(HELD_PR,)),
             make_item(*TOKEN_REDACTION),
         ]
-        extra = notes_args(make_notes, items, tmp_path, 1, 2)
+        extra = notes_args(make_notes, items, tmp_path, *held)
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 0
         )

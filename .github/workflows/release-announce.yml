@@ -619,6 +619,8 @@ jobs:
       - name: Review the docs
         id: docs-claude
         if: steps.state.outputs.docs != 'skip'
+        # A failed review must not hold back the changelog; the job still fails below.
+        continue-on-error: true
         timeout-minutes: ${{ fromJSON(env.DOCS_TIMEOUT_MINUTES) }}
         uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         env:
@@ -652,7 +654,9 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
       - name: Read the docs report
-        if: steps.state.outputs.docs != 'skip'
+        id: docs-report
+        if: steps.state.outputs.docs != 'skip' && steps.docs-claude.outcome == 'success'
+        continue-on-error: true
         env:
           EXECUTION_FILE: ${{ steps.docs-claude.outputs.execution_file }}
         run: |
@@ -661,7 +665,8 @@ jobs:
 
       - name: Check the docs edits
         id: patch
-        if: steps.state.outputs.docs != 'skip'
+        if: steps.docs-report.outcome == 'success'
+        continue-on-error: true
         run: |
           uv run --script "$SCRIPTS/checkpatch.py" "$RUNNER_TEMP/pristine" "$RUNNER_TEMP/edited" \
             --out "$RUNNER_TEMP/patch.json" --outputs "$GITHUB_OUTPUT"
@@ -713,20 +718,27 @@ jobs:
         if: env.MODE != 'dry-run'
         env:
           GH_TOKEN: ${{ steps.fern-write.outputs.token }}
-          DOCS: ${{ steps.state.outputs.docs }}
+          PATCH: ${{ steps.patch.outcome }}
           CHANGED: ${{ steps.patch.outputs.changed }}
         run: |
+          # Held indexes also keep the docs PR from merging when every item is held.
+          read -ra held <<< "$HELD"
           args=("$TAG" --fern fern-write --state "$RUNNER_TEMP/fresh/state.json" --mode "$MODE" \
-            --outputs "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY")
+            --held "${held[@]}" --outputs "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY")
           if [[ "$HAS_ENTRY" == true ]]; then
-            read -ra held <<< "$HELD"
-            args+=(--notes "$RUNNER_TEMP/full/release-notes.json" --held "${held[@]}")
+            args+=(--notes "$RUNNER_TEMP/full/release-notes.json")
           fi
-          if [[ "$DOCS" != skip && "$CHANGED" != 0 ]]; then
+          if [[ "$PATCH" == success && "$CHANGED" != 0 ]]; then
             args+=(--docs-check "$RUNNER_TEMP/patch.json" --docs-report "$RUNNER_TEMP/docs-report.json" \
               --docs-range "$RUNNER_TEMP/range.json" --edited "$RUNNER_TEMP/edited" --pristine "$RUNNER_TEMP/pristine")
           fi
           uv run --script "$SCRIPTS/filefern.py" "${args[@]}"
+
+      - name: Fail on a failed docs review
+        if: steps.state.outputs.docs != 'skip' && steps.patch.outcome != 'success'
+        run: |
+          echo "::error::The docs review or its edit check failed; no docs PR was filed."
+          exit 1
 
       - name: Summarize
         if: always()

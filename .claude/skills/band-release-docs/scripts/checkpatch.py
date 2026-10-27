@@ -155,21 +155,28 @@ def changed_pages(pristine: Path, edited: Path) -> list[str]:
     return modified
 
 
-def diff_lines(before: str, after: str) -> tuple[list[str], int]:
-    """The added lines, and the count of added plus removed lines."""
+def changed_line_count(before: str, after: str) -> int:
+    """Added plus removed lines."""
     diff = difflib.unified_diff(
         before.splitlines(), after.splitlines(), lineterm="", n=0
     )
-    changed = [
-        line for line in diff if line[:1] in "+-" and line[:3] not in ("+++", "---")
-    ]
-    return [line[1:] for line in changed if line.startswith("+")], len(changed)
+    return sum(
+        1 for line in diff if line[:1] in "+-" and line[:3] not in ("+++", "---")
+    )
+
+
+def prose_lines(text: str) -> list[str]:
+    """The page's lines outside code blocks and inline code."""
+    return CODE_PATTERN.sub("", text).splitlines()
+
+
+def added_prose(before: str, after: str) -> list[str]:
+    return list((Counter(prose_lines(after)) - Counter(prose_lines(before))).elements())
 
 
 def mdx_constructs(text: str) -> Counter[str]:
     """Tags and expressions outside code; import lines have their own rule."""
-    prose = CODE_PATTERN.sub("", text).splitlines()
-    kept = "\n".join(line for line in prose if not IMPORT_LINE.match(line))
+    kept = "\n".join(line for line in prose_lines(text) if not IMPORT_LINE.match(line))
     return Counter(MDX_CONSTRUCT.findall(kept))
 
 
@@ -204,7 +211,8 @@ def links_allowed(lines: Sequence[str]) -> bool:
 
 def page_violations(path: str, before: str, after: str) -> tuple[list[Finding], int]:
     """The content violations in one page's edit, and its changed-line count."""
-    added, count = diff_lines(before, after)
+    count = changed_line_count(before, after)
+    added = added_prose(before, after)
     kinds = []
     if any(IMPORT_LINE.match(line) for line in added):
         kinds.append(ContentViolation.IMPORT)

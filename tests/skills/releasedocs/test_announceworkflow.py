@@ -276,17 +276,34 @@ class TestAnnounceWorkflow:
             releasedata.DOCS_STRUCTURE,
         )
 
-    def test_filing_drops_the_held_items_from_the_full_notes(self) -> None:
+    def test_filing_always_gets_the_held_items(self) -> None:
+        """Held indexes drop items from the changelog and, even when every
+        item is held, keep the docs PR from merging."""
         run = step_run("file")
-        assert (
-            '--notes "$RUNNER_TEMP/full/release-notes.json" --held "${held[@]}"' in run
-        )
+        held = run.index('--held "${held[@]}"')
+        assert held < run.index('if [[ "$HAS_ENTRY" == true ]]')
+        assert '--notes "$RUNNER_TEMP/full/release-notes.json"' in run
         (download,) = [
             s
             for s in job("fern")["steps"]
             if s.get("with", {}).get("name") == "release-notes-full"
         ]
         assert download["with"]["path"] == "${{ runner.temp }}/full"
+
+    def test_a_failed_docs_review_still_files_the_changelog_and_fails(
+        self,
+    ) -> None:
+        steps = job("fern")["steps"]
+        review = steps[step_position("fern", uses(CLAUDE_ACTION))]
+        assert review["continue-on-error"] == "true"
+        assert '$PATCH" == success' in step_run("file")
+        fail = step_position(
+            "fern", lambda s: s.get("name") == "Fail on a failed docs review"
+        )
+        assert steps[fail]["if"] == (
+            "steps.state.outputs.docs != 'skip' && steps.patch.outcome != 'success'"
+        )
+        assert step_position("fern", has_id("file")) < fail
 
     def test_alert_covers_holdbacks_and_fern(self) -> None:
         assert {"holdbacks", "fern"} <= needs("alert")

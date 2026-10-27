@@ -33,7 +33,7 @@ from checkpatch import PatchCheck
 from collectprs import gh_output, git
 from docsreport import DocsReport, pr_body
 from fernstate import Action, BranchPr, FernState, Gh, action
-from holdbacks import held_reasons, load_ledger
+from holdbacks import held_reasons, ledger_matches, load_ledger
 from pydantic import BaseModel
 from releasedata import CHANGELOG_DIR, FERN_BASE, FERN_REPO, HELD_ITEMS, ReleaseNotes
 from renderentry import merge_into
@@ -282,7 +282,10 @@ class Filer:
         existing: BranchPr | None,
     ) -> FiledPr:
         self.start_branch(branch)
-        reasons = held_reasons(notes, held, load_ledger(self.fern / HELD_ITEMS))
+        entries = load_ledger(self.fern / HELD_ITEMS)
+        # A re-run reuses the holdbacks job's indexes; the fresh ledger may hold more.
+        held = sorted(set(held) | set(ledger_matches(notes, entries)))
+        reasons = held_reasons(notes, held, entries)
         with tempfile.TemporaryDirectory() as scratch:
             body = Path(scratch) / "pr-body.md"
             merge_into(notes, self.fern / CHANGELOG_DIR, held, body, reasons)

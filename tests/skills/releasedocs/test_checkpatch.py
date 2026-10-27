@@ -23,11 +23,13 @@ PRISTINE = {
     OUTSIDE: "# Rooms\n",
 }
 # Keeps the existing import, JSX tag, and allowed link, and adds an allowed
-# link, a relative link, and braces inside code.
+# link, a relative link, and a snippet whose code imports, exports, and links.
 ALLOWED_EDIT = DOCS_PAGE_TEXT.replace(
     "Create an agent with `Agent.create()`.",
     "Create an agent with `Agent.start({})`; see https://github.com/band-ai/band-sdk-python"
-    " and the [overview](../overview#agents).",
+    " and the [overview](../overview#agents).\n\n"
+    '```python\nimport asyncio\nURL = "http://localhost:4000"\n```\n\n'
+    "```bash\nexport BAND_API_KEY=key\n```",
 )
 
 
