@@ -107,6 +107,11 @@ def holdbacks(scripts: Callable[[str], ModuleType]) -> ModuleType:
 
 
 @pytest.fixture
+def withhold(scripts: Callable[[str], ModuleType]) -> ModuleType:
+    return scripts("withhold")
+
+
+@pytest.fixture
 def fernstate(scripts: Callable[[str], ModuleType]) -> ModuleType:
     return scripts("fernstate")
 

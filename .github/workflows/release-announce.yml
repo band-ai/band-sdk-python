@@ -490,7 +490,7 @@ jobs:
   fern:
     needs: [changelog, holdbacks, bundle]
     if: >-
-      always() && needs.holdbacks.result == 'success' &&
+      !cancelled() && needs.holdbacks.result == 'success' &&
       (needs.bundle.result == 'success' || needs.bundle.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -580,7 +580,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           baseline=$(jq -r .baseline "$RUNNER_TEMP/range.json")
-          uv run --script "$SCRIPTS/collectprs.py" "$TAG" --since "$baseline" --repo "$SRC" > review-prs.json
+          uv run --script "$SCRIPTS/collectprs.py" "$TAG" --since "$baseline" --repo "$SRC" > "$RUNNER_TEMP/review-all.json"
+
+      - name: Withhold held PRs from the review
+        if: steps.state.outputs.docs != 'skip'
+        run: |
+          read -ra held <<< "$HELD"
+          uv run --script "$SCRIPTS/withhold.py" "$RUNNER_TEMP/review-all.json" \
+            "$RUNNER_TEMP/full/release-notes.json" --ledger "fern/$HELD_ITEMS" \
+            --held "${held[@]}" > review-prs.json
 
       - name: Revoke the Fern read token
         if: always() && steps.fern-read.outputs.token != ''
@@ -633,6 +641,14 @@ jobs:
             --permission-prompts none
             --json-schema '${{ steps.docs-schema.outputs.schema }}'
 
+      # The review could write anywhere in the workspace, such as a planted
+      # .git the filing checkout would reuse; keep only the edited Fern tree.
+      - name: Clear the workspace
+        if: steps.state.outputs.docs != 'skip'
+        run: |
+          mv fern "$RUNNER_TEMP/edited"
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
       - name: Read the docs report
         if: steps.state.outputs.docs != 'skip'
         env:
@@ -645,7 +661,7 @@ jobs:
         id: patch
         if: steps.state.outputs.docs != 'skip'
         run: |
-          uv run --script "$SCRIPTS/checkpatch.py" "$RUNNER_TEMP/pristine" fern \
+          uv run --script "$SCRIPTS/checkpatch.py" "$RUNNER_TEMP/pristine" "$RUNNER_TEMP/edited" \
             --out "$RUNNER_TEMP/patch.json" --outputs "$GITHUB_OUTPUT"
 
       - name: Mint a Fern write token
@@ -706,7 +722,7 @@ jobs:
           fi
           if [[ "$DOCS" != skip && "$CHANGED" != 0 ]]; then
             args+=(--docs-check "$RUNNER_TEMP/patch.json" --docs-report "$RUNNER_TEMP/docs-report.json" \
-              --docs-range "$RUNNER_TEMP/range.json" --edited fern --pristine "$RUNNER_TEMP/pristine")
+              --docs-range "$RUNNER_TEMP/range.json" --edited "$RUNNER_TEMP/edited" --pristine "$RUNNER_TEMP/pristine")
           fi
           uv run --script "$SCRIPTS/filefern.py" "${args[@]}"
 
@@ -728,7 +744,8 @@ jobs:
 
   alert:
     needs: [collect, changelog, holdbacks, bundle, slack, discord, fern]
-    if: failure()
+    # A queued fern job a newer one displaces ends cancelled, not failed.
+    if: failure() || contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

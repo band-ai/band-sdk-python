@@ -41,6 +41,7 @@ carries its dependencies inline. Data shapes live in `scripts/releasedata.py`.
 | `postslack.py`, `postdiscord.py` | Post to the webhooks; Discord also deletes by message id |
 | `docsrange.py` | Picks the releases a Fern docs review covers and the docs PRs it supersedes |
 | `holdbacks.py` | Removes the items Fern's held-items ledger or the review holds; fails closed |
+| `withhold.py` | Drops the PRs a held item or the ledger cites from the docs review input; fails closed |
 | `fernstate.py` | Records the Fern PR state a filing depends on and decides file, reuse, or skip |
 | `checkpatch.py` | Checks the docs review's edits against a pristine Fern tree |
 | `docsreport.py` | The docs review's report model and the docs PR body |

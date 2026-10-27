@@ -192,6 +192,26 @@ class TestAnnounceWorkflow:
         review = job("fern")["steps"][step_position("fern", uses(CLAUDE_ACTION))]
         assert review["if"] == "steps.state.outputs.docs != 'skip'"
 
+    def test_held_prs_are_withheld_before_the_docs_review(self) -> None:
+        withhold = step_position("fern", lambda s: "withhold.py" in s.get("run", ""))
+        assert "> review-prs.json" in job("fern")["steps"][withhold]["run"]
+        assert withhold < step_position("fern", uses(CLAUDE_ACTION))
+
+    def test_workspace_is_cleared_between_the_review_and_filing(self) -> None:
+        clear = step_position(
+            "fern", lambda s: "find . -mindepth 1" in s.get("run", "")
+        )
+        checkouts = [
+            i
+            for i, step in enumerate(job("fern")["steps"])
+            if uses("actions/checkout")(step)
+        ]
+        assert step_position("fern", uses(CLAUDE_ACTION)) < clear < checkouts[-1]
+
+    def test_cancelled_runs_file_nothing_and_a_displaced_filing_alerts(self) -> None:
+        assert job("fern")["if"].startswith("!cancelled() && ")
+        assert "contains(needs.*.result, 'cancelled')" in job("alert")["if"]
+
     def test_claude_steps_cannot_print_tool_results(self) -> None:
         for step in claude_steps().values():
             assert step["env"] == {"ACTIONS_STEP_DEBUG": "false"}
