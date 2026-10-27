@@ -7,10 +7,10 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
+import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.types import Tool
 
 from band.integrations.mcp import (
@@ -40,6 +40,9 @@ STORE_MEMORY_ARGS: dict[str, Any] = {
     "thought": "user stated preference",
     "scope": "organization",
 }
+
+# The MCP SDK's own client timeouts: a long read keeps an idle stream open.
+MCP_CLIENT_TIMEOUT = httpx.Timeout(30.0, read=300.0)
 
 _TRANSPORT_PATHS: dict[BandMCPTransport, str] = {
     BandMCPTransport.HTTP: LOCAL_MCP_HTTP_PATH,
@@ -110,7 +113,9 @@ async def _client_streams(
     match transport:
         case BandMCPTransport.HTTP:
             async with (
-                create_mcp_http_client(headers=dict(headers)) as http,
+                httpx.AsyncClient(
+                    headers=dict(headers), timeout=MCP_CLIENT_TIMEOUT
+                ) as http,
                 streamable_http_client(url, http_client=http) as streams,
             ):
                 yield streams

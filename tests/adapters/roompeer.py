@@ -15,9 +15,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared._httpx_utils import create_mcp_http_client
 
 from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG, MCP_SERVERS_KEY
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
@@ -90,7 +90,7 @@ def band_server(mcp_config: Path) -> dict[str, Any]:
 
 async def reply(server: dict[str, Any], content: str) -> None:
     async with (
-        create_mcp_http_client(headers=server["headers"]) as http,
+        httpx.AsyncClient(headers=server["headers"]) as http,
         streamable_http_client(server["url"], http_client=http) as (read, write, *_),
         ClientSession(read, write) as session,
     ):

@@ -93,6 +93,24 @@ class TestMcpConfigFile:
             != (second.mcp_servers[BAND_MCP_SERVER_NAME]["url"])
         )
 
+    async def test_leaving_a_room_removes_only_its_config_file(
+        self, claude_room: OpenRoom
+    ) -> None:
+        room = await claude_room()
+        other_room = room.beside("room-2")
+        room.claude.script(
+            [room.model_reply("hi")], [other_room.model_reply("hi there")]
+        )
+        await room.send("hello")
+        await other_room.send("hello")
+        left_file, kept_file = (
+            cli_mcp_config_file(cli.options) for cli in room.claude.sessions
+        )
+
+        await room.leave()
+
+        assert (left_file.exists(), kept_file.exists()) == (False, True)
+
     async def test_cleanup_all_removes_the_config_files(
         self, claude_room: OpenRoom
     ) -> None:

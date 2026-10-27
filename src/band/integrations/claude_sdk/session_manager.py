@@ -407,6 +407,11 @@ class ClaudeSessionManager:
             on_disposed: Called with a room's id once its final release is
                 confirmed, even if the leave that started it stopped waiting.
         """
+        if MCP_CONFIG_FLAG in base_options.extra_args:
+            raise ValueError(
+                f"extra_args[{MCP_CONFIG_FLAG!r}] would replace the MCP config "
+                "file this manager writes; pass those servers in mcp_servers"
+            )
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
         self._mcp_servers_factory = mcp_servers_factory
@@ -476,11 +481,6 @@ class ClaudeSessionManager:
         if not dialed:
             return {"mcp_servers": mcp_servers}
         extra_args = self.base_options.extra_args
-        if MCP_CONFIG_FLAG in extra_args:
-            raise ValueError(
-                f"extra_args[{MCP_CONFIG_FLAG!r}] would replace the MCP config "
-                "file this manager writes; pass those servers in mcp_servers"
-            )
         config_file = self._mcp_config_files.write(room_id, dialed)
         return {
             "mcp_servers": {
@@ -492,9 +492,11 @@ class ClaudeSessionManager:
         }
 
     def discard(self, session: ClaudeRoomSession) -> None:
-        """Forget a disposed room and release its workspace claim."""
+        """Forget a disposed room, delete its MCP config file and release its
+        workspace claim."""
         if self._rooms.get(session.room_id) is session:
             del self._rooms[session.room_id]
+            self._mcp_config_files.discard(session.room_id)
             if self._on_disposed is not None:
                 self._on_disposed(session.room_id)
         if self._workspaces is not None:

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from letta_client import UnprocessableEntityError
 
 from band.adapters.letta import (
     LettaAdapter,
@@ -26,7 +30,26 @@ from tests.adapters.lettakit import (
     make_platform_message,
 )
 from tests.adapters.lettamcp.kit import _stale_tool_error, letta_registering_one_tool
-from tests.mcpbackends import FakeBandMCPBackend, backends_created_by, hold_backend
+from tests.mcpbackends import (
+    FAKE_AUTH_TOKEN,
+    FakeBandMCPBackend,
+    backends_created_by,
+    hold_backend,
+)
+
+LETTA_MCP_SERVERS_URL = "http://letta.test/v1/mcp-servers/"
+
+
+async def reject_echoing_the_config(**submitted: Any) -> None:
+    """Refuse a create the way Letta's 422 does: echoing what it was sent."""
+    body = {"detail": [{"msg": "invalid", "input": submitted}]}
+    raise UnprocessableEntityError(
+        f"Error code: 422 - {body}",
+        response=httpx.Response(
+            422, request=httpx.Request("POST", LETTA_MCP_SERVERS_URL)
+        ),
+        body=body,
+    )
 
 
 class TestSelfHostedMCPLifecycle:
@@ -493,6 +516,24 @@ class TestSelfHostedMCPLifecycle:
             adapter._mcp.advertised_url(50001)
             == "http://host.docker.internal:50001/mcp"
         )
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_registration_never_reports_the_echoed_token(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        client = letta_registering_one_tool()
+        client.mcp_servers.create.side_effect = reject_echoing_the_config
+        bridge = LettaAdapter()._mcp
+
+        with (
+            backends_created_by(),
+            pytest.raises(RuntimeError) as failed,
+        ):
+            await bridge.ensure_ready(client)
+
+        assert str(failed.value).endswith(": UnprocessableEntityError (HTTP 422)")
+        assert FAKE_AUTH_TOKEN not in caplog.text
 
     @pytest.mark.asyncio
     async def test_discovery_failure_leaves_registration_not_ready(self) -> None:

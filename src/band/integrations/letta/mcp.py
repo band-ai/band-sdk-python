@@ -41,6 +41,17 @@ _MCP_URL_PATHS: dict[str, str] = {
 }
 
 
+def _registration_failure(error: Exception) -> str:
+    """``error``, described without a Letta API error's text: that text
+    carries the response ``body``, which can echo the submitted config and
+    its bearer token."""
+    if not hasattr(error, "body"):
+        return str(error)
+    status = getattr(error, "status_code", None)
+    name = type(error).__name__
+    return name if status is None else f"{name} (HTTP {status})"
+
+
 async def bounded_teardown(
     operation: Awaitable[Any], *, timeout_s: float, action: str
 ) -> bool:
@@ -201,10 +212,11 @@ class LettaMCPBridge:
             self._last_server_url = server_url
             logger.info("Discovered %d MCP tools: %s", len(self.tool_ids), tool_names)
         except Exception as e:
-            logger.error("Failed to register MCP server: %s", e)
+            failure = _registration_failure(e)
+            logger.error("Failed to register MCP server: %s", failure)
             raise RuntimeError(
                 f"MCP server registration failed. Ensure the Band MCP server "
-                f"is reachable by Letta at {server_url}: {e}"
+                f"is reachable by Letta at {server_url}: {failure}"
             ) from e
 
     async def release(self, client: Any) -> None:

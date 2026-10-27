@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from http import HTTPStatus
 
+import httpx
 import pytest
 
 from band.integrations.mcp import (
@@ -45,6 +47,22 @@ class TestSharedBandMCPBackend:
             assert await served_tool_names(url, headers=crashed.headers) == {
                 ONE_TOOL.name
             }
+
+    async def test_each_owner_mints_its_own_token(self) -> None:
+        """One adapter's headers must not open another adapter's server."""
+        async with (
+            SharedBandMCPBackend(one_tool_settings) as first,
+            SharedBandMCPBackend(one_tool_settings) as second,
+            httpx.AsyncClient() as http,
+        ):
+            first_backend, second_backend = await first.ensure(), await second.ensure()
+
+            response = await http.post(
+                second_backend.endpoint(BandMCPTransport.HTTP),
+                headers=first_backend.headers,
+            )
+
+        assert response.status_code == HTTPStatus.UNAUTHORIZED
 
     async def test_a_replacement_avoids_the_dead_servers_port(self) -> None:
         with backends_created_by() as starts:

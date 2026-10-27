@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server
 
 from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG
@@ -29,6 +30,15 @@ BAND_SERVER: dict[str, Any] = {
 
 
 class TestMcpServerSplit:
+    def test_a_caller_mcp_config_file_is_refused_up_front(self) -> None:
+        """It would replace the private file the dialed servers go to."""
+        with pytest.raises(ValueError, match=MCP_CONFIG_FLAG):
+            ClaudeSessionManager(
+                ClaudeAgentOptions(
+                    model=MODEL, extra_args={MCP_CONFIG_FLAG: "servers.json"}
+                )
+            )
+
     async def test_a_factoryless_sdk_server_stays_inline(
         self, claude: FakeClaude
     ) -> None:

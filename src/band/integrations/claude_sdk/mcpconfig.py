@@ -42,8 +42,9 @@ class McpConfigFiles:
 
     The directory is created on the first write (``mkdtemp``: mode ``0700`` on
     POSIX; on Windows under the user's own temp directory) and removed by
-    ``remove()``. A room's file is replaced whole for each CLI start, so a
-    failed write never leaves a partial file behind.
+    ``remove()``; ``discard()`` deletes a disposed room's file. A room's file
+    is replaced whole for each CLI start, so a failed write never leaves a
+    partial file behind.
     """
 
     def __init__(self) -> None:
@@ -51,10 +52,9 @@ class McpConfigFiles:
 
     def write(self, room_id: str, servers: Mapping[str, Any]) -> Path:
         """Write ``room_id``'s MCP servers; return the file's path."""
-        directory = self._ensure_directory()
-        path = directory / f"{quote(room_id, safe='')}.json"
+        path = self._ensure_directory() / self._file_name(room_id)
         # mkstemp creates the file readable and writable by this user only.
-        descriptor, staged = tempfile.mkstemp(dir=directory, suffix=".tmp")
+        descriptor, staged = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as file:
                 json.dump({MCP_SERVERS_KEY: dict(servers)}, file)
@@ -63,6 +63,11 @@ class McpConfigFiles:
             Path(staged).unlink(missing_ok=True)
             raise
         return path
+
+    def discard(self, room_id: str) -> None:
+        """Delete ``room_id``'s file, if one was written."""
+        if self._directory is not None:
+            (self._directory / self._file_name(room_id)).unlink(missing_ok=True)
 
     def remove(self) -> None:
         """Delete the directory and every file in it."""
@@ -80,6 +85,10 @@ class McpConfigFiles:
             )
             return
         self._directory = None
+
+    @staticmethod
+    def _file_name(room_id: str) -> str:
+        return f"{quote(room_id, safe='')}.json"
 
     def _ensure_directory(self) -> Path:
         if self._directory is None:

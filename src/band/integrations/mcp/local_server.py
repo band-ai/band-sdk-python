@@ -37,7 +37,9 @@ from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.routing import BaseRoute, Mount, Route
+from starlette.status import WS_1008_POLICY_VIOLATION
 from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.websockets import WebSocketClose
 
 from band.integrations.mcp.engine import (
     ROOM_PATH_PARAM,
@@ -67,6 +69,10 @@ LOCAL_MCP_AUTH_SCHEME = "Bearer"
 # How a refused request's route is logged: room ids and unserved paths masked.
 REDACTED_ROOM = "<room>"
 UNKNOWN_ROUTE = "<unknown>"
+REFUSAL_LOG = (
+    "Local MCP server %s refused an unauthenticated request to %s "
+    "(%s refused there so far)"
+)
 
 
 def local_mcp_auth_headers(token: str) -> dict[str, str]:
@@ -114,13 +120,28 @@ def _is_power_of_ten(count: int) -> bool:
     return str(count).rstrip("0") == "1"
 
 
+def _refusal(scope: Scope) -> ASGIApp:
+    """How an unauthorized request of ``scope``'s type is refused."""
+    if scope["type"] == "websocket":
+        return WebSocketClose(code=WS_1008_POLICY_VIOLATION)
+    return PlainTextResponse(
+        "Unauthorized",
+        status_code=401,
+        headers={"WWW-Authenticate": LOCAL_MCP_AUTH_SCHEME},
+    )
+
+
 class BearerTokenGuard:
-    """ASGI middleware answering 401 to every HTTP request outside
-    ``open_paths`` that lacks ``Authorization: Bearer <token>``.
+    """ASGI middleware refusing every request outside ``open_paths`` that
+    lacks ``Authorization: Bearer <token>``: HTTP with 401, a websocket
+    handshake by closing it with 1008 (policy violation).
+
+    Websockets are guarded too: the SSE message endpoint is a raw ASGI mount
+    that would otherwise receive an unauthenticated upgrade. Only lifespan
+    events pass unguarded.
 
     Refusals are counted per redacted route and logged on the 1st, 10th,
-    100th, ... so a caller retrying in a loop cannot flood the log. Lifespan
-    events pass through; the server mounts no websocket routes.
+    100th, ... so a caller retrying in a loop cannot flood the log.
     """
 
     def __init__(
@@ -141,19 +162,14 @@ class BearerTokenGuard:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (
-            scope["type"] != "http"
+            scope["type"] == "lifespan"
             or scope["path"] in self._open_paths
             or self._authorized(Headers(scope=scope))
         ):
             await self._app(scope, receive, send)
             return
         self._record_refusal(scope["path"])
-        refusal = PlainTextResponse(
-            "Unauthorized",
-            status_code=401,
-            headers={"WWW-Authenticate": LOCAL_MCP_AUTH_SCHEME},
-        )
-        await refusal(scope, receive, send)
+        await _refusal(scope)(scope, receive, send)
 
     def _authorized(self, headers: Headers) -> bool:
         values = headers.getlist(LOCAL_MCP_AUTH_HEADER)
@@ -169,8 +185,7 @@ class BearerTokenGuard:
         count = self._refusals[route] = self._refusals.get(route, 0) + 1
         if _is_power_of_ten(count):
             logger.warning(
-                "Local MCP server %s refused an unauthenticated request to %s "
-                "(%s refused there so far)",
+                REFUSAL_LOG,
                 self._server_name,
                 route,
                 count,

@@ -1,4 +1,5 @@
-"""A refused request is logged once per route, with the room id redacted."""
+"""Refused requests are logged on the 1st and 10th per route, with room ids
+and unserved paths redacted."""
 
 from __future__ import annotations
 
@@ -11,30 +12,46 @@ from band.integrations.mcp.local_server import (
     LOCAL_MCP_HTTP_PATH,
     LOCAL_MCP_ROOMS_PATH,
     REDACTED_ROOM,
+    REFUSAL_LOG,
+    UNKNOWN_ROUTE,
 )
 from tests.mcp.loopbackauth.kit import (
-    AUTH_TOKEN,
-    ROOM,
+    CRAFTED_PATH,
+    CRAFTED_ROOM_PATH,
     ROOM_HTTP,
+    SERVER_NAME,
     Credential,
+    Route,
     guarded_servers,
 )
 
 GUARD_LOGGER = local_server.logger.name
+REFUSALS = 10
 
 
 class TestRefusalLog:
     @pytest.mark.timeout(90)
-    async def test_repeated_refusals_log_one_redacted_warning(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(
+        ("route", "logged_route"),
+        [
+            pytest.param(
+                ROOM_HTTP,
+                f"{LOCAL_MCP_ROOMS_PATH}/{REDACTED_ROOM}{LOCAL_MCP_HTTP_PATH}",
+                id="served-room-route",
+            ),
+            pytest.param(CRAFTED_ROOM_PATH, UNKNOWN_ROUTE, id="crafted-room-path"),
+            pytest.param(CRAFTED_PATH, UNKNOWN_ROUTE, id="crafted-path"),
+        ],
+    )
+    async def test_the_first_and_tenth_refusal_are_logged_redacted(
+        self, route: Route, logged_route: str, caplog: pytest.LogCaptureFixture
     ) -> None:
         caplog.set_level(logging.WARNING, logger=GUARD_LOGGER)
         async with guarded_servers() as guarded:
-            await guarded.status(ROOM_HTTP, Credential.WRONG_TOKEN)
-            await guarded.status(ROOM_HTTP, Credential.MISSING)
+            for _ in range(REFUSALS):
+                await guarded.status(route, Credential.WRONG_TOKEN)
 
-        [record] = [r for r in caplog.records if r.name == GUARD_LOGGER]
-        message = record.getMessage()
-        assert f"{LOCAL_MCP_ROOMS_PATH}/{REDACTED_ROOM}{LOCAL_MCP_HTTP_PATH}" in message
-        assert ROOM not in message
-        assert AUTH_TOKEN not in message
+        assert [r.getMessage() for r in caplog.records if r.name == GUARD_LOGGER] == [
+            REFUSAL_LOG % (SERVER_NAME, logged_route, 1),
+            REFUSAL_LOG % (SERVER_NAME, logged_route, REFUSALS),
+        ]

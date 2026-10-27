@@ -29,6 +29,7 @@ from band.integrations.mcp.local_server import (
 )
 
 AUTH_TOKEN = "loopback-auth-test-token"
+SERVER_NAME = "loopback-auth-test"
 ROOM = "room-a"
 RECORD_TOOL = "record"
 
@@ -103,6 +104,10 @@ SSE_MESSAGE = Route(
 MULTI_ROOM_HTTP = Route(Served.MULTI_ROOM, "POST", LOCAL_MCP_HTTP_PATH, INITIALIZE)
 MULTI_ROOM_SSE = Route(Served.MULTI_ROOM, "GET", LOCAL_MCP_SSE_PATH)
 HEALTH = Route(Served.ROOM_BOUND, "GET", LOCAL_MCP_HEALTH_PATH)
+# Paths neither server serves, carrying caller-chosen text.
+CRAFTED_TEXT = "caller-chosen-text"
+CRAFTED_ROOM_PATH = Route(Served.ROOM_BOUND, "GET", f"{_ROOM_PREFIX}/{CRAFTED_TEXT}")
+CRAFTED_PATH = Route(Served.MULTI_ROOM, "GET", f"/{CRAFTED_TEXT}")
 
 
 class RecordInput(BaseModel):
@@ -177,7 +182,7 @@ class GuardedServers:
 
 def _guarded_server(recorded: list[str], *, room_bound: bool) -> LocalMCPServer:
     return LocalMCPServer(
-        name="loopback-auth-test",
+        name=SERVER_NAME,
         tool_registrations=[record_tool(recorded)],
         auth_token=AUTH_TOKEN,
         port_min=0,
