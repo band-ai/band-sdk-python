@@ -47,3 +47,35 @@ class TestAgentConfig:
             AgentConfig(
                 agent_id="aid", api_key="", target=HTTPTarget(url="https://x/y")
             )
+
+    @pytest.mark.parametrize(
+        "agent",
+        [
+            {"message_only": "private-bearer"},
+            {
+                "target": {
+                    "type": "http",
+                    "url": "https://x/y",
+                    "bearer_tokn": "private-bearer",
+                }
+            },
+            {
+                "target": {
+                    "type": "agentcore",
+                    "runtime_arn": "arn:x",
+                    "regoin": "private-bearer",
+                }
+            },
+        ],
+    )
+    def test_rejects_unknown_option_without_echoing_it(
+        self, agent: dict[str, object]
+    ) -> None:
+        config = {
+            "agent_id": "aid",
+            "api_key": "key",
+            "target": {"type": "http", "url": "https://x/y"},
+        } | agent
+        with pytest.raises(ValueError, match="extra_forbidden") as error:
+            AgentConfig.model_validate(config)
+        assert "private-bearer" not in str(error.value)

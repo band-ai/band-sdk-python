@@ -51,8 +51,15 @@ class HTTPTarget(BaseModel):
     @field_validator("bearer_token")
     @classmethod
     def validate_bearer_token(cls, value: SecretStr | None) -> SecretStr | None:
-        if value is not None and not value.get_secret_value().strip():
-            raise ValueError("HTTPTarget.bearer_token must be non-empty")
+        # An illegal header value makes httpx raise with the token in its message.
+        if value is None:
+            return value
+        token = value.get_secret_value()
+        if not (token and token.isascii() and token.isprintable() and " " not in token):
+            raise ValueError(
+                "HTTPTarget.bearer_token must be non-empty printable ASCII "
+                "without whitespace"
+            )
         return value
 
 
@@ -103,7 +110,7 @@ class AgentConfig(BaseModel):
     ``api_key``) and forwards every event it receives to ``target``.
     """
 
-    model_config = ConfigDict(hide_input_in_errors=True)
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     agent_id: str
     api_key: str = Field(repr=False)
@@ -128,17 +135,16 @@ class AgentConfig(BaseModel):
 class BridgeConfig(BaseModel):
     """Bridge process configuration."""
 
-    model_config = ConfigDict(hide_input_in_errors=True)
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     agents: list[AgentConfig]
     ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
     rest_url: str = "https://app.band.ai"
     health_port: int = 8080
     health_host: str = "0.0.0.0"
-    # Per-agent cap on concurrent in-flight forwards. One asyncio task is
-    # spawned per WS event; without a cap, a burst of events (or a slow target)
-    # can pile up thousands of tasks waiting on the per-room lock or the
-    # target's I/O, and fan a flood of HTTP/AgentCore calls at the backend.
+    # Per-agent cap on concurrent target calls across rooms, so a burst of
+    # events cannot fan a flood of HTTP/AgentCore calls at the backend. Tasks
+    # queued behind their room's lock do not hold capacity.
     max_concurrent_forwards: int = 32
 
     @field_validator("max_concurrent_forwards")

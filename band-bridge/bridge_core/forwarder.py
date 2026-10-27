@@ -68,9 +68,8 @@ class HTTPForwarder:
                     "httpx is required for HTTPForwarder. "
                     "Install with: pip install band-sdk[bridge]"
                 )
-            self._client = _httpx.AsyncClient(
-                timeout=_httpx.Timeout(self._target.timeout)
-            )
+            # forward() sets the target timeout per request, for injected clients too.
+            self._client = _httpx.AsyncClient()
         return self._client
 
     async def forward(self, payload: dict[str, Any]) -> None:

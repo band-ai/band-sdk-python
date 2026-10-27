@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from bridge_core.bridge import AgentRunner
 from bridge_core.config import ReconnectConfig
+from bridge_core.dispatch import RoomForwards
 from bridge_core.forwarder import Forwarder
 
 from band.client.streaming import AgentControlPayload
@@ -208,11 +209,15 @@ async def drain_control_tasks(runner: Any) -> None:
 
 
 class GatedForwarder:
-    """Hold selected forwards and expose their actual ordering."""
+    """Hold selected forwards, optionally through cancellation cleanup, and record ordering."""
 
-    def __init__(self, held: tuple[str, ...]) -> None:
+    def __init__(
+        self, held: tuple[str, ...], *, held_cleanup: tuple[str, ...] = ()
+    ) -> None:
         self.started = {key: asyncio.Event() for key in held}
         self.release = {key: asyncio.Event() for key in held}
+        self.settling = {key: asyncio.Event() for key in held_cleanup}
+        self.release_cleanup = {key: asyncio.Event() for key in held_cleanup}
         self.events: list[tuple[str, str]] = []
 
     async def forward(self, payload: dict[str, Any]) -> None:
@@ -220,33 +225,12 @@ class GatedForwarder:
         self.events.append(("start", key))
         if key in self.started:
             self.started[key].set()
-            await self.release[key].wait()
-        self.events.append(("end", key))
-
-    async def close(self) -> None:
-        return
-
-
-class SettlingForwarder:
-    """Hold cancellation cleanup so ownership can be observed before settlement."""
-
-    def __init__(self, held: str) -> None:
-        self.held = held
-        self.started = asyncio.Event()
-        self.settling = asyncio.Event()
-        self.release_cleanup = asyncio.Event()
-        self.events: list[tuple[str, str]] = []
-
-    async def forward(self, payload: dict[str, Any]) -> None:
-        key = payload["payload"]["id"]
-        self.events.append(("start", key))
-        if key == self.held:
-            self.started.set()
             try:
-                await asyncio.Event().wait()
+                await self.release[key].wait()
             finally:
-                self.settling.set()
-                await self.release_cleanup.wait()
+                if key in self.settling:
+                    self.settling[key].set()
+                    await self.release_cleanup[key].wait()
         self.events.append(("end", key))
 
     async def close(self) -> None:
@@ -261,6 +245,10 @@ async def accept_event(
     await runner._safe_handle_event(event)
 
 
-def retained_rooms(runner: AgentRunner) -> set[str | None]:
+def held_rooms(forwards: RoomForwards) -> set[str | None]:
     """Project room bookkeeping for lifecycle assertions."""
-    return set(runner._forwards._rooms)
+    return set(forwards._rooms)
+
+
+def retained_rooms(runner: AgentRunner) -> set[str | None]:
+    return held_rooms(runner._forwards)

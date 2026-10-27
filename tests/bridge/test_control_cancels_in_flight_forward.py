@@ -11,7 +11,6 @@ from tests.bridge.conftest import FakeForwarder
 from tests.bridge.kit import (
     GatedForwarder,
     HangingForwarder,
-    SettlingForwarder,
     accept_event,
     await_cancelled,
     build_runner,
@@ -85,16 +84,16 @@ class TestControlCancelsInFlightForward:
         assert retained_rooms(runner) == set()
 
     async def test_new_work_waits_for_cancelled_handler_cleanup(self) -> None:
-        forwarder = SettlingForwarder("a")
+        forwarder = GatedForwarder(("a",), held_cleanup=("a",))
         runner, _, _ = build_runner(forwarder=forwarder)
         async with asyncio.TaskGroup() as group, AsyncExitStack() as cleanup:
-            cleanup.callback(forwarder.release_cleanup.set)
+            cleanup.callback(forwarder.release_cleanup["a"].set)
             a = group.create_task(runner._safe_handle_event(make_message_event("a")))
-            await forwarder.started.wait()
+            await forwarder.started["a"].wait()
             await runner._control.handle(
                 control_signal("interrupt", scope="room", room_id="r1")
             )
-            await forwarder.settling.wait()
+            await forwarder.settling["a"].wait()
             accepted = asyncio.Event()
             b = group.create_task(
                 accept_event(runner, make_message_event("b"), accepted)
@@ -102,7 +101,7 @@ class TestControlCancelsInFlightForward:
             await accepted.wait()
             assert retained_rooms(runner) == {"r1"}
             assert forwarder.events == [("start", "a")]
-            forwarder.release_cleanup.set()
+            forwarder.release_cleanup["a"].set()
             await await_cancelled(a)
             await b
         assert forwarder.events == [("start", "a"), ("start", "b"), ("end", "b")]

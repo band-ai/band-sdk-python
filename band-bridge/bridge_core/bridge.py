@@ -488,13 +488,19 @@ class AgentRunner:
             )
             return
 
-        skip_event = self._config.messages_only and not isinstance(event, MessageEvent)
+        if self._config.messages_only and not isinstance(event, MessageEvent):
+            logger.debug(
+                "Agent %s: not forwarding event %s (messages_only)",
+                self._config.agent_id,
+                type(event).__name__,
+            )
+            return
+
         forward_succeeded = False
         async with self._forwards.ready(room):
             try:
-                if not skip_event:
-                    await self._forwarder.forward(payload)
-                    forward_succeeded = True
+                await self._forwarder.forward(payload)
+                forward_succeeded = True
             except Exception:
                 logger.warning(
                     "Agent %s: forward failed for event %s",
@@ -542,8 +548,8 @@ class AgentRunner:
     # --- Control signals (interrupt/stop/play) ---
     #
     # Signal routing/dedup lives in ControlSignalHandler (control.py); it calls
-    # back into the operations below, which touch this runner's forwarding
-    # state (the per-room task registry) and the /next nudge path.
+    # back into the operations below, which reach room work through
+    # RoomForwards (dispatch.py) and the /next nudge path.
 
     def _spawn_play_nudge(self, room_ids: list[str]) -> None:
         """Run PLAY nudges off the control lane so later signals are not blocked."""

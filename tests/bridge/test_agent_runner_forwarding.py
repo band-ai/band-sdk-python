@@ -70,15 +70,20 @@ class TestAgentRunnerForwarding:
 
         assert len(fwd.forwarded) == 1
 
-    @pytest.mark.parametrize("messages_only, expected", [(True, 1), (False, 2)])
+    @pytest.mark.parametrize(
+        "messages_only, expected_types",
+        [
+            (True, ["message_created"]),
+            (False, ["participant_added", "message_created"]),
+        ],
+    )
     async def test_message_filter_preserves_message_delivery(
-        self, messages_only: bool, expected: int
+        self, messages_only: bool, expected_types: list[str]
     ) -> None:
         runner, fwd, _ = build_runner(messages_only=messages_only)
         await runner._safe_handle_event(make_participant_added_event())
         await runner._safe_handle_event(make_message_event())
-        assert len(fwd.forwarded) == expected
-        assert fwd.forwarded[-1]["event_type"] == "message_created"
+        assert [p["event_type"] for p in fwd.forwarded] == expected_types
 
     @pytest.mark.parametrize(
         "event",

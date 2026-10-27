@@ -19,9 +19,37 @@ from tests.bridge.kit import (
 
 
 class TestRoomForwardingLifetime:
-    @pytest.mark.parametrize("messages_only", [False, True])
+    @pytest.mark.parametrize(
+        "messages_only, expected_events",
+        [
+            (
+                False,
+                [
+                    ("start", "a"),
+                    ("end", "a"),
+                    ("start", "r1"),
+                    ("end", "r1"),
+                    ("start", "c"),
+                    ("end", "c"),
+                    ("start", "d"),
+                    ("end", "d"),
+                ],
+            ),
+            (
+                True,
+                [
+                    ("start", "a"),
+                    ("end", "a"),
+                    ("start", "c"),
+                    ("end", "c"),
+                    ("start", "d"),
+                    ("end", "d"),
+                ],
+            ),
+        ],
+    )
     async def test_teardown_cannot_split_room_serialization(
-        self, messages_only: bool
+        self, messages_only: bool, expected_events: list[tuple[str, str]]
     ) -> None:
         forwarder = GatedForwarder(("a", "c"))
         runner, _, _ = build_runner(forwarder=forwarder, messages_only=messages_only)
@@ -55,12 +83,7 @@ class TestRoomForwardingLifetime:
             assert ("start", "d") not in forwarder.events
             forwarder.release["c"].set()
             await asyncio.gather(a, c, d)
-        assert forwarder.events[-4:] == [
-            ("start", "c"),
-            ("end", "c"),
-            ("start", "d"),
-            ("end", "d"),
-        ]
+        assert forwarder.events == expected_events
         assert retained_rooms(runner) == set()
 
     @pytest.mark.parametrize("concurrency", [1, 32])
@@ -69,7 +92,7 @@ class TestRoomForwardingLifetime:
     ) -> None:
         forwarder = GatedForwarder(("a",))
         runner, _, _ = build_runner(
-            forwarder=forwarder, messages_only=True, max_concurrent_forwards=concurrency
+            forwarder=forwarder, max_concurrent_forwards=concurrency
         )
         a = asyncio.create_task(
             runner._safe_handle_event(make_message_event(message_id="a"))

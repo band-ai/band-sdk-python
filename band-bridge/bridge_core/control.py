@@ -1,9 +1,10 @@
 """Agent control-signal handling (interrupt / stop / play) for the bridge.
 
-Split out of ``AgentRunner``: the runner owns forwarding, rehydration, and the
-per-room in-flight task registry; this module owns only the control-signal
-concern — correlation-id dedup, target-room resolution, and mode dispatch —
-delegating the actual cancel / nudge / room-list operations back to the runner.
+Split out of ``AgentRunner``: the runner owns forwarding and rehydration, and
+``RoomForwards`` (dispatch.py) owns room work tracking; this module owns only
+the control-signal concern — correlation-id dedup, target-room resolution, and
+mode dispatch — delegating the actual cancel / nudge / room-list operations
+back to the runner.
 """
 
 from __future__ import annotations

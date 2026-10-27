@@ -12,9 +12,12 @@ from pytest_httpx import HTTPXMock
 
 
 class TestHTTPForwarder:
-    @pytest.mark.parametrize("token", [None, "test-bearer"])
+    @pytest.mark.parametrize(
+        "token, expected_authorization",
+        [(None, None), ("test-bearer", "Bearer test-bearer")],
+    )
     async def test_posts_authenticated_json_with_injected_client(
-        self, token: str | None
+        self, token: str | None, expected_authorization: str | None
     ) -> None:
         requests: list[httpx.Request] = []
         target = HTTPTarget(url="https://example.com/invocations", bearer_token=token)
@@ -37,9 +40,7 @@ class TestHTTPForwarder:
         assert requests[0].method == "POST"
         assert str(requests[0].url) == target.url
         assert json.loads(requests[0].content) == payload
-        assert requests[0].headers.get("Authorization") == (
-            f"Bearer {token}" if token else None
-        )
+        assert requests[0].headers.get("Authorization") == expected_authorization
         assert requests[0].extensions["timeout"]["read"] == target.timeout
 
     @pytest.mark.parametrize("status", [401, 500, 503])
