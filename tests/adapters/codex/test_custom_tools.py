@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import BaseModel
 
@@ -98,3 +100,54 @@ class TestCustomTools:
         _, payload = fake_client.responses[0]
         assert payload["success"] is True
         assert payload["contentItems"][0]["text"] == "42"
+
+
+@pytest.mark.asyncio
+async def test_custom_tool_denial_and_correction_preserve_rpc_status() -> None:
+    """Denied protocol discovery stays failed; correction can succeed in the turn."""
+
+    class DiscoveryInput(BaseModel):
+        """Discover an authorized protocol."""
+
+        authorized: bool
+
+    def discover(inp: DiscoveryInput) -> dict[str, object]:
+        if not inp.authorized:
+            return {"ok": False, "status": 403, "error": "protocol discovery disabled"}
+        return {"ok": True, "protocol": "authorized"}
+
+    client = FakeCodexClient(
+        events=[
+            event_request(
+                call_id,
+                "item/tool/call",
+                {
+                    "tool": "discovery",
+                    "arguments": {"authorized": authorized},
+                    "callId": f"call-{call_id}",
+                },
+            )
+            for call_id, authorized in [(101, False), (102, True)]
+        ]
+        + [turn_completed()]
+    )
+    adapter = make_codex_adapter(
+        client,
+        config=CodexAdapterConfig(),
+        additional_tools=[(DiscoveryInput, discover)],
+    )
+    await adapter.on_started("Codex Agent", "A coding agent")
+    await send_bootstrap(adapter, tools=ToolSchemaFakeTools())
+
+    responses = dict(client.responses)
+    assert responses[101]["success"] is False
+    assert json.loads(responses[101]["contentItems"][0]["text"]) == {
+        "ok": False,
+        "status": 403,
+        "error": "protocol discovery disabled",
+    }
+    assert responses[102]["success"] is True
+    assert json.loads(responses[102]["contentItems"][0]["text"]) == {
+        "ok": True,
+        "protocol": "authorized",
+    }

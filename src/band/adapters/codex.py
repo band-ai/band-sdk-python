@@ -122,6 +122,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.tools.schema import is_failed_tool_output
 from band.workspaces import (
     RoomWorkspaces,
     WorkspaceResolver,
@@ -2551,7 +2552,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     result = await execute_custom_tool(
                         custom_tool, arguments, turn=tools.turn
                     )
-                    success = True
+                    success = not is_failed_tool_output(result)
                 else:
                     # Structured: a base tool (e.g. band_send_message) can fail without
                     # raising (bad args, API error) via ok=False; the plain variant would
