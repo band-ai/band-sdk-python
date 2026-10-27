@@ -28,6 +28,23 @@ class TestRoutes:
         assert (response.status_code, response.json()) == (200, {"status": "done"})
         invoker.handle_event.assert_awaited_once_with(body)
 
+    async def test_malformed_json_is_rejected_before_invocation(
+        self, receiver: ModuleType, invoker: MagicMock
+    ) -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=receiver.app), base_url="http://receiver"
+        ) as client:
+            response = await client.post(
+                "/invocations",
+                content=b"{",
+                headers={"content-type": "application/json"},
+            )
+        assert (response.status_code, response.json()) == (
+            400,
+            {"detail": "invalid JSON body"},
+        )
+        invoker.handle_event.assert_not_awaited()
+
     @pytest.mark.parametrize(
         "error,status,detail",
         [

@@ -93,11 +93,13 @@ adapter cleanup; do not copy that choice into general multi-room receivers.
 
 ## Credential and lifetime boundaries
 
-Only `examples/oneshot/server.py` is allowed in the image build context. The
-context-root `.dockerignore` excludes the launcher and every other file. The
-pinned Wrangler passes Dockerfile contents through stdin, so a
-`Dockerfile.dockerignore` sidecar does not protect this build. Dependencies come
-from the receiver's PEP 723 metadata, including qualified `band-sdk==6.0.1`.
+Only `examples/oneshot/server.py` and its `server.py.lock` are allowed in the
+image build context. The context-root `.dockerignore` excludes the launcher and
+every other file. The pinned Wrangler passes Dockerfile contents through stdin,
+so a `Dockerfile.dockerignore` sidecar does not protect this build. Dependencies
+install from the receiver's script lock, which resolves its PEP 723 metadata,
+including qualified `band-sdk==6.0.1`. After changing that metadata, refresh it
+with `uv lock --script examples/oneshot/server.py`.
 
 Raw provider keys stay in Worker secrets. Containers receive `proxy-managed`
 placeholders. The bridge bearer is removed before forwarding to the container. The Worker intercepts HTTPS only for the configured Band host and

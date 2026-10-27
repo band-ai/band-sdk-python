@@ -163,12 +163,10 @@ export AWS_DEFAULT_REGION=us-east-1
 ## Step 6 — Run the bridge
 
 ```bash
-# Install bridge deps
-uv sync --extra bridge_agentcore
-
 # Start the bridge (loads repo-root .env.test automatically)
 uv run --isolated examples/oneshot/run-bridge.py
-# or run the module directly:
+# or run the module directly from the project environment:
+uv sync --extra bridge_agentcore
 PYTHONPATH=band-bridge uv run python -m bridge_core
 ```
 

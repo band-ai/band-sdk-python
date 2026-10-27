@@ -26,11 +26,11 @@ Environment variables:
     BAND_WS_URL   — defaults to wss://app.band.ai/api/v1/socket/websocket
                        (unused by the container; reserved for SDK consistency)
     BAND_REST_URL — defaults to https://app.band.ai
-    ANTHROPIC_MODEL  — defaults to claude-sonnet-5-5
+    ANTHROPIC_MODEL  — defaults to the SDK's default Anthropic model
     SYSTEM_PROMPT    — optional custom system prompt for the adapter
     EMIT_EXECUTION   — "true" (default) emits tool_call/tool_result as platform
                        events; set "false" to silence them
-    PORT             — defaults to 8080 (AgentCore Runtime contract)
+    PORT             — defaults to 8080
 
 Run locally::
 
@@ -129,7 +129,7 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/ping")
 async def ping() -> dict[str, str]:
-    """AgentCore Runtime health probe."""
+    """Report readiness once startup has loaded the agent."""
     return {"status": "Healthy"}
 
 
@@ -149,7 +149,10 @@ async def invocations(request: Request) -> dict[str, Any]:
         }
     """
     invoker: OneShotInvoker = app.state.invoker
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="invalid JSON body") from e
     try:
         return await invoker.handle_event(body)
     except OneShotEnvelopeError as e:

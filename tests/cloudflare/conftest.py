@@ -4,17 +4,28 @@ from __future__ import annotations
 
 import json
 import shutil
-import socket
 import subprocess
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from tests.cloudflare.client import WorkerRuntime
+from tests.cloudflare.contract import Scenario
 from tests.paths import EXAMPLES_ROOT
+from tests.ports import reserve_port
+
+EXAMPLE = EXAMPLES_ROOT / "cloudflare"
+HARNESS_MODULES = ("contract.py", "kit.py", "lifecycle.py", "harness.py")
+# JSONC (comments, trailing commas) is valid JavaScript object-literal syntax.
+READ_JSONC = (
+    'process.stdout.write(JSON.stringify(eval("(" + '
+    'require("fs").readFileSync(0, "utf8") + ")")))'
+)
 
 
 class Settings(BaseSettings):
@@ -24,39 +35,55 @@ class Settings(BaseSettings):
     CLOUDFLARE_TESTS_ENABLED: bool = False
 
 
-@pytest.fixture(scope="module")
-def worker(tmp_path_factory: pytest.TempPathFactory) -> Iterator[httpx.Client]:
+def shipped_compatibility() -> dict[str, Any]:
+    shipped = json.loads(
+        subprocess.run(
+            ["node", "-e", READ_JSONC],
+            input=(EXAMPLE / "wrangler.jsonc").read_text(),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+    return {
+        "compatibility_date": shipped["compatibility_date"],
+        "compatibility_flags": shipped["compatibility_flags"],
+    }
+
+
+def harness_project(root: Path) -> None:
+    source = root / "src"
+    source.mkdir()
+    shutil.copy(EXAMPLE / "src" / "worker.py", source / "worker.py")
+    for name in HARNESS_MODULES:
+        shutil.copy(Path(__file__).with_name(name), source / name)
+    shutil.copytree(EXAMPLE / "python_modules", root / "python_modules")
+    config = {
+        "name": "band-python-tests",
+        "main": "src/harness.py",
+        **shipped_compatibility(),
+        "durable_objects": {"bindings": [{"name": "HARNESS", "class_name": "Harness"}]},
+        "migrations": [{"tag": "v1", "new_sqlite_classes": ["Harness"]}],
+    }
+    (root / "wrangler.json").write_text(json.dumps(config))
+
+
+@pytest.fixture(scope="package")
+def runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WorkerRuntime]:
     if not Settings().CLOUDFLARE_TESTS_ENABLED:
         pytest.skip(
             "Set CLOUDFLARE_TESTS_ENABLED=true for real Python Worker runtime tests"
         )
-    example = EXAMPLES_ROOT / "cloudflare"
     subprocess.run(
         ["uv", "run", "--locked", "pywrangler", "sync"],
-        cwd=example,
+        cwd=EXAMPLE,
         check=True,
         capture_output=True,
         text=True,
     )
     root = tmp_path_factory.mktemp("cloudflare")
-    source = root / "src"
-    source.mkdir()
-    shutil.copy(example / "src" / "worker.py", source / "worker.py")
-    for name in ("kit.py", "harness.py"):
-        shutil.copy(Path(__file__).with_name(name), source / name)
-    shutil.copytree(example / "python_modules", root / "python_modules")
-    config = {
-        "name": "band-python-tests",
-        "main": "src/harness.py",
-        "compatibility_date": "2026-09-29",
-        "compatibility_flags": ["python_workers"],
-        "durable_objects": {"bindings": [{"name": "HARNESS", "class_name": "Harness"}]},
-        "migrations": [{"tag": "v1", "new_sqlite_classes": ["Harness"]}],
-    }
-    (root / "wrangler.json").write_text(json.dumps(config))
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
+    harness_project(root)
+    port = reserve_port()
     with (root / "runtime.log").open("w+") as log:
         process = subprocess.Popen(
             [
@@ -89,7 +116,7 @@ def worker(tmp_path_factory: pytest.TempPathFactory) -> Iterator[httpx.Client]:
                             log.seek(0)
                             pytest.fail("Python Worker failed to start:\n" + log.read())
                         time.sleep(0.1)
-                yield client
+                yield WorkerRuntime(client)
         finally:
             process.terminate()
             try:
@@ -97,3 +124,9 @@ def worker(tmp_path_factory: pytest.TempPathFactory) -> Iterator[httpx.Client]:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+
+
+@pytest.fixture(scope="package")
+def constants(runtime: WorkerRuntime) -> dict[str, Any]:
+    """The Worker's own settings vocabulary and wiring, read from workerd."""
+    return runtime.run(Scenario.CONSTANTS)

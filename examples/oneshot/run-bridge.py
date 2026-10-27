@@ -13,6 +13,9 @@ Each agent's ``target`` may be either:
 - ``{"type": "agentcore", "runtime_arn": "arn:...", "region": "us-east-1"}``
   — Bedrock AgentCore Runtime via SigV4
 
+The ``band-sdk`` pin must provide every SDK symbol this checkout's
+``bridge_core`` imports, so raise it together with ``bridge_core``.
+
 Run from the repo root::
 
     BAND_BRIDGE_AGENTS='[

@@ -10,7 +10,6 @@ import asyncio
 import hmac
 import json
 import logging
-from contextlib import suppress
 from typing import Any
 
 import js
@@ -19,12 +18,18 @@ from workers import DurableObject, Request, Response, WorkerEntrypoint
 
 logger = logging.getLogger(__name__)
 PORT = 8080
+CONTAINER_HOST = "container"
 READINESS_SECONDS = 90
+PING_INTERVAL_SECONDS = 0.25
 IDLE_MS = 180_000
 PROXY_KEY = "proxy-managed"
 ANTHROPIC_HOST = "api.anthropic.com"
 SECRET_SETTINGS = ("BAND_API_KEY", "ANTHROPIC_API_KEY", "BRIDGE_TOKEN")
 REQUIRED_SETTINGS = ("BAND_AGENT_ID", "BAND_REST_URL", *SECRET_SETTINGS)
+OPTIONAL_SETTINGS = ("ANTHROPIC_MODEL",)
+WORKER_VERSION_HEADER = "x-band-worker-version"
+ROOM_VERSION_HEADER = "x-band-room-version"
+CONTAINER_IMAGE_HEADER = "x-band-container-image"
 
 
 def runtime_options(value: dict[str, Any]) -> Any:
@@ -36,23 +41,40 @@ def nonempty(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-def configured(env: Any) -> bool:
-    if not all(nonempty(getattr(env, name, None)) for name in REQUIRED_SETTINGS):
-        return False
+def secure_endpoint(url: str) -> bool:
     try:
-        endpoint = js.URL.new(env.BAND_REST_URL)
-        return bool(
-            endpoint.protocol == "https:"
-            and endpoint.hostname
-            and not endpoint.username
-            and not endpoint.password
-            and (
-                not getattr(env, "ANTHROPIC_MODEL", None)
-                or nonempty(env.ANTHROPIC_MODEL)
-            )
-        )
+        endpoint = js.URL.new(url)
     except JsException:
         return False
+    return bool(
+        endpoint.protocol == "https:"
+        and endpoint.hostname
+        and not endpoint.username
+        and not endpoint.password
+    )
+
+
+def invalid_settings(env: Any) -> list[str]:
+    """Name each setting that makes the Worker fail closed."""
+    invalid = [
+        name for name in REQUIRED_SETTINGS if not nonempty(getattr(env, name, None))
+    ]
+    invalid += [
+        name
+        for name in OPTIONAL_SETTINGS
+        if getattr(env, name, None) and not nonempty(getattr(env, name))
+    ]
+    if "BAND_REST_URL" not in invalid and not secure_endpoint(env.BAND_REST_URL):
+        invalid.append("BAND_REST_URL")
+    return invalid
+
+
+def redacted(env: Any, detail: str) -> str:
+    for name in SECRET_SETTINGS:
+        secret = getattr(env, name, None)
+        if secret:
+            detail = detail.replace(secret, "[redacted]")
+    return detail
 
 
 def tagged_response(upstream: Any, headers: dict[str, str]) -> Response:
@@ -79,7 +101,7 @@ class KeyInjector(WorkerEntrypoint):
 class Room(DurableObject):
     def __init__(self, ctx: Any, env: Any) -> None:
         super().__init__(ctx, env)
-        self.booting: asyncio.Task[None] | None = None
+        self.boot: asyncio.Task[None] | None = None
         if ctx.container and ctx.container.running:
             ctx.blockConcurrencyWhile(create_once_callable(self.restore_idle))
 
@@ -87,15 +109,19 @@ class Room(DurableObject):
         await self.ctx.container.setInactivityTimeout(IDLE_MS)
 
     async def ensure_ready(self) -> None:
-        if self.booting is None:
-            self.booting = asyncio.create_task(self.boot())
-        await asyncio.shield(self.booting)
+        if self.boot is None or not self.serving(self.boot):
+            self.boot = asyncio.create_task(self.start_and_wait())
+        await asyncio.shield(self.boot)
 
-    async def boot(self) -> None:
-        try:
-            await self.start_and_wait()
-        finally:
-            self.booting = None
+    def serving(self, boot: asyncio.Task[None]) -> bool:
+        """Reuse a boot while it runs, or after it succeeded while its container runs."""
+        if not boot.done():
+            return True
+        return (
+            not boot.cancelled()
+            and boot.exception() is None
+            and self.ctx.container.running
+        )
 
     async def start_and_wait(self) -> None:
         container = self.ctx.container
@@ -108,9 +134,8 @@ class Room(DurableObject):
         try:
             if starting:
                 await self.start(container)
-            await container.setInactivityTimeout(IDLE_MS)
             termination = asyncio.ensure_future(container.monitor())
-            termination.add_done_callback(observe_termination)
+            termination.add_done_callback(self.receiver_stopped)
             readiness = asyncio.create_task(self.wait_for_ping(abort.signal))
             done, _ = await asyncio.wait(
                 (readiness, termination), return_when=asyncio.FIRST_COMPLETED
@@ -124,7 +149,7 @@ class Room(DurableObject):
             if readiness is not None:
                 await asyncio.gather(readiness, return_exceptions=True)
             if starting:
-                await container.destroy()
+                await self.discard(container)
                 if termination is not None:
                     await asyncio.gather(termination, return_exceptions=True)
             raise
@@ -147,9 +172,11 @@ class Room(DurableObject):
             "BAND_API_KEY": PROXY_KEY,
             "ANTHROPIC_API_KEY": PROXY_KEY,
             "PORT": str(PORT),
+        } | {
+            name: getattr(self.env, name)
+            for name in OPTIONAL_SETTINGS
+            if getattr(self.env, name, None)
         }
-        if getattr(self.env, "ANTHROPIC_MODEL", None):
-            environment["ANTHROPIC_MODEL"] = self.env.ANTHROPIC_MODEL
         container.start(
             runtime_options(
                 {
@@ -160,6 +187,24 @@ class Room(DurableObject):
                 }
             )
         )
+        await container.setInactivityTimeout(IDLE_MS)
+
+    async def discard(self, container: Any) -> None:
+        # Cleanup failure must not replace the startup error the caller reports.
+        try:
+            await container.destroy()
+        except JsException as error:
+            logger.warning(
+                "Room receiver cleanup failed: %s", redacted(self.env, str(error))
+            )
+
+    def receiver_stopped(self, termination: asyncio.Future[Any]) -> None:
+        if termination.cancelled():
+            return
+        if error := termination.exception():
+            logger.warning("Room receiver failed: %s", redacted(self.env, str(error)))
+        else:
+            logger.info("Room receiver stopped")
 
     async def wait_for_ping(self, signal: Any) -> None:
         port = self.ctx.container.getTcpPort(PORT)
@@ -171,7 +216,8 @@ class Room(DurableObject):
             try:
                 signals = js.AbortSignal.any(to_js([signal, controller.signal]))
                 response = await port.fetch(
-                    "http://container/ping", runtime_options({"signal": signals})
+                    f"http://{CONTAINER_HOST}/ping",
+                    runtime_options({"signal": signals}),
                 )
                 if response.body:
                     await response.body.cancel()
@@ -183,7 +229,7 @@ class Room(DurableObject):
                 timer.cancel()
             remaining = deadline - loop.time()
             if remaining > 0:
-                await asyncio.sleep(min(0.25, remaining))
+                await asyncio.sleep(min(PING_INTERVAL_SECONDS, remaining))
         raise RuntimeError("Receiver readiness deadline exceeded")
 
     async def fetch(self, request: Request) -> Response:
@@ -191,7 +237,7 @@ class Room(DurableObject):
             await self.ensure_ready()
             target = js.URL.new(request.url)
             target.protocol = "http:"
-            target.hostname = "container"
+            target.hostname = CONTAINER_HOST
             target.port = ""
             forwarded = js.Request.new(target, request.js_object)
             forwarded.headers.delete("Authorization")
@@ -200,37 +246,30 @@ class Room(DurableObject):
             return tagged_response(
                 upstream,
                 {
-                    "x-band-room-version": self.env.VERSION.id,
-                    "x-band-container-image": inspection.image
+                    ROOM_VERSION_HEADER: self.env.VERSION.id,
+                    CONTAINER_IMAGE_HEADER: inspection.image
                     if inspection
                     else "unknown",
                 },
             )
         except (JsException, RuntimeError, ValueError) as error:
-            detail = str(error)
-            for name in SECRET_SETTINGS:
-                secret = getattr(self.env, name, None)
-                if secret:
-                    detail = detail.replace(secret, "[redacted]")
-            logger.error("Room receiver unavailable: %s", detail)
+            logger.error(
+                "Room receiver unavailable: %s", redacted(self.env, str(error))
+            )
             return Response(
                 "Receiver unavailable; restart bridge after recovery", status=503
             )
 
 
-def observe_termination(task: asyncio.Future[Any]) -> None:
-    # monitor has no abort API; observe its eventual settlement after idle shutdown.
-    with suppress(asyncio.CancelledError, Exception):
-        task.result()
-
-
 class Default(WorkerEntrypoint):
     async def fetch(self, request: Request) -> Response:
-        if not configured(self.env):
+        if invalid := invalid_settings(self.env):
+            logger.error("Worker settings invalid: %s", ", ".join(invalid))
             return Response("Configuration unavailable", status=503)
+        # workers' Request.method raises KeyError outside http.HTTPMethod.
         if (
             js.URL.new(request.url).pathname != "/invocations"
-            or request.method != "POST"
+            or request.js_object.method != "POST"
         ):
             return Response("Not found", status=404)
         actual = request.headers.get("Authorization", "").encode()
@@ -254,5 +293,5 @@ class Default(WorkerEntrypoint):
             Request(request, body=body)
         )
         return tagged_response(
-            upstream.js_object, {"x-band-worker-version": self.env.VERSION.id}
+            upstream.js_object, {WORKER_VERSION_HEADER: self.env.VERSION.id}
         )

@@ -2,8 +2,8 @@
 FROM --platform=linux/amd64 python:3.13-slim
 COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /usr/local/bin/uv
 WORKDIR /app
-COPY server.py /app/server.py
-RUN uv export --script /app/server.py --no-hashes --output-file /tmp/requirements.txt \
+COPY server.py server.py.lock /app/
+RUN uv export --script /app/server.py --locked --no-hashes --output-file /tmp/requirements.txt \
     && uv pip install --system --requirements /tmp/requirements.txt \
     && rm /tmp/requirements.txt \
     && useradd --no-log-init --create-home --uid 1000 appuser
