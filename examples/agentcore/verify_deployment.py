@@ -22,7 +22,7 @@ What it is NOT:
   runs in CI (nothing under ``tests/`` depends on it, and it depends on nothing
   there);
 - **not** the demo itself, and **not** how you run the demo — the bridge is
-  ``run_agentcore.py`` and the deployed container is ``agentcore_llm_server.py``;
+  ``../oneshot/run-bridge.py`` and the deployed container is ``../oneshot/server.py``;
 - **not** a general SDK/adapter test — those live in ``tests/e2e/baseline/``.
 
 Prerequisites:
@@ -32,7 +32,7 @@ Prerequisites:
 2. The demo deployed and running externally:
    - three AgentCore Runtimes (weather / math / personal_assistant);
    - the bridge running with ``BAND_BRIDGE_AGENTS`` pointing at the three
-     identities and their runtime ARNs (see ``run_agentcore.py``).
+     identities and their runtime ARNs (see ``../oneshot/run-bridge.py``).
 3. ``AGENTCORE_DEMO_PA_AGENT_ID`` — the personal_assistant's Band agent UUID, so
    this tool knows whom to @-mention. (PA recruits the other two at runtime.)
    ``AGENTCORE_DEMO_PA_AGENT_NAME`` optionally overrides the mention name

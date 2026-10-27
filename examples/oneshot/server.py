@@ -1,12 +1,12 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[anthropic]>=4.0.0",
+#   "band-sdk[anthropic]==6.0.1",
 #   "fastapi>=0.110",
 #   "uvicorn>=0.29",
 # ]
 # ///
-"""AgentCore container that runs the Band SDK per invocation.
+"""HTTP receiver that runs the Band SDK per invocation.
 
 The bridge (dumb pipe) forwards raw Band WS events to this container over
 HTTP. On each POST /invocations the container hands the forwarded event to the
@@ -16,7 +16,7 @@ the platform's lifecycle markers (claim / processed / failed / drain) so
 concurrent invocations don't duplicate work.
 
 Each invocation is one-shot — no per-room state is kept across calls. The SDK
-owns all the lifecycle logic; this file is just the AgentCore Runtime transport
+owns all the lifecycle logic; this file is just the hosting transport
 (``/ping`` + ``/invocations``) and env-driven adapter construction.
 
 Environment variables:
@@ -35,7 +35,7 @@ Environment variables:
 Run locally::
 
     BAND_AGENT_ID=... BAND_API_KEY=... ANTHROPIC_API_KEY=... \\
-        uv run python examples/agentcore/agentcore_llm_server.py
+        uv run --isolated examples/oneshot/server.py
 """
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LogSettings
 from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
+from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.core.types import Emit
 from band.platform.link import BandLink
 from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
@@ -69,7 +70,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
     band_rest_url: str = "https://app.band.ai"
-    anthropic_model: str = "claude-sonnet-5-5"
+    anthropic_model: str = ANTHROPIC_MODEL
     system_prompt: str = ""
     emit_execution: bool = True
     port: int = 8080
@@ -110,16 +111,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         adapter=_build_adapter(settings),
         agent_id=settings.band_agent_id,
     )
-    await invoker.startup()
-    logger.info(
-        "Container ready: agent_id=%s name=%s",
-        settings.band_agent_id,
-        invoker.agent_name,
-    )
-
-    app.state.invoker = invoker
-
     try:
+        await invoker.startup()
+        logger.info(
+            "Container ready: agent_id=%s name=%s",
+            settings.band_agent_id,
+            invoker.agent_name,
+        )
+        app.state.invoker = invoker
         yield
     finally:
         await invoker.shutdown()

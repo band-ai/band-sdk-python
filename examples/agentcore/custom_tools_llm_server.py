@@ -9,12 +9,12 @@
 # ///
 """AgentCore container variant with a custom tool wired in.
 
-Same shape as ``agentcore_llm_server.py`` (see that file for the full
+Same shape as ``../oneshot/server.py`` (see that file for the full
 lifecycle/transport walkthrough). The only difference is ``_build_adapter``
 passing ``additional_tools`` — see BUILDING.md's "Adding custom tools"
 section.
 
-Environment variables: same as ``agentcore_llm_server.py``.
+Environment variables: same as ``../oneshot/server.py``.
 
 Run locally::
 
