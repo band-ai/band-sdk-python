@@ -492,6 +492,8 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 
 Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` supports the A2A gateway demo orchestrator, and `bridge`, `bridge_agentcore`, and `agentcore_runtime` support the standalone bridge service under `band-bridge/` and `examples/agentcore/`.
 
+For request-driven hosting, use the shared [one-shot receiver](examples/oneshot/README.md) with the [Cloudflare example](examples/cloudflare/README.md) or [AgentCore](examples/agentcore/README.md). The persistent bridge runs separately on your infrastructure.
+
 ---
 
 ## Platform Tools

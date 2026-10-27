@@ -1,4 +1,8 @@
-"""Local launcher for the dumb-pipe bridge with AgentCore agents.
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["band-sdk[bridge_agentcore]==6.0.1"]
+# ///
+"""Local launcher for the dumb-pipe bridge with HTTP or AgentCore agents.
 
 Reads :class:`BridgeConfig` from the ``BAND_BRIDGE_AGENTS`` env var (a
 JSON array of ``{agent_id, api_key, target}`` entries) and runs the bridge.
@@ -9,12 +13,15 @@ Each agent's ``target`` may be either:
 - ``{"type": "agentcore", "runtime_arn": "arn:...", "region": "us-east-1"}``
   — Bedrock AgentCore Runtime via SigV4
 
+The ``band-sdk`` pin must provide every SDK symbol this checkout's
+``bridge_core`` imports, so raise it together with ``bridge_core``.
+
 Run from the repo root::
 
     BAND_BRIDGE_AGENTS='[
       {"agent_id":"...","api_key":"...","target":{"type":"agentcore","runtime_arn":"arn:...","region":"us-east-1"}}
     ]' \\
-        uv run python examples/agentcore/run_agentcore.py
+        uv run --isolated examples/oneshot/run-bridge.py
 
 Or place the JSON in ``.env.test`` as a single line.
 """
@@ -22,20 +29,22 @@ Or place the JSON in ``.env.test`` as a single line.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
-
-# Add band-bridge dir to path so bridge_core is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "band-bridge"))
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(
-    os.environ.get(
-        "ENV_FILE", os.path.join(os.path.dirname(__file__), "..", "..", ".env.test")
-    )
-)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "band-bridge"))
 
 from bridge_core.bridge import main
 
-asyncio.run(main())
+
+def run() -> None:
+    """Load the checkout's shared configuration and run its bridge."""
+    load_dotenv(REPO_ROOT / ".env.test")
+    asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

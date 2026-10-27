@@ -1,12 +1,12 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[anthropic]>=4.0.0",
+#   "band-sdk[anthropic]==6.0.1",
 #   "fastapi>=0.110",
 #   "uvicorn>=0.29",
 # ]
 # ///
-"""AgentCore container that runs the Band SDK per invocation.
+"""HTTP receiver that runs the Band SDK per invocation.
 
 The bridge (dumb pipe) forwards raw Band WS events to this container over
 HTTP. On each POST /invocations the container hands the forwarded event to the
@@ -16,7 +16,7 @@ the platform's lifecycle markers (claim / processed / failed / drain) so
 concurrent invocations don't duplicate work.
 
 Each invocation is one-shot — no per-room state is kept across calls. The SDK
-owns all the lifecycle logic; this file is just the AgentCore Runtime transport
+owns all the lifecycle logic; this file is just the hosting transport
 (``/ping`` + ``/invocations``) and env-driven adapter construction.
 
 Environment variables:
@@ -26,16 +26,16 @@ Environment variables:
     BAND_WS_URL   — defaults to wss://app.band.ai/api/v1/socket/websocket
                        (unused by the container; reserved for SDK consistency)
     BAND_REST_URL — defaults to https://app.band.ai
-    ANTHROPIC_MODEL  — defaults to claude-sonnet-5-5
+    ANTHROPIC_MODEL  — defaults to the SDK's default Anthropic model
     SYSTEM_PROMPT    — optional custom system prompt for the adapter
     EMIT_EXECUTION   — "true" (default) emits tool_call/tool_result as platform
                        events; set "false" to silence them
-    PORT             — defaults to 8080 (AgentCore Runtime contract)
+    PORT             — defaults to 8080
 
 Run locally::
 
     BAND_AGENT_ID=... BAND_API_KEY=... ANTHROPIC_API_KEY=... \\
-        uv run python examples/agentcore/agentcore_llm_server.py
+        uv run --isolated examples/oneshot/server.py
 """
 
 from __future__ import annotations
@@ -51,12 +51,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LogSettings
 from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
+from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.core.types import Emit
 from band.platform.link import BandLink
 from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
 
 LogSettings().for_application().configure()
 logger = logging.getLogger(__name__)
+HEALTHY = "Healthy"
+INVALID_JSON = "invalid JSON body"
+INVOCATION_FAILED = "invocation failed"
 
 
 class Settings(BaseSettings):
@@ -69,7 +73,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
     band_rest_url: str = "https://app.band.ai"
-    anthropic_model: str = "claude-sonnet-5-5"
+    anthropic_model: str = ANTHROPIC_MODEL
     system_prompt: str = ""
     emit_execution: bool = True
     port: int = 8080
@@ -110,16 +114,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         adapter=_build_adapter(settings),
         agent_id=settings.band_agent_id,
     )
-    await invoker.startup()
-    logger.info(
-        "Container ready: agent_id=%s name=%s",
-        settings.band_agent_id,
-        invoker.agent_name,
-    )
-
-    app.state.invoker = invoker
-
     try:
+        await invoker.startup()
+        logger.info(
+            "Container ready: agent_id=%s name=%s",
+            settings.band_agent_id,
+            invoker.agent_name,
+        )
+        app.state.invoker = invoker
         yield
     finally:
         await invoker.shutdown()
@@ -130,8 +132,8 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/ping")
 async def ping() -> dict[str, str]:
-    """AgentCore Runtime health probe."""
-    return {"status": "Healthy"}
+    """Report readiness once startup has loaded the agent."""
+    return {"status": HEALTHY}
 
 
 @app.post("/invocations")
@@ -150,14 +152,17 @@ async def invocations(request: Request) -> dict[str, Any]:
         }
     """
     invoker: OneShotInvoker = app.state.invoker
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=INVALID_JSON) from e
     try:
         return await invoker.handle_event(body)
     except OneShotEnvelopeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
-        logger.exception("invocation failed")
-        raise HTTPException(status_code=500, detail="invocation failed")
+        logger.exception(INVOCATION_FAILED)
+        raise HTTPException(status_code=500, detail=INVOCATION_FAILED)
 
 
 def main() -> None:

@@ -1,7 +1,7 @@
 """Tests for examples/agentcore/custom_tools_llm_server.py.
 
-Same shape as test_container.py (see that file for the boilerplate rationale).
-This module additionally covers the custom-tool wiring that distinguishes
+The route, lifespan and settings contract it shares with
+``examples/oneshot/server.py`` is covered in ``tests/oneshot_server``. This module covers the custom-tool wiring that distinguishes
 this variant: the ``WeatherInput``/``get_weather`` pair passed as
 ``additional_tools`` to the adapter.
 """

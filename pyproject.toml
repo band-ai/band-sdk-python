@@ -163,7 +163,7 @@ bridge_agentcore = [
 ]
 agentcore_runtime = [
     # Deps for the container hosted by Bedrock AgentCore Runtime
-    # (examples/agentcore/agentcore_llm_server.py). Combine with the
+    # (examples/oneshot/server.py). Combine with the
     # adapter extra of your choice (e.g. anthropic).
     "fastapi>=0.110",
     "uvicorn>=0.29",
