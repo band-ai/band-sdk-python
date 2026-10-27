@@ -1,4 +1,4 @@
-"""AgentConfig behavior."""
+"""AgentConfig validates identity fields and rejects unknown options without echoing them."""
 
 from __future__ import annotations
 

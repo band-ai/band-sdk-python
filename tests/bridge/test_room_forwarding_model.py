@@ -41,6 +41,17 @@ class TestRoomForwardingModel:
         ],
         capacity=1,
     )
+    @example(
+        steps=[
+            Step.ACCEPT_A,
+            Step.ACCEPT_B,
+            Step.RELEASE_A,
+            Step.ACCEPT_A,
+            Step.RELEASE_B,
+            Step.DRAIN,
+        ],
+        capacity=1,
+    )
     def test_sequences_preserve_room_ownership(
         self, steps: list[Step], capacity: int
     ) -> None:

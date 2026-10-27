@@ -1,4 +1,4 @@
-"""ReconnectConfig behavior."""
+"""ReconnectConfig rejects backoff settings that cannot make progress."""
 
 from __future__ import annotations
 

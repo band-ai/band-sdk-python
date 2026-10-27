@@ -1,4 +1,4 @@
-"""BridgeConfigFromEnv behavior."""
+"""BridgeConfig.from_env loads agents and overrides from the environment."""
 
 from __future__ import annotations
 

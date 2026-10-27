@@ -43,5 +43,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 USER appuser
 
-# The bridge reads BAND_BRIDGE_AGENTS; no handler registration is needed.
+# The bridge reads its agents and targets from BAND_BRIDGE_AGENTS.
 CMD ["python", "-m", "bridge_core"]

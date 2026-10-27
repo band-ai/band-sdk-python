@@ -1,4 +1,4 @@
-"""BuildForwarder behavior."""
+"""build_forwarder picks the forwarder matching the target type."""
 
 from __future__ import annotations
 

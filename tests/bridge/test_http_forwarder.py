@@ -71,7 +71,14 @@ class TestHTTPForwarder:
             with pytest.raises(error_type):
                 await forwarder.forward({})
 
-    async def test_owned_client_closes_idempotently_and_reopens(
+    async def test_closes_owned_client_idempotently(self) -> None:
+        forwarder = HTTPForwarder(HTTPTarget(url="https://example.com"))
+        client = forwarder._get_client()
+        await forwarder.close()
+        await forwarder.close()
+        assert client.is_closed
+
+    async def test_owned_client_reopens_after_close(
         self, httpx_mock: HTTPXMock
     ) -> None:
         target = HTTPTarget(url="https://example.com/invocations")
@@ -79,14 +86,11 @@ class TestHTTPForwarder:
         forwarder = HTTPForwarder(target)
         await forwarder.forward({})
         await forwarder.close()
-        await forwarder.close()
         await forwarder.forward({})
         await forwarder.close()
         assert len(httpx_mock.get_requests()) == 2
 
-    async def test_owned_client_authenticates_each_request(
-        self, httpx_mock: HTTPXMock
-    ) -> None:
+    async def test_owned_client_sends_bearer(self, httpx_mock: HTTPXMock) -> None:
         target = HTTPTarget(
             url="https://example.com/invocations", bearer_token="owned-bearer"
         )

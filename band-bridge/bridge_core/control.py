@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from band.client.streaming import AgentControlPayload
 
 if TYPE_CHECKING:
-    from .bridge import AgentRunner
+    from bridge_core.bridge import AgentRunner
 
 logger = logging.getLogger(__name__)
 

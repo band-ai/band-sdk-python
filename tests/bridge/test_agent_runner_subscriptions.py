@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -57,14 +57,16 @@ class TestAgentRunnerSubscriptions:
     @pytest.mark.parametrize(
         "event_factory, operation",
         [
-            (make_room_added_event, "subscribe_room"),
-            (make_room_removed_event, "unsubscribe_room"),
+            (make_room_added_event, lambda link: link.subscribe_room),
+            (make_room_removed_event, lambda link: link.unsubscribe_room),
         ],
     )
     async def test_filter_keeps_subscription_management(
-        self, event_factory: Callable[..., object], operation: str
+        self,
+        event_factory: Callable[..., object],
+        operation: Callable[[MagicMock], AsyncMock],
     ) -> None:
         runner, forwarder, link = build_runner(messages_only=True)
         await runner._safe_handle_event(event_factory(room_id="filtered-room"))
-        getattr(link, operation).assert_awaited_once_with("filtered-room")
+        operation(link).assert_awaited_once_with("filtered-room")
         assert forwarder.forwarded == []

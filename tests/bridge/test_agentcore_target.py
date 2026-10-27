@@ -1,4 +1,4 @@
-"""AgentCoreTarget behavior."""
+"""AgentCoreTarget validates its runtime fields and rejects unknown options."""
 
 from __future__ import annotations
 

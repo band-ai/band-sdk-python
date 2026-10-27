@@ -16,6 +16,8 @@ class Step(StrEnum):
     ACCEPT_GLOBAL = auto()
     CANCEL_A = auto()
     CANCEL_B = auto()
+    RELEASE_A = auto()
+    RELEASE_B = auto()
     DRAIN = auto()
 
 
@@ -27,6 +29,7 @@ class Job:
     room_id: str | None
     admitted: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
+    running: bool = False
     task: asyncio.Task[None] | None = None
 
 
@@ -49,6 +52,10 @@ class ForwardingLifecycle:
                 await self.cancel("a")
             case Step.CANCEL_B:
                 await self.cancel("b")
+            case Step.RELEASE_A:
+                await self.release("a")
+            case Step.RELEASE_B:
+                await self.release("b")
             case Step.DRAIN:
                 await self.drain()
         assert self.forwards.active_rooms() == {
@@ -70,9 +77,11 @@ class ForwardingLifecycle:
                 assert job.room_id not in self.running
                 assert len(self.running) < self.capacity
                 self.running.add(job.room_id)
+                job.running = True
                 try:
                     await job.release.wait()
                 finally:
+                    job.running = False
                     self.running.remove(job.room_id)
 
     async def cancel(self, room_id: str) -> None:
@@ -83,6 +92,14 @@ class ForwardingLifecycle:
         ]
         assert self.forwards.cancel(room_id) == len(pending)
         await self.join(pending)
+
+    async def release(self, room_id: str) -> None:
+        """Settle the room's running job while other rooms keep holding or waiting."""
+        for job in self.jobs:
+            if job.room_id == room_id and job.running and job.task is not None:
+                job.release.set()
+                await self.join([job.task])
+                return
 
     async def drain(self) -> None:
         for job in self.jobs:

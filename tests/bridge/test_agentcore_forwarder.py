@@ -1,4 +1,4 @@
-"""AgentCoreForwarder behavior."""
+"""AgentCoreForwarder invokes the runtime per room and propagates failures."""
 
 from __future__ import annotations
 

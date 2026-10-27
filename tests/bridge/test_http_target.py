@@ -1,4 +1,4 @@
-"""HTTPTarget behavior."""
+"""HTTPTarget validates URLs, timeouts and header-safe bearer credentials."""
 
 from __future__ import annotations
 
@@ -56,6 +56,16 @@ class TestHTTPTarget:
         target = HTTPTarget(url="https://example.com", bearer_token=token)
         assert target.bearer_token is not None
         assert target.bearer_token.get_secret_value() == token
+
+    @pytest.mark.parametrize(
+        "url, token",
+        [
+            ("https://user:pass@example.com", None),
+            ("https://example.com/a@b?x=@", "private-bearer"),
+        ],
+    )
+    def test_accepts_single_credential(self, url: str, token: str | None) -> None:
+        assert HTTPTarget(url=url, bearer_token=token).url == url
 
     def test_rejects_url_userinfo_with_bearer(self) -> None:
         with pytest.raises(ValueError, match="userinfo") as error:
