@@ -32,7 +32,6 @@ from acp.schema import (
     SessionConfigOptionSelect,
     SetSessionConfigOptionResponse,
 )
-from pydantic import BaseModel
 
 from band.integrations.acp.client_profiles import NoopACPClientProfile
 from band.integrations.acp.client_runtime import (
@@ -55,6 +54,7 @@ from band.integrations.mcp.engine import (
 )
 from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import AgentTools
+from tests.integrations.acp.codexacpkit import EchoInput
 from tests.runtime.conftest import make_participant
 from tests.toolkit.timeouts import backstop_timeout
 
@@ -105,7 +105,7 @@ def non_current_config_selection(
 # live subprocess (Node + network), so they are opt-in like the rest of the e2e
 # suite. Gated on E2E_TESTS_ENABLED so a plain `uv run pytest` skips them — they
 # are slow and their subprocess/fd pressure was starving nearby server tests
-# (e.g. tests/integrations/mcp/test_local_server.py) into spurious timeouts.
+# (e.g. tests/integrations/mcp/localserver/) into spurious timeouts.
 _E2E_ENABLED = os.environ.get("E2E_TESTS_ENABLED", "").strip().lower() in {
     "1",
     "true",
@@ -129,12 +129,6 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.timeout(backstop_timeout(_PROMPT_TIMEOUT)),
 ]
-
-
-class EchoInput(BaseModel):
-    """Echo text back to the caller."""
-
-    message: str
 
 
 def _spawn_codex_acp(acp_client: BandACPClient):
@@ -193,384 +187,384 @@ async def _allow_all_permissions(
     return cancel_permission() if option_id is None else allow_permission(option_id)
 
 
-@pytest.mark.asyncio
-async def test_codex_acp_initialize(acp_client: BandACPClient) -> None:
-    """Should successfully initialize the ACP protocol with codex-acp."""
-    ctx = _spawn_codex_acp(acp_client)
-    conn, _proc = await ctx.__aenter__()
-    try:
-        result = await asyncio.wait_for(
-            conn.initialize(protocol_version=1),
-            timeout=_INIT_TIMEOUT,
-        )
-        logger.info("Initialize result: %s", result)
-        assert result is not None
-        assert result.protocol_version == 1
-        assert result.agent_info is not None
-        logger.info("Agent: %s v%s", result.agent_info.name, result.agent_info.version)
-    finally:
-        await ctx.__aexit__(None, None, None)
-
-
-@pytest.mark.asyncio
-async def test_codex_acp_new_session(acp_client: BandACPClient) -> None:
-    """Should create a new ACP session with cwd and mcp_servers."""
-    ctx = _spawn_codex_acp(acp_client)
-    conn, _proc = await ctx.__aenter__()
-    try:
-        await asyncio.wait_for(
-            conn.initialize(protocol_version=1),
-            timeout=_INIT_TIMEOUT,
-        )
-
-        session = await asyncio.wait_for(
-            conn.new_session(cwd="/tmp", mcp_servers=[]),
-            timeout=_INIT_TIMEOUT,
-        )
-        logger.info("Session ID: %s", session.session_id)
-        assert session.session_id is not None
-        assert len(session.session_id) > 0
-    finally:
-        await ctx.__aexit__(None, None, None)
-
-
-@pytest.mark.asyncio(loop_scope="session")
-async def test_codex_acp_prompt_and_collect(acp_runtime: ACPRuntime) -> None:
-    """Should send a prompt and collect response chunks from codex-acp."""
-    assert acp_runtime.client is not None
-    session_id = await asyncio.wait_for(
-        acp_runtime.create_session(cwd="/tmp", mcp_servers=[]),
-        timeout=_INIT_TIMEOUT,
-    )
-    acp_runtime.reset_session(session_id)
-
-    chunks = await asyncio.wait_for(
-        acp_runtime.prompt(
-            session_id=session_id,
-            prompt_text="What is 2 + 2? Reply with just the number.",
-        ),
-        timeout=_PROMPT_TIMEOUT,
-    )
-    text = acp_runtime.client.get_collected_text(session_id)
-    logger.info("Collected %d chunks, text: %s", len(chunks), text[:200])
-
-    assert len(chunks) > 0, "Expected at least one response chunk"
-    assert len(text) > 0, "Expected non-empty response text"
-
-    # Verify chunk types are valid
-    valid_types = {"text", "thought", "tool_call", "tool_result", "plan"}
-    seen_types = {chunk.chunk_type for chunk in chunks}
-    assert seen_types <= valid_types, f"Unexpected chunk types: {seen_types}"
-
-
-@pytest.mark.asyncio(loop_scope="session")
-@pytest.mark.parametrize("option_id", _DYNAMIC_CONFIG_OPTION_IDS)
-async def test_codex_acp_dynamic_configuration_survives_two_turns(
-    acp_runtime: ACPRuntime,
-    option_id: str,
-) -> None:
-    """Apply live catalog selections before proving the configured session continues."""
-    assert acp_runtime.client is not None
-    session = await asyncio.wait_for(
-        acp_runtime.create_session_response(cwd="/tmp", mcp_servers=[]),
-        timeout=_INIT_TIMEOUT,
-    )
-    config_options = session.config_options
-    assert config_options is not None
-
-    async def set_option(
-        session_id: str,
-        option_id: str,
-        value: str,
-    ) -> SetSessionConfigOptionResponse | None:
-        return await acp_runtime.set_config_option(
-            session_id=session_id,
-            config_id=option_id,
-            value=value,
-        )
-
-    await apply_session_config_selections(
-        session_id=session.session_id,
-        config_options=config_options,
-        selections=non_current_config_selection(config_options, option_id),
-        set_option=set_option,
-    )
-
-    marker = f"acp-config-{uuid4().hex}"
-    acp_runtime.reset_session(session.session_id)
-    first_turn = await asyncio.wait_for(
-        acp_runtime.prompt(
-            session_id=session.session_id,
-            prompt_text=(
-                f"Remember this exact reference for a later question: {marker}. "
-                "Reply with the reference."
-            ),
-        ),
-        timeout=_PROMPT_TIMEOUT,
-    )
-    assert first_turn
-    assert marker in acp_runtime.client.get_collected_text(session.session_id)
-
-    confirmation = f"acp-confirm-{uuid4().hex}"
-    acp_runtime.reset_session(session.session_id)
-    second_turn = await asyncio.wait_for(
-        acp_runtime.prompt(
-            session_id=session.session_id,
-            prompt_text=(
-                "Reply with the exact reference from my previous message and this "
-                f"new confirmation: {confirmation}."
-            ),
-        ),
-        timeout=_PROMPT_TIMEOUT,
-    )
-    assert second_turn
-    second_text = acp_runtime.client.get_collected_text(session.session_id)
-    assert marker in second_text
-    assert confirmation in second_text
-
-
-@pytest.mark.asyncio(loop_scope="session")
-async def test_codex_acp_http_mcp_server_tool_call(
-    acp_runtime: ACPRuntime,
-) -> None:
-    """Should connect to a local HTTP MCP server and execute a tool."""
-
-    assert acp_runtime.client is not None
-
-    # execute() must return a wire-serialized string: the dynamic handler
-    # build_engine() creates always declares -> str, so FastMCP's
-    # structured-output validation rejects a raw dict here.
-    async def execute(arguments: dict[str, str]) -> str:
-        return json.dumps({"echo": arguments["message"]})
-
-    local_server = LocalMCPServer(
-        auth_token=AUTH_TOKEN,
-        name="test-codex-http-mcp",
-        tool_registrations=[
-            MCPToolRegistration(
-                name="echo",
-                description="Echo a provided message",
-                input_model=EchoInput,
-                execute=execute,
-            )
-        ],
-        port_min=55110,
-        port_max=55119,
-    )
-
-    await local_server.start()
-    try:
-        session_id = await asyncio.wait_for(
-            acp_runtime.create_session(
-                cwd="/tmp",
-                mcp_servers=[
-                    HttpMcpServer(
-                        type="http",
-                        name="smoke",
-                        url=local_server.http_url,
-                        headers=auth_http_headers(local_server),
-                    )
-                ],
-            ),
-            timeout=_INIT_TIMEOUT,
-        )
-
-        acp_runtime.reset_session(session_id)
-        acp_runtime.set_permission_handler(session_id, _allow_all_permissions)
-
-        chunks = await asyncio.wait_for(
-            acp_runtime.prompt(
-                session_id=session_id,
-                prompt_text=(
-                    "Use the smoke echo tool exactly once with message "
-                    "'mcp smoke ok'. Then reply with only the tool result."
-                ),
-            ),
-            timeout=_PROMPT_TIMEOUT,
-        )
-        text = acp_runtime.client.get_collected_text(session_id)
-
-        assert any(chunk.chunk_type == "tool_call" for chunk in chunks)
-        assert any(chunk.chunk_type == "tool_result" for chunk in chunks)
-        assert "mcp smoke ok" in text
-    finally:
-        await local_server.stop()
-
-
-@pytest.mark.asyncio(loop_scope="session")
-async def test_codex_acp_band_mcp_tool_call(
-    acp_runtime: ACPRuntime,
-) -> None:
-    """Should discover and call a real Band MCP tool."""
-
-    assert acp_runtime.client is not None
-
-    rest = SimpleNamespace(
-        agent_api_participants=SimpleNamespace(
-            list_agent_chat_participants=AsyncMock(
-                return_value=SimpleNamespace(
-                    data=[
-                        make_participant(
-                            {
-                                "id": "u1",
-                                "name": "Pat",
-                                "type": "user",
-                                "handle": "@pat",
-                            }
-                        ),
-                        make_participant(
-                            {
-                                "id": "a1",
-                                "name": "ACP Bridge",
-                                "type": "agent",
-                                "handle": "@pat/acp-bridge",
-                            }
-                        ),
-                    ]
-                )
-            )
-        )
-    )
-    agent_tools = AgentTools("room-123", rest)
-    local_server = LocalMCPServer(
-        auth_token=AUTH_TOKEN,
-        name="test-band-http-mcp",
-        tool_registrations=build_band_mcp_tool_registrations(agent_tools),
-        port_min=55120,
-        port_max=55129,
-    )
-
-    await local_server.start()
-    try:
-        session_id = await asyncio.wait_for(
-            acp_runtime.create_session(
-                cwd="/tmp",
-                mcp_servers=[
-                    HttpMcpServer(
-                        type="http",
-                        name="band",
-                        url=local_server.http_url,
-                        headers=auth_http_headers(local_server),
-                    )
-                ],
-            ),
-            timeout=_INIT_TIMEOUT,
-        )
-
-        acp_runtime.reset_session(session_id)
-        acp_runtime.set_permission_handler(session_id, _allow_all_permissions)
-
-        chunks = await asyncio.wait_for(
-            acp_runtime.prompt(
-                session_id=session_id,
-                prompt_text=(
-                    "You must call the Band get participants tool "
-                    "exactly once. Do not answer from prior context. "
-                    "After the tool call, reply with only the "
-                    "participant names."
-                ),
-            ),
-            timeout=_PROMPT_TIMEOUT,
-        )
-        text = acp_runtime.client.get_collected_text(session_id)
-
-        tool_calls = [chunk for chunk in chunks if chunk.chunk_type == "tool_call"]
-        if not tool_calls:
-            pytest.skip("codex-acp did not invoke the Band MCP tool in this run")
-        if not called_tool(tool_calls, "band_get_participants"):
-            pytest.skip(
-                "codex-acp invoked MCP in this run, but not the expected Band tool"
-            )
-        assert "Pat" in text
-        assert "ACP Bridge" in text
-    finally:
-        await local_server.stop()
-
-
-@pytest.mark.asyncio(loop_scope="session")
-async def test_codex_acp_multiple_sessions(acp_runtime: ACPRuntime) -> None:
-    """Should handle multiple concurrent sessions with separate buffers."""
-    assert acp_runtime.client is not None
-    s1_id = await asyncio.wait_for(
-        acp_runtime.create_session(cwd="/tmp", mcp_servers=[]), timeout=_INIT_TIMEOUT
-    )
-    s2_id = await asyncio.wait_for(
-        acp_runtime.create_session(cwd="/tmp", mcp_servers=[]), timeout=_INIT_TIMEOUT
-    )
-    assert s1_id != s2_id
-
-    acp_runtime.reset_session(s1_id)
-    acp_runtime.reset_session(s2_id)
-
-    # Send prompts to both (sequentially)
-    chunks_1 = await asyncio.wait_for(
-        acp_runtime.prompt(
-            session_id=s1_id, prompt_text="Say 'hello' and nothing else."
-        ),
-        timeout=_PROMPT_TIMEOUT,
-    )
-    chunks_2 = await asyncio.wait_for(
-        acp_runtime.prompt(
-            session_id=s2_id, prompt_text="Say 'world' and nothing else."
-        ),
-        timeout=_PROMPT_TIMEOUT,
-    )
-
-    # Both sessions should have responses in separate buffers
-    assert len(chunks_1) > 0, "Session 1 should have response chunks"
-    assert len(chunks_2) > 0, "Session 2 should have response chunks"
-
-    text_1 = acp_runtime.client.get_collected_text(s1_id)
-    text_2 = acp_runtime.client.get_collected_text(s2_id)
-    logger.info("Session 1: %s", text_1[:100])
-    logger.info("Session 2: %s", text_2[:100])
-
-
-@pytest.mark.asyncio
-async def test_codex_acp_list_sessions(acp_client: BandACPClient) -> None:
-    """Should list created sessions (if supported by the agent)."""
-
-    ctx = _spawn_codex_acp(acp_client)
-    conn, _proc = await ctx.__aenter__()
-    try:
-        await asyncio.wait_for(
-            conn.initialize(protocol_version=1),
-            timeout=_INIT_TIMEOUT,
-        )
-
-        # Create a session
-        session = await asyncio.wait_for(
-            conn.new_session(cwd="/tmp"),
-            timeout=_INIT_TIMEOUT,
-        )
-
-        # list_sessions is optional per ACP protocol — some agents don't implement it
+class TestCodexAcpEndToEnd:
+    @pytest.mark.asyncio
+    async def test_codex_acp_initialize(self, acp_client: BandACPClient) -> None:
+        """Should successfully initialize the ACP protocol with codex-acp."""
+        ctx = _spawn_codex_acp(acp_client)
+        conn, _proc = await ctx.__aenter__()
         try:
             result = await asyncio.wait_for(
-                conn.list_sessions(),
+                conn.initialize(protocol_version=1),
                 timeout=_INIT_TIMEOUT,
             )
-            logger.info("Listed sessions: %s", result)
+            logger.info("Initialize result: %s", result)
             assert result is not None
-            assert len(result.sessions) >= 1
-            session_ids = {s.session_id for s in result.sessions}
-            if session.session_id not in session_ids:
-                pytest.skip(
-                    "codex-acp session/list did not include the newly created "
-                    "session in this environment"
+            assert result.protocol_version == 1
+            assert result.agent_info is not None
+            logger.info(
+                "Agent: %s v%s", result.agent_info.name, result.agent_info.version
+            )
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_codex_acp_new_session(self, acp_client: BandACPClient) -> None:
+        """Should create a new ACP session with cwd and mcp_servers."""
+        ctx = _spawn_codex_acp(acp_client)
+        conn, _proc = await ctx.__aenter__()
+        try:
+            await asyncio.wait_for(
+                conn.initialize(protocol_version=1),
+                timeout=_INIT_TIMEOUT,
+            )
+
+            session = await asyncio.wait_for(
+                conn.new_session(cwd="/tmp", mcp_servers=[]),
+                timeout=_INIT_TIMEOUT,
+            )
+            logger.info("Session ID: %s", session.session_id)
+            assert session.session_id is not None
+            assert len(session.session_id) > 0
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_codex_acp_prompt_and_collect(self, acp_runtime: ACPRuntime) -> None:
+        """Should send a prompt and collect response chunks from codex-acp."""
+        assert acp_runtime.client is not None
+        session_id = await asyncio.wait_for(
+            acp_runtime.create_session(cwd="/tmp", mcp_servers=[]),
+            timeout=_INIT_TIMEOUT,
+        )
+        acp_runtime.reset_session(session_id)
+
+        chunks = await asyncio.wait_for(
+            acp_runtime.prompt(
+                session_id=session_id,
+                prompt_text="What is 2 + 2? Reply with just the number.",
+            ),
+            timeout=_PROMPT_TIMEOUT,
+        )
+        text = acp_runtime.client.get_collected_text(session_id)
+        logger.info("Collected %d chunks, text: %s", len(chunks), text[:200])
+
+        assert len(chunks) > 0, "Expected at least one response chunk"
+        assert len(text) > 0, "Expected non-empty response text"
+
+        # Verify chunk types are valid
+        valid_types = {"text", "thought", "tool_call", "tool_result", "plan"}
+        seen_types = {chunk.chunk_type for chunk in chunks}
+        assert seen_types <= valid_types, f"Unexpected chunk types: {seen_types}"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    @pytest.mark.parametrize("option_id", _DYNAMIC_CONFIG_OPTION_IDS)
+    async def test_codex_acp_dynamic_configuration_survives_two_turns(
+        self,
+        acp_runtime: ACPRuntime,
+        option_id: str,
+    ) -> None:
+        """Apply live catalog selections before proving the configured session continues."""
+        assert acp_runtime.client is not None
+        session = await asyncio.wait_for(
+            acp_runtime.create_session_response(cwd="/tmp", mcp_servers=[]),
+            timeout=_INIT_TIMEOUT,
+        )
+        config_options = session.config_options
+        assert config_options is not None
+
+        async def set_option(
+            session_id: str,
+            option_id: str,
+            value: str,
+        ) -> SetSessionConfigOptionResponse | None:
+            return await acp_runtime.set_config_option(
+                session_id=session_id,
+                config_id=option_id,
+                value=value,
+            )
+
+        await apply_session_config_selections(
+            session_id=session.session_id,
+            config_options=config_options,
+            selections=non_current_config_selection(config_options, option_id),
+            set_option=set_option,
+        )
+
+        marker = f"acp-config-{uuid4().hex}"
+        acp_runtime.reset_session(session.session_id)
+        first_turn = await asyncio.wait_for(
+            acp_runtime.prompt(
+                session_id=session.session_id,
+                prompt_text=(
+                    f"Remember this exact reference for a later question: {marker}. "
+                    "Reply with the reference."
+                ),
+            ),
+            timeout=_PROMPT_TIMEOUT,
+        )
+        assert first_turn
+        assert marker in acp_runtime.client.get_collected_text(session.session_id)
+
+        confirmation = f"acp-confirm-{uuid4().hex}"
+        acp_runtime.reset_session(session.session_id)
+        second_turn = await asyncio.wait_for(
+            acp_runtime.prompt(
+                session_id=session.session_id,
+                prompt_text=(
+                    "Reply with the exact reference from my previous message and this "
+                    f"new confirmation: {confirmation}."
+                ),
+            ),
+            timeout=_PROMPT_TIMEOUT,
+        )
+        assert second_turn
+        second_text = acp_runtime.client.get_collected_text(session.session_id)
+        assert marker in second_text
+        assert confirmation in second_text
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_codex_acp_http_mcp_server_tool_call(
+        self,
+        acp_runtime: ACPRuntime,
+    ) -> None:
+        """Should connect to a local HTTP MCP server and execute a tool."""
+
+        assert acp_runtime.client is not None
+
+        # execute() must return a wire-serialized string: the dynamic handler
+        # build_engine() creates always declares -> str, so FastMCP's
+        # structured-output validation rejects a raw dict here.
+        async def execute(arguments: dict[str, str]) -> str:
+            return json.dumps({"echo": arguments["message"]})
+
+        local_server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-codex-http-mcp",
+            tool_registrations=[
+                MCPToolRegistration(
+                    name="echo",
+                    description="Echo a provided message",
+                    input_model=EchoInput,
+                    execute=execute,
                 )
-        except RequestError as e:
-            if "Method not found" in str(e):
-                pytest.skip("codex-acp does not support session/list")
-            raise
-    finally:
-        await ctx.__aexit__(None, None, None)
+            ],
+            port_min=55110,
+            port_max=55119,
+        )
 
+        await local_server.start()
+        try:
+            session_id = await asyncio.wait_for(
+                acp_runtime.create_session(
+                    cwd="/tmp",
+                    mcp_servers=[
+                        HttpMcpServer(
+                            type="http",
+                            name="smoke",
+                            url=local_server.http_url,
+                            headers=auth_http_headers(local_server),
+                        )
+                    ],
+                ),
+                timeout=_INIT_TIMEOUT,
+            )
 
-@pytest.mark.asyncio
-async def test_spawn_process_safety(acp_client: BandACPClient) -> None:
-    """Should handle __aenter__ failure gracefully for bad command."""
+            acp_runtime.reset_session(session_id)
+            acp_runtime.set_permission_handler(session_id, _allow_all_permissions)
 
-    ctx = spawn_agent_process(acp_client, "nonexistent-acp-command-12345")
-    with pytest.raises(FileNotFoundError):
-        await ctx.__aenter__()
+            chunks = await asyncio.wait_for(
+                acp_runtime.prompt(
+                    session_id=session_id,
+                    prompt_text=(
+                        "Use the smoke echo tool exactly once with message "
+                        "'mcp smoke ok'. Then reply with only the tool result."
+                    ),
+                ),
+                timeout=_PROMPT_TIMEOUT,
+            )
+            text = acp_runtime.client.get_collected_text(session_id)
+
+            assert any(chunk.chunk_type == "tool_call" for chunk in chunks)
+            assert any(chunk.chunk_type == "tool_result" for chunk in chunks)
+            assert "mcp smoke ok" in text
+        finally:
+            await local_server.stop()
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_codex_acp_band_mcp_tool_call(
+        self,
+        acp_runtime: ACPRuntime,
+    ) -> None:
+        """Should discover and call a real Band MCP tool."""
+
+        assert acp_runtime.client is not None
+
+        rest = SimpleNamespace(
+            agent_api_participants=SimpleNamespace(
+                list_agent_chat_participants=AsyncMock(
+                    return_value=SimpleNamespace(
+                        data=[
+                            make_participant(
+                                {
+                                    "id": "u1",
+                                    "name": "Pat",
+                                    "type": "user",
+                                    "handle": "@pat",
+                                }
+                            ),
+                            make_participant(
+                                {
+                                    "id": "a1",
+                                    "name": "ACP Bridge",
+                                    "type": "agent",
+                                    "handle": "@pat/acp-bridge",
+                                }
+                            ),
+                        ]
+                    )
+                )
+            )
+        )
+        agent_tools = AgentTools("room-123", rest)
+        local_server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-band-http-mcp",
+            tool_registrations=build_band_mcp_tool_registrations(agent_tools),
+            port_min=55120,
+            port_max=55129,
+        )
+
+        await local_server.start()
+        try:
+            session_id = await asyncio.wait_for(
+                acp_runtime.create_session(
+                    cwd="/tmp",
+                    mcp_servers=[
+                        HttpMcpServer(
+                            type="http",
+                            name="band",
+                            url=local_server.http_url,
+                            headers=auth_http_headers(local_server),
+                        )
+                    ],
+                ),
+                timeout=_INIT_TIMEOUT,
+            )
+
+            acp_runtime.reset_session(session_id)
+            acp_runtime.set_permission_handler(session_id, _allow_all_permissions)
+
+            chunks = await asyncio.wait_for(
+                acp_runtime.prompt(
+                    session_id=session_id,
+                    prompt_text=(
+                        "You must call the Band get participants tool "
+                        "exactly once. Do not answer from prior context. "
+                        "After the tool call, reply with only the "
+                        "participant names."
+                    ),
+                ),
+                timeout=_PROMPT_TIMEOUT,
+            )
+            text = acp_runtime.client.get_collected_text(session_id)
+
+            tool_calls = [chunk for chunk in chunks if chunk.chunk_type == "tool_call"]
+            if not tool_calls:
+                pytest.skip("codex-acp did not invoke the Band MCP tool in this run")
+            if not called_tool(tool_calls, "band_get_participants"):
+                pytest.skip(
+                    "codex-acp invoked MCP in this run, but not the expected Band tool"
+                )
+            assert "Pat" in text
+            assert "ACP Bridge" in text
+        finally:
+            await local_server.stop()
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_codex_acp_multiple_sessions(self, acp_runtime: ACPRuntime) -> None:
+        """Should handle multiple concurrent sessions with separate buffers."""
+        assert acp_runtime.client is not None
+        s1_id = await asyncio.wait_for(
+            acp_runtime.create_session(cwd="/tmp", mcp_servers=[]),
+            timeout=_INIT_TIMEOUT,
+        )
+        s2_id = await asyncio.wait_for(
+            acp_runtime.create_session(cwd="/tmp", mcp_servers=[]),
+            timeout=_INIT_TIMEOUT,
+        )
+        assert s1_id != s2_id
+
+        acp_runtime.reset_session(s1_id)
+        acp_runtime.reset_session(s2_id)
+
+        # Send prompts to both (sequentially)
+        chunks_1 = await asyncio.wait_for(
+            acp_runtime.prompt(
+                session_id=s1_id, prompt_text="Say 'hello' and nothing else."
+            ),
+            timeout=_PROMPT_TIMEOUT,
+        )
+        chunks_2 = await asyncio.wait_for(
+            acp_runtime.prompt(
+                session_id=s2_id, prompt_text="Say 'world' and nothing else."
+            ),
+            timeout=_PROMPT_TIMEOUT,
+        )
+
+        # Both sessions should have responses in separate buffers
+        assert len(chunks_1) > 0, "Session 1 should have response chunks"
+        assert len(chunks_2) > 0, "Session 2 should have response chunks"
+
+        text_1 = acp_runtime.client.get_collected_text(s1_id)
+        text_2 = acp_runtime.client.get_collected_text(s2_id)
+        logger.info("Session 1: %s", text_1[:100])
+        logger.info("Session 2: %s", text_2[:100])
+
+    @pytest.mark.asyncio
+    async def test_codex_acp_list_sessions(self, acp_client: BandACPClient) -> None:
+        """Should list created sessions (if supported by the agent)."""
+
+        ctx = _spawn_codex_acp(acp_client)
+        conn, _proc = await ctx.__aenter__()
+        try:
+            await asyncio.wait_for(
+                conn.initialize(protocol_version=1),
+                timeout=_INIT_TIMEOUT,
+            )
+
+            # Create a session
+            session = await asyncio.wait_for(
+                conn.new_session(cwd="/tmp"),
+                timeout=_INIT_TIMEOUT,
+            )
+
+            # list_sessions is optional per ACP protocol — some agents don't implement it
+            try:
+                result = await asyncio.wait_for(
+                    conn.list_sessions(),
+                    timeout=_INIT_TIMEOUT,
+                )
+                logger.info("Listed sessions: %s", result)
+                assert result is not None
+                assert len(result.sessions) >= 1
+                session_ids = {s.session_id for s in result.sessions}
+                if session.session_id not in session_ids:
+                    pytest.skip(
+                        "codex-acp session/list did not include the newly created "
+                        "session in this environment"
+                    )
+            except RequestError as e:
+                if "Method not found" in str(e):
+                    pytest.skip("codex-acp does not support session/list")
+                raise
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_spawn_process_safety(self, acp_client: BandACPClient) -> None:
+        """Should handle __aenter__ failure gracefully for bad command."""
+
+        ctx = spawn_agent_process(acp_client, "nonexistent-acp-command-12345")
+        with pytest.raises(FileNotFoundError):
+            await ctx.__aenter__()
