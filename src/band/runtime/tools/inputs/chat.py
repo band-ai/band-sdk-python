@@ -14,9 +14,16 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 from band.core.content import BLANK_CONTENT_ERROR, has_visible_content
 from band.core.types import EventMessageType
 
+# Shared by the tool schema and the system prompt: what an entry of ``mentions`` is and
+# what the room makes of it. Handles, not ids: the participant roster deliberately shows
+# no ids, and a model told "id" tends to assume the reader sees an opaque token and
+# repeats the recipient's name in the content.
 MENTION_IDENTIFIERS = (
-    "Use a participant's exact ID when available. Handles also work: "
-    "@<username> for users, @<username>/<agent-name> for agents."
+    "Each entry is a participant's handle exactly as the room lists it: @<username> "
+    "for users, @<username>/<agent-name> for agents. The platform shows every "
+    "mentioned participant's name in front of the message for every reader, so never "
+    "write an @handle or @name in the content, and never repeat a recipient's name "
+    "after it: address through mentions and write the content in plain prose."
 )
 
 
@@ -36,14 +43,18 @@ def require_visible_content(value: str) -> str:
 class SendMessageInput(BaseModel):
     """Send a message to the chat room.
 
-    Use this to respond to users or other agents. Messages require at least one @mention
-    in the mentions array.
+    Use this to respond to users or other agents. The message is delivered to the
+    participants listed in mentions (at least one), and every reader sees their names in
+    front of the content; the content itself carries no @handles.
     """
 
-    content: str = Field(..., description="The message content to send")
+    content: str = Field(
+        ...,
+        description="The message content to send: plain prose, without @handles or @names.",
+    )
     mentions: list[str] = Field(
         ...,
-        description=f"List of participants to mention. At least one required. {MENTION_IDENTIFIERS}",
+        description=f"The participants this message is delivered to. At least one required. {MENTION_IDENTIFIERS}",
     )
 
     _validate_content = field_validator("content")(require_visible_content)

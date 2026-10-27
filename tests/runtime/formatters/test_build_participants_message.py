@@ -30,6 +30,10 @@ class TestBuildParticipantsMessage:
         # Instruction emphasizes using exact handles, not display names
         assert "handle" in result
         assert "NOT the display name" in result
+        # The roster is where a model learns what a mention is: the instruction must
+        # say the names are rendered for the reader, or the model repeats them in content.
+        assert "names in front of your message" in result
+        assert "never write an @handle" in result
 
     def test_handles_missing_fields(self):
         participants = [{"id": "1"}]  # Missing name and type
