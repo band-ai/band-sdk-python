@@ -20,7 +20,7 @@ from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
 
-from collectprs import GhModel, gh_output, shape_errors
+from collectprs import GhModel, gh_output
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from releasedata import (
     CHANGELOG_BRANCH_PREFIX,
@@ -30,6 +30,7 @@ from releasedata import (
     REHEARSAL_SUFFIX,
     SDK_TAG_PREFIX,
     fern_branch,
+    shape_errors,
 )
 from stepoutputs import append_outputs
 

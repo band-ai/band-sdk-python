@@ -165,10 +165,13 @@ class TestFernState:
     def test_malformed_listing_fails_without_logging_its_content(
         self,
         fernstate: ModuleType,
+        gh: FakeGh,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         def malformed_gh(*args: str) -> str:
+            if args[:2] != ("pr", "list"):
+                return gh(*args)
             return json.dumps([{"number": "docs/private-branch", "state": OPEN}])
 
         assert run(fernstate, malformed_gh, tmp_path) == 1

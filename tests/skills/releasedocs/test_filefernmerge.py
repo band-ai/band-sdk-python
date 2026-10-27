@@ -9,7 +9,7 @@ from types import ModuleType
 import pytest
 
 from tests.skills.releasedocs.fernnames import FernNames
-from tests.skills.releasedocs.fernremote import FernRemote, run_git
+from tests.skills.releasedocs.fernremote import MAINTAINER, FernRemote, run_git
 from tests.skills.releasedocs.filingkit import (
     EDITED_PAGE,
     docs_args,
@@ -323,6 +323,11 @@ class TestFernMerge:
         (docs,) = gh.on(fern_names.docs)
         assert (docs.state, older.state) == (OPEN, OPEN)
 
+    @pytest.mark.parametrize(
+        "author",
+        [lambda filefern: MAINTAINER, lambda filefern: filefern.COMMITTER],
+        ids=["filed-by-hand", "bot-commit-amended-by-hand"],
+    )
     def test_open_pr_filed_by_hand_is_never_taken_over(
         self,
         filefern: ModuleType,
@@ -333,14 +338,20 @@ class TestFernMerge:
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
+        author: Callable[[ModuleType], tuple[str, str]],
     ) -> None:
         sha = fern_remote.push_branch(
-            fern_names.changelog, {fern_names.date_file: "a maintainer's entry"}
+            fern_names.changelog,
+            {fern_names.date_file: "a maintainer's entry"},
+            committer=MAINTAINER,
+            author=author(filefern),
         )
         hand_filed = gh.add_pr(fern_names.changelog, OPEN, sha=sha)
         gh.checks[fern_names.changelog] = PASSING
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
+        summary = tmp_path / "summary.md"
         extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
+        extra += ["--summary", str(summary)]
         assert (
             file_fern(
                 filefern, gh, fern_remote, tmp_path, state, filefern.Mode.LIVE, *extra
@@ -348,6 +359,9 @@ class TestFernMerge:
             == 1
         )
         assert (hand_filed.state, fern_remote.head(fern_names.changelog)) == (OPEN, sha)
+        assert summary.read_text("utf-8").splitlines()[0] == (
+            f"- Fern changelog: {filefern.Outcome.HAND_FILED} {hand_filed.url}"
+        )
         assert read_outputs(tmp_path / "outputs") == {
             "changelog_pr": hand_filed.url,
             "docs_pr": "",

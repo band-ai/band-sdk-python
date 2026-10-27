@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
@@ -13,6 +14,7 @@ from tests.skills.releasedocs.filingkit import (
     EDITED_PAGE,
     docs_args,
     file_fern,
+    notes_args,
     read_state,
 )
 from tests.skills.releasedocs.ghpeer import (
@@ -21,7 +23,7 @@ from tests.skills.releasedocs.ghpeer import (
     FakeGh,
 )
 from tests.skills.releasedocs.outputsfile import read_outputs
-from tests.skills.releasedocs.samples import DOCS_PAGE
+from tests.skills.releasedocs.samples import DOCS_PAGE, RELEASE_DATE, SEND_RETRIES
 
 
 class TestFernDocsGuards:
@@ -69,13 +71,26 @@ class TestFernDocsGuards:
         earlier = gh.add_pr(fern_names.docs, OPEN, sha=sha)
         gh.checks[fern_names.docs] = PASSING
         state = read_state(fernstate, gh, tmp_path)
+        summary = tmp_path / "summary.md"
         assert (
-            file_fern(filefern, gh, fern_remote, tmp_path, state, filefern.Mode.LIVE)
+            file_fern(
+                filefern,
+                gh,
+                fern_remote,
+                tmp_path,
+                state,
+                filefern.Mode.LIVE,
+                "--summary",
+                str(summary),
+            )
             == 1
         )
         assert (earlier.state, read_outputs(tmp_path / "outputs")) == (
             OPEN,
             {"changelog_pr": "", "docs_pr": earlier.url},
+        )
+        assert summary.read_text("utf-8").splitlines()[-1] == (
+            f"- Fern docs: {filefern.Outcome.LEFT_OPEN} {earlier.url}"
         )
 
     @pytest.mark.parametrize(
@@ -164,11 +179,49 @@ class TestFernDocsGuards:
         earlier = gh.add_pr(fern_names.changelog, OPEN, sha=sha)
         # Every item is held now, so the workflow passes no date and no notes.
         state = read_state(fernstate, gh, tmp_path)
+        summary = tmp_path / "summary.md"
         assert (
-            file_fern(filefern, gh, fern_remote, tmp_path, state, filefern.Mode.LIVE)
+            file_fern(
+                filefern,
+                gh,
+                fern_remote,
+                tmp_path,
+                state,
+                filefern.Mode.LIVE,
+                "--summary",
+                str(summary),
+            )
             == 1
         )
         assert (earlier.state, read_outputs(tmp_path / "outputs")) == (
             OPEN,
             {"changelog_pr": earlier.url, "docs_pr": ""},
         )
+        assert summary.read_text("utf-8").splitlines()[0] == (
+            f"- Fern changelog: {filefern.Outcome.LEFT_OPEN} {earlier.url}"
+        )
+
+    def test_rejected_push_logs_no_remote_output(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        fern_remote: FernRemote,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        fern_remote.reject_pushes(f"push declined: {fern_names.date_file}")
+        state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
+        extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
+        assert (
+            file_fern(
+                filefern, gh, fern_remote, tmp_path, state, filefern.Mode.LIVE, *extra
+            )
+            == 1
+        )
+        assert "git push failed" in caplog.text
+        # The log is public; the remote's message may name private files.
+        assert fern_names.date_file not in caplog.text

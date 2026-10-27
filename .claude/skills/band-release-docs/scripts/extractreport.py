@@ -16,8 +16,8 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
-from collectprs import shape_errors
 from pydantic import BaseModel, ValidationError
+from releasedata import shape_errors
 from reportschema import REPORT_MODELS, ReportKind, add_kind_argument
 
 logger = logging.getLogger(__name__)

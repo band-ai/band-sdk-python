@@ -15,7 +15,14 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Self
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 
 SDK_TAG_PREFIX = "band-sdk-v"
 SDK_REPO_NAME = "band-sdk-python"
@@ -126,6 +133,12 @@ def single_line(text: str) -> str:
     if "\n" in text or "\r" in text:
         raise ValueError("must be a single line")
     return text
+
+
+def shape_errors(exc: ValidationError) -> str:
+    """Each error's location and message, never its input, which may be private."""
+    errors = exc.errors(include_input=False, include_url=False)
+    return "\n".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in errors)
 
 
 class Item(Frozen):

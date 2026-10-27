@@ -8,9 +8,10 @@ Runs only after every check passed, holding the write token, in a fresh clone
 of Fern ``dev`` (``--fern``). For each part it skips a merged branch PR, or
 commits this run's checked content, force-pushes it, and opens a new PR or
 updates the open one, so nothing pushed to the branch since is merged
-unchecked. An open PR whose head commit the release bot did not author was
-filed by hand and is left alone. It then waits until every check run on the PR's head succeeds and
-squash-merges it (live); a rehearsal (test) closes it whatever its checks say.
+unchecked. An open PR whose head commit the release bot did not commit was
+filed or edited by hand and is left alone. It then waits until every check
+run on the PR's head succeeds and squash-merges it (live); a rehearsal (test)
+closes it whatever its checks say.
 A docs PR whose content checks failed is opened but never merged. Once the
 docs PR is merged, by this run or an earlier one, the open docs PRs its body
 supersedes are closed (live). Appends each PR link to ``--outputs`` and
@@ -296,17 +297,12 @@ class Filer:
         return Outcome.MERGED
 
     def filed_by_bot(self, pr: BranchPr) -> bool:
-        """Whether the release bot authored the PR's head commit."""
+        """Whether the release bot committed the PR's head; an amend changes the committer."""
         email = self.gh(
-            "pr",
-            "view",
-            str(pr.number),
-            "--repo",
-            FERN_REPO,
-            "--json",
-            "commits",
+            "api",
+            f"repos/{FERN_REPO}/commits/refs/pull/{pr.number}/head",
             "--jq",
-            ".commits[-1].authors[0].email",
+            ".commit.committer.email",
         )
         return email.strip() == COMMITTER[1]
 

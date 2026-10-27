@@ -13,6 +13,7 @@ from tests.skills.releasedocs.fernremote import FernRemote
 GH_FILES_PER_PR = 100
 PULL_FILES = re.compile(r"^repos/[\w-]+/[\w-]+/pulls/(\d+)/files$")
 CHECK_RUNS = re.compile(r"^repos/[\w-]+/[\w-]+/commits/(\w+)/check-runs\?per_page=100$")
+PR_HEAD_COMMIT = re.compile(r"^repos/[\w-]+/[\w-]+/commits/refs/pull/(\d+)/head$")
 MERGE = re.compile(r"^repos/[\w-]+/[\w-]+/pulls/(\d+)/merge$")
 # GitHub's PR states, as gh reports them.
 OPEN, CLOSED, MERGED = "OPEN", "CLOSED", "MERGED"
@@ -203,19 +204,11 @@ class FakeGh:
                 ".body",
             ):
                 return self.number(number).body + "\n"
-            case (
-                "pr",
-                "view",
-                number,
-                "--repo",
-                self.repo,
-                "--json",
-                "commits",
-                "--jq",
-                ".commits[-1].authors[0].email",
+            case ("api", path, "--jq", ".commit.committer.email") if (
+                match := PR_HEAD_COMMIT.match(path)
             ):
                 assert self.remote is not None, "this test has no remote to read"
-                return self.remote.author_email(self.number(number).sha) + "\n"
+                return self.remote.committer_email(self.number(match[1]).sha) + "\n"
             case ("api", path) if match := CHECK_RUNS.match(path):
                 (pr,) = [p for p in self.prs if match[1] in (p.sha, *p.earlier_heads)]
                 return json.dumps({"check_runs": self.checks.get(pr.head, [])})

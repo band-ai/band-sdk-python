@@ -24,6 +24,10 @@ def write_tree(root: Path, files: dict[str, str | bytes]) -> Path:
     return root
 
 
+# The identity of someone editing Fern by hand.
+MAINTAINER = ("Fern Tester", "fern-tester@example.invalid")
+
+
 class FernRemote:
     """A bare repository whose ``base`` branch holds the seeded Fern files."""
 
@@ -41,8 +45,8 @@ class FernRemote:
         run_git("init", "--quiet", "--bare", f"--initial-branch={base}", str(self.bare))
         run_git("init", "--quiet", f"--initial-branch={base}", str(self.seed))
         seed_config = {
-            "user.name": "Fern Tester",
-            "user.email": "fern-tester@example.invalid",
+            "user.name": MAINTAINER[0],
+            "user.email": MAINTAINER[1],
             **self.config,
         }
         for key, value in seed_config.items():
@@ -92,8 +96,14 @@ class FernRemote:
             "-C", str(self.bare), "rev-parse", f"refs/heads/{branch}"
         ).strip()
 
-    def author_email(self, sha: str) -> str:
-        return run_git("-C", str(self.bare), "log", "-1", "--format=%ae", sha).strip()
+    def committer_email(self, sha: str) -> str:
+        return run_git("-C", str(self.bare), "log", "-1", "--format=%ce", sha).strip()
+
+    def reject_pushes(self, message: str) -> None:
+        """Make the remote refuse every push, printing ``message`` as GitHub would."""
+        hook = self.bare / "hooks" / "pre-receive"
+        hook.write_text(f"#!/bin/sh\necho '{message}' >&2\nexit 1\n", "utf-8")
+        hook.chmod(0o755)
 
     def has_branch(self, branch: str) -> bool:
         refs = run_git("-C", str(self.bare), "branch", "--list", branch)
@@ -106,9 +116,13 @@ class FernRemote:
         self,
         branch: str,
         files: dict[str, str | bytes],
-        author: tuple[str, str] = ("Fern Tester", "fern-tester@example.invalid"),
+        committer: tuple[str, str] = MAINTAINER,
+        author: tuple[str, str] | None = None,
     ) -> str:
-        """Push a branch off the base holding ``files``, committed by ``author``; return its head."""
+        """Push a branch off the base holding ``files``; return its head.
+
+        ``author`` defaults to ``committer``; an amended commit keeps its author.
+        """
         run_git(
             "-C",
             str(self.seed),
@@ -120,7 +134,8 @@ class FernRemote:
         )
         write_tree(self.seed, files)
         run_git("-C", str(self.seed), "add", "--all")
-        name, email = author
+        name, email = committer
+        author_name, author_email = author or committer
         run_git(
             "-C",
             str(self.seed),
@@ -130,6 +145,7 @@ class FernRemote:
             f"user.email={email}",
             "commit",
             "--quiet",
+            f"--author={author_name} <{author_email}>",
             "--message",
             branch,
         )

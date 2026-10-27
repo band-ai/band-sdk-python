@@ -8,8 +8,8 @@ Compares the edited tree with a pristine copy. A path violation (a created,
 deleted, or renamed file, a symlink, a file outside the docs pages, a
 non-UTF-8 file, or too many pages) fails the command: nothing may be filed. A
 content violation (a new import, a new JSX tag, a link outside the allowed
-sites or one these checks cannot read, a new escaped backtick or code span
-wrapped across lines, too many changed lines) only marks the docs PR
+sites or one these checks cannot read, a new escaped backtick, code span
+wrapped across lines, or indented code fence, too many changed lines) only marks the docs PR
 do-not-merge. Writes the changed pages and content violations to ``--out`` and
 appends ``changed`` and ``mergeable`` to ``--outputs``. Logs counts and
 violation kinds only: the pages are private.
@@ -56,6 +56,8 @@ SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
 # CommonMark's backslash escapes: any ASCII punctuation character.
 BACKSLASH_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
 ESCAPED_BACKTICK = "\\`"
+# A fence inside a list item or blockquote; FENCE pairs fences by indent alone.
+INDENTED_FENCE = re.compile(r"^[ \t]+(?:`{3,}|~{3,})")
 
 
 class PathViolation(StrEnum):
@@ -73,6 +75,7 @@ class ContentViolation(StrEnum):
     LINK = "links outside the allowed sites"
     ESCAPED_BACKTICK = "escapes a backtick, which hides code spans from these checks"
     WRAPPED_CODE = "wraps a code span across lines, which hides it from these checks"
+    INDENTED_FENCE = "indents a code fence, which can hide prose from these checks"
     TOO_LONG = f"changes more than {MAX_CHANGED_LINES} lines"
 
 
@@ -217,6 +220,16 @@ def wrapped_code_spans(text: str) -> Counter[str]:
     )
 
 
+def adds_indented_fence(before: str, after: str) -> bool:
+    """Whether a new line opens or closes an indented code fence.
+
+    The block-stripping pattern ignores list and blockquote containers, so such
+    a fence can swallow following top-level prose that still renders.
+    """
+    added = Counter(after.splitlines()) - Counter(before.splitlines())
+    return any(INDENTED_FENCE.match(line) for line in added)
+
+
 def adds_wrapped_code_span(before: str, after: str) -> bool:
     return bool(wrapped_code_spans(after) - wrapped_code_spans(before))
 
@@ -294,6 +307,8 @@ def page_violations(path: str, before: str, after: str) -> tuple[list[Finding], 
         kinds.append(ContentViolation.ESCAPED_BACKTICK)
     if adds_wrapped_code_span(before, after):
         kinds.append(ContentViolation.WRAPPED_CODE)
+    if adds_indented_fence(before, after):
+        kinds.append(ContentViolation.INDENTED_FENCE)
     return [Finding(path=path, kind=kind) for kind in kinds], count
 
 

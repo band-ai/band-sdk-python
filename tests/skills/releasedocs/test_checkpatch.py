@@ -285,6 +285,11 @@ class TestCheckPatch:
                 DOCS_PAGE_TEXT + "Intro `one\n___\n<Danger /> two` end.\n",
                 ["WRAPPED_CODE"],
             ),
+            (
+                DOCS_PAGE_TEXT
+                + "- item\n  ```\n  code\n[x](https://evil.example/)\n    ```\n",
+                ["INDENTED_FENCE"],
+            ),
         ],
         ids=[
             "import",
@@ -315,6 +320,7 @@ class TestCheckPatch:
             "code-span-across-a-setext-underline",
             "code-span-into-a-blockquote",
             "jsx-in-a-code-span-across-a-break",
+            "list-item-fence-hiding-a-link",
         ],
     )
     def test_content_breach_files_the_pr_unmergeable(

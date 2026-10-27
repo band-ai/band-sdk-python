@@ -5,9 +5,10 @@
 """Choose which band-sdk releases a Fern docs review covers, and which PRs it supersedes.
 
 Reads the merged and open Fern docs PR listings ``fernstate.py`` wrote into
-its ``--out`` directory. Writes ``{"baseline": <tag>, "supersede": [<PR number>...]}``: the
-review covers ``baseline..TAG``, and ``supersede`` lists the open docs PRs
-whose release that range already covers. It refuses a TAG whose docs PR is
+its ``--out`` directory. Writes
+``{"baseline": <tag>, "supersede": [<PR number>...]}``: the review covers
+``baseline..TAG``, and ``supersede`` lists the open docs PRs whose release
+that range already covers. It refuses a TAG whose docs PR is
 already merged, a TAG older than a release whose docs PR is merged (that review
 would roll pages back), and a TAG older than an open docs PR, which covers it.
 """
@@ -20,16 +21,10 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from collectprs import (
-    GhModel,
-    earlier_sdk_tags,
-    release_version,
-    shape_errors,
-    tag_version,
-)
+from collectprs import GhModel, earlier_sdk_tags, release_version, tag_version
 from fernstate import DOCS_MERGED_FILE, DOCS_OPEN_FILE
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from releasedata import DOCS_BRANCH_PREFIX, SDK_TAG_PREFIX
+from releasedata import DOCS_BRANCH_PREFIX, SDK_TAG_PREFIX, shape_errors
 
 logger = logging.getLogger(__name__)
 
