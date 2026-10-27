@@ -59,38 +59,44 @@ class TestExtractReport:
     @pytest.mark.parametrize(
         ("kind", "report"),
         [
-            ("changelog", REPORT),
-            ("holdbacks", HOLDBACKS_REPORT),
-            ("docs", DOCS_REPORT),
+            ("CHANGELOG", REPORT),
+            ("HOLDBACKS", HOLDBACKS_REPORT),
+            ("DOCS", DOCS_REPORT),
         ],
     )
     def test_each_kind_writes_its_report(
         self,
         extractreport: ModuleType,
+        reportschema: ModuleType,
         tmp_path: Path,
         kind: str,
         report: dict[str, object],
     ) -> None:
-        code, out = extract(extractreport, tmp_path, kind, report)
+        code, out = extract(
+            extractreport, tmp_path, reportschema.ReportKind[kind], report
+        )
         assert code == 0
         assert json.loads(out.read_text("utf-8")) == report
 
     @pytest.mark.parametrize(
         ("kind", "report"),
         [
-            ("changelog", HOLDBACKS_REPORT),
-            ("holdbacks", DOCS_REPORT),
-            ("docs", REPORT),
+            ("CHANGELOG", HOLDBACKS_REPORT),
+            ("HOLDBACKS", DOCS_REPORT),
+            ("DOCS", REPORT),
         ],
     )
     def test_report_of_another_kind_fails(
         self,
         extractreport: ModuleType,
+        reportschema: ModuleType,
         tmp_path: Path,
         kind: str,
         report: dict[str, object],
     ) -> None:
-        code, out = extract(extractreport, tmp_path, kind, report)
+        code, out = extract(
+            extractreport, tmp_path, reportschema.ReportKind[kind], report
+        )
         assert code == 1
         assert not out.exists()
 

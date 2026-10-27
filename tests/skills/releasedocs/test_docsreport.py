@@ -86,6 +86,12 @@ class TestDocsReport:
         body = docsreport.pr_body(forged, RELEASE_TAG, [7], [])
         assert docsreport.superseded(body) == [7]
 
+    def test_supersedes_lines_survive_a_body_edited_on_github(
+        self, docsreport: ModuleType
+    ) -> None:
+        body = docsreport.pr_body(report(docsreport), RELEASE_TAG, [7, 8], [])
+        assert docsreport.superseded(body.replace("\n", "\r\n")) == [7, 8]
+
     @pytest.mark.parametrize(
         "path",
         [

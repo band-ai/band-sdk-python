@@ -15,7 +15,9 @@ from tests.skills.releasedocs.outputsfile import read_outputs
 from tests.skills.releasedocs.samples import RELEASE_DATE, RELEASE_TAG
 
 
-def run(fernstate: ModuleType, gh: FakeGh, tmp_path: Path, *extra: str) -> int:
+def run(
+    fernstate: ModuleType, gh: Callable[..., str], tmp_path: Path, *extra: str
+) -> int:
     argv = [
         RELEASE_TAG,
         "--out",
@@ -159,3 +161,16 @@ class TestFernState:
             [{"number": merged.number, "headRefName": merged.head}],
             [{"number": pending.number, "headRefName": pending.head}],
         ]
+
+    def test_malformed_listing_fails_without_logging_its_content(
+        self,
+        fernstate: ModuleType,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        def malformed_gh(*args: str) -> str:
+            return json.dumps([{"number": "docs/private-branch", "state": OPEN}])
+
+        assert run(fernstate, malformed_gh, tmp_path) == 1
+        assert "number" in caplog.text
+        assert "private-branch" not in caplog.text

@@ -213,6 +213,8 @@ class TestDocsRange:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         state = fern_state(fernstate, tmp_path, [], [])
-        (state / fernstate.DOCS_OPEN_FILE).write_text('[{"number": 1}]', "utf-8")
+        listing = json.dumps([{"number": "docs/private-branch"}])
+        (state / fernstate.DOCS_OPEN_FILE).write_text(listing, "utf-8")
         assert docsrange.main([TAG, str(state)]) == 1
         assert "headRefName" in caplog.text
+        assert "private-branch" not in caplog.text

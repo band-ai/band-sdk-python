@@ -50,9 +50,16 @@ class FernRemote:
         run_git("-C", str(self.seed), "remote", "add", "origin", str(self.bare))
         self.commit_to_base("chore: seed", files)
 
-    def commit_to_base(self, subject: str, files: dict[str, str | bytes]) -> None:
-        """Land ``files`` on the base branch, as another team's merge would."""
+    def commit_to_base(
+        self,
+        subject: str,
+        files: dict[str, str | bytes],
+        removed: tuple[str, ...] = (),
+    ) -> None:
+        """Land ``files`` and drop ``removed`` on the base, as another team's merge would."""
         write_tree(self.seed, files)
+        for path in removed:
+            (self.seed / path).unlink()
         run_git("-C", str(self.seed), "add", "--all")
         run_git(
             "-C",
@@ -85,6 +92,9 @@ class FernRemote:
             "-C", str(self.bare), "rev-parse", f"refs/heads/{branch}"
         ).strip()
 
+    def author_email(self, sha: str) -> str:
+        return run_git("-C", str(self.bare), "log", "-1", "--format=%ae", sha).strip()
+
     def has_branch(self, branch: str) -> bool:
         refs = run_git("-C", str(self.bare), "branch", "--list", branch)
         return bool(refs.strip())
@@ -92,8 +102,13 @@ class FernRemote:
     def file_on(self, branch: str, path: str) -> str:
         return run_git("-C", str(self.bare), "show", f"{branch}:{path}")
 
-    def push_branch(self, branch: str, files: dict[str, str | bytes]) -> str:
-        """Push a branch off the base holding ``files``; return its head."""
+    def push_branch(
+        self,
+        branch: str,
+        files: dict[str, str | bytes],
+        author: tuple[str, str] = ("Fern Tester", "fern-tester@example.invalid"),
+    ) -> str:
+        """Push a branch off the base holding ``files``, committed by ``author``; return its head."""
         run_git(
             "-C",
             str(self.seed),
@@ -105,7 +120,19 @@ class FernRemote:
         )
         write_tree(self.seed, files)
         run_git("-C", str(self.seed), "add", "--all")
-        run_git("-C", str(self.seed), "commit", "--quiet", "--message", branch)
+        name, email = author
+        run_git(
+            "-C",
+            str(self.seed),
+            "-c",
+            f"user.name={name}",
+            "-c",
+            f"user.email={email}",
+            "commit",
+            "--quiet",
+            "--message",
+            branch,
+        )
         run_git(
             "-C",
             str(self.seed),

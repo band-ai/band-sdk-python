@@ -24,7 +24,8 @@ SOURCE_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[\w.@+/-]+$")
 DO_NOT_MERGE = "Do not merge"
 SUPERSEDES = "Supersedes #"
 # Model text cannot forge this line: pr_body_text quotes every `#N` it writes.
-SUPERSEDES_LINE = re.compile(rf"^{SUPERSEDES}(\d+)$", re.MULTILINE)
+# A body edited on github.com comes back with CRLF line endings.
+SUPERSEDES_LINE = re.compile(rf"^{SUPERSEDES}(\d+)\r?$", re.MULTILINE)
 
 Line = Annotated[str, Field(min_length=1), AfterValidator(single_line)]
 

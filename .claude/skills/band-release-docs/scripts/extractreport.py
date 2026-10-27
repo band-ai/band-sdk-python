@@ -16,6 +16,7 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
+from collectprs import shape_errors
 from pydantic import BaseModel, ValidationError
 from reportschema import REPORT_MODELS, ReportKind, add_kind_argument
 
@@ -47,11 +48,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = extract_report(args.execution_file, args.kind)
     except ValidationError as exc:
         # Without the input: model text may hold a secret.
-        errors = exc.errors(include_input=False, include_url=False)
-        logger.error(
-            "The report does not match the schema:\n%s",
-            "\n".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in errors),
-        )
+        logger.error("The report does not match the schema:\n%s", shape_errors(exc))
         return 1
     except ValueError as exc:
         logger.error("No report: %s", exc)

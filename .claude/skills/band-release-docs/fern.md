@@ -63,7 +63,10 @@ closed PR may keep its branch or have it deleted.
 3. Holdbacks: apply [holdbacks.md](holdbacks.md) to `<bundle>/release-notes.json`
    with `<fern>`'s ledger and docs summary. The bundle the workflow attached
    already leaves out what it held; show every further match and ask the
-   maintainer whether to hold it back.
+   maintainer whether to hold it back. A hold made here binds only this PR:
+   also add it to the ledger, or a later workflow run may publish the item.
+   Workflow re-runs leave this PR alone, because its head commit is not the
+   release bot's.
 4. Merge the entry:
    `uv run --script "$S/renderentry.py" <bundle>/release-notes.json --merge-into <worktree>/fern/changelog/sdks --drop <held index>... --pr-body <tmp>/pr-body.md`.
    It validates the entry against the [format reference](references/fern-changelog-format.md),

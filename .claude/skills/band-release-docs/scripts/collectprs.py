@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.alias_generators import to_camel
 from releasedata import SDK_TAG_PREFIX, LooseCommit, PullRequest, ReleasePrs
 from stepoutputs import append_outputs
@@ -72,6 +72,12 @@ class GhModel(BaseModel):
     model_config = ConfigDict(
         frozen=True, alias_generator=to_camel, validate_by_name=True, extra="ignore"
     )
+
+
+def shape_errors(exc: ValidationError) -> str:
+    """Each error's location and message, never its input, which may be private."""
+    errors = exc.errors(include_input=False, include_url=False)
+    return "\n".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in errors)
 
 
 class Named(GhModel):

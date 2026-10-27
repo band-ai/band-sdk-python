@@ -20,9 +20,15 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from collectprs import GhModel, earlier_sdk_tags, release_version, tag_version
+from collectprs import (
+    GhModel,
+    earlier_sdk_tags,
+    release_version,
+    shape_errors,
+    tag_version,
+)
 from fernstate import DOCS_MERGED_FILE, DOCS_OPEN_FILE
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from releasedata import DOCS_BRANCH_PREFIX, SDK_TAG_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -113,6 +119,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         open_prs = DOCS_PRS.validate_json((args.state / DOCS_OPEN_FILE).read_bytes())
         earlier = earlier_sdk_tags(args.repo, args.tag).values()
         found = docs_range(args.tag, list(earlier), merged, open_prs)
+    except ValidationError as exc:
+        logger.error(
+            "A docs PR listing does not match its shape:\n%s", shape_errors(exc)
+        )
+        return 1
     except (RuntimeError, ValueError) as exc:
         logger.error("error: %s", exc)
         return 1

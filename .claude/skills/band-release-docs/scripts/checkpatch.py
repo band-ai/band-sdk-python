@@ -177,12 +177,14 @@ def changed_line_count(before: str, after: str) -> int:
     )
 
 
-def prose_lines(text: str) -> list[str]:
-    """The page's lines outside code blocks and inline code.
+def without_escaped_backticks(text: str) -> str:
+    """An escaped backtick renders as text, so it never opens a code span."""
+    return text.replace(ESCAPED_BACKTICK, "'")
 
-    An escaped backtick renders as text, so it never opens a code span.
-    """
-    return CODE_PATTERN.sub("", text.replace(ESCAPED_BACKTICK, "'")).splitlines()
+
+def prose_lines(text: str) -> list[str]:
+    """The page's lines outside code blocks and inline code."""
+    return CODE_PATTERN.sub("", without_escaped_backticks(text)).splitlines()
 
 
 def added_prose(before: str, after: str) -> list[str]:
@@ -208,10 +210,9 @@ def wrapped_code_spans(text: str) -> Counter[str]:
     A block break CommonMark ends the paragraph at (a thematic break, a setext
     underline, a blockquote) leaves such a span unclosed, rendering its text.
     """
-    text = text.replace(ESCAPED_BACKTICK, "'")
     return Counter(
         span[0]
-        for span in CODE_PATTERN.finditer(text)
+        for span in CODE_PATTERN.finditer(without_escaped_backticks(text))
         if span["ticks"] and "\n" in span[0]
     )
 

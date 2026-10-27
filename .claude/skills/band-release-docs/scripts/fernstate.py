@@ -20,8 +20,8 @@ from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
 
-from collectprs import GhModel, gh_output
-from pydantic import BaseModel, TypeAdapter
+from collectprs import GhModel, gh_output, shape_errors
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from releasedata import (
     CHANGELOG_BRANCH_PREFIX,
     CHANGELOG_DIR,
@@ -180,7 +180,8 @@ def read_state(gh: Gh, tag: str, date: str | None, *, rehearsal: bool) -> FernSt
     """Read Fern; ``date`` is the release date, or ``None`` when no changelog is filed."""
     changelog_branch = fern_branch(CHANGELOG_BRANCH_PREFIX, tag, rehearsal=rehearsal)
     docs_branch = fern_branch(DOCS_BRANCH_PREFIX, tag, rehearsal=rehearsal)
-    changelog_pr = branch_pr(gh, changelog_branch) if date else None
+    # Read even without a date: an open PR from an earlier run must not go unreported.
+    changelog_pr = branch_pr(gh, changelog_branch)
     filing = date and action(changelog_pr) is not Action.SKIP
     return FernState(
         changelog_branch=changelog_branch,
@@ -218,6 +219,11 @@ def main(argv: Sequence[str] | None = None, gh: Gh = gh_output) -> int:
 
     try:
         state = record(gh, args.tag, args.date, args.out, rehearsal=args.rehearsal)
+    except ValidationError as exc:
+        logger.error(
+            "A Fern PR listing does not match its shape:\n%s", shape_errors(exc)
+        )
+        return 1
     except RuntimeError as exc:
         logger.error("error: %s", exc)
         return 1

@@ -203,6 +203,19 @@ class FakeGh:
                 ".body",
             ):
                 return self.number(number).body + "\n"
+            case (
+                "pr",
+                "view",
+                number,
+                "--repo",
+                self.repo,
+                "--json",
+                "commits",
+                "--jq",
+                ".commits[-1].authors[0].email",
+            ):
+                assert self.remote is not None, "this test has no remote to read"
+                return self.remote.author_email(self.number(number).sha) + "\n"
             case ("api", path) if match := CHECK_RUNS.match(path):
                 (pr,) = [p for p in self.prs if match[1] in (p.sha, *p.earlier_heads)]
                 return json.dumps({"check_runs": self.checks.get(pr.head, [])})

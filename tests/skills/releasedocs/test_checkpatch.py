@@ -26,14 +26,16 @@ PRISTINE = {
     PAGES_META: "{}\n",
 }
 # Keeps the existing import, JSX tag, and allowed link, and adds an allowed
-# link, an allowed autolink, a relative link, and a snippet whose code
-# imports, exports, links, and escapes a backtick.
+# link, an allowed autolink, a relative link, an allowed reference
+# definition, and a snippet whose code imports, exports, links, and escapes a
+# backtick.
 ALLOWED_EDIT = DOCS_PAGE_TEXT.replace(
     "Create an agent with `Agent.create()`.",
     "Create an agent with `Agent.start({})`; see https://github.com/band-ai/band-sdk-python,"
     " <https://docs.band.ai/sdks>, and the [overview](../overview#agents).\n\n"
     '```python\nimport asyncio\nURL = "http://localhost:4000"\n```\n\n'
-    "```bash\nexport BAND_API_KEY=key\necho \\`date\\`\n```",
+    "```bash\nexport BAND_API_KEY=key\necho \\`date\\`\n```\n\n"
+    "[ref]: https://docs.band.ai/sdks",
 )
 
 
@@ -201,8 +203,14 @@ class TestCheckPatch:
             "[LangGraph](https://langchain-ai.github.io/langgraph/) runs graphs.",
             "Type \\`x\\` here.",
             "Wrapped `code\nspan` here.",
+            "- [a]: https://docs.band.ai/sdks",
         ],
-        ids=["outside-link", "escaped-backtick", "wrapped-code-span"],
+        ids=[
+            "outside-link",
+            "escaped-backtick",
+            "wrapped-code-span",
+            "definition-in-a-list-item",
+        ],
     )
     def test_editing_beside_an_existing_construct_stays_mergeable(
         self,

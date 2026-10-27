@@ -8,7 +8,8 @@ Runs only after every check passed, holding the write token, in a fresh clone
 of Fern ``dev`` (``--fern``). For each part it skips a merged branch PR, or
 commits this run's checked content, force-pushes it, and opens a new PR or
 updates the open one, so nothing pushed to the branch since is merged
-unchecked. It then waits until every check run on the PR's head succeeds and
+unchecked. An open PR whose head commit the release bot did not author was
+filed by hand and is left alone. It then waits until every check run on the PR's head succeeds and
 squash-merges it (live); a rehearsal (test) closes it whatever its checks say.
 A docs PR whose content checks failed is opened but never merged. Once the
 docs PR is merged, by this run or an earlier one, the open docs PRs its body
@@ -82,6 +83,7 @@ class Mode(StrEnum):
 class Outcome(StrEnum):
     NOTHING = "nothing to file"
     LEFT_OPEN = "open PR left unmerged: this run has nothing to file"
+    HAND_FILED = "open PR left unmerged: it was filed by hand"
     ALREADY_MERGED = "already merged"
     MERGED = "merged"
     CLOSED = "checks passed; closed unmerged (test)"
@@ -293,6 +295,21 @@ class Filer:
         )
         return Outcome.MERGED
 
+    def filed_by_bot(self, pr: BranchPr) -> bool:
+        """Whether the release bot authored the PR's head commit."""
+        email = self.gh(
+            "pr",
+            "view",
+            str(pr.number),
+            "--repo",
+            FERN_REPO,
+            "--json",
+            "commits",
+            "--jq",
+            ".commits[-1].authors[0].email",
+        )
+        return email.strip() == COMMITTER[1]
+
     def close_superseded(self, docs_pr: int) -> None:
         """Close the open PRs the merged docs PR supersedes; a re-run closes any left."""
         if self.mode is not Mode.LIVE:
@@ -349,7 +366,8 @@ class Filer:
         self.start_branch(branch)
         for path in docs.check.files:
             target = self.fern / path
-            if target.read_bytes() != (docs.pristine / path).read_bytes():
+            pristine = (docs.pristine / path).read_bytes()
+            if not target.is_file() or target.read_bytes() != pristine:
                 raise StaleError(
                     "a reviewed page changed in Fern since the review; re-run"
                 )
@@ -411,6 +429,9 @@ def run_part(
             case Action.SKIP if pr is not None:
                 on_merged(pr.number)
                 return PartResult(Outcome.ALREADY_MERGED, pr.url)
+            case Action.REUSE if pr is not None and not filer.filed_by_bot(pr):
+                # A maintainer's PR may drop items by hand; never overwrite or merge it.
+                return PartResult(Outcome.HAND_FILED, pr.url)
             case Action.REUSE:
                 existing = pr
             case _:

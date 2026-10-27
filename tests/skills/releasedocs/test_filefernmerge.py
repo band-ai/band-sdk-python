@@ -130,13 +130,15 @@ class TestFernMerge:
         tmp_path: Path,
     ) -> None:
         pushed = {
-            fern_names.date_file: "pushed since the last run",
+            fern_names.date_file: "filed by an earlier run",
             "fern/docs.yml": "x",
         }
         earlier = gh.add_pr(
             fern_names.changelog,
             OPEN,
-            sha=fern_remote.push_branch(fern_names.changelog, pushed),
+            sha=fern_remote.push_branch(
+                fern_names.changelog, pushed, filefern.COMMITTER
+            ),
         )
         gh.checks[fern_names.changelog] = PASSING
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
@@ -320,3 +322,33 @@ class TestFernMerge:
         )
         (docs,) = gh.on(fern_names.docs)
         assert (docs.state, older.state) == (OPEN, OPEN)
+
+    def test_open_pr_filed_by_hand_is_never_taken_over(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        fern_remote: FernRemote,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+    ) -> None:
+        sha = fern_remote.push_branch(
+            fern_names.changelog, {fern_names.date_file: "a maintainer's entry"}
+        )
+        hand_filed = gh.add_pr(fern_names.changelog, OPEN, sha=sha)
+        gh.checks[fern_names.changelog] = PASSING
+        state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
+        extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
+        assert (
+            file_fern(
+                filefern, gh, fern_remote, tmp_path, state, filefern.Mode.LIVE, *extra
+            )
+            == 1
+        )
+        assert (hand_filed.state, fern_remote.head(fern_names.changelog)) == (OPEN, sha)
+        assert read_outputs(tmp_path / "outputs") == {
+            "changelog_pr": hand_filed.url,
+            "docs_pr": "",
+        }
