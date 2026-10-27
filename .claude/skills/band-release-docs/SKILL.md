@@ -1,7 +1,6 @@
 ---
 name: band-release-docs
-description: Release notes for band-sdk releases. CI's release-announce workflow uses the changelog task to turn a release's PRs into structured changelog items; a maintainer runs /band-release-docs <tag> to file the Fern changelog PR and the Fern docs PR for a release.
-disable-model-invocation: true
+description: Release notes for band-sdk releases. CI's release-announce workflow uses the changelog task to turn a release's PRs into structured changelog items. Start the local Fern task (/band-release-docs <tag> [--bundle <dir>] [--rehearse]) only when a user explicitly asks to file or rehearse the Fern changelog and docs PRs for a named band-sdk-v* tag; never because a release, changelog, or docs topic comes up.
 ---
 
 # Release Docs
