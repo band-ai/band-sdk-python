@@ -86,6 +86,7 @@ from band.runtime.messages import PlatformMessage
 from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.resync import ResyncSchedule
 from band.runtime.sessionconfig import SessionConfig
+from band.runtime.terminalnotice import is_terminal_delivery
 from band.runtime.tools.agent import AgentTools
 from band.runtime.working_state import WorkingStateReporter
 
@@ -1381,11 +1382,7 @@ class ExecutionContext:
             return False
         payload = event.payload
         msg_id = payload.id
-        if self._agent_id and is_self_echo(
-            sender_id=payload.sender_id or "",
-            sender_type=payload.sender_type or "",
-            agent_id=self._agent_id,
-        ):
+        if self._is_self_echo(payload):
             return False
         if self.claims.is_completed(
             self.room_id, msg_id
@@ -1656,18 +1653,23 @@ class ExecutionContext:
             )
             return ResyncOutcome.RETRY
 
+    def _is_self_echo(self, message: PlatformMessage | MessageCreatedPayload) -> bool:
+        if not self._agent_id:
+            return False
+        # Keep nullable wire fields away from the core's strict string inputs.
+        return is_self_echo(
+            sender_id=message.sender_id or "",
+            sender_type=message.sender_type or "",
+            agent_id=self._agent_id,
+        ) and not is_terminal_delivery(
+            message.message_type, message.id, message.metadata, self._agent_id
+        )
+
     def _backlog_is_nonrunnable(self, msg: PlatformMessage) -> bool:
         return (
             self.claims.is_completed(self.room_id, msg.id)
             or self._retry_tracker.is_permanently_failed(msg.id)
-            or bool(
-                self._agent_id
-                and is_self_echo(
-                    sender_id=msg.sender_id or "",
-                    sender_type=msg.sender_type or "",
-                    agent_id=self._agent_id,
-                )
-            )
+            or self._is_self_echo(msg)
         )
 
     async def _process_backlog_message(
@@ -1685,16 +1687,8 @@ class ExecutionContext:
         """
         msg_id = msg.id
 
-        # Skip messages from self (agent's own messages) to avoid infinite loops.
-        # ``PlatformMessage`` declares these as ``str``, but it's a plain
-        # dataclass filled from Fern models -- a backend null reaches here as
-        # ``None`` and would otherwise raise ``TypeError`` from is_self_echo
-        # (a pyo3 extension with non-Optional ``str`` params).
-        if self._agent_id and is_self_echo(
-            sender_id=msg.sender_id or "",
-            sender_type=msg.sender_type or "",
-            agent_id=self._agent_id,
-        ):
+        # Ordinary self-authored chat is an echo, not another turn.
+        if self._is_self_echo(msg):
             logger.debug("Skipping self-message %s", msg_id)
             return TurnOutcome.ADVANCED
 
@@ -2259,16 +2253,8 @@ class ExecutionContext:
 
         # For messages: check if we should skip
         if isinstance(event, MessageEvent) and msg_id and payload:
-            # Skip messages from self (agent's own messages) to avoid infinite
-            # loops. ``payload`` is hydrated via ``model_construct``, which
-            # bypasses pydantic validation -- a null sender field would
-            # otherwise raise ``TypeError`` from is_self_echo's non-Optional
-            # ``str`` params.
-            if self._agent_id and is_self_echo(
-                sender_id=payload.sender_id or "",
-                sender_type=payload.sender_type or "",
-                agent_id=self._agent_id,
-            ):
+            # Apply the same self-echo boundary as backlog recovery.
+            if self._is_self_echo(payload):
                 logger.debug("Skipping self-message %s", msg_id)
                 return TurnOutcome.ADVANCED
 
