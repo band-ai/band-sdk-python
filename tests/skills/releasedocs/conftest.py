@@ -121,13 +121,12 @@ def fernstate(scripts: Callable[[str], ModuleType]) -> ModuleType:
 @pytest.fixture
 def checkpatch(scripts: Callable[[str], ModuleType]) -> ModuleType:
     """The edit check, once its MDX reader can run; CI installs it for every test job."""
-    if shutil.which("node") is None:
-        pytest.skip("node is not installed")
     module = scripts("checkpatch")
     reader = module.MDX_READER.parent
-    if not (reader / "node_modules").is_dir():
+    if shutil.which("node") is None or not (reader / "node_modules").is_dir():
         pytest.fail(
-            f"Install the MDX reader: npm ci --ignore-scripts --prefix {reader}"
+            "Install Node.js, then the MDX reader:"
+            f" npm ci --ignore-scripts --prefix {reader}"
         )
     return module
 

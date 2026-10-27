@@ -25,9 +25,9 @@ and names.
 - Edit only what a PR in the range made wrong. Staleness that predates the
   range goes in the report, not the page.
 - Change existing pages under that directory only: no new, deleted, or renamed
-  files, and no new imports or JSX components. Link only where
-  `scripts/checkpatch.py` allows. A path breach stops the filing; a content
-  breach keeps the PR from merging.
+  files, no frontmatter changes, and no new imports or JSX components. Link
+  only where `scripts/checkpatch.py` allows. A path breach stops the filing; a
+  content breach keeps the PR from merging.
 - Follow the writing rules in Fern's `.claude/skills/write-docs/STYLE.md` and
   `.claude/fern-docs-elements-guide.md`; their ledger and scoping steps are for
   Fern's own docs work and do not apply here.

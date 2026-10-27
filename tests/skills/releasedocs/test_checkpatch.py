@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -25,9 +27,10 @@ PRISTINE = {
     OUTSIDE: "# Rooms\n",
     PAGES_META: "{}\n",
 }
-# Keeps the existing import, JSX tag, and allowed link, and adds an allowed
-# bare URL, a relative link, an allowed reference definition, and a snippet
-# whose code imports, exports, links, and escapes a backtick.
+# Keeps the frontmatter and the existing import, JSX tag, and allowed link,
+# and adds an allowed bare URL, a relative link, an allowed reference
+# definition, and a snippet whose code imports, exports, links, and escapes a
+# backtick.
 ALLOWED_EDIT = DOCS_PAGE_TEXT.replace(
     "Create an agent with `Agent.create()`.",
     "Create an agent with `Agent.start({})`; see https://github.com/band-ai/band-sdk-python"
@@ -36,6 +39,15 @@ ALLOWED_EDIT = DOCS_PAGE_TEXT.replace(
     "```bash\nexport BAND_API_KEY=key\necho \\`date\\`\n```\n\n"
     "[ref]: https://docs.band.ai/sdks",
 )
+CONSTRUCTS = (
+    'import { Note } from "@components";',
+    "<Note>Read this.</Note>",
+    "{props.version}",
+)
+# Page text that must never reach the logs.
+PRIVATE = "private-page-text"
+# An escaped YAML string Fern renders as the page's edit link.
+ESCAPED_EDIT_LINK = 'edit-this-page-url: "\\x68ttps://evil.example/x"\n'
 
 
 @pytest.fixture
@@ -50,6 +62,11 @@ def run(checkpatch: ModuleType, trees: tuple[Path, Path], tmp_path: Path) -> int
     pristine, edited = trees
     argv = [str(pristine), str(edited), "--out", str(tmp_path / "patch.json")]
     return checkpatch.main([*argv, "--outputs", str(tmp_path / "outputs")])
+
+
+def before_the_reader(script: str) -> str:
+    """Return ``NODE_OPTIONS`` that make node run ``script`` before the reader."""
+    return f"--import=data:text/javascript,{script}"
 
 
 def make_symlink(pristine: Path, edited: Path) -> None:
@@ -233,6 +250,7 @@ class TestCheckPatch:
             "Type \\`x\\` here.",
             "- [a]: https://docs.band.ai/sdks\n\nSee [the docs][a].",
             "- Run it:\n\n  ```bash\n  open [x](//evil.example)\n  ```",
+            "[repo](https://github.com/band-ai/x/../band-sdk-python)",
         ],
         ids=[
             "code-span-ending-in-a-backslash",
@@ -240,6 +258,7 @@ class TestCheckPatch:
             "escaped-backticks",
             "definition-in-a-list-item",
             "fence-in-a-list-item",
+            "dot-segment-inside-an-allowed-path",
         ],
     )
     def test_adding_code_or_an_allowed_link_stays_mergeable(
@@ -252,6 +271,70 @@ class TestCheckPatch:
         write_tree(trees[1], {OTHER_PAGE: f"# Overview\n\n{added}\n"})
         assert run(checkpatch, trees, tmp_path) == 0
         assert read_outputs(tmp_path / "outputs")["mergeable"] == "true"
+
+    @pytest.mark.parametrize(
+        "removed", CONSTRUCTS, ids=["import", "jsx-tag", "mdx-expression"]
+    )
+    def test_removing_a_construct_stays_mergeable(
+        self,
+        checkpatch: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+        removed: str,
+    ) -> None:
+        kept = [construct for construct in CONSTRUCTS if construct != removed]
+        write_tree(trees[0], {OTHER_PAGE: "\n\n".join(CONSTRUCTS) + "\n"})
+        write_tree(trees[1], {OTHER_PAGE: "\n\n".join(kept) + "\n"})
+        assert run(checkpatch, trees, tmp_path) == 0
+        assert read_outputs(tmp_path / "outputs")["mergeable"] == "true"
+
+    def test_editing_a_page_mdx_could_not_parse_files_the_pr_unmergeable(
+        self, checkpatch: ModuleType, trees: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        write_tree(
+            trees[0], {OTHER_PAGE: "# Overview\n\n<https://docs.band.ai/sdks>\n"}
+        )
+        write_tree(trees[1], {OTHER_PAGE: "# Overview\n\nhttps://docs.band.ai/sdks\n"})
+        assert run(checkpatch, trees, tmp_path) == 0
+        assert json.loads((tmp_path / "patch.json").read_text("utf-8")) == {
+            "files": [OTHER_PAGE],
+            "content_violations": [
+                {"path": OTHER_PAGE, "kind": checkpatch.ContentViolation.UNPARSED}
+            ],
+        }
+
+    @pytest.mark.parametrize(
+        ("variable", "value"),
+        [
+            ("PATH", os.devnull),
+            (
+                "NODE_OPTIONS",
+                before_the_reader(f"process.stderr.write('{PRIVATE}');process.exit(3)"),
+            ),
+            ("NODE_OPTIONS", before_the_reader("process.stdout.write('x')")),
+        ],
+        ids=["node-missing", "reader-exits-non-zero", "reader-writes-malformed-output"],
+    )
+    def test_reader_failure_stops_the_filing_without_logging_pages(
+        self,
+        checkpatch: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        variable: str,
+        value: str,
+    ) -> None:
+        write_tree(trees[0], {OTHER_PAGE: f"---\ntitle: {PRIVATE}\n---\n\nOne.\n"})
+        write_tree(trees[1], {OTHER_PAGE: f"---\ntitle: {PRIVATE}\n---\n\nTwo.\n"})
+        monkeypatch.setenv(variable, value)
+        assert run(checkpatch, trees, tmp_path) == 1
+        assert (
+            read_outputs(tmp_path / "outputs"),
+            (tmp_path / "patch.json").exists(),
+        ) == ({}, False)
+        assert [record.levelno for record in caplog.records] == [logging.ERROR]
+        assert PRIVATE not in caplog.text
 
     @pytest.mark.parametrize(
         ("edit", "kinds"),
@@ -286,7 +369,12 @@ class TestCheckPatch:
                 DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/%2E%2e/evil)\n",
                 ["LINK"],
             ),
-            (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/x/..)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/..)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/..?x)\n", ["LINK"]),
+            (
+                DOCS_PAGE_TEXT + "[pkg](https://pypi.org/project/band-sdk/..#a)\n",
+                ["LINK"],
+            ),
             (DOCS_PAGE_TEXT + "\n[d]: http://evil.example\n\nSee [d].\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "[the guide](\n//evil.example/x)\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "\n[g]:\n//evil.example/x\n\nSee [g].\n", ["LINK"]),
@@ -329,6 +417,20 @@ class TestCheckPatch:
             (DOCS_PAGE_TEXT + "[x](java&#9;script:alert(1))\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "[x](/\\evil.example)\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "<https://docs.band.ai/sdks>\n", ["UNPARSED"]),
+            (
+                DOCS_PAGE_TEXT.replace("---\n\n", ESCAPED_EDIT_LINK + "---\n\n"),
+                ["FRONTMATTER"],
+            ),
+            (
+                DOCS_PAGE_TEXT.replace(
+                    "---\n\n", 'logo:\n  light: "//evil.example/l.png"\n---\n\n'
+                ),
+                ["FRONTMATTER"],
+            ),
+            (
+                DOCS_PAGE_TEXT.replace("---\n\n", ESCAPED_EDIT_LINK + "---x\n\n"),
+                ["UNPARSED"],
+            ),
         ],
         ids=[
             "import",
@@ -349,6 +451,8 @@ class TestCheckPatch:
             "path-escaping-link",
             "percent-encoded-path-escape",
             "trailing-path-escape",
+            "path-escape-before-a-query",
+            "path-escape-before-a-fragment",
             "reference-definition",
             "link-split-across-lines",
             "reference-split-across-lines",
@@ -366,6 +470,9 @@ class TestCheckPatch:
             "tab-inside-a-scheme",
             "backslash-read-as-a-slash",
             "not-mdx",
+            "frontmatter-edit-link",
+            "frontmatter-logo",
+            "frontmatter-micromark-does-not-close",
         ],
     )
     def test_content_breach_files_the_pr_unmergeable(

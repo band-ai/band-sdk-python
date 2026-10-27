@@ -264,7 +264,9 @@ class TestAnnounceWorkflow:
         install = step_position("fern", has_id("mdx-reader"))
         assert step_position("fern", uses(CLAUDE_ACTION)) < install
         assert install < step_position("fern", has_id("patch"))
-        assert step_run("mdx-reader").startswith("npm ci --ignore-scripts ")
+        assert (
+            step_run("mdx-reader") == 'npm ci --ignore-scripts --prefix "$SCRIPTS/mdx"'
+        )
 
     def test_write_token_follows_the_edit_check_and_skips_dry_run(self) -> None:
         write = step_position("fern", has_id("fern-write"))

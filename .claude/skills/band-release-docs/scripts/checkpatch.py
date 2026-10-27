@@ -8,12 +8,14 @@ Compares the edited tree with a pristine copy. A path violation (a created,
 deleted, or renamed file, a symlink, a file outside the docs pages, a
 non-UTF-8 file, or too many pages) fails the command: nothing may be filed. A
 content violation (a new import, a new JSX tag or MDX expression, a link
-outside the allowed sites, too many changed lines) only marks the docs PR
-do-not-merge, as does a page MDX cannot parse. MDX's own parser reads the
-pages (``mdx/readmdx.mjs`` under Node; ``npm ci`` there first), so a construct
-counts exactly where it renders. Writes the changed pages and content
-violations to ``--out`` and appends ``changed`` and ``mergeable`` to
-``--outputs``. Logs counts and violation kinds only: the pages are private.
+outside the allowed sites, a frontmatter change, too many changed lines) only
+marks the docs PR do-not-merge, as does a page MDX cannot parse. MDX's own
+parser reads the pages (``mdx/readmdx.mjs`` under Node; ``npm ci
+--ignore-scripts`` there first), so a construct counts exactly where it
+renders. Writes the changed pages and content violations to ``--out`` and
+appends ``changed`` and ``mergeable`` to ``--outputs``. Fails, writing
+nothing, when the reader cannot read the pages. Logs counts and violation
+kinds only: the pages are private.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from releasedata import MAX_REVIEWED_PAGES, Frozen, is_docs_page
 from stepoutputs import append_outputs
 
@@ -45,6 +47,7 @@ ALLOWED_LINK_PREFIXES = (
 )
 MDX_READER = Path(__file__).resolve().parent / "mdx" / "readmdx.mjs"
 SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
+ORIGIN_AND_PATH = re.compile(r"([^/?#]*//[^/?#]*)([^?#]*)")
 # Browsers drop whitespace and controls from a URL and read a backslash as a
 # slash, so `java&#9;script:` or `/\host` can leave the page.
 UNREADABLE_TARGET = re.compile(r"[\x00-\x20\x7f\\]")
@@ -63,6 +66,7 @@ class ContentViolation(StrEnum):
     IMPORT = "adds an import or export"
     JSX = "adds or changes a JSX tag or MDX expression"
     LINK = "links outside the allowed sites"
+    FRONTMATTER = "changes the page's frontmatter"
     UNPARSED = "is not MDX these checks can read"
     TOO_LONG = f"changes more than {MAX_CHANGED_LINES} lines"
 
@@ -168,38 +172,76 @@ def changed_line_count(before: str, after: str) -> int:
     )
 
 
-class Page(Frozen):
-    """What MDX renders from a page outside code."""
+class ReaderError(RuntimeError):
+    """The MDX reader could not read the pages; says why without their text."""
 
+
+class Page(Frozen):
+    """What MDX renders from a page outside code, and its raw frontmatter."""
+
+    frontmatter: str | None
     targets: list[str]
     tags: list[str]
     expressions: list[str]
     imports: list[str]
 
 
-PAGES = TypeAdapter(list[Page | None])
+READER_OUTPUT = TypeAdapter(list[Page | None])
 
 
 def read_pages(texts: list[str]) -> list[Page | None]:
-    """Each page as MDX parses it, or None when MDX cannot."""
-    result = subprocess.run(
-        ["node", str(MDX_READER)],
-        input=json.dumps(texts),
-        capture_output=True,
-        encoding="utf-8",
-        check=True,
-    )
-    return PAGES.validate_json(result.stdout)
+    """Read each page with MDX: None marks a page MDX cannot parse.
+
+    Raise ``ReaderError`` when the reader fails; its stderr and output may
+    quote the pages, so neither reaches the error.
+    """
+    try:
+        result = subprocess.run(
+            ["node", str(MDX_READER)],
+            input=json.dumps(texts),
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+        )
+    except OSError:
+        raise ReaderError("could not start node") from None
+    if result.returncode:
+        raise ReaderError(f"exited with code {result.returncode}")
+    try:
+        return READER_OUTPUT.validate_json(result.stdout)
+    except ValidationError:
+        raise ReaderError("wrote output this check cannot read") from None
+
+
+def dot_name(segment: str) -> str:
+    """Spell a path segment as browsers compare it with ``.`` and ``..``."""
+    return segment.lower().replace("%2e", ".")
+
+
+def resolved_path(path: str) -> str:
+    """Resolve a URL path's dot segments as browsers do (RFC 3986 5.2.4)."""
+    segments = path.split("/")[1:]
+    resolved: list[str] = []
+    for segment in segments:
+        match dot_name(segment):
+            case "..":
+                del resolved[-1:]
+            case ".":
+                pass
+            case _:
+                resolved.append(segment)
+    if segments and dot_name(segments[-1]) in (".", ".."):
+        resolved.append("")
+    return "/" + "/".join(resolved)
 
 
 def is_allowed_url(url: str) -> bool:
-    """An absolute URL on an allowed site, with no step out of its path."""
-    path = url.lower().replace("%2e", ".")
-    return (
-        url.startswith(ALLOWED_LINK_PREFIXES)
-        and "/../" not in path
-        and not path.endswith("/..")
-    )
+    """Tell whether a URL with a host resolves to a path on an allowed site."""
+    parts = ORIGIN_AND_PATH.match(url)
+    if parts is None:
+        return False
+    origin, path = parts.groups()
+    return f"{origin}{resolved_path(path)}".startswith(ALLOWED_LINK_PREFIXES)
 
 
 def is_allowed_target(target: str) -> bool:
@@ -212,14 +254,17 @@ def is_allowed_target(target: str) -> bool:
 
 
 def adds(before: list[str], after: list[str]) -> bool:
+    """Tell whether ``after`` holds some item more times than ``before`` does."""
     return bool(Counter(after) - Counter(before))
 
 
 def page_violations(path: str, old: Page | None, new: Page | None) -> list[Finding]:
-    """The content violations in one page's edit."""
+    """List the content violations in one page's edit."""
     if old is None or new is None:
         return [Finding(path=path, kind=ContentViolation.UNPARSED)]
     kinds = []
+    if old.frontmatter != new.frontmatter:
+        kinds.append(ContentViolation.FRONTMATTER)
     if adds(old.imports, new.imports):
         kinds.append(ContentViolation.IMPORT)
     if adds(old.tags + old.expressions, new.tags + new.expressions):
@@ -263,6 +308,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "The docs edits break a path rule (%d finding(s)): %s",
             len(exc.findings),
             exc,
+        )
+        return 1
+    except ReaderError as exc:
+        logger.error(
+            "The MDX reader %s; install it with: npm ci --ignore-scripts --prefix %s",
+            exc,
+            MDX_READER.parent,
         )
         return 1
     args.out.write_text(check.model_dump_json(indent=2), encoding="utf-8")
