@@ -251,6 +251,8 @@ class TestCheckPatch:
             "- [a]: https://docs.band.ai/sdks\n\nSee [the docs][a].",
             "- Run it:\n\n  ```bash\n  open [x](//evil.example)\n  ```",
             "[repo](https://github.com/band-ai/x/../band-sdk-python)",
+            "[repo](https://github.com/band-ai/./band-sdk-python)",
+            "[org](https://github.com/band-ai/.)",
         ],
         ids=[
             "code-span-ending-in-a-backslash",
@@ -259,6 +261,8 @@ class TestCheckPatch:
             "definition-in-a-list-item",
             "fence-in-a-list-item",
             "dot-segment-inside-an-allowed-path",
+            "single-dot-segment-inside-an-allowed-path",
+            "trailing-single-dot-segment",
         ],
     )
     def test_adding_code_or_an_allowed_link_stays_mergeable(
@@ -322,6 +326,7 @@ class TestCheckPatch:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
+        capfd: pytest.CaptureFixture[str],
         variable: str,
         value: str,
     ) -> None:
@@ -335,12 +340,28 @@ class TestCheckPatch:
         ) == ({}, False)
         assert [record.levelno for record in caplog.records] == [logging.ERROR]
         assert PRIVATE not in caplog.text
+        assert PRIVATE not in "".join(capfd.readouterr())
+
+    def test_no_edits_need_no_reader(
+        self,
+        checkpatch: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("PATH", os.devnull)
+        assert run(checkpatch, trees, tmp_path) == 0
+        assert read_outputs(tmp_path / "outputs") == {
+            "changed": "0",
+            "mergeable": "true",
+        }
 
     @pytest.mark.parametrize(
         ("edit", "kinds"),
         [
             (DOCS_PAGE_TEXT + '\nimport { Secret } from "@x";\n', ["IMPORT"]),
             (DOCS_PAGE_TEXT + "<Callout>Run it.</Callout>\n", ["JSX"]),
+            (DOCS_PAGE_TEXT + "<Tabs>\nMore.\n</Tabs>\n", ["JSX"]),
             (DOCS_PAGE_TEXT.replace("<Tabs>", "<Tabs onClick={go}>"), ["JSX"]),
             (DOCS_PAGE_TEXT + '{globalThis.fetch("/x")}\n', ["JSX"]),
             (
@@ -367,6 +388,10 @@ class TestCheckPatch:
             (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/../evil)\n", ["LINK"]),
             (
                 DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/%2E%2e/evil)\n",
+                ["LINK"],
+            ),
+            (
+                DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/./../evil)\n",
                 ["LINK"],
             ),
             (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/..)\n", ["LINK"]),
@@ -416,6 +441,8 @@ class TestCheckPatch:
             (DOCS_PAGE_TEXT + "![logo](//evil.example/logo.png)\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "[x](java&#9;script:alert(1))\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "[x](/\\evil.example)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[x](https://evil.example//docs.band.ai/x)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[x](https://[evil.example/x)\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "<https://docs.band.ai/sdks>\n", ["UNPARSED"]),
             (
                 DOCS_PAGE_TEXT.replace("---\n\n", ESCAPED_EDIT_LINK + "---\n\n"),
@@ -435,6 +462,7 @@ class TestCheckPatch:
         ids=[
             "import",
             "jsx-tag",
+            "another-copy-of-an-existing-jsx-tag",
             "jsx-attribute",
             "mdx-expression",
             "jsx-in-escaped-backticks",
@@ -450,6 +478,7 @@ class TestCheckPatch:
             "backslash-escaped-colon",
             "path-escaping-link",
             "percent-encoded-path-escape",
+            "single-dot-before-a-path-escape",
             "trailing-path-escape",
             "path-escape-before-a-query",
             "path-escape-before-a-fragment",
@@ -469,6 +498,8 @@ class TestCheckPatch:
             "foreign-image",
             "tab-inside-a-scheme",
             "backslash-read-as-a-slash",
+            "allowed-site-in-a-foreign-path",
+            "malformed-host",
             "not-mdx",
             "frontmatter-edit-link",
             "frontmatter-logo",

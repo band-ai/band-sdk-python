@@ -4,16 +4,12 @@
 # ///
 """Check the docs review's edits to the Fern tree before anything is pushed.
 
-Compares the edited tree with a pristine copy. A path violation (a created,
-deleted, or renamed file, a symlink, a file outside the docs pages, a
-non-UTF-8 file, or too many pages) fails the command: nothing may be filed. A
-content violation (a new import, a new JSX tag or MDX expression, a link
-outside the allowed sites, a frontmatter change, too many changed lines) only
-marks the docs PR do-not-merge, as does a page MDX cannot parse. MDX's own
-parser reads the pages (``mdx/readmdx.mjs`` under Node; ``npm ci
---ignore-scripts`` there first), so a construct counts exactly where it
-renders. Writes the changed pages and content violations to ``--out`` and
-appends ``changed`` and ``mergeable`` to ``--outputs``. Fails, writing
+Compares the edited tree with a pristine copy. A ``PathViolation`` fails the
+command: nothing may be filed. A ``ContentViolation`` only marks the docs PR
+do-not-merge. MDX's own parser reads the pages (``mdx/readmdx.mjs`` under
+Node; ``npm ci --ignore-scripts`` there first), so a construct counts exactly
+where it renders. Writes the changed pages and content violations to ``--out``
+and appends ``changed`` and ``mergeable`` to ``--outputs``. Fails, writing
 nothing, when the reader cannot read the pages. Logs counts and violation
 kinds only: the pages are private.
 """
@@ -30,6 +26,7 @@ from collections import Counter
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
 from pydantic import TypeAdapter, ValidationError
 from releasedata import MAX_REVIEWED_PAGES, Frozen, is_docs_page
@@ -47,7 +44,8 @@ ALLOWED_LINK_PREFIXES = (
 )
 MDX_READER = Path(__file__).resolve().parent / "mdx" / "readmdx.mjs"
 SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
-ORIGIN_AND_PATH = re.compile(r"([^/?#]*//[^/?#]*)([^?#]*)")
+# Browsers read an escaped dot in a path as a dot segment.
+ESCAPED_DOT = re.compile("%2e", re.IGNORECASE)
 # Browsers drop whitespace and controls from a URL and read a backslash as a
 # slash, so `java&#9;script:` or `/\host` can leave the page.
 UNREADABLE_TARGET = re.compile(r"[\x00-\x20\x7f\\]")
@@ -193,8 +191,11 @@ def read_pages(texts: list[str]) -> list[Page | None]:
     """Read each page with MDX: None marks a page MDX cannot parse.
 
     Raise ``ReaderError`` when the reader fails; its stderr and output may
-    quote the pages, so neither reaches the error.
+    quote the pages, so neither reaches the error. Start no reader for no
+    pages, so an edit-free run never needs it.
     """
+    if not texts:
+        return []
     try:
         result = subprocess.run(
             ["node", str(MDX_READER)],
@@ -213,35 +214,16 @@ def read_pages(texts: list[str]) -> list[Page | None]:
         raise ReaderError("wrote output this check cannot read") from None
 
 
-def dot_name(segment: str) -> str:
-    """Spell a path segment as browsers compare it with ``.`` and ``..``."""
-    return segment.lower().replace("%2e", ".")
-
-
-def resolved_path(path: str) -> str:
-    """Resolve a URL path's dot segments as browsers do (RFC 3986 5.2.4)."""
-    segments = path.split("/")[1:]
-    resolved: list[str] = []
-    for segment in segments:
-        match dot_name(segment):
-            case "..":
-                del resolved[-1:]
-            case ".":
-                pass
-            case _:
-                resolved.append(segment)
-    if segments and dot_name(segments[-1]) in (".", ".."):
-        resolved.append("")
-    return "/" + "/".join(resolved)
-
-
 def is_allowed_url(url: str) -> bool:
     """Tell whether a URL with a host resolves to a path on an allowed site."""
-    parts = ORIGIN_AND_PATH.match(url)
-    if parts is None:
+    try:
+        path = urlsplit(url).path
+    except ValueError:
         return False
-    origin, path = parts.groups()
-    return f"{origin}{resolved_path(path)}".startswith(ALLOWED_LINK_PREFIXES)
+    # Resolving an absolute path drops its dot segments as browsers do; the
+    # leading `/.` keeps a path starting with `//` from naming another host.
+    resolved = urljoin(url, "/." + ESCAPED_DOT.sub(".", path))
+    return resolved.startswith(ALLOWED_LINK_PREFIXES)
 
 
 def is_allowed_target(target: str) -> bool:
