@@ -47,11 +47,16 @@ def _echoes_request(error: Exception) -> bool:
     return hasattr(error, "body")
 
 
+def _status_code(error: Exception) -> int | None:
+    """The HTTP status a Letta API error carries, if any."""
+    return getattr(error, "status_code", None)
+
+
 def _registration_failure(error: Exception) -> str:
     """``error``, described without a Letta API error's text."""
     if not _echoes_request(error):
         return str(error)
-    status = getattr(error, "status_code", None)
+    status = _status_code(error)
     name = type(error).__name__
     return name if status is None else f"{name} (HTTP {status})"
 
@@ -390,7 +395,7 @@ class LettaMCPBridge:
                 server_id, config=self._registration_config(server_url)
             )
         except Exception as error:  # noqa: BLE001 -- re-raised, chained only when its text cannot echo the token
-            if getattr(error, "status_code", None) == HTTPStatus.NOT_FOUND:
+            if _status_code(error) == HTTPStatus.NOT_FOUND:
                 self._forget_registration()
             raise RuntimeError(
                 f"Repointing MCP server registration {server_id} failed: "

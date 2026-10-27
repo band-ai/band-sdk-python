@@ -12,18 +12,14 @@ SERVER = {"type": "http", "url": "http://127.0.0.1:1/mcp"}
 
 class TestMcpConfigFiles:
     def test_a_failed_write_keeps_the_previous_file_and_leaves_no_partial(
-        self,
+        self, mcp_config_files: McpConfigFiles
     ) -> None:
-        files = McpConfigFiles()
-        try:
-            path = files.write("room-a", {"band": SERVER})
+        path = mcp_config_files.write("room-a", {"band": SERVER})
 
-            with pytest.raises(TypeError):
-                files.write("room-a", {"band": SERVER, "broken": object()})
+        with pytest.raises(TypeError):
+            mcp_config_files.write("room-a", {"band": SERVER, "broken": object()})
 
-            assert (list(path.parent.iterdir()), read_mcp_config(path)) == (
-                [path],
-                {"band": SERVER},
-            )
-        finally:
-            files.remove()
+        assert (list(path.parent.iterdir()), read_mcp_config(path)) == (
+            [path],
+            {"band": SERVER},
+        )

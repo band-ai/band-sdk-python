@@ -31,6 +31,11 @@ MCP_CONFIG_FLAG = "mcp-config"
 MCP_SERVERS_KEY = "mcpServers"
 # The ``type`` of an in-process server the SDK itself serves.
 SDK_SERVER_TYPE = "sdk"
+REMOVAL_FAILED_LOG = "Could not remove Claude MCP config directory %s"
+REPLACED_DIRECTORY_LOG = (
+    "Claude MCP config directory %s is no longer private to this user; "
+    "writing to a new one"
+)
 
 
 def is_in_process(config: object) -> bool:
@@ -81,11 +86,7 @@ class McpConfigFiles:
         except FileNotFoundError:
             pass
         except OSError:
-            logger.warning(
-                "Could not remove Claude MCP config directory %s",
-                self._directory,
-                exc_info=True,
-            )
+            logger.warning(REMOVAL_FAILED_LOG, self._directory, exc_info=True)
             return
         self._directory = None
 
@@ -94,8 +95,13 @@ class McpConfigFiles:
         return f"{quote(room_id, safe='')}.json"
 
     def _ensure_directory(self) -> Path:
-        if self._directory is None or not _is_private_directory(self._directory):
-            self._directory = Path(tempfile.mkdtemp(prefix=MCP_CONFIG_DIR_PREFIX))
+        directory = self._directory
+        if directory is not None and _is_private_directory(directory):
+            return directory
+        if directory is not None and os.path.lexists(directory):
+            # Reaped and then taken by another user, or no longer ours alone.
+            logger.warning(REPLACED_DIRECTORY_LOG, directory)
+        self._directory = Path(tempfile.mkdtemp(prefix=MCP_CONFIG_DIR_PREFIX))
         return self._directory
 
 
@@ -111,4 +117,5 @@ def _is_private_directory(path: Path) -> bool:
     if os.name == "nt":
         # The user's own temp directory, which other users cannot write.
         return True
-    return status.st_uid == os.getuid() and stat.S_IMODE(status.st_mode) == 0o700
+    # Only the permission bits: a setgid parent passes its setgid bit down.
+    return status.st_uid == os.getuid() and status.st_mode & 0o077 == 0
