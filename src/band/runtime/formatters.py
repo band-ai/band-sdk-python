@@ -9,6 +9,7 @@ from collections.abc import Set as AbstractSet
 from enum import StrEnum
 
 from band.core.types import PlatformMessage
+from band.runtime.tools.inputs.chat import MENTION_GUIDANCE
 
 # A room message is delivered to an agent only when it @mentions it, so the
 # platform prepends one normalized ``@[[uuid]]`` token per mention to the
@@ -268,10 +269,6 @@ def build_participants_message(participants: list[dict]) -> str:
         )
 
     lines.append("")
-    lines.append(
-        "IMPORTANT: In band_send_message mentions, always use the exact "
-        "handle shown above (e.g. '@john' for users, '@john/weather-agent' "
-        "for agents), NOT the display name. Handles are lowercase with no spaces."
-    )
+    lines.append(MENTION_GUIDANCE)
 
     return "\n".join(lines)

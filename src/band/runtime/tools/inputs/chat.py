@@ -14,9 +14,11 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 from band.core.content import BLANK_CONTENT_ERROR, has_visible_content
 from band.core.types import EventMessageType
 
-MENTION_IDENTIFIERS = (
-    "Use a participant's exact ID when available. Handles also work: "
-    "@<username> for users, @<username>/<agent-name> for agents."
+MENTION_GUIDANCE = (
+    "Use `mentions` to address the intended recipients, preferably with their exact "
+    "handles from the room roster. Band displays their names automatically. "
+    "Write `content` as a clear, natural message, using names and formatting where "
+    "they add meaning and avoiding redundant recipient labels."
 )
 
 
@@ -36,14 +38,14 @@ def require_visible_content(value: str) -> str:
 class SendMessageInput(BaseModel):
     """Send a message to the chat room.
 
-    Use this to respond to users or other agents. Messages require at least one @mention
-    in the mentions array.
+    Use this to respond to users or other agents. At least one recipient is required
+    in mentions.
     """
 
     content: str = Field(..., description="The message content to send")
     mentions: list[str] = Field(
         ...,
-        description=f"List of participants to mention. At least one required. {MENTION_IDENTIFIERS}",
+        description=f"Participants to address. At least one required. {MENTION_GUIDANCE}",
     )
 
     _validate_content = field_validator("content")(require_visible_content)
