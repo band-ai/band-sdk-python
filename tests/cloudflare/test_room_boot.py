@@ -99,8 +99,17 @@ class TestRoomBoot:
             },
             "forwarded": [
                 {
-                    "url": f"http://{constants['container_host']}/invocations",
+                    "url": f"http://{constants['container_host']}"
+                    f"{constants['invocations_path']}",
                     "authorization": None,
                 }
             ],
+        }
+
+    def test_unreported_image_is_tagged_unknown(
+        self, runtime: WorkerRuntime, constants: dict[str, Any]
+    ) -> None:
+        assert runtime.run(Scenario.UNREPORTED_IMAGE) == {
+            **SERVED,
+            "image": constants["unknown_image"],
         }

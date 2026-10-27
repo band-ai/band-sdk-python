@@ -11,11 +11,11 @@ from band.runtime.oneshot import OneShotEnvelopeError
 
 
 class TestRoutes:
-    async def test_ping(self, client: httpx.AsyncClient) -> None:
+    async def test_ping_reports_healthy(self, client: httpx.AsyncClient) -> None:
         response = await client.get("/ping")
         assert (response.status_code, response.json()) == (200, {"status": "Healthy"})
 
-    async def test_invocation(
+    async def test_invocation_body_reaches_the_invoker_unchanged(
         self, client: httpx.AsyncClient, invoker: NonCallableMagicMock
     ) -> None:
         body = {"event_type": "message_created", "room_id": "r1", "payload": {}}
@@ -44,7 +44,7 @@ class TestRoutes:
             (RuntimeError("private failure"), 500, "invocation failed"),
         ],
     )
-    async def test_error_mapping(
+    async def test_invoker_errors_map_to_sanitized_http_errors(
         self,
         client: httpx.AsyncClient,
         invoker: NonCallableMagicMock,

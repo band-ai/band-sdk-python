@@ -11,25 +11,38 @@ import pytest
 
 from band.runtime.oneshot import OneShotInvoker
 from tests.loaders import load_script_module
+from tests.oneshot_server.kit import CREDENTIALS, PLATFORM_URL
 from tests.paths import EXAMPLES_ROOT
 
+# The shared receiver and its AgentCore custom-tools variant serve the same contract.
+RECEIVERS = {
+    "oneshot": EXAMPLES_ROOT / "oneshot" / "server.py",
+    "custom-tools": EXAMPLES_ROOT / "agentcore" / "custom_tools_llm_server.py",
+}
+
 
 @pytest.fixture
-def platform_url(monkeypatch: pytest.MonkeyPatch) -> str:
+def credentials(
+    receiver: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, str]:
+    """Isolate the receiver's settings from the host, then set its credentials."""
+    for field in receiver.Settings.model_fields:
+        monkeypatch.delenv(field.upper(), raising=False)
+    for name, value in CREDENTIALS.items():
+        monkeypatch.setenv(name, value)
+    return CREDENTIALS
+
+
+@pytest.fixture
+def platform_url(credentials: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> str:
     """Configure the receiver's environment and return its platform URL."""
-    url = "https://receiver-platform.test"
-    monkeypatch.setenv("BAND_AGENT_ID", "agent-1")
-    monkeypatch.setenv("BAND_API_KEY", "test-key")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-provider")
-    monkeypatch.setenv("BAND_REST_URL", url)
-    return url
+    monkeypatch.setenv("BAND_REST_URL", PLATFORM_URL)
+    return PLATFORM_URL
 
 
-@pytest.fixture
-def receiver() -> ModuleType:
-    return load_script_module(
-        EXAMPLES_ROOT / "oneshot" / "server.py", "oneshot_receiver"
-    )
+@pytest.fixture(params=RECEIVERS)
+def receiver(request: pytest.FixtureRequest) -> ModuleType:
+    return load_script_module(RECEIVERS[request.param], f"receiver_{request.param}")
 
 
 @pytest.fixture

@@ -29,6 +29,7 @@ class Scenario(StrEnum):
     CRASH_AFTER_READY = "crash-after-ready"
     FORWARD_FAILURE = "forward-failure"
     RETRIES_SHARE_MONITOR = "retries-share-monitor"
+    UNREPORTED_IMAGE = "unreported-image"
 
 
 class Call(StrEnum):
@@ -70,6 +71,8 @@ UPSTREAM_FAILURE = "upstream failed"
 # How workerd renders a rejected JavaScript Error in Python.
 CRASH_ERROR = f"Error: {CRASH}"
 DESTROY_ERROR = f"Error: {DESTROY_FAILURE}"
+# How workerd renders the rejection of a fetch whose signal was aborted.
+ABORTED_PROBE = "AbortError: The operation was aborted"
 ENVELOPE = {
     "agent_id": SETTINGS["BAND_AGENT_ID"],
     "room_id": "room",

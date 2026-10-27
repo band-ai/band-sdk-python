@@ -21,8 +21,10 @@ from contract import (
 )
 from pyodide.ffi import create_proxy
 from worker import (
+    API_KEY_HEADER,
     AUTHORIZATION,
     CONTAINER_IMAGE_HEADER,
+    INVOCATIONS_PATH,
     ROOM_VERSION_HEADER,
     SECRET_SETTINGS,
 )
@@ -36,8 +38,9 @@ REFUSED = "refused"
 class Container:
     """A room container whose RPCs settle only when the scenario allows them to."""
 
-    def __init__(self, *, running: bool = False) -> None:
+    def __init__(self, *, running: bool = False, image: str | None = IMAGE) -> None:
         self.running = running
+        self.image = image
         self.images = SimpleNamespace(base=IMAGE)
         self.calls: list[Call] = []
         self.idle_timeouts: list[int] = []
@@ -94,7 +97,7 @@ class Container:
 
     async def inspect(self) -> Any:
         self.calls.append(Call.INSPECT)
-        return SimpleNamespace(image=IMAGE)
+        return SimpleNamespace(image=self.image)
 
     def getTcpPort(self, port: int) -> Container:
         return self
@@ -225,7 +228,7 @@ def upstream_requests() -> Iterator[list[dict[str, Any]]]:
         captured.append(
             {
                 "url": request.url,
-                "key": request.headers.get("x-api-key"),
+                "key": request.headers.get(API_KEY_HEADER),
                 "redirect": request.redirect,
             }
         )
@@ -254,7 +257,7 @@ def environment(settings: dict[str, Any], **bindings: Any) -> SimpleNamespace:
 def invocation(
     *,
     method: str = "POST",
-    path: str = "/invocations",
+    path: str = INVOCATIONS_PATH,
     authorization: str = f"Bearer {SETTINGS['BRIDGE_TOKEN']}",
     body: str = BODY,
 ) -> Request:

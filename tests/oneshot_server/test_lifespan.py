@@ -9,6 +9,7 @@ import pytest
 from band_rest.core.api_error import ApiError
 from pytest_httpx import HTTPXMock
 
+from tests.oneshot_server.kit import CREDENTIALS
 from tests.runtime.conftest import make_link_mock
 
 AGENT_ME_PATH = "/api/v1/agent/me"
@@ -32,7 +33,7 @@ class TestLifespan:
                 "/invocations",
                 json={
                     "event_type": "room_added",
-                    "agent_id": "agent-1",
+                    "agent_id": CREDENTIALS["BAND_AGENT_ID"],
                     "room_id": "room-1",
                     "payload": {},
                 },

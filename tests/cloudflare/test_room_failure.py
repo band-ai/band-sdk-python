@@ -8,6 +8,7 @@ import pytest
 
 from tests.cloudflare.client import WorkerRuntime
 from tests.cloudflare.contract import (
+    ABORTED_PROBE,
     COLD_START,
     CRASH_ERROR,
     DESTROY_ERROR,
@@ -17,6 +18,12 @@ from tests.cloudflare.contract import (
 )
 
 BOOTED = [*COLD_START, Call.INSPECT]
+
+
+def deadline_log(constants: dict[str, Any]) -> str:
+    """The unavailable log for a readiness deadline whose last probe was aborted."""
+    readiness = constants["readiness_exceeded"] % ABORTED_PROBE
+    return constants["receiver_unavailable_log"] % readiness
 
 
 @pytest.mark.timeout(120)
@@ -40,7 +47,7 @@ class TestRoomFailure:
         }
 
     def test_readiness_deadline_destroys_the_container_it_started(
-        self, runtime: WorkerRuntime
+        self, runtime: WorkerRuntime, constants: dict[str, Any]
     ) -> None:
         assert runtime.run(Scenario.DEADLINE) == {
             "status": 503,
@@ -48,10 +55,14 @@ class TestRoomFailure:
             "running": False,
             "fired_early": [False],
             "deadline_timers_cancelled": [True],
+            "logs": [
+                ["INFO", constants["receiver_stopped_log"]],
+                ["ERROR", deadline_log(constants)],
+            ],
         }
 
     def test_readiness_deadline_keeps_an_already_running_container(
-        self, runtime: WorkerRuntime
+        self, runtime: WorkerRuntime, constants: dict[str, Any]
     ) -> None:
         assert runtime.run(Scenario.DEADLINE_WHILE_RUNNING) == {
             "status": 503,
@@ -59,6 +70,7 @@ class TestRoomFailure:
             "running": True,
             "fired_early": [False],
             "deadline_timers_cancelled": [True],
+            "logs": [["ERROR", deadline_log(constants)]],
         }
 
     def test_failed_retries_on_a_running_container_log_its_stop_once(

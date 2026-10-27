@@ -76,61 +76,85 @@ class TestIngress:
             "logs": [["ERROR", constants["invalid_settings_log"] % invalid]],
         }
 
-    @pytest.mark.parametrize("model", ["", MODEL])
-    def test_empty_or_named_model_routes(
-        self, runtime: WorkerRuntime, model: str
-    ) -> None:
-        result = runtime.run(Scenario.INGRESS, settings={"ANTHROPIC_MODEL": model})
-        assert (result["status"], result["room"]) == (201, ENVELOPE["room_id"])
-
     @pytest.mark.parametrize(
-        "case,status",
+        "case,status,body,invalid",
         [
-            ({"request": {"authorization": ""}}, 401),
-            ({"request": {"authorization": "Bearer private-wrong"}}, 401),
-            ({"request": {"authorization": "Bearer x"}}, 401),
-            ({"request": {"body": "{"}}, 400),
-            ({"request": {"body": "[]"}}, 400),
-            ({"request": {"body": "null"}}, 400),
-            ({"request": {"path": "/ping"}}, 404),
-            ({"request": {"method": "GET"}}, 404),
-            ({"request": {"method": "PROPFIND"}}, 404),
+            ({"request": {"authorization": ""}}, 401, "unauthorized", []),
+            (
+                {"request": {"authorization": "Bearer private-wrong"}},
+                401,
+                "unauthorized",
+                [],
+            ),
+            ({"request": {"authorization": "Bearer x"}}, 401, "unauthorized", []),
+            ({"request": {"body": "{"}}, 400, "invalid_envelope", []),
+            ({"request": {"body": "[]"}}, 400, "invalid_envelope", []),
+            ({"request": {"body": "null"}}, 400, "invalid_envelope", []),
+            ({"request": {"path": "/ping"}}, 404, "not_found", []),
+            ({"request": {"method": "GET"}}, 404, "not_found", []),
+            ({"request": {"method": "PROPFIND"}}, 404, "not_found", []),
             # Combined faults pin the check order: settings, route, auth, then body.
-            ({"settings": {"BAND_API_KEY": None}, "request": {"path": "/ping"}}, 503),
-            ({"request": {"authorization": "", "path": "/ping"}}, 404),
-            ({"request": {"authorization": "", "body": "{"}}, 401),
-            *[
-                ({"request": {"body": json.dumps({**ENVELOPE, "room_id": value})}}, 400)
-                for value in (None, "", " ", 123, [], {})
-            ],
+            (
+                {"settings": {"BAND_API_KEY": None}, "request": {"path": "/ping"}},
+                503,
+                "configuration_unavailable",
+                ["BAND_API_KEY"],
+            ),
+            (
+                {"request": {"authorization": "", "path": "/ping"}},
+                404,
+                "not_found",
+                [],
+            ),
+            (
+                {"request": {"authorization": "", "body": "{"}},
+                401,
+                "unauthorized",
+                [],
+            ),
             *[
                 (
-                    {"request": {"body": json.dumps({**ENVELOPE, "agent_id": value})}},
+                    {"request": {"body": json.dumps({**ENVELOPE, field: value})}},
                     400,
+                    "invalid_routing",
+                    [],
                 )
-                for value in ("other", None, 4)
-            ],
-            *[
-                (
-                    {
-                        "request": {
-                            "body": json.dumps({**ENVELOPE, "event_type": value})
-                        }
-                    },
-                    400,
+                for field, values in (
+                    ("room_id", (None, "", " ", 123, [], {})),
+                    ("agent_id", ("other", None, 4)),
+                    ("event_type", (None, 4, "", " ")),
                 )
-                for value in (None, 4, "", " ")
+                for value in values
             ],
         ],
     )
-    def test_invalid_ingress_never_routes(
-        self, runtime: WorkerRuntime, case: dict[str, Any], status: int
+    def test_invalid_ingress_is_rejected_without_routing_or_leaking(
+        self,
+        runtime: WorkerRuntime,
+        constants: dict[str, Any],
+        case: dict[str, Any],
+        status: int,
+        body: str,
+        invalid: list[str],
     ) -> None:
-        result = runtime.run(Scenario.INGRESS, **case)
-        assert (result["status"], result["room"]) == (status, None)
+        assert runtime.run(Scenario.INGRESS, **case) == {
+            "status": status,
+            "body": constants[body],
+            "room": None,
+            "forwarded_body": None,
+            "worker_version": None,
+            "logs": [
+                ["ERROR", constants["invalid_settings_log"] % name] for name in invalid
+            ],
+        }
 
-    def test_routes_original_body_to_exact_room(self, runtime: WorkerRuntime) -> None:
-        assert runtime.run(Scenario.INGRESS) == {
+    @pytest.mark.parametrize(
+        "settings", [{}, {"ANTHROPIC_MODEL": ""}, {"ANTHROPIC_MODEL": MODEL}]
+    )
+    def test_routes_original_body_to_exact_room(
+        self, runtime: WorkerRuntime, settings: dict[str, str]
+    ) -> None:
+        assert runtime.run(Scenario.INGRESS, settings=settings) == {
             "status": 201,
             "body": BODY,
             "room": ENVELOPE["room_id"],

@@ -132,7 +132,7 @@ async def expire_readiness(room: Room, container: Container) -> Observations:
     container.ping_ready.clear()
     container.ping_entered.clear()
     clock = Clock()
-    with clock.installed(asyncio.get_running_loop()):
+    with clock.installed(asyncio.get_running_loop()), recorded_logs(logger) as logs:
         async with asyncio.TaskGroup() as group:
             fetch = group.create_task(room.fetch(invocation()))
             await container.ping_entered.wait()
@@ -145,6 +145,7 @@ async def expire_readiness(room: Room, container: Container) -> Observations:
         "running": container.running,
         "fired_early": fired_early,
         "deadline_timers_cancelled": [timer.cancelled for timer in clock.timers],
+        "logs": logs,
     }
 
 
@@ -220,6 +221,12 @@ async def retries_share_monitor(ctx: Any, settings: dict[str, Any]) -> Observati
     }
 
 
+async def unreported_image(ctx: Any, settings: dict[str, Any]) -> Observations:
+    container = Container(image=None)
+    room = room_for(ctx, container, settings)
+    return await observed(await room.fetch(invocation()))
+
+
 ROOM_SCENARIOS: dict[
     Scenario, Callable[[Any, dict[str, Any]], Awaitable[Observations]]
 ] = {
@@ -236,4 +243,5 @@ ROOM_SCENARIOS: dict[
     Scenario.CRASH_AFTER_READY: crash_after_ready,
     Scenario.FORWARD_FAILURE: forward_failure,
     Scenario.RETRIES_SHARE_MONITOR: retries_share_monitor,
+    Scenario.UNREPORTED_IMAGE: unreported_image,
 }

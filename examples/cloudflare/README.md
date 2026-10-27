@@ -84,12 +84,11 @@ and send a reply. Verify the posted tool events, actual reply, processed trigger
 and a follow-up using current history. Repeat in a second room with distinct
 context. A successful `/ping` is startup evidence, not conversation proof.
 
-HTTP/AgentCore target options reject unknown fields, including misspelled bearer
-options. An explicitly empty bearer token is invalid. `messages_only` defaults
-to false; this example opts in to avoid non-message cold starts. Room subscription
-management still happens. Keep the default for AgentCore: its receiver needs
-cleanup events. Here a room container's bounded lifetime replaces immediate
-adapter cleanup; do not copy that choice into general multi-room receivers.
+Bridge target options are described in [the one-shot README](../oneshot/README.md).
+This example opts in to `messages_only` to avoid non-message cold starts; room
+subscription management still happens. A room container's bounded lifetime
+replaces immediate adapter cleanup, so do not copy that choice into general
+multi-room receivers.
 
 ## Credential and lifetime boundaries
 
