@@ -184,12 +184,7 @@ class BearerTokenGuard:
         route = self._redacted(path)
         count = self._refusals[route] = self._refusals.get(route, 0) + 1
         if _is_power_of_ten(count):
-            logger.warning(
-                REFUSAL_LOG,
-                self._server_name,
-                route,
-                count,
-            )
+            logger.warning(REFUSAL_LOG, self._server_name, route, count)
 
     def _redacted(self, path: str) -> str:
         """``path`` with its room id masked; ``UNKNOWN_ROUTE`` for a path the

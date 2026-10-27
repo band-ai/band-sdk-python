@@ -83,15 +83,12 @@ class TestMcpConfigFile:
 
         await room.send("second")
 
-        first, second = room.claude.sessions
+        crashed_url, replacement_url = room.session_band_urls
         assert room.chat == ["before", "after"]
-        assert second.mcp_servers[BAND_MCP_SERVER_NAME]["url"] == (
-            room.mcp_backend.endpoint(BandMCPTransport.HTTP, room.room_id)
+        assert replacement_url == room.mcp_backend.endpoint(
+            BandMCPTransport.HTTP, room.room_id
         )
-        assert (
-            first.mcp_servers[BAND_MCP_SERVER_NAME]["url"]
-            != (second.mcp_servers[BAND_MCP_SERVER_NAME]["url"])
-        )
+        assert crashed_url != replacement_url
 
     async def test_leaving_a_room_removes_only_its_config_file(
         self, claude_room: OpenRoom

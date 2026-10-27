@@ -480,7 +480,6 @@ class ClaudeSessionManager:
         }
         if not dialed:
             return {"mcp_servers": mcp_servers}
-        extra_args = self.base_options.extra_args
         config_file = self._mcp_config_files.write(room_id, dialed)
         return {
             "mcp_servers": {
@@ -488,7 +487,10 @@ class ClaudeSessionManager:
                 for name, config in mcp_servers.items()
                 if is_in_process(config)
             },
-            "extra_args": {**extra_args, MCP_CONFIG_FLAG: str(config_file)},
+            "extra_args": {
+                **self.base_options.extra_args,
+                MCP_CONFIG_FLAG: str(config_file),
+            },
         }
 
     def discard(self, session: ClaudeRoomSession) -> None:

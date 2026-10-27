@@ -61,6 +61,14 @@ from tests.toolkit.timeouts import backstop_timeout
 logger = logging.getLogger(__name__)
 
 
+def auth_http_headers(server: LocalMCPServer) -> list[HttpHeader]:
+    """``server``'s bearer headers, as an ACP MCP server config carries them."""
+    return [
+        HttpHeader(name=name, value=value)
+        for name, value in server.auth_headers.items()
+    ]
+
+
 def called_tool(tool_calls: list[CollectedChunk], tool_name: str) -> bool:
     """Whether any tool_call chunk invoked tool_name."""
     return any(
@@ -360,10 +368,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
                         type="http",
                         name="smoke",
                         url=local_server.http_url,
-                        headers=[
-                            HttpHeader(name=name, value=value)
-                            for name, value in local_server.auth_headers.items()
-                        ],
+                        headers=auth_http_headers(local_server),
                     )
                 ],
             ),
@@ -445,10 +450,7 @@ async def test_codex_acp_band_mcp_tool_call(
                         type="http",
                         name="band",
                         url=local_server.http_url,
-                        headers=[
-                            HttpHeader(name=name, value=value)
-                            for name, value in local_server.auth_headers.items()
-                        ],
+                        headers=auth_http_headers(local_server),
                     )
                 ],
             ),
