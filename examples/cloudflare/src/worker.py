@@ -23,13 +23,8 @@ READINESS_SECONDS = 90
 IDLE_MS = 180_000
 PROXY_KEY = "proxy-managed"
 ANTHROPIC_HOST = "api.anthropic.com"
-REQUIRED_SETTINGS = (
-    "BAND_AGENT_ID",
-    "BAND_REST_URL",
-    "BAND_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "BRIDGE_TOKEN",
-)
+SECRET_SETTINGS = ("BAND_API_KEY", "ANTHROPIC_API_KEY", "BRIDGE_TOKEN")
+REQUIRED_SETTINGS = ("BAND_AGENT_ID", "BAND_REST_URL", *SECRET_SETTINGS)
 
 
 def runtime_options(value: dict[str, Any]) -> Any:
@@ -213,7 +208,7 @@ class Room(DurableObject):
             )
         except (JsException, RuntimeError, ValueError) as error:
             detail = str(error)
-            for name in ("BAND_API_KEY", "ANTHROPIC_API_KEY", "BRIDGE_TOKEN"):
+            for name in SECRET_SETTINGS:
                 secret = getattr(self.env, name, None)
                 if secret:
                     detail = detail.replace(secret, "[redacted]")

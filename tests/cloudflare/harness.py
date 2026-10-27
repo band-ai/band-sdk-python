@@ -12,7 +12,14 @@ from urllib.parse import urlsplit
 import js
 from kit import BODY, IMAGE, SETTINGS, Clock, Container, Routing
 from pyodide.ffi import create_proxy
-from worker import READINESS_SECONDS, KeyInjector, Room, logger, runtime_options
+from worker import (
+    READINESS_SECONDS,
+    SECRET_SETTINGS,
+    KeyInjector,
+    Room,
+    logger,
+    runtime_options,
+)
 from worker import Default as Ingress
 from workers import DurableObject, Request, Response, WorkerEntrypoint
 
@@ -188,7 +195,7 @@ class Harness(DurableObject):
                 assert "destroy" not in container.calls
                 assert output.getvalue()
                 body = await failed.text()
-                for name in ("BAND_API_KEY", "ANTHROPIC_API_KEY", "BRIDGE_TOKEN"):
+                for name in SECRET_SETTINGS:
                     assert SETTINGS[name] not in output.getvalue()
                     assert SETTINGS[name] not in body
 

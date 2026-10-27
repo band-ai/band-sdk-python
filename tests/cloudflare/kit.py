@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 import js
 from pyodide.ffi import create_proxy
-from worker import PROXY_KEY
+from worker import PROXY_KEY, SECRET_SETTINGS
 from workers import Request, Response
 
 SETTINGS = {
@@ -48,7 +48,7 @@ class Container:
         assert options.enableInternet is False
         assert options.env.BAND_API_KEY == PROXY_KEY
         assert options.env.ANTHROPIC_API_KEY == PROXY_KEY
-        for name in ("BAND_API_KEY", "ANTHROPIC_API_KEY", "BRIDGE_TOKEN"):
+        for name in SECRET_SETTINGS:
             assert SETTINGS[name] not in str(js.JSON.stringify(options))
 
     async def setInactivityTimeout(self, timeout: int) -> None:
@@ -96,10 +96,7 @@ class Container:
         self.calls.append("forward")
         if self.fail_forward:
             raise RuntimeError(
-                " ".join(
-                    SETTINGS[name]
-                    for name in ("BAND_API_KEY", "ANTHROPIC_API_KEY", "BRIDGE_TOKEN")
-                )
+                " ".join(SETTINGS[name] for name in SECRET_SETTINGS)
                 + " upstream failed"
             )
         return Response(await request.text(), status=201).js_object
