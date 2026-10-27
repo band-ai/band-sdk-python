@@ -25,6 +25,12 @@ local command: follow `fern.md` with `$ARGUMENTS`.
 The entry format has one source, [the format reference](references/fern-changelog-format.md),
 enforced by `scripts/validateentry.py`; guides link to it rather than restate it.
 
+## Holdbacks
+
+Only Fern's held-items ledger holds a feature across releases. When a Fern
+changelog PR marks an item "flagged by the holdbacks review", the hold came
+from the review alone and lasts one release: add the feature to the ledger.
+
 ## Scripts
 
 Each script runs standalone with `uv run --script scripts/<name>.py` and

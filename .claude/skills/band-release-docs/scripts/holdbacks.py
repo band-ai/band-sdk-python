@@ -24,7 +24,7 @@ from typing import TypeVar
 import yaml
 from collectprs import ANNOUNCED_ASSET
 from pydantic import BaseModel, ConfigDict, ValidationError
-from releasedata import HoldbacksReport, ReleaseNotes, ReleasePrs
+from releasedata import HELD_ITEMS, HoldbacksReport, ReleaseNotes, ReleasePrs
 from renderentry import SURFACE
 from stepoutputs import append_outputs
 
@@ -33,7 +33,11 @@ logger = logging.getLogger(__name__)
 SDK_REPO_NAME = "band-sdk-python"
 # A ledger source: `<repo>#<number>`, the repo optionally owner-qualified.
 LEDGER_SOURCE = re.compile(r"^(?:[\w.-]+/)?(?P<repo>[\w.-]+)#(?P<number>\d+)$")
-FLAGGED_BY_REVIEW = "flagged by the holdbacks review"
+# Only ledger holds persist: a review-only hold must be added to the ledger
+# by hand, or the next release's docs review may document the feature.
+FLAGGED_BY_REVIEW = (
+    f"flagged by the holdbacks review; add it to {HELD_ITEMS} to keep it held"
+)
 HELD_BREAKING = "the breaking change is held; file this release by hand"
 
 Model = TypeVar("Model", bound=BaseModel)
