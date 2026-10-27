@@ -14,17 +14,11 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 from band.core.content import BLANK_CONTENT_ERROR, has_visible_content
 from band.core.types import EventMessageType
 
-# Shared by the tool schema and the system prompt: what an entry of ``mentions`` is and
-# what the room makes of it. Handles, not ids: the participant roster deliberately shows
-# no ids, and a model told "id" tends to assume the reader sees an opaque token and
-# repeats the recipient's name in the content.
-MENTION_IDENTIFIERS = (
-    "Each entry is a participant's handle exactly as the room lists it: @<username> "
-    "for users, @<username>/<agent-name> for agents. Every reader sees each mention as "
-    "a chip with the participant's name, drawn where the content holds that "
-    "participant's @[[id]] token (the form stored history shows) or else in front of "
-    "the message. Typed @names or @handles stay plain text, so never write them into "
-    "the content, and never follow a mention with that person's name."
+MENTION_GUIDANCE = (
+    "Use `mentions` to address the intended recipients, preferably with their exact "
+    "handles from the room roster. Band displays their names automatically. "
+    "Write `content` as a clear, natural message, using names and formatting where "
+    "they add meaning and avoiding redundant recipient labels."
 )
 
 
@@ -44,21 +38,14 @@ def require_visible_content(value: str) -> str:
 class SendMessageInput(BaseModel):
     """Send a message to the chat room.
 
-    Use this to respond to users or other agents. The message is delivered to the
-    participants listed in mentions (at least one); every reader sees the mentioned names
-    as chips, so the content never repeats them.
+    Use this to respond to users or other agents. At least one recipient is required
+    in mentions.
     """
 
-    content: str = Field(
-        ...,
-        description=(
-            "The message content to send: plain prose. A participant's @[[id]] token "
-            "places that mention's chip inline; never type an @name or @handle."
-        ),
-    )
+    content: str = Field(..., description="The message content to send")
     mentions: list[str] = Field(
         ...,
-        description=f"The participants this message is delivered to. At least one required. {MENTION_IDENTIFIERS}",
+        description=f"Participants to address. At least one required. {MENTION_GUIDANCE}",
     )
 
     _validate_content = field_validator("content")(require_visible_content)

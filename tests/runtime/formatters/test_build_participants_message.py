@@ -4,6 +4,7 @@ from band.runtime.formatters import (
     _MAX_PARTICIPANT_DESCRIPTION_LENGTH,
     build_participants_message,
 )
+from band.runtime.tools.inputs.chat import MENTION_GUIDANCE
 
 
 class TestBuildParticipantsMessage:
@@ -23,17 +24,10 @@ class TestBuildParticipantsMessage:
         assert "u1" not in result
         assert "User" in result
 
-    def test_includes_mention_instruction(self):
+    def test_includes_shared_mention_guidance(self) -> None:
         participants = [{"id": "1", "name": "Test", "type": "User", "handle": "test"}]
         result = build_participants_message(participants)
-        assert "band_send_message" in result
-        # Instruction emphasizes using exact handles, not display names
-        assert "handle" in result
-        assert "NOT the display name" in result
-        # The roster is where a model learns what a mention is: the instruction must
-        # say the names are rendered as chips, or the model repeats them in content.
-        assert "chip with the participant's name" in result
-        assert "never repeat a mentioned name" in result
+        assert MENTION_GUIDANCE in result
 
     def test_handles_missing_fields(self):
         participants = [{"id": "1"}]  # Missing name and type
