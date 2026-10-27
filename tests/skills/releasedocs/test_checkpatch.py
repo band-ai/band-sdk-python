@@ -46,6 +46,10 @@ CONSTRUCTS = (
 )
 # Page text that must never reach the logs.
 PRIVATE = "private-page-text"
+# MDX reads `<` as JSX, so it cannot parse a page holding an autolink.
+AUTOLINK = "<https://docs.band.ai/sdks>"
+# Keeps node from ever exiting. NODE_OPTIONS splits on spaces, so it has none.
+STALL = "setInterval(()=>{},1e9)"
 # An escaped YAML string Fern renders as the page's edit link.
 ESCAPED_EDIT_LINK = 'edit-this-page-url: "\\x68ttps://evil.example/x"\n'
 
@@ -295,9 +299,7 @@ class TestCheckPatch:
     def test_editing_a_page_mdx_could_not_parse_files_the_pr_unmergeable(
         self, checkpatch: ModuleType, trees: tuple[Path, Path], tmp_path: Path
     ) -> None:
-        write_tree(
-            trees[0], {OTHER_PAGE: "# Overview\n\n<https://docs.band.ai/sdks>\n"}
-        )
+        write_tree(trees[0], {OTHER_PAGE: f"# Overview\n\n{AUTOLINK}\n"})
         write_tree(trees[1], {OTHER_PAGE: "# Overview\n\nhttps://docs.band.ai/sdks\n"})
         assert run(checkpatch, trees, tmp_path) == 0
         assert json.loads((tmp_path / "patch.json").read_text("utf-8")) == {
@@ -341,6 +343,14 @@ class TestCheckPatch:
         assert [record.levelno for record in caplog.records] == [logging.ERROR]
         assert PRIVATE not in caplog.text
         assert PRIVATE not in "".join(capfd.readouterr())
+
+    def test_a_stalled_reader_fails_without_quoting_pages(
+        self, checkpatch: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NODE_OPTIONS", before_the_reader(STALL))
+        with pytest.raises(checkpatch.ReaderError) as raised:
+            checkpatch.read_pages([PRIVATE], timeout=0)
+        assert PRIVATE not in str(raised.value)
 
     def test_no_edits_need_no_reader(
         self,
@@ -443,7 +453,7 @@ class TestCheckPatch:
             (DOCS_PAGE_TEXT + "[x](/\\evil.example)\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "[x](https://evil.example//docs.band.ai/x)\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "[x](https://[evil.example/x)\n", ["LINK"]),
-            (DOCS_PAGE_TEXT + "<https://docs.band.ai/sdks>\n", ["UNPARSED"]),
+            (DOCS_PAGE_TEXT + f"{AUTOLINK}\n", ["UNPARSED"]),
             (
                 DOCS_PAGE_TEXT.replace("---\n\n", ESCAPED_EDIT_LINK + "---\n\n"),
                 ["FRONTMATTER"],

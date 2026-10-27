@@ -43,6 +43,10 @@ ALLOWED_LINK_PREFIXES = (
     "https://pypi.org/project/band-sdk/",
 )
 MDX_READER = Path(__file__).resolve().parent / "mdx" / "readmdx.mjs"
+INSTALL_READER = f"npm ci --ignore-scripts --prefix {MDX_READER.parent}"
+# Real pages read in well under a second, but micromark is quadratic on some
+# long lines, so a crafted page could otherwise stall the release job.
+READER_TIMEOUT_SECONDS = 60
 SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
 # Browsers read an escaped dot in a path as a dot segment.
 ESCAPED_DOT = re.compile("%2e", re.IGNORECASE)
@@ -187,12 +191,15 @@ class Page(Frozen):
 READER_OUTPUT = TypeAdapter(list[Page | None])
 
 
-def read_pages(texts: list[str]) -> list[Page | None]:
+def read_pages(
+    texts: list[str], timeout: float = READER_TIMEOUT_SECONDS
+) -> list[Page | None]:
     """Read each page with MDX: None marks a page MDX cannot parse.
 
-    Raise ``ReaderError`` when the reader fails; its stderr and output may
-    quote the pages, so neither reaches the error. Start no reader for no
-    pages, so an edit-free run never needs it.
+    Raise ``ReaderError`` when the reader fails or outlives ``timeout``
+    seconds; its stderr and output may quote the pages, so neither reaches
+    the error. Start no reader for no pages, so an edit-free run never
+    needs it.
     """
     if not texts:
         return []
@@ -203,9 +210,12 @@ def read_pages(texts: list[str]) -> list[Page | None]:
             capture_output=True,
             encoding="utf-8",
             check=False,
+            timeout=timeout,
         )
     except OSError:
         raise ReaderError("could not start node") from None
+    except subprocess.TimeoutExpired:
+        raise ReaderError(f"did not finish within {timeout} seconds") from None
     if result.returncode:
         raise ReaderError(f"exited with code {result.returncode}")
     try:
@@ -293,11 +303,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 1
     except ReaderError as exc:
-        logger.error(
-            "The MDX reader %s; install it with: npm ci --ignore-scripts --prefix %s",
-            exc,
-            MDX_READER.parent,
-        )
+        logger.error("The MDX reader %s (installed by: %s)", exc, INSTALL_READER)
         return 1
     args.out.write_text(check.model_dump_json(indent=2), encoding="utf-8")
     append_outputs(

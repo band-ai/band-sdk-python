@@ -702,10 +702,13 @@ jobs:
         continue-on-error: true
         run: npm ci --ignore-scripts --prefix "$SCRIPTS/mdx"
 
+      # A backstop above checkpatch.py's own reader timeout, so a stalled
+      # check still leaves time to file the changelog.
       - name: Check the docs edits
         id: patch
         if: steps.docs-report.outcome == 'success'
         continue-on-error: true
+        timeout-minutes: 5
         run: |
           uv run --script "$SCRIPTS/checkpatch.py" "$RUNNER_TEMP/pristine" "$RUNNER_TEMP/edited" \
             --out "$RUNNER_TEMP/patch.json" --outputs "$GITHUB_OUTPUT"

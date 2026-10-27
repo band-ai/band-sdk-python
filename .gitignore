@@ -184,4 +184,4 @@ scripts/config.yaml
 .claude/settings.local.json
 
 # The release-docs MDX reader's packages (npm ci installs them)
-node_modules/
+.claude/skills/band-release-docs/scripts/mdx/node_modules/

@@ -124,10 +124,7 @@ def checkpatch(scripts: Callable[[str], ModuleType]) -> ModuleType:
     module = scripts("checkpatch")
     reader = module.MDX_READER.parent
     if shutil.which("node") is None or not (reader / "node_modules").is_dir():
-        pytest.fail(
-            "Install Node.js, then the MDX reader:"
-            f" npm ci --ignore-scripts --prefix {reader}"
-        )
+        pytest.fail(f"Install Node.js, then the MDX reader: {module.INSTALL_READER}")
     return module
 
 
