@@ -156,13 +156,27 @@ def stop_reason(release: Release | None, *, live: bool) -> StopReason | None:
     return None
 
 
+class CommandError(RuntimeError):
+    """A failed ``git`` or ``gh`` call.
+
+    Its message names only the subcommand and exit code: the output of a call
+    on the private Fern repository may name its files. ``detail`` holds stderr.
+    """
+
+    def __init__(self, command: str, code: int, detail: str) -> None:
+        super().__init__(f"{command} failed (exit {code})")
+        self.detail = detail
+
+
 def git(repo: Path, *args: str) -> str:
     try:
         return subprocess.run(
             ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
         ).stdout
     except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"git {args[0]} failed: {exc.stderr.strip()}") from exc
+        raise CommandError(
+            f"git {args[0]}", exc.returncode, exc.stderr.strip()
+        ) from exc
 
 
 def earlier_sdk_tags(repo: Path, tag: str) -> dict[str, tuple[int, int, int]]:
@@ -281,7 +295,17 @@ def gh(*args: str) -> subprocess.CompletedProcess[str]:
 def gh_failed(
     args: Sequence[str], result: subprocess.CompletedProcess[str]
 ) -> Exception:
-    return RuntimeError(f"gh {' '.join(args[:2])} failed: {result.stderr.strip()}")
+    return CommandError(
+        f"gh {' '.join(args[:2])}", result.returncode, result.stderr.strip()
+    )
+
+
+def gh_output(*args: str) -> str:
+    """Run ``gh`` and return its stdout; raise on a non-zero exit."""
+    result = gh(*args)
+    if result.returncode != 0:
+        raise gh_failed(args, result)
+    return result.stdout
 
 
 def gh_release(tag: str) -> Release | None:
@@ -302,11 +326,8 @@ def gh_release(tag: str) -> Release | None:
 
 
 def gh_pr_meta(number: int) -> PrMeta:
-    args = ("pr", "view", str(number), "--json", "title,body,labels")
-    result = gh(*args)
-    if result.returncode != 0:
-        raise gh_failed(args, result)
-    return PrMeta.model_validate_json(result.stdout)
+    output = gh_output("pr", "view", str(number), "--json", "title,body,labels")
+    return PrMeta.model_validate_json(output)
 
 
 def run(
@@ -362,6 +383,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             release_lookup=gh_release,
             pr_meta=gh_pr_meta,
         )
+    except CommandError as exc:
+        # This repository is public, so the command's output may be shown.
+        logger.error("error: %s: %s", exc, exc.detail)
+        return 1
     except (RuntimeError, ValueError) as exc:
         logger.error("error: %s", exc)
         return 1

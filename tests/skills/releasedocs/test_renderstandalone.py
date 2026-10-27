@@ -183,3 +183,33 @@ class TestStandaloneEntry:
         notes = make_notes([make_item(*TOOL_PREFIX)], breaking)
         path = renderentry.write_standalone(notes, tmp_path)
         assert MIGRATION_CODE in path.read_text(encoding="utf-8")
+
+    def test_held_item_is_left_out_of_the_standalone_entry(
+        self,
+        renderentry: ModuleType,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+    ) -> None:
+        notes = make_notes([make_item(*SEND_RETRIES), make_item(*RECONNECT)])
+        notes_file = tmp_path / "release-notes.json"
+        notes_file.write_text(notes.model_dump_json(), encoding="utf-8")
+        argv = [str(notes_file), "--out", str(tmp_path), "--drop", "1"]
+        assert renderentry.main(argv) == 0
+        assert (tmp_path / f"{RELEASE_DATE}.md").read_text(encoding="utf-8") == (
+            renderentry.render_standalone(make_notes([make_item(*SEND_RETRIES)]))
+        )
+
+    def test_every_item_held_writes_no_entry(
+        self,
+        renderentry: ModuleType,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+    ) -> None:
+        notes = make_notes([make_item(*SEND_RETRIES)])
+        notes_file = tmp_path / "release-notes.json"
+        notes_file.write_text(notes.model_dump_json(), encoding="utf-8")
+        argv = [str(notes_file), "--out", str(tmp_path), "--drop", "0"]
+        assert renderentry.main(argv) == 1
+        assert not (tmp_path / f"{RELEASE_DATE}.md").exists()

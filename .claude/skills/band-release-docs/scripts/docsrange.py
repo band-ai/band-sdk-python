@@ -4,10 +4,11 @@
 # ///
 """Choose which band-sdk releases a Fern docs review covers, and which PRs it supersedes.
 
-Reads ``gh pr list --json number,headRefName`` output for merged and open Fern
-docs PRs. Writes ``{"baseline": <tag>, "supersede": [<PR number>...]}``: the
-review covers ``baseline..TAG``, and ``supersede`` lists the open docs PRs
-whose release that range already covers. It refuses a TAG whose docs PR is
+Reads the merged and open Fern docs PR listings ``fernstate.py`` wrote into
+its ``--out`` directory. Writes
+``{"baseline": <tag>, "supersede": [<PR number>...]}``: the review covers
+``baseline..TAG``, and ``supersede`` lists the open docs PRs whose release
+that range already covers. It refuses a TAG whose docs PR is
 already merged, a TAG older than a release whose docs PR is merged (that review
 would roll pages back), and a TAG older than an open docs PR, which covers it.
 """
@@ -21,12 +22,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from collectprs import GhModel, earlier_sdk_tags, release_version, tag_version
-from pydantic import BaseModel, TypeAdapter
-from releasedata import SDK_TAG_PREFIX
+from fernstate import DOCS_MERGED_FILE, DOCS_OPEN_FILE
+from pydantic import BaseModel, TypeAdapter, ValidationError
+from releasedata import DOCS_BRANCH_PREFIX, SDK_TAG_PREFIX, shape_errors
 
 logger = logging.getLogger(__name__)
 
-DOCS_BRANCH_PREFIX = "docs/python-sdk-"
 # A review never reaches further back than this many band-sdk releases.
 MAX_DOCS_RELEASES = 3
 
@@ -103,17 +104,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tag")
-    parser.add_argument("merged", type=Path, help="gh pr list --state merged output")
-    parser.add_argument("open", type=Path, help="gh pr list --state open output")
+    parser.add_argument("state", type=Path, help="fernstate.py's --out directory")
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     args = parser.parse_args(argv)
 
     try:
         release_version(args.tag)
-        merged = DOCS_PRS.validate_json(args.merged.read_bytes())
-        open_prs = DOCS_PRS.validate_json(args.open.read_bytes())
+        merged = DOCS_PRS.validate_json((args.state / DOCS_MERGED_FILE).read_bytes())
+        open_prs = DOCS_PRS.validate_json((args.state / DOCS_OPEN_FILE).read_bytes())
         earlier = earlier_sdk_tags(args.repo, args.tag).values()
         found = docs_range(args.tag, list(earlier), merged, open_prs)
+    except ValidationError as exc:
+        logger.error(
+            "A docs PR listing does not match its shape:\n%s", shape_errors(exc)
+        )
+        return 1
     except (RuntimeError, ValueError) as exc:
         logger.error("error: %s", exc)
         return 1
