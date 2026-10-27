@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
-from reportschema import REPORT_MODELS, ReportKind
+from reportschema import REPORT_MODELS, ReportKind, add_kind_argument
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +40,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("execution_file", type=Path)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument(
-        "--kind",
-        type=ReportKind,
-        choices=list(ReportKind),
-        default=ReportKind.CHANGELOG,
-    )
+    add_kind_argument(parser)
     args = parser.parse_args(argv)
 
     try:

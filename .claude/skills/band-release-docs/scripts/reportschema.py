@@ -59,14 +59,18 @@ def cli_schema(kind: ReportKind = ReportKind.CHANGELOG) -> str:
     return json.dumps(inline(schema, definitions), separators=(",", ":"))
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def add_kind_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--kind",
         type=ReportKind,
         choices=list(ReportKind),
         default=ReportKind.CHANGELOG,
     )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_kind_argument(parser)
     args = parser.parse_args(argv)
     sys.stdout.write(cli_schema(args.kind) + "\n")
     return 0

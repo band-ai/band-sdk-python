@@ -35,9 +35,9 @@ from docsreport import DocsReport, pr_body
 from fernstate import Action, BranchPr, FernState, Gh, action
 from holdbacks import (
     held_reasons,
-    ledger_matches,
     load_ledger,
     refuse_held_breaking,
+    with_ledger_holds,
 )
 from pydantic import BaseModel
 from releasedata import (
@@ -302,7 +302,7 @@ class Filer:
         entries = load_ledger(self.fern / HELD_ITEMS)
         refuse_held_breaking(changelog.release, entries)
         # A re-run reuses the holdbacks job's indexes; the fresh ledger may hold more.
-        held = sorted(set(changelog.held) | set(ledger_matches(notes, entries)))
+        held = with_ledger_holds(notes, changelog.held, entries)
         reasons = held_reasons(notes, held, entries)
         with tempfile.TemporaryDirectory() as scratch:
             body = Path(scratch) / "pr-body.md"

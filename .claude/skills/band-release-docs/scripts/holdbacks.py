@@ -118,7 +118,14 @@ def held_indexes(
     if report.hold_breaking:
         raise HoldbacksError(HELD_BREAKING)
     refuse_held_breaking(release, entries)
-    return sorted(set(report.held) | set(ledger_matches(notes, entries)))
+    return with_ledger_holds(notes, report.held, entries)
+
+
+def with_ledger_holds(
+    notes: ReleaseNotes, held: Sequence[int], entries: Sequence[LedgerEntry]
+) -> list[int]:
+    """``held`` plus every index a ledger entry holds, sorted."""
+    return sorted(set(held) | set(ledger_matches(notes, entries)))
 
 
 def refuse_held_breaking(release: ReleasePrs, entries: Sequence[LedgerEntry]) -> None:
