@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from pathlib import Path
 from typing import TypeVar
 
 import pytest
@@ -12,6 +11,7 @@ from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from band.integrations.claude_sdk import transport
+from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG
 from tests.adapters.roompeer import CLEANUP_FAILURE, MCP_CONFIG_ARG
 from tests.paths import ROOM_PEER
 
@@ -74,9 +74,9 @@ class WorkspacePeer(WorkspaceProcess):
             str(ROOM_PEER),
             *self.arguments,
         ]
-        # As the SDK passes a config file path to the real CLI.
-        if isinstance(mcp_config := self._options.mcp_servers, str | Path):
-            command.extend([MCP_CONFIG_ARG, str(mcp_config)])
+        # As the SDK passes the manager's config file to the real CLI.
+        if (mcp_config := self._options.extra_args.get(MCP_CONFIG_FLAG)) is not None:
+            command.extend([MCP_CONFIG_ARG, mcp_config])
         return command
 
 

@@ -28,7 +28,7 @@ from mcp import ClientSession
 
 from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
 from band.integrations.claude_sdk import session_manager
-from band.integrations.claude_sdk.mcpconfig import MCP_SERVERS_KEY
+from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG, MCP_SERVERS_KEY
 from band.integrations.mcp import BandMCPTransport
 from tests.adapters.hold import Hold
 from tests.baseline.decisions import ModelDecision, ToolCall
@@ -194,15 +194,28 @@ class FakeClaude:
         assert not self._turns, f"{len(self._turns)} scripted turn(s) never ran"
 
 
+def read_mcp_config(path: str | Path) -> dict[str, Any]:
+    """The servers in a ``--mcp-config`` file."""
+    return json.loads(Path(path).read_text(encoding="utf-8"))[MCP_SERVERS_KEY]
+
+
+def cli_mcp_config_file(options: ClaudeAgentOptions) -> Path:
+    """The private config file ``options`` pass the CLI as an extra
+    ``--mcp-config``."""
+    return Path(options.extra_args[MCP_CONFIG_FLAG])
+
+
 def cli_mcp_servers(options: ClaudeAgentOptions) -> dict[str, Any]:
-    """The MCP servers a CLI started with ``options`` reads at start: the
-    SDK's inline dict, or the ``--mcp-config`` file a path names."""
+    """The MCP servers a CLI started with ``options`` reads at start, merged
+    from every ``--mcp-config`` it gets, as the CLI merges them."""
     match options.mcp_servers:
         case dict() as servers:
-            return servers
+            inline = dict(servers)
         case path:
-            config = json.loads(Path(path).read_text(encoding="utf-8"))
-            return config[MCP_SERVERS_KEY]
+            inline = read_mcp_config(path)
+    if (extra := options.extra_args.get(MCP_CONFIG_FLAG)) is None:
+        return inline
+    return {**inline, **read_mcp_config(extra)}
 
 
 @contextmanager

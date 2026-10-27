@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import os
 import stat
-from pathlib import Path
 
 import pytest
 
 from band.integrations.mcp import BandMCPTransport
 from band.runtime.tools import BAND_MCP_SERVER_NAME
+from tests.adapters.claude_sdk.fakecli import cli_mcp_config_file
 from tests.adapters.claude_sdk.helpers import OpenRoom, sdk_cli_argv
 from tests.adapters.roompeer import MCP_CONFIG_ARG
 from tests.mcpclient import bearer_token
@@ -31,7 +31,9 @@ class TestMcpConfigFile:
         [cli] = room.claude.sessions
         argv = sdk_cli_argv(cli.options)
         token = bearer_token(room.mcp_backend.headers)
-        assert argv[argv.index(MCP_CONFIG_ARG) + 1] == str(cli.options.mcp_servers)
+        assert argv[argv.index(MCP_CONFIG_ARG) + 1] == str(
+            cli_mcp_config_file(cli.options)
+        )
         assert cli.mcp_servers == {
             BAND_MCP_SERVER_NAME: {
                 "type": "http",
@@ -50,7 +52,7 @@ class TestMcpConfigFile:
         room.claude.script([room.model_reply("hi")])
         await room.send("hello")
 
-        config = Path(room.claude.sessions[0].options.mcp_servers)
+        config = cli_mcp_config_file(room.claude.sessions[0].options)
         assert (
             stat.S_IMODE(config.stat().st_mode),
             stat.S_IMODE(config.parent.stat().st_mode),
@@ -97,7 +99,7 @@ class TestMcpConfigFile:
         room = await claude_room()
         room.claude.script([room.model_reply("hi")])
         await room.send("hello")
-        config = Path(room.claude.sessions[0].options.mcp_servers)
+        config = cli_mcp_config_file(room.claude.sessions[0].options)
 
         await room.adapter.cleanup_all()
 

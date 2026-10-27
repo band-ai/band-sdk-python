@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import ANY
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
@@ -21,6 +22,7 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapterConfig,
 )
 from band.core.types import Emit
+from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG
 from band.integrations.claude_sdk.transport import create_transport
 from tests.adapters.claude_sdk.fakecli import cli_mcp_servers
 from tests.adapters.claude_sdk.helpers import (
@@ -82,7 +84,7 @@ async def test_cli_options_reach_the_cli(claude_room: OpenRoom, tmp_path: Path) 
     assert options.cli_path == cli.cli_path
     assert options.env == {"ANTHROPIC_API_KEY": "per-agent-key"}
     assert options.add_dirs == [str(tmp_path / "shared")]
-    assert options.extra_args == {"debug-to-stderr": None}
+    assert options.extra_args == {"debug-to-stderr": None, MCP_CONFIG_FLAG: ANY}
 
 
 async def test_plugins_leave_band_wiring_in_place(

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, get_args
+from unittest.mock import ANY
 
 import pytest
 import yaml
@@ -17,6 +18,7 @@ from band.adapters.claude_sdk import (
     ClaudePermissionMode,
     ClaudeSDKAdapterConfig,
 )
+from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import WRITE_NOTE, OpenRoom
 from tests.baseline.decisions import ModelDecision
@@ -88,7 +90,7 @@ async def test_a_yaml_host_config_governs_the_cli_and_the_approval_flow(
     assert options.setting_sources == ["project"]
     assert Path(options.cwd) == tmp_path
     assert options.env == {"GITHUB_TOKEN": "per-agent-token"}
-    assert options.extra_args == {"debug-to-stderr": None}
+    assert options.extra_args == {"debug-to-stderr": None, MCP_CONFIG_FLAG: ANY}
 
 
 @pytest.mark.looptime

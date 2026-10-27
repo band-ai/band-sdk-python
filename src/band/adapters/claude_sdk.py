@@ -126,6 +126,7 @@ from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
     DedupingAgentTools,
 )
+from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
 from band.integrations.claude_sdk.session_manager import (
     CLI_STARTUP_TIMEOUT_S,  # noqa: F401 -- re-exported for adapter configs
@@ -209,7 +210,7 @@ SDK_OWNED_CLI_FLAGS: frozenset[str] = frozenset(
         "fallback-model",
         "input-format",
         "max-thinking-tokens",
-        "mcp-config",
+        MCP_CONFIG_FLAG,
         "model",
         "output-format",
         "permission-mode",

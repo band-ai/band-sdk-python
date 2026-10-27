@@ -19,7 +19,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-from band.integrations.claude_sdk.mcpconfig import MCP_SERVERS_KEY
+from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG, MCP_SERVERS_KEY
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 
 WRITE_PREFIX = "WRITE="
@@ -41,7 +41,7 @@ HOLD_POLL_S = 0.01
 FAIL_STARTUP_ARG = "--fail-startup"
 HOLD_STARTUP_ARG = "--hold-startup"
 # The Claude CLI's flag naming its MCP config file.
-MCP_CONFIG_ARG = "--mcp-config"
+MCP_CONFIG_ARG = f"--{MCP_CONFIG_FLAG}"
 
 
 class PeerCommand(StrEnum):

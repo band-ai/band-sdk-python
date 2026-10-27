@@ -29,7 +29,11 @@ from band.core.retention import (
     RoomRetentionConfig,
 )
 from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
-from band.integrations.claude_sdk.mcpconfig import McpConfigFiles
+from band.integrations.claude_sdk.mcpconfig import (
+    MCP_CONFIG_FLAG,
+    McpConfigFiles,
+    is_in_process,
+)
 from band.workspaces import RoomWorkspaces
 
 try:
@@ -444,14 +448,9 @@ class ClaudeSessionManager:
     ) -> ClaudeAgentOptions:
         """``base_options`` with one room session's overrides applied.
 
-        Servers given as a dict reach the CLI as a private file, keeping the
-        headers they carry out of the CLI's argv; an empty dict stays as is,
-        so the SDK passes no config. ``dataclasses.replace()`` shallow-copies
-        every base field.
+        ``dataclasses.replace()`` shallow-copies every base field.
         """
-        if isinstance(mcp_servers, dict) and mcp_servers:
-            mcp_servers = self._mcp_config_files.write(session.room_id, mcp_servers)
-        overrides: dict[str, Any] = {"mcp_servers": mcp_servers}
+        overrides = self._mcp_overrides(session.room_id, mcp_servers)
         if self._workspaces is not None:
             overrides["cwd"] = self._workspaces.claim(session.room_id)
         if resume:
@@ -459,6 +458,38 @@ class ClaudeSessionManager:
         if self._can_use_tool_factory:
             overrides["can_use_tool"] = self._can_use_tool_factory(session, generation)
         return dataclasses.replace(self.base_options, **overrides)
+
+    def _mcp_overrides(self, room_id: str, mcp_servers: McpServers) -> dict[str, Any]:
+        """The CLI's MCP servers, keeping any headers out of its argv.
+
+        Servers the CLI dials go to the room's private config file, passed as
+        an extra ``--mcp-config``; in-process ``sdk`` servers stay in the dict,
+        where the SDK serves them. A path is passed on as given.
+        """
+        if not isinstance(mcp_servers, dict):
+            return {"mcp_servers": mcp_servers}
+        dialed = {
+            name: config
+            for name, config in mcp_servers.items()
+            if not is_in_process(config)
+        }
+        if not dialed:
+            return {"mcp_servers": mcp_servers}
+        extra_args = self.base_options.extra_args
+        if MCP_CONFIG_FLAG in extra_args:
+            raise ValueError(
+                f"extra_args[{MCP_CONFIG_FLAG!r}] would replace the MCP config "
+                "file this manager writes; pass those servers in mcp_servers"
+            )
+        config_file = self._mcp_config_files.write(room_id, dialed)
+        return {
+            "mcp_servers": {
+                name: config
+                for name, config in mcp_servers.items()
+                if is_in_process(config)
+            },
+            "extra_args": {**extra_args, MCP_CONFIG_FLAG: str(config_file)},
+        }
 
     def discard(self, session: ClaudeRoomSession) -> None:
         """Forget a disposed room and release its workspace claim."""
