@@ -162,15 +162,20 @@ class FakeGh:
                 return pr.url + "\n"
             case (
                 "pr",
-                "view",
+                "edit",
                 number,
                 "--repo",
                 self.repo,
-                "--json",
-                "body,headRefOid",
+                "--title",
+                _,
+                "--body-file",
+                body,
             ):
+                assert self.remote is not None, "this test has no remote to push to"
                 pr = self.number(number)
-                return json.dumps({"body": pr.body, "headRefOid": pr.sha})
+                pr.sha = self.remote.head(pr.head)
+                pr.body = Path(body).read_text("utf-8")
+                return ""
             case ("api", path) if match := CHECK_RUNS.match(path):
                 (pr,) = [p for p in self.prs if p.sha == match[1]]
                 return json.dumps({"check_runs": self.checks.get(pr.head, [])})

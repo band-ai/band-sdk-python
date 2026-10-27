@@ -204,26 +204,40 @@ class TestFileFern:
         )
         assert "Reconnect" not in fern_remote.file_on(CHANGELOG, DATE_FILE)
 
-    def test_open_pr_from_an_earlier_run_is_reused_and_merged(
+    def test_open_pr_is_refiled_from_this_runs_content_before_merging(
         self,
         filefern: ModuleType,
         fernstate: ModuleType,
+        renderentry: ModuleType,
         gh: FakeGh,
         fern_remote: FernRemote,
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
     ) -> None:
+        pushed = {DATE_FILE: "pushed since the last run", "fern/docs.yml": "x"}
         earlier = gh.add_pr(
-            CHANGELOG, OPEN, sha=fern_remote.push_branch(CHANGELOG, {DATE_FILE: "x"})
+            CHANGELOG, OPEN, sha=fern_remote.push_branch(CHANGELOG, pushed)
         )
         gh.checks[CHANGELOG] = PASSING
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
-        extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
+        items = [make_item(*SEND_RETRIES)]
+        extra = notes_args(make_notes, items, tmp_path)
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 0
         )
         assert (gh.on(CHANGELOG), earlier.state) == ([earlier], MERGED)
+        assert earlier.sha == fern_remote.head(CHANGELOG)
+        assert fern_remote.file_on(
+            CHANGELOG, DATE_FILE
+        ) == renderentry.render_standalone(make_notes(items))
+        assert run_git(
+            "-C",
+            str(fern_remote.bare),
+            "diff",
+            "--name-only",
+            f"{fern_remote.base}...{CHANGELOG}",
+        ).split() == [DATE_FILE]
 
     def test_merged_pr_is_not_filed_again(
         self,
@@ -295,7 +309,7 @@ class TestFileFern:
         assert (docs.state, older.state) == (OPEN, OPEN)
         assert f"## Do not merge\n\n- `{DOCS_PAGE}`: adds a JSX tag\n" in docs.body
 
-    def test_reused_do_not_merge_pr_is_never_merged(
+    def test_open_pr_this_run_has_nothing_to_file_for_is_never_merged(
         self,
         filefern: ModuleType,
         fernstate: ModuleType,
@@ -303,14 +317,15 @@ class TestFileFern:
         fern_remote: FernRemote,
         tmp_path: Path,
     ) -> None:
-        sha = fern_remote.push_branch(DOCS, {DOCS_PAGE: "edited"})
-        earlier = gh.add_pr(
-            DOCS, OPEN, sha=sha, body="## Do not merge\n\n- a check failed\n"
-        )
+        sha = fern_remote.push_branch(DOCS, {DOCS_PAGE: "pushed since the last run"})
+        earlier = gh.add_pr(DOCS, OPEN, sha=sha)
         gh.checks[DOCS] = PASSING
         state = read_state(fernstate, gh, tmp_path)
         assert file_fern(filefern, gh, fern_remote, tmp_path, state, "live") == 1
-        assert earlier.state == OPEN
+        assert (earlier.state, read_outputs(tmp_path / "outputs")) == (
+            OPEN,
+            {"docs_pr": earlier.url},
+        )
 
     def test_test_mode_closes_both_rehearsal_prs_unmerged(
         self,

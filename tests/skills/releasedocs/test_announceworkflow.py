@@ -188,6 +188,10 @@ class TestAnnounceWorkflow:
         drop = step_position("fern", lambda s: s.get("run") == "rm -rf fern/.git")
         assert drop < step_position("fern", uses(CLAUDE_ACTION))
 
+    def test_docs_review_runs_when_an_open_pr_is_refiled(self) -> None:
+        review = job("fern")["steps"][step_position("fern", uses(CLAUDE_ACTION))]
+        assert review["if"] == "steps.state.outputs.docs != 'skip'"
+
     def test_claude_steps_cannot_print_tool_results(self) -> None:
         for step in claude_steps().values():
             assert step["env"] == {"ACTIONS_STEP_DEBUG": "false"}

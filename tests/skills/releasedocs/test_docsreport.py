@@ -54,7 +54,6 @@ class TestDocsReport:
     ) -> None:
         body = docsreport.pr_body(report(docsreport), RELEASE_TAG, [7], [])
         assert body == BODY
-        assert docsreport.is_do_not_merge(body) is False
 
     def test_failed_content_checks_mark_the_body_do_not_merge(
         self, docsreport: ModuleType
@@ -63,7 +62,6 @@ class TestDocsReport:
             report(docsreport), RELEASE_TAG, [], ["`a.mdx`: adds a JSX tag"]
         )
         assert body.endswith("## Do not merge\n\n- `a.mdx`: adds a JSX tag\n")
-        assert docsreport.is_do_not_merge(body) is True
 
     def test_mentions_and_issue_references_render_inert(
         self, docsreport: ModuleType

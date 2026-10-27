@@ -20,7 +20,7 @@ from textsafety import pr_body_text
 
 # A repository-relative path: no scheme, no parent step, no leading slash.
 SOURCE_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[\w.@+/-]+$")
-# The section that keeps a docs PR from merging, even when a re-run reuses it.
+# The section listing the content checks that keep a docs PR from merging.
 DO_NOT_MERGE = "Do not merge"
 
 Line = Annotated[str, Field(min_length=1), AfterValidator(single_line)]
@@ -85,10 +85,6 @@ def heading(title: str) -> str:
 
 def section(title: str, lines: list[str]) -> list[str]:
     return [heading(title), "", *lines, ""]
-
-
-def is_do_not_merge(body: str) -> bool:
-    return heading(DO_NOT_MERGE) in body.splitlines()
 
 
 def review_line(page: PageReview) -> str:

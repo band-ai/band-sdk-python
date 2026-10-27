@@ -5,10 +5,11 @@
 """File the Fern changelog and docs PRs from checked inputs, then merge or close them.
 
 Runs only after every check passed, holding the write token, in a fresh clone
-of Fern ``dev`` (``--fern``). For each part it skips a merged branch PR,
-reuses an open one, or commits, pushes, and opens a new PR. It then waits
-until every check run on the PR's head succeeds and squash-merges it (live) or
-closes it (test). A docs PR whose content checks failed is opened but never
+of Fern ``dev`` (``--fern``). For each part it skips a merged branch PR, or
+commits this run's checked content, force-pushes it, and opens a new PR or
+updates the open one, so nothing pushed to the branch since is merged
+unchecked. It then waits until every check run on the PR's head succeeds and
+squash-merges it (live) or closes it (test). A docs PR whose content checks failed is opened but never
 merged; superseded docs PRs are closed once the docs PR merges. Appends each
 PR link to ``--outputs`` and ``--summary``, and fails when a part is left
 unmerged.
@@ -19,7 +20,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 import shutil
 import tempfile
 import time
@@ -30,8 +30,8 @@ from functools import partial
 from pathlib import Path
 
 from checkpatch import PatchCheck
-from collectprs import GhModel, gh_output, git
-from docsreport import DocsReport, is_do_not_merge, pr_body
+from collectprs import gh_output, git
+from docsreport import DocsReport, pr_body
 from fernstate import Action, BranchPr, FernState, Gh, action
 from holdbacks import held_reasons, load_ledger
 from pydantic import BaseModel
@@ -47,7 +47,6 @@ MIN_CHECK_RUNS = 2
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
 CHECK_POLL_SECONDS = 30
 CHECK_POLL_ATTEMPTS = 40
-SUPERSEDES = re.compile(r"^Supersedes #(\d+)$", re.MULTILINE)
 
 
 class Mode(StrEnum):
@@ -57,6 +56,7 @@ class Mode(StrEnum):
 
 class Outcome(StrEnum):
     NOTHING = "nothing to file"
+    LEFT_OPEN = "open PR left unmerged: this run has nothing to file"
     ALREADY_MERGED = "already merged"
     MERGED = "merged"
     CLOSED = "checks passed; closed unmerged (test)"
@@ -83,11 +83,6 @@ class CheckRun(BaseModel):
 
 class CheckRuns(BaseModel):
     check_runs: list[CheckRun]
-
-
-class OpenPrView(GhModel):
-    body: str
-    head_ref_oid: str
 
 
 @dataclass(frozen=True)
@@ -179,12 +174,32 @@ class Filer:
         return git(self.fern, "rev-parse", "HEAD").strip()
 
     def open_pr(
-        self, branch: str, title: str, body: str, *, mergeable: bool
+        self,
+        branch: str,
+        title: str,
+        body: str,
+        *,
+        mergeable: bool,
+        existing: BranchPr | None,
     ) -> FiledPr:
+        """Push this run's commit; update ``existing`` or open a new PR."""
         sha = self.push(branch, title)
         with tempfile.TemporaryDirectory() as scratch:
             body_file = Path(scratch) / "body.md"
             body_file.write_text(body, encoding="utf-8")
+            if existing is not None:
+                self.gh(
+                    "pr",
+                    "edit",
+                    str(existing.number),
+                    "--repo",
+                    FERN_REPO,
+                    "--title",
+                    title,
+                    "--body-file",
+                    str(body_file),
+                )
+                return FiledPr(existing.number, existing.url, sha, mergeable)
             url = self.gh(
                 "pr",
                 "create",
@@ -200,18 +215,6 @@ class Filer:
                 str(body_file),
             ).strip()
         return FiledPr(int(url.rsplit("/", 1)[1]), url, sha, mergeable)
-
-    def view(self, pr: BranchPr) -> OpenPrView:
-        output = self.gh(
-            "pr",
-            "view",
-            str(pr.number),
-            "--repo",
-            FERN_REPO,
-            "--json",
-            "body,headRefOid",
-        )
-        return OpenPrView.model_validate_json(output)
 
     def wait_for_checks(self, sha: str) -> ChecksState:
         state = ChecksState.PENDING
@@ -269,7 +272,11 @@ class Filer:
             )
 
     def file_changelog(
-        self, branch: str, notes: ReleaseNotes, held: Sequence[int]
+        self,
+        branch: str,
+        notes: ReleaseNotes,
+        held: Sequence[int],
+        existing: BranchPr | None,
     ) -> FiledPr:
         self.start_branch(branch)
         reasons = held_reasons(notes, held, load_ledger(self.fern / HELD_ITEMS))
@@ -278,10 +285,16 @@ class Filer:
             merge_into(notes, self.fern / CHANGELOG_DIR, held, body, reasons)
             text = body.read_text(encoding="utf-8")
         return self.open_pr(
-            branch, self.title("docs(changelog): Python SDK"), text, mergeable=True
+            branch,
+            self.title("docs(changelog): Python SDK"),
+            text,
+            mergeable=True,
+            existing=existing,
         )
 
-    def file_docs(self, branch: str, docs: DocsInput) -> FiledPr:
+    def file_docs(
+        self, branch: str, docs: DocsInput, existing: BranchPr | None
+    ) -> FiledPr:
         self.start_branch(branch)
         for path in docs.check.files:
             target = self.fern / path
@@ -293,31 +306,30 @@ class Filer:
         violations = [str(finding) for finding in docs.check.content_violations]
         body = pr_body(docs.report, self.tag, docs.supersede, violations)
         return self.open_pr(
-            branch, self.title("docs: Python SDK"), body, mergeable=docs.check.mergeable
+            branch,
+            self.title("docs: Python SDK"),
+            body,
+            mergeable=docs.check.mergeable,
+            existing=existing,
         )
 
     def new_changelog(
-        self, branch: str, changelog: tuple[ReleaseNotes, list[int]] | None
+        self,
+        branch: str,
+        changelog: tuple[ReleaseNotes, list[int]] | None,
+        existing: BranchPr | None,
     ) -> tuple[FiledPr, list[int]] | None:
         if changelog is None:
             return None
-        return self.file_changelog(branch, *changelog), []
+        return self.file_changelog(branch, *changelog, existing), []
 
     def new_docs(
-        self, branch: str, docs: DocsInput | None
+        self, branch: str, docs: DocsInput | None, existing: BranchPr | None
     ) -> tuple[FiledPr, list[int]] | None:
         if docs is None or not docs.check.files:
             return None
         supersede = docs.supersede if self.mode is Mode.LIVE else []
-        return self.file_docs(branch, docs), supersede
-
-    def reused(self, pr: BranchPr) -> tuple[FiledPr, list[int]]:
-        """An open PR from an earlier run, with the PRs its body supersedes."""
-        view = self.view(pr)
-        supersede = [int(number) for number in SUPERSEDES.findall(view.body)]
-        return FiledPr(
-            pr.number, pr.url, view.head_ref_oid, not is_do_not_merge(view.body)
-        ), supersede
+        return self.file_docs(branch, docs, existing), supersede
 
 
 @dataclass(frozen=True)
@@ -329,20 +341,24 @@ class PartResult:
 def run_part(
     filer: Filer,
     pr: BranchPr | None,
-    file_new: Callable[[], tuple[FiledPr, list[int]] | None],
+    file_new: Callable[[BranchPr | None], tuple[FiledPr, list[int]] | None],
 ) -> PartResult:
-    """Skip a merged PR, reuse an open one, or file a new one; then settle it."""
+    """Skip a merged PR, else file this run's content (updating an open PR); then settle it."""
     try:
         match action(pr):
             case Action.SKIP if pr is not None:
                 return PartResult(Outcome.ALREADY_MERGED, pr.url)
-            case Action.REUSE if pr is not None:
-                filed, supersede = filer.reused(pr)
+            case Action.REUSE:
+                existing = pr
             case _:
-                new = file_new()
-                if new is None:
-                    return PartResult(Outcome.NOTHING)
-                filed, supersede = new
+                existing = None
+        new = file_new(existing)
+        if new is None:
+            # An open PR this run can't vouch for is never merged.
+            if existing is not None:
+                return PartResult(Outcome.LEFT_OPEN, existing.url)
+            return PartResult(Outcome.NOTHING)
+        filed, supersede = new
         outcome = filer.settle(filed)
         if outcome is Outcome.MERGED:
             filer.close_superseded(filed, supersede)

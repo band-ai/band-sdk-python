@@ -35,7 +35,7 @@
 #
 # Recovery: "Re-run failed jobs". Each step is its own job, so a Discord
 # failure after Slack posted re-posts only to Discord, and a fern re-run skips
-# merged Fern PRs and reuses open ones. /band-release-docs <tag> files the Fern
+# merged Fern PRs and refiles open ones from its own checked content. /band-release-docs <tag> files the Fern
 # PRs by hand.
 # Re-announcing: a live run stops before Claude when the release already
 # carries release-notes.json. Delete that asset, then dispatch again.
@@ -567,14 +567,14 @@ jobs:
           uv run --script "$SCRIPTS/fernstate.py" "${args[@]}"
 
       - name: Pick the docs range
-        if: steps.state.outputs.docs == 'file'
+        if: steps.state.outputs.docs != 'skip'
         run: |
           uv run --script "$SCRIPTS/docsrange.py" "$TAG" \
             "$RUNNER_TEMP/state/docs-merged.json" "$RUNNER_TEMP/state/docs-open.json" \
             --repo "$SRC" > "$RUNNER_TEMP/range.json"
 
       - name: Collect the review's PRs
-        if: steps.state.outputs.docs == 'file'
+        if: steps.state.outputs.docs != 'skip'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -593,7 +593,7 @@ jobs:
         run: rm -rf fern/.git
 
       - name: Prepare the review workspace
-        if: steps.state.outputs.docs == 'file'
+        if: steps.state.outputs.docs != 'skip'
         run: |
           mkdir sdk
           git -C "$SRC" archive "$TAG" | tar -x -C sdk
@@ -602,13 +602,13 @@ jobs:
 
       - name: Emit the docs schema
         id: docs-schema
-        if: steps.state.outputs.docs == 'file'
+        if: steps.state.outputs.docs != 'skip'
         run: echo "schema=$(uv run --script "$SCRIPTS/reportschema.py" --kind docs)" >> "$GITHUB_OUTPUT"
 
       # Debug output would print tool results (Fern pages) to public logs.
       - name: Review the docs
         id: docs-claude
-        if: steps.state.outputs.docs == 'file'
+        if: steps.state.outputs.docs != 'skip'
         timeout-minutes: ${{ fromJSON(env.DOCS_TIMEOUT_MINUTES) }}
         uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         env:
@@ -634,7 +634,7 @@ jobs:
             --json-schema '${{ steps.docs-schema.outputs.schema }}'
 
       - name: Read the docs report
-        if: steps.state.outputs.docs == 'file'
+        if: steps.state.outputs.docs != 'skip'
         env:
           EXECUTION_FILE: ${{ steps.docs-claude.outputs.execution_file }}
         run: |
@@ -643,7 +643,7 @@ jobs:
 
       - name: Check the docs edits
         id: patch
-        if: steps.state.outputs.docs == 'file'
+        if: steps.state.outputs.docs != 'skip'
         run: |
           uv run --script "$SCRIPTS/checkpatch.py" "$RUNNER_TEMP/pristine" fern \
             --out "$RUNNER_TEMP/patch.json" --outputs "$GITHUB_OUTPUT"
@@ -675,7 +675,7 @@ jobs:
           uv run --script "$SCRIPTS/fernstate.py" "${args[@]}"
 
       - name: Re-pick the docs range
-        if: env.MODE != 'dry-run' && steps.state.outputs.docs == 'file'
+        if: env.MODE != 'dry-run' && steps.state.outputs.docs != 'skip'
         run: |
           uv run --script "$SCRIPTS/docsrange.py" "$TAG" \
             "$RUNNER_TEMP/fresh/docs-merged.json" "$RUNNER_TEMP/fresh/docs-open.json" \
@@ -704,7 +704,7 @@ jobs:
             read -ra held <<< "$HELD"
             args+=(--notes "$RUNNER_TEMP/full/release-notes.json" --held "${held[@]}")
           fi
-          if [[ "$DOCS" == file && "$CHANGED" != 0 ]]; then
+          if [[ "$DOCS" != skip && "$CHANGED" != 0 ]]; then
             args+=(--docs-check "$RUNNER_TEMP/patch.json" --docs-report "$RUNNER_TEMP/docs-report.json" \
               --docs-range "$RUNNER_TEMP/range.json" --edited fern --pristine "$RUNNER_TEMP/pristine")
           fi
