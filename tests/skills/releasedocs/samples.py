@@ -35,12 +35,25 @@ Create an agent with `Agent.create()`.
 
 See the [reference](https://docs.band.ai/reference).
 """
-LEDGER = """held_items:
-  - id: sdk-901-room-tasks
-    source: band-sdk-python#901
+# A docs review's report on that page.
+DOCS_REPORT = {
+    "summary": "Agent creation now uses `Agent.start()`.",
+    "pages_reviewed": [{"page": DOCS_PAGE, "reason": "Renamed", "sources": [812]}],
+    "claims": [],
+    "also_stale": [],
+    "pages_missing": [],
+}
+# The PR the ledger's sdks entry cites, and that entry's fields.
+HELD_PR = "901"
+HELD_SOURCE = f"band-sdk-python#{HELD_PR}"
+LEDGER_ID = "sdk-901-room-tasks"
+LEDGER_REASON = "Not public yet."
+LEDGER = f"""held_items:
+  - id: {LEDGER_ID}
+    source: {HELD_SOURCE}
     title: Room tasks
     status: held
-    reason: Not public yet.
+    reason: {LEDGER_REASON}
     surfaces: [sdks, platform]
     released_surfaces: []
   - id: platform-77-billing
@@ -55,5 +68,3 @@ LEDGER = """held_items:
 RELEASED_LEDGER = LEDGER.replace(
     "released_surfaces: []", "released_surfaces: [sdks]", 1
 )
-# The PR the ledger's sdks entry cites.
-HELD_PR = "901"

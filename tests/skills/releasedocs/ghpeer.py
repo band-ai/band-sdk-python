@@ -39,6 +39,12 @@ class FakePr:
     body: str = ""
     files: list[str] = field(default_factory=list)
     comments: list[str] = field(default_factory=list)
+    earlier_heads: list[str] = field(default_factory=list)
+
+    def move_head(self, sha: str) -> None:
+        """Point the PR at a new head; its earlier heads keep their check runs."""
+        self.earlier_heads.append(self.sha)
+        self.sha = sha
 
     @property
     def url(self) -> str:
@@ -50,7 +56,8 @@ class FakeGh:
 
     A created PR's head comes from the local remote, as GitHub reads it from the
     pushed branch. Check runs are scripted per branch; an unscripted branch has
-    none yet, so its checks are still pending.
+    none yet, so its checks are still pending. A close of a PR in
+    ``failing_closes`` fails once, as a GitHub error would.
     """
 
     def __init__(self, repo: str, base: str, remote: FernRemote | None = None) -> None:
@@ -59,6 +66,7 @@ class FakeGh:
         self.remote = remote
         self.prs: list[FakePr] = []
         self.checks: dict[str, list[dict[str, str | None]]] = {}
+        self.failing_closes: set[int] = set()
 
     def add_pr(
         self,
@@ -173,11 +181,23 @@ class FakeGh:
             ):
                 assert self.remote is not None, "this test has no remote to push to"
                 pr = self.number(number)
-                pr.sha = self.remote.head(pr.head)
+                pr.move_head(self.remote.head(pr.head))
                 pr.body = Path(body).read_text("utf-8")
                 return ""
+            case (
+                "pr",
+                "view",
+                number,
+                "--repo",
+                self.repo,
+                "--json",
+                "body",
+                "--jq",
+                ".body",
+            ):
+                return self.number(number).body + "\n"
             case ("api", path) if match := CHECK_RUNS.match(path):
-                (pr,) = [p for p in self.prs if p.sha == match[1]]
+                (pr,) = [p for p in self.prs if match[1] in (p.sha, *p.earlier_heads)]
                 return json.dumps({"check_runs": self.checks.get(pr.head, [])})
             case ("api", "-X", "PUT", path, "-f", "merge_method=squash", "-f", sha) if (
                 match := MERGE.match(path)
@@ -194,6 +214,9 @@ class FakeGh:
                 return ""
             case ("pr", "close", number, "--repo", self.repo, "--comment", comment):
                 pr = self.number(number)
+                if pr.number in self.failing_closes:
+                    self.failing_closes.remove(pr.number)
+                    raise RuntimeError("gh pr close failed")
                 pr.state = CLOSED
                 pr.comments.append(comment)
                 return ""

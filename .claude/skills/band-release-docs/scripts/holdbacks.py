@@ -7,9 +7,10 @@
 An item is held when the holdbacks review flags its index or when a ledger
 entry for the ``sdks`` surface cites one of its PRs. Anything that cannot be
 decided fails closed, writing nothing: an unreadable ledger or report, an
-unknown index, or a held breaking change, which has no index to drop. Writes
-the kept notes to ``--out`` and appends ``has_entry`` and ``held`` (the held
-indexes) to ``--outputs``. Logs counts only: the ledger is private.
+``sdks`` entry whose source is not ``<repo>#<number>``, an unknown index, or a
+held breaking change, which has no index to drop. Writes the kept notes to
+``--out`` and appends ``has_entry`` and ``held`` (the held indexes) to
+``--outputs``. Logs counts only: the ledger is private.
 """
 
 from __future__ import annotations
@@ -17,20 +18,28 @@ from __future__ import annotations
 import argparse
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TypeVar
+from typing import Self, TypeVar
 
 import yaml
 from collectprs import ANNOUNCED_ASSET
-from pydantic import BaseModel, ConfigDict, ValidationError
-from releasedata import HELD_ITEMS, HoldbacksReport, ReleaseNotes, ReleasePrs
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from releasedata import (
+    FORMER_SDK_REPO_NAME,
+    HELD_ITEMS,
+    SDK_REPO_NAME,
+    HoldbacksReport,
+    ReleaseNotes,
+    ReleasePrs,
+)
 from renderentry import SURFACE
 from stepoutputs import append_outputs
 
 logger = logging.getLogger(__name__)
 
-SDK_REPO_NAME = "band-sdk-python"
+SDK_REPO_NAMES = {SDK_REPO_NAME, FORMER_SDK_REPO_NAME}
 # A ledger source: `<repo>#<number>`, the repo optionally owner-qualified.
 LEDGER_SOURCE = re.compile(r"^(?:[\w.-]+/)?(?P<repo>[\w.-]+)#(?P<number>\d+)$")
 # Only ledger holds persist: a review-only hold must be added to the ledger
@@ -56,6 +65,13 @@ class LedgerEntry(BaseModel):
     surfaces: list[str]
     released_surfaces: list[str] = []
 
+    @model_validator(mode="after")
+    def held_source_parses(self) -> Self:
+        # An unparsed source would match no item and publish the feature.
+        if self.holds_sdks and LEDGER_SOURCE.match(self.source) is None:
+            raise ValueError("an sdks entry's source is not <repo>#<number>")
+        return self
+
     @property
     def holds_sdks(self) -> bool:
         return SURFACE in self.surfaces and SURFACE not in self.released_surfaces
@@ -64,13 +80,13 @@ class LedgerEntry(BaseModel):
     def sdk_pr(self) -> str | None:
         """The band-sdk-python PR number this entry cites, if any."""
         match = LEDGER_SOURCE.match(self.source)
-        if match is None or match["repo"] != SDK_REPO_NAME:
+        if match is None or match["repo"].lower() not in SDK_REPO_NAMES:
             return None
         return match["number"]
 
     def cites(self, sources: Sequence[str]) -> bool:
-        """Whether this entry names one of ``sources``, by PR number or verbatim."""
-        return self.source in sources or self.sdk_pr in sources
+        """Whether this entry cites the PR of one of ``sources``."""
+        return self.sdk_pr in sources
 
 
 class Ledger(BaseModel):
@@ -79,18 +95,25 @@ class Ledger(BaseModel):
     held_items: list[LedgerEntry]
 
 
-def load_ledger(path: Path) -> list[LedgerEntry]:
-    """The ledger entries still held from the ``sdks`` surface."""
+@contextmanager
+def failing_closed(name: str) -> Iterator[None]:
+    """Turn an unreadable or misshapen ``name`` into a ``HoldbacksError``."""
     try:
-        ledger = Ledger.model_validate(yaml.safe_load(path.read_text("utf-8")))
+        yield
     except (OSError, yaml.YAMLError) as exc:
         raise HoldbacksError(
-            f"the ledger is unreadable ({type(exc).__name__})"
+            f"the {name} is unreadable ({type(exc).__name__})"
         ) from exc
     except ValidationError as exc:
         raise HoldbacksError(
-            f"the ledger does not match its shape ({exc.error_count()} error(s))"
+            f"the {name} does not match its shape ({exc.error_count()} error(s))"
         ) from exc
+
+
+def load_ledger(path: Path) -> list[LedgerEntry]:
+    """The ledger entries still held from the ``sdks`` surface."""
+    with failing_closed("ledger"):
+        ledger = Ledger.model_validate(yaml.safe_load(path.read_text("utf-8")))
     return [entry for entry in ledger.held_items if entry.holds_sdks]
 
 
@@ -165,14 +188,8 @@ def write_holdbacks(
 
 
 def read_model(model: type[Model], path: Path, name: str) -> Model:
-    try:
+    with failing_closed(name):
         return model.model_validate_json(path.read_bytes())
-    except OSError as exc:
-        raise HoldbacksError(f"no {name} ({type(exc).__name__})") from exc
-    except ValidationError as exc:
-        raise HoldbacksError(
-            f"the {name} does not match its shape ({exc.error_count()} error(s))"
-        ) from exc
 
 
 def summary_counts(held: Sequence[int], matched: Mapping[int, LedgerEntry]) -> str:

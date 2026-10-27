@@ -8,16 +8,17 @@ Compares the edited tree with a pristine copy. A path violation (a created,
 deleted, or renamed file, a symlink, a file outside the docs pages, a
 non-UTF-8 file, or too many pages) fails the command: nothing may be filed. A
 content violation (a new import, a new JSX tag, a link outside the allowed
-sites, too many changed lines) only marks the docs PR do-not-merge. Writes the
-changed pages and content violations to ``--out`` and appends ``changed`` and
-``mergeable`` to ``--outputs``. Logs counts and violation kinds only: the
-pages are private.
+sites, a new escaped backtick, too many changed lines) only marks the docs PR
+do-not-merge. Writes the changed pages and content violations to ``--out`` and
+appends ``changed`` and ``mergeable`` to ``--outputs``. Logs counts and
+violation kinds only: the pages are private.
 """
 
 from __future__ import annotations
 
 import argparse
 import difflib
+import html
 import logging
 import re
 from collections import Counter
@@ -27,7 +28,7 @@ from pathlib import Path
 
 from releasedata import MAX_REVIEWED_PAGES, Frozen, is_docs_page
 from stepoutputs import append_outputs
-from textsafety import CODE_PATTERN, URL_PATTERN
+from textsafety import CODE_PATTERN, URL_PATTERN, without_fenced_code
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,8 @@ LINK_TARGET = re.compile(
     r"\]\(\s*<?([^)\s>]+)|^[ \t]*\[[^\]]+\]:\s*<?([^\s>]+)", re.MULTILINE
 )
 SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
+# CommonMark's backslash escapes: any ASCII punctuation character.
+BACKSLASH_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
 ESCAPED_BACKTICK = "\\`"
 
 
@@ -64,6 +67,7 @@ class ContentViolation(StrEnum):
     IMPORT = "adds an import or export"
     JSX = "adds or changes a JSX tag or MDX expression"
     LINK = "links outside the allowed sites"
+    ESCAPED_BACKTICK = "escapes a backtick, which hides code spans from these checks"
     TOO_LONG = f"changes more than {MAX_CHANGED_LINES} lines"
 
 
@@ -180,6 +184,19 @@ def added_prose(before: str, after: str) -> list[str]:
     return list((Counter(prose_lines(after)) - Counter(prose_lines(before))).elements())
 
 
+def adds_escaped_backtick(before: str, after: str) -> bool:
+    """Whether a new line outside fenced code holds an escaped backtick.
+
+    ``prose_lines`` cannot tell an escaped backtick from a backslash closing a
+    code span, so content between two spans could escape every check.
+    """
+
+    def lines(text: str) -> Counter[str]:
+        return Counter(without_fenced_code(text).splitlines())
+
+    return any(ESCAPED_BACKTICK in line for line in lines(after) - lines(before))
+
+
 def mdx_constructs(text: str) -> Counter[str]:
     """Tags and expressions outside code; import lines have their own rule."""
     kept = "\n".join(line for line in prose_lines(text) if not IMPORT_LINE.match(line))
@@ -196,10 +213,16 @@ def is_allowed_url(url: str) -> bool:
     )
 
 
+def link_destination(target: str) -> str:
+    """The href MDX renders: character references and backslash escapes resolved."""
+    return BACKSLASH_ESCAPE.sub(r"\1", html.unescape(target))
+
+
 def is_allowed_target(target: str) -> bool:
     """A link target: a relative path or anchor, or an allowed URL."""
-    if target.startswith("//") or SCHEME.match(target):
-        return is_allowed_url(target)
+    href = link_destination(target)
+    if href.startswith("//") or SCHEME.match(href):
+        return is_allowed_url(href)
     return True
 
 
@@ -229,6 +252,8 @@ def page_violations(path: str, before: str, after: str) -> tuple[list[Finding], 
         kinds.append(ContentViolation.JSX)
     if not new_links_allowed(before, after):
         kinds.append(ContentViolation.LINK)
+    if adds_escaped_backtick(before, after):
+        kinds.append(ContentViolation.ESCAPED_BACKTICK)
     return [Finding(path=path, kind=kind) for kind in kinds], count
 
 

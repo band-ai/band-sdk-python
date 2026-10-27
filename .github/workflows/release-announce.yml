@@ -35,8 +35,9 @@
 #
 # Recovery: "Re-run failed jobs". Each step is its own job, so a Discord
 # failure after Slack posted re-posts only to Discord, and a fern re-run skips
-# merged Fern PRs and refiles open ones from its own checked content. /band-release-docs <tag> files the Fern
-# PRs by hand.
+# merged Fern PRs (still closing the PRs a merged docs PR supersedes) and
+# refiles open ones from its own checked content. /band-release-docs <tag>
+# files the Fern PRs by hand.
 # Re-announcing: a live run stops before Claude when the release already
 # carries release-notes.json. Delete that asset, then dispatch again.
 #
@@ -556,17 +557,24 @@ jobs:
           token: ${{ steps.fern-read.outputs.token }}
           persist-credentials: false
 
+      # Both state reads take these arguments, one per line.
+      - name: Pick the Fern state arguments
+        run: |
+          {
+            if [[ "$HAS_ENTRY" == true ]]; then
+              printf -- '--date\n%s\n' "$(jq -r .release_date "$RUNNER_TEMP/full/release-notes.json")"
+            fi
+            if [[ "$MODE" == test ]]; then echo --rehearsal; fi
+          } > "$RUNNER_TEMP/state-args"
+
       - name: Read the Fern state
         id: state
         env:
           GH_TOKEN: ${{ steps.fern-read.outputs.token }}
         run: |
-          args=("$TAG" --out "$RUNNER_TEMP/state" --outputs "$GITHUB_OUTPUT")
-          if [[ "$HAS_ENTRY" == true ]]; then
-            args+=(--date "$(jq -r .release_date "$RUNNER_TEMP/full/release-notes.json")")
-          fi
-          if [[ "$MODE" == test ]]; then args+=(--rehearsal); fi
-          uv run --script "$SCRIPTS/fernstate.py" "${args[@]}"
+          mapfile -t args < "$RUNNER_TEMP/state-args"
+          uv run --script "$SCRIPTS/fernstate.py" "$TAG" --out "$RUNNER_TEMP/state" \
+            --outputs "$GITHUB_OUTPUT" "${args[@]}"
 
       # A docs refusal must not hold back the changelog; each docs step needs
       # the one before it, and the job fails after filing when one failed.
@@ -698,12 +706,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.fern-write.outputs.token }}
         run: |
-          args=("$TAG" --out "$RUNNER_TEMP/fresh")
-          if [[ "$HAS_ENTRY" == true ]]; then
-            args+=(--date "$(jq -r .release_date "$RUNNER_TEMP/full/release-notes.json")")
-          fi
-          if [[ "$MODE" == test ]]; then args+=(--rehearsal); fi
-          uv run --script "$SCRIPTS/fernstate.py" "${args[@]}"
+          mapfile -t args < "$RUNNER_TEMP/state-args"
+          uv run --script "$SCRIPTS/fernstate.py" "$TAG" --out "$RUNNER_TEMP/fresh" "${args[@]}"
 
       - name: Re-pick the docs range
         id: docs-rerange
@@ -734,7 +738,8 @@ jobs:
         run: |
           # Held indexes also keep the docs PR from merging when every item is held.
           read -ra held <<< "$HELD"
-          args=("$TAG" --fern fern-write --state "$RUNNER_TEMP/fresh/state.json" --mode "$MODE" \
+          args=("$TAG" --fern fern-write --state "$RUNNER_TEMP/fresh/state.json" \
+            --docs-open "$RUNNER_TEMP/fresh/docs-open.json" --mode "$MODE" \
             --held "${held[@]}" --outputs "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY")
           if [[ "$HAS_ENTRY" == true ]]; then
             args+=(--notes "$RUNNER_TEMP/full/release-notes.json" --release-prs "$RUNNER_TEMP/full/release-prs.json")
@@ -793,7 +798,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           FERN_PRS: ${{ needs.fern.outputs.changelog_pr }} ${{ needs.fern.outputs.docs_pr }}
         run: |
-          failed=$(jq -r '[to_entries[] | select(.value.result == "failure") | .key] | join(", ")' <<< "$NEEDS")
+          failed=$(jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key): \(.value.result)"] | join(", ")' <<< "$NEEDS")
           {
             printf 'release-announce failed for %s (%s): %s\n%s\n' "$TAG" "$MODE" "$failed" "$RUN_URL"
             if [[ -n "${FERN_PRS// }" ]]; then printf 'Fern PRs: %s\n' "$FERN_PRS"; fi

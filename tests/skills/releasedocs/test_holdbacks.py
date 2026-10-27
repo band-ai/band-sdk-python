@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from types import ModuleType
 
 import pytest
 
 from tests.skills.releasedocs.holdbackfiles import Inputs, release_prs
-from tests.skills.releasedocs.samples import HELD_PR, LEDGER
-
-LEDGER_REASON = "Not public yet."
-LEDGER_ID = "sdk-901-room-tasks"
+from tests.skills.releasedocs.samples import (
+    HELD_PR,
+    HELD_SOURCE,
+    LEDGER,
+    LEDGER_ID,
+    LEDGER_REASON,
+    RELEASED_LEDGER,
+)
 
 
 class TestHoldbacks:
@@ -33,9 +38,9 @@ class TestHoldbacks:
     @pytest.mark.parametrize(
         "ledger",
         [
-            LEDGER.replace("released_surfaces: []", "released_surfaces: [sdks]", 1),
+            RELEASED_LEDGER,
             LEDGER.replace("surfaces: [sdks, platform]", "surfaces: [platform]"),
-            LEDGER.replace("band-sdk-python#901", "band-sdk-typescript#901"),
+            LEDGER.replace(HELD_SOURCE, f"band-sdk-typescript#{HELD_PR}"),
         ],
         ids=["already-released", "other-surface", "other-repo"],
     )
@@ -45,6 +50,27 @@ class TestHoldbacks:
         inputs.write(release_prs(), ledger, {"held": [], "hold_breaking": False})
         assert holdbacks.main(inputs.argv()) == 0
         assert inputs.outputs_written() == {"has_entry": "true", "held": ""}
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            lambda _: f"band-ai/{HELD_SOURCE}",
+            lambda _: HELD_SOURCE.upper(),
+            lambda releasedata: f"thenvoi/{releasedata.FORMER_SDK_REPO_NAME}#{HELD_PR}",
+        ],
+        ids=["owner-qualified", "other-case", "former-repo-name"],
+    )
+    def test_every_spelling_of_the_sdk_repo_holds_the_item(
+        self,
+        holdbacks: ModuleType,
+        releasedata: ModuleType,
+        inputs: Inputs,
+        source: Callable[[ModuleType], str],
+    ) -> None:
+        ledger = LEDGER.replace(HELD_SOURCE, source(releasedata))
+        inputs.write(release_prs(), ledger, {"held": [], "hold_breaking": False})
+        assert holdbacks.main(inputs.argv()) == 0
+        assert inputs.outputs_written() == {"has_entry": "true", "held": "1"}
 
     def test_every_item_held_leaves_no_entry(
         self, holdbacks: ModuleType, inputs: Inputs
@@ -71,6 +97,14 @@ class TestHoldbacks:
                 {"held": [], "hold_breaking": False},
             ),
             (release_prs(), "held_items: [", {"held": [], "hold_breaking": False}),
+            (
+                release_prs(),
+                LEDGER.replace(
+                    HELD_SOURCE,
+                    f"https://github.com/band-ai/band-sdk-python/pull/{HELD_PR}",
+                ),
+                {"held": [], "hold_breaking": False},
+            ),
         ],
         ids=[
             "ledger-holds-the-breaking-change",
@@ -79,6 +113,7 @@ class TestHoldbacks:
             "invalid-report",
             "invalid-ledger",
             "unreadable-ledger",
+            "unparsed-sdks-source",
         ],
     )
     def test_undecidable_holdbacks_fail_closed(

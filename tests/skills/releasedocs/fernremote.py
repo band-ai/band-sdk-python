@@ -31,14 +31,21 @@ class FernRemote:
         self.base = base
         self.bare = root / "fern.git"
         self.seed = root / "seed"
+        # Every repository here ignores the developer's signing and hooks, and
+        # keeps the seeded bytes (Git for Windows defaults to CRLF checkouts).
+        self.config = {
+            "commit.gpgsign": "false",
+            "core.hooksPath": str(root / "no-hooks"),
+            "core.autocrlf": "false",
+        }
         run_git("init", "--quiet", "--bare", f"--initial-branch={base}", str(self.bare))
         run_git("init", "--quiet", f"--initial-branch={base}", str(self.seed))
-        for key, value in (
-            ("user.name", "Fern Tester"),
-            ("user.email", "fern-tester@example.invalid"),
-            ("commit.gpgsign", "false"),
-            ("core.autocrlf", "false"),
-        ):
+        seed_config = {
+            "user.name": "Fern Tester",
+            "user.email": "fern-tester@example.invalid",
+            **self.config,
+        }
+        for key, value in seed_config.items():
             run_git("-C", str(self.seed), "config", key, value)
         run_git("-C", str(self.seed), "remote", "add", "origin", str(self.bare))
         self.commit_to_base("chore: seed", files)
@@ -59,12 +66,13 @@ class FernRemote:
         run_git("-C", str(self.seed), "push", "--quiet", "origin", f"HEAD:{self.base}")
 
     def clone(self, dest: Path) -> Path:
-        # Git for Windows defaults to CRLF checkouts; keep the seeded bytes.
+        configs = [
+            arg for item in self.config.items() for arg in ("--config", "=".join(item))
+        ]
         run_git(
             "clone",
             "--quiet",
-            "--config",
-            "core.autocrlf=false",
+            *configs,
             "--branch",
             self.base,
             str(self.bare),

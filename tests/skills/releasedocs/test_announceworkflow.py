@@ -216,55 +216,59 @@ class TestAnnounceWorkflow:
         assert job("fern")["if"].startswith("!cancelled() && ")
         assert "contains(needs.*.result, 'cancelled')" in job("alert")["if"]
 
-    def test_claude_steps_cannot_print_tool_results(self) -> None:
-        for step in claude_steps().values():
-            assert step["env"] == {"ACTIONS_STEP_DEBUG": "false"}
-            assert (
-                step["with"]["show_full_output"],
-                step["with"]["display_report"],
-            ) == (
-                "false",
-                "false",
-            )
+    @pytest.mark.parametrize("name", FERN_JOBS)
+    def test_claude_steps_cannot_print_tool_results(self, name: str) -> None:
+        step = claude_steps()[name]
+        assert step["env"] == {"ACTIONS_STEP_DEBUG": "false"}
+        assert (step["with"]["show_full_output"], step["with"]["display_report"]) == (
+            "false",
+            "false",
+        )
 
     @pytest.mark.parametrize(
-        ("name", "tools", "flags"),
+        ("name", "tools", "permissions"),
         [
-            ("holdbacks", "Read,Glob,Grep", []),
+            ("holdbacks", "Read,Glob,Grep", {}),
             (
                 "fern",
                 "Read,Glob,Grep,Edit,Write",
-                ["--permission-mode", "acceptEdits", "--permission-prompts", "none"],
+                {"--permission-mode": "acceptEdits", "--permission-prompts": "none"},
             ),
         ],
     )
     def test_claude_flags_are_pinned(
-        self, name: str, tools: str, flags: list[str]
+        self, name: str, tools: str, permissions: dict[str, str]
     ) -> None:
         args = claude_steps()[name]["with"]["claude_args"].split()
         assert args[args.index("--tools") + 1] == tools
         assert {"--restricted", "--strict-mcp-config", "--json-schema"} <= set(args)
-        assert " ".join(flags) in " ".join(args)
+        assert {
+            arg: args[index + 1]
+            for index, arg in enumerate(args)
+            if arg.startswith("--permission")
+        } == permissions
 
     def test_write_token_follows_the_edit_check_and_skips_dry_run(self) -> None:
         write = step_position("fern", has_id("fern-write"))
         assert step_position("fern", has_id("patch")) < write
         assert job("fern")["steps"][write]["if"] == "env.MODE != 'dry-run'"
 
-    def test_every_fern_token_is_narrowed_to_the_fern_repository(self) -> None:
-        tokens = [
-            step["with"]
-            for name in FERN_JOBS
-            for step in job(name)["steps"]
-            if uses(TOKEN_ACTION)(step)
-        ]
-        assert len(tokens) == 3
-        for inputs in tokens:
-            assert (inputs["owner"], inputs["repositories"]) == (
-                "${{ env.FERN_OWNER }}",
-                "${{ env.FERN_REPO_NAME }}",
-            )
-            assert any(key.startswith("permission-") for key in inputs)
+    @pytest.mark.parametrize(
+        ("name", "token_steps"),
+        [("holdbacks", ["fern-read"]), ("fern", ["fern-read", "fern-write"])],
+    )
+    def test_every_fern_token_is_narrowed_to_the_fern_repository(
+        self, name: str, token_steps: list[str]
+    ) -> None:
+        tokens = [step for step in job(name)["steps"] if uses(TOKEN_ACTION)(step)]
+        assert [step["id"] for step in tokens] == token_steps
+        assert {
+            (step["with"]["owner"], step["with"]["repositories"]) for step in tokens
+        } == {("${{ env.FERN_OWNER }}", "${{ env.FERN_REPO_NAME }}")}
+        assert all(
+            any(key.startswith("permission-") for key in step["with"])
+            for step in tokens
+        )
 
     def test_fern_facts_match_the_scripts(self, releasedata: ModuleType) -> None:
         env = workflow()["env"]

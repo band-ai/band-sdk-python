@@ -16,7 +16,10 @@ from tests.skills.releasedocs.samples import (
 )
 
 
-def release_prs(breaking: tuple[str, ...] = ()) -> dict[str, object]:
+def release_prs(
+    breaking: tuple[str, ...] = (), loose_commits: tuple[str, ...] = ()
+) -> dict[str, object]:
+    """Three PRs, the second the ledger's; ``loose_commits`` are commit SHAs."""
     numbers = ["101", HELD_PR, "102"]
     return {
         "tag": RELEASE_TAG,
@@ -36,7 +39,10 @@ def release_prs(breaking: tuple[str, ...] = ()) -> dict[str, object]:
             }
             for number in numbers
         ],
-        "loose_commits": [],
+        "loose_commits": [
+            {"sha": sha, "subject": "fix: direct", "files": [], "breaking": False}
+            for sha in loose_commits
+        ],
         "excluded_internal": [],
     }
 

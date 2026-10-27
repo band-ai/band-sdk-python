@@ -10,6 +10,7 @@ from types import ModuleType
 
 import pytest
 
+from tests.skills.releasedocs.fernnames import FernNames
 from tests.skills.releasedocs.fernremote import FernRemote, run_git, write_tree
 from tests.skills.releasedocs.ghpeer import (
     CLOSED,
@@ -26,8 +27,11 @@ from tests.skills.releasedocs.outputsfile import read_outputs
 from tests.skills.releasedocs.samples import (
     DOCS_PAGE,
     DOCS_PAGE_TEXT,
+    DOCS_REPORT,
     HELD_PR,
     LEDGER,
+    LEDGER_ID,
+    LEDGER_REASON,
     RECONNECT,
     RELEASE_DATE,
     RELEASE_TAG,
@@ -36,24 +40,21 @@ from tests.skills.releasedocs.samples import (
     TOKEN_REDACTION,
 )
 
-CHANGELOG = f"changelog/python-sdk-{RELEASE_TAG}"
-DOCS = f"docs/python-sdk-{RELEASE_TAG}"
-OLDER_DOCS = "docs/python-sdk-band-sdk-v6.0.1"
-DATE_FILE = f"fern/changelog/sdks/{RELEASE_DATE}.md"
 EDITED_PAGE = DOCS_PAGE_TEXT.replace("Agent.create()", "Agent.start()")
-REPORT = {
-    "summary": "Agent creation now uses `Agent.start()`.",
-    "pages_reviewed": [{"page": DOCS_PAGE, "reason": "Renamed", "sources": [812]}],
-    "claims": [],
-    "also_stale": [],
-    "pages_missing": [],
-}
 
 
-def read_state(fernstate: ModuleType, gh: FakeGh, tmp_path: Path, *extra: str) -> Path:
+def read_state(
+    fernstate: ModuleType, gh: FakeGh, tmp_path: Path, *extra: str
+) -> list[str]:
+    """Record the Fern state; return the filing's arguments that point at it."""
     out = tmp_path / "state"
     assert fernstate.main([RELEASE_TAG, "--out", str(out), *extra], gh=gh) == 0
-    return out / "state.json"
+    return [
+        "--state",
+        str(out / fernstate.STATE_FILE),
+        "--docs-open",
+        str(out / fernstate.DOCS_OPEN_FILE),
+    ]
 
 
 def docs_args(
@@ -61,6 +62,7 @@ def docs_args(
     fern_files: dict[str, str | bytes],
     tmp_path: Path,
     page: str,
+    supersede: tuple[int, ...] = (),
 ) -> list[str]:
     """Review ``page`` into an edited copy of Fern and check it, as the workflow does."""
     pristine = write_tree(tmp_path / "pristine", fern_files)
@@ -71,9 +73,10 @@ def docs_args(
         tmp_path / name for name in ("patch.json", "report.json", "range.json")
     )
     assert checkpatch.main([str(pristine), str(edited), "--out", str(check)]) == 0
-    report.write_text(json.dumps(REPORT), encoding="utf-8")
+    report.write_text(json.dumps(DOCS_REPORT), encoding="utf-8")
     docs_range.write_text(
-        json.dumps({"baseline": "band-sdk-v6.0.0", "supersede": [1]}), "utf-8"
+        json.dumps({"baseline": "band-sdk-v6.0.0", "supersede": list(supersede)}),
+        "utf-8",
     )
     return [
         "--docs-check",
@@ -107,14 +110,18 @@ def file_fern(
     gh: FakeGh,
     remote: FernRemote,
     tmp_path: Path,
-    state: Path,
+    state: list[str],
     mode: str,
     *extra: str,
+    wait: Callable[[], None] = lambda: None,
 ) -> int:
-    fern = remote.clone(tmp_path / "fern-write")
-    argv = [RELEASE_TAG, "--fern", str(fern), "--state", str(state), "--mode", mode]
+    """File from a fresh clone, as each workflow run does; ``wait`` runs between polls."""
+    dest = tmp_path / "fern-write"
+    shutil.rmtree(dest, ignore_errors=True)
+    fern = remote.clone(dest)
+    argv = [RELEASE_TAG, "--fern", str(fern), *state, "--mode", mode]
     argv += ["--outputs", str(tmp_path / "outputs"), *extra]
-    return filefern.main(argv, gh=gh, poll=filefern.Poll(2, lambda: None))
+    return filefern.main(argv, gh=gh, poll=filefern.Poll(2, wait))
 
 
 class TestFileFern:
@@ -125,45 +132,53 @@ class TestFileFern:
         checkpatch: ModuleType,
         renderentry: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         fern_files: dict[str, str | bytes],
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
     ) -> None:
-        older = gh.add_pr(OLDER_DOCS, OPEN)
-        gh.checks |= {CHANGELOG: PASSING, DOCS: PASSING}
+        older = gh.add_pr(fern_names.older_docs, OPEN)
+        gh.checks |= {fern_names.changelog: PASSING, fern_names.docs: PASSING}
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
         items = [make_item(*SEND_RETRIES)]
+        summary = tmp_path / "summary.md"
         extra = notes_args(make_notes, items, tmp_path) + docs_args(
-            checkpatch, fern_files, tmp_path, EDITED_PAGE
+            checkpatch, fern_files, tmp_path, EDITED_PAGE, (older.number,)
         )
+        extra += ["--summary", str(summary)]
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 0
         )
-        changelog, docs = gh.on(CHANGELOG)[0], gh.on(DOCS)[0]
+        changelog, docs = gh.on(fern_names.changelog)[0], gh.on(fern_names.docs)[0]
         assert (changelog.state, docs.state, older.state) == (MERGED, MERGED, CLOSED)
         assert older.comments == [f"Superseded by #{docs.number}"]
         assert fern_remote.file_on(
-            CHANGELOG, DATE_FILE
+            fern_names.changelog, fern_names.date_file
         ) == renderentry.render_standalone(make_notes(items))
-        assert fern_remote.file_on(DOCS, DOCS_PAGE) == EDITED_PAGE
+        assert fern_remote.file_on(fern_names.docs, DOCS_PAGE) == EDITED_PAGE
         assert read_outputs(tmp_path / "outputs") == {
             "changelog_pr": changelog.url,
             "docs_pr": docs.url,
         }
+        assert summary.read_text("utf-8") == (
+            f"- Fern changelog: {filefern.Outcome.MERGED} {changelog.url}\n"
+            f"- Fern docs: {filefern.Outcome.MERGED} {docs.url}\n"
+        )
 
     def test_commits_carry_the_release_bot_and_no_ai_attribution(
         self,
         filefern: ModuleType,
         fernstate: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
     ) -> None:
-        gh.checks[CHANGELOG] = PASSING
+        gh.checks[fern_names.changelog] = PASSING
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
         extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
         assert (
@@ -175,7 +190,7 @@ class TestFileFern:
             "log",
             "-1",
             "--format=%an <%ae>%n%B",
-            CHANGELOG,
+            fern_names.changelog,
         )
         assert (
             commit.strip()
@@ -194,7 +209,9 @@ class TestFileFern:
         filefern: ModuleType,
         fernstate: ModuleType,
         holdbacks: ModuleType,
+        renderentry: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
@@ -203,10 +220,11 @@ class TestFileFern:
         fern_remote.commit_to_base(
             "chore: hold room tasks", {releasedata.HELD_ITEMS: LEDGER}
         )
-        gh.checks[CHANGELOG] = PASSING
+        gh.checks[fern_names.changelog] = PASSING
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
+        kept = make_item(*SEND_RETRIES)
         items = [
-            make_item(*SEND_RETRIES),
+            kept,
             make_item(*RECONNECT, sources=(HELD_PR,)),
             make_item(*TOKEN_REDACTION),
         ]
@@ -214,13 +232,16 @@ class TestFileFern:
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 0
         )
-        body = gh.on(CHANGELOG)[0].body
-        holdbacks_section = body.split("## Holdbacks\n\n", 1)[1]
-        assert holdbacks_section == (
-            "- **Reconnect** — Rooms rejoin after a drop. (sdk-901-room-tasks: Not public yet.)\n"
-            f"- **Token Redaction** — Keys never reach logs. ({holdbacks.FLAGGED_BY_REVIEW})\n"
+        assert gh.on(fern_names.changelog)[0].body == renderentry.pr_body(
+            make_notes([kept]),
+            [
+                f"- **Reconnect** — Rooms rejoin after a drop. ({LEDGER_ID}: {LEDGER_REASON})",
+                f"- **Token Redaction** — Keys never reach logs. ({holdbacks.FLAGGED_BY_REVIEW})",
+            ],
         )
-        assert "Reconnect" not in fern_remote.file_on(CHANGELOG, DATE_FILE)
+        assert fern_remote.file_on(
+            fern_names.changelog, fern_names.date_file
+        ) == renderentry.render_standalone(make_notes([kept]))
 
     def test_open_pr_is_refiled_from_this_runs_content_before_merging(
         self,
@@ -228,55 +249,62 @@ class TestFileFern:
         fernstate: ModuleType,
         renderentry: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
     ) -> None:
-        pushed = {DATE_FILE: "pushed since the last run", "fern/docs.yml": "x"}
+        pushed = {
+            fern_names.date_file: "pushed since the last run",
+            "fern/docs.yml": "x",
+        }
         earlier = gh.add_pr(
-            CHANGELOG, OPEN, sha=fern_remote.push_branch(CHANGELOG, pushed)
+            fern_names.changelog,
+            OPEN,
+            sha=fern_remote.push_branch(fern_names.changelog, pushed),
         )
-        gh.checks[CHANGELOG] = PASSING
+        gh.checks[fern_names.changelog] = PASSING
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
         items = [make_item(*SEND_RETRIES)]
         extra = notes_args(make_notes, items, tmp_path)
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 0
         )
-        assert (gh.on(CHANGELOG), earlier.state) == ([earlier], MERGED)
-        assert earlier.sha == fern_remote.head(CHANGELOG)
+        assert (gh.on(fern_names.changelog), earlier.state) == ([earlier], MERGED)
+        assert earlier.sha == fern_remote.head(fern_names.changelog)
         assert fern_remote.file_on(
-            CHANGELOG, DATE_FILE
+            fern_names.changelog, fern_names.date_file
         ) == renderentry.render_standalone(make_notes(items))
         assert run_git(
             "-C",
             str(fern_remote.bare),
             "diff",
             "--name-only",
-            f"{fern_remote.base}...{CHANGELOG}",
-        ).split() == [DATE_FILE]
+            f"{fern_remote.base}...{fern_names.changelog}",
+        ).split() == [fern_names.date_file]
 
     def test_merged_pr_is_not_filed_again(
         self,
         filefern: ModuleType,
         fernstate: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
     ) -> None:
-        merged = gh.add_pr(CHANGELOG, MERGED)
+        merged = gh.add_pr(fern_names.changelog, MERGED)
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
         extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 0
         )
-        assert (gh.on(CHANGELOG), fern_remote.has_branch(CHANGELOG)) == (
-            [merged],
-            False,
-        )
+        assert (
+            gh.on(fern_names.changelog),
+            fern_remote.has_branch(fern_names.changelog),
+        ) == ([merged], False)
         assert read_outputs(tmp_path / "outputs") == {"changelog_pr": merged.url}
 
     @pytest.mark.parametrize(
@@ -287,23 +315,98 @@ class TestFileFern:
         filefern: ModuleType,
         fernstate: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
         checks: list[dict[str, str | None]],
     ) -> None:
-        gh.checks[CHANGELOG] = checks
+        gh.checks[fern_names.changelog] = checks
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
         extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 1
         )
-        (pr,) = gh.on(CHANGELOG)
+        (pr,) = gh.on(fern_names.changelog)
         assert (pr.state, read_outputs(tmp_path / "outputs")) == (
             OPEN,
             {"changelog_pr": pr.url},
         )
+
+    def test_checks_still_running_at_first_merge_once_they_pass(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        fern_remote: FernRemote,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+    ) -> None:
+        gh.checks[fern_names.changelog] = PENDING
+        state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
+        extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
+
+        def checks_finish() -> None:
+            gh.checks[fern_names.changelog] = PASSING
+
+        assert (
+            file_fern(
+                filefern,
+                gh,
+                fern_remote,
+                tmp_path,
+                state,
+                "live",
+                *extra,
+                wait=checks_finish,
+            )
+            == 0
+        )
+        assert gh.on(fern_names.changelog)[0].state == MERGED
+
+    def test_head_moved_after_the_checks_is_not_merged(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        checkpatch: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        fern_remote: FernRemote,
+        fern_files: dict[str, str | bytes],
+        tmp_path: Path,
+    ) -> None:
+        older = gh.add_pr(fern_names.older_docs, OPEN)
+        gh.checks[fern_names.docs] = PENDING
+        state = read_state(fernstate, gh, tmp_path)
+        extra = docs_args(
+            checkpatch, fern_files, tmp_path, EDITED_PAGE, (older.number,)
+        )
+
+        def push_while_checks_finish() -> None:
+            (docs,) = gh.on(fern_names.docs)
+            docs.move_head(
+                fern_remote.push_branch(fern_names.docs, {DOCS_PAGE: "Unchecked.\n"})
+            )
+            gh.checks[fern_names.docs] = PASSING
+
+        assert (
+            file_fern(
+                filefern,
+                gh,
+                fern_remote,
+                tmp_path,
+                state,
+                "live",
+                *extra,
+                wait=push_while_checks_finish,
+            )
+            == 1
+        )
+        (docs,) = gh.on(fern_names.docs)
+        assert (docs.state, older.state) == (OPEN, OPEN)
 
     def test_content_breach_opens_the_docs_pr_unmerged(
         self,
@@ -311,23 +414,55 @@ class TestFileFern:
         fernstate: ModuleType,
         checkpatch: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         fern_files: dict[str, str | bytes],
         tmp_path: Path,
     ) -> None:
-        older = gh.add_pr(OLDER_DOCS, OPEN)
-        gh.checks[DOCS] = PASSING
+        older = gh.add_pr(fern_names.older_docs, OPEN)
+        gh.checks[fern_names.docs] = PASSING
         state = read_state(fernstate, gh, tmp_path)
         breach = EDITED_PAGE + "<Callout>New.</Callout>\n"
-        extra = docs_args(checkpatch, fern_files, tmp_path, breach)
+        extra = docs_args(checkpatch, fern_files, tmp_path, breach, (older.number,))
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 1
         )
-        (docs,) = gh.on(DOCS)
+        (docs,) = gh.on(fern_names.docs)
         assert (docs.state, older.state) == (OPEN, OPEN)
         assert (
             f"## Do not merge\n\n- `{DOCS_PAGE}`: adds or changes a JSX tag or MDX expression\n"
             in docs.body
+        )
+
+    def test_rerun_closes_the_superseded_prs_a_failed_close_left_open(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        checkpatch: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        fern_remote: FernRemote,
+        fern_files: dict[str, str | bytes],
+        tmp_path: Path,
+    ) -> None:
+        older = gh.add_pr(fern_names.older_docs, OPEN)
+        gh.checks[fern_names.docs] = PASSING
+        gh.failing_closes.add(older.number)
+        state = read_state(fernstate, gh, tmp_path)
+        extra = docs_args(
+            checkpatch, fern_files, tmp_path, EDITED_PAGE, (older.number,)
+        )
+        assert (
+            file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 1
+        )
+        (docs,) = gh.on(fern_names.docs)
+        assert (docs.state, older.state) == (MERGED, OPEN)
+        # The re-run's docs chain skips the merged PR, so it files no docs.
+        state = read_state(fernstate, gh, tmp_path)
+        assert file_fern(filefern, gh, fern_remote, tmp_path, state, "live") == 0
+        assert (older.state, older.comments) == (
+            CLOSED,
+            [f"Superseded by #{docs.number}"],
         )
 
     @pytest.mark.parametrize(
@@ -342,10 +477,9 @@ class TestFileFern:
         fernstate: ModuleType,
         checkpatch: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         fern_files: dict[str, str | bytes],
-        make_item: Callable[..., object],
-        make_notes: Callable[..., object],
         tmp_path: Path,
         ledger: str,
         held: list[str],
@@ -353,14 +487,14 @@ class TestFileFern:
         fern_remote.commit_to_base(
             "chore: update holdbacks", {releasedata.HELD_ITEMS: ledger}
         )
-        gh.checks[DOCS] = PASSING
+        gh.checks[fern_names.docs] = PASSING
         state = read_state(fernstate, gh, tmp_path)
         extra = docs_args(checkpatch, fern_files, tmp_path, EDITED_PAGE)
         extra += ["--held", *held]
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 1
         )
-        (docs,) = gh.on(DOCS)
+        (docs,) = gh.on(fern_names.docs)
         assert docs.state == OPEN
         assert f"## Do not merge\n\n- {filefern.HOLDBACKS_ACTIVE}\n" in docs.body
 
@@ -369,12 +503,15 @@ class TestFileFern:
         filefern: ModuleType,
         fernstate: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         tmp_path: Path,
     ) -> None:
-        sha = fern_remote.push_branch(DOCS, {DOCS_PAGE: "pushed since the last run"})
-        earlier = gh.add_pr(DOCS, OPEN, sha=sha)
-        gh.checks[DOCS] = PASSING
+        sha = fern_remote.push_branch(
+            fern_names.docs, {DOCS_PAGE: "pushed since the last run"}
+        )
+        earlier = gh.add_pr(fern_names.docs, OPEN, sha=sha)
+        gh.checks[fern_names.docs] = PASSING
         state = read_state(fernstate, gh, tmp_path)
         assert file_fern(filefern, gh, fern_remote, tmp_path, state, "live") == 1
         assert (earlier.state, read_outputs(tmp_path / "outputs")) == (
@@ -388,28 +525,57 @@ class TestFileFern:
         fernstate: ModuleType,
         checkpatch: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         fern_files: dict[str, str | bytes],
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
         tmp_path: Path,
     ) -> None:
-        older = gh.add_pr(OLDER_DOCS, OPEN)
-        gh.checks |= {f"{CHANGELOG}-rehearsal": PASSING, f"{DOCS}-rehearsal": PASSING}
+        older = gh.add_pr(fern_names.older_docs, OPEN)
+        gh.checks |= {
+            fern_names.changelog_rehearsal: PASSING,
+            fern_names.docs_rehearsal: PASSING,
+        }
         state = read_state(
             fernstate, gh, tmp_path, "--date", RELEASE_DATE, "--rehearsal"
         )
         extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
-        extra += docs_args(checkpatch, fern_files, tmp_path, EDITED_PAGE)
+        extra += docs_args(
+            checkpatch, fern_files, tmp_path, EDITED_PAGE, (older.number,)
+        )
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "test", *extra) == 0
         )
         changelog, docs = (
-            gh.on(f"{CHANGELOG}-rehearsal")[0],
-            gh.on(f"{DOCS}-rehearsal")[0],
+            gh.on(fern_names.changelog_rehearsal)[0],
+            gh.on(fern_names.docs_rehearsal)[0],
         )
         assert (changelog.state, docs.state, older.state) == (CLOSED, CLOSED, OPEN)
-        assert (gh.on(CHANGELOG), gh.on(DOCS)) == ([], [])
+        assert (gh.on(fern_names.changelog), gh.on(fern_names.docs)) == ([], [])
+
+    @pytest.mark.parametrize("checks", [FAILING, PENDING], ids=["failed", "unfinished"])
+    def test_rehearsal_pr_whose_checks_do_not_pass_is_closed_and_fails(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        fern_remote: FernRemote,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+        checks: list[dict[str, str | None]],
+    ) -> None:
+        gh.checks[fern_names.changelog_rehearsal] = checks
+        state = read_state(
+            fernstate, gh, tmp_path, "--date", RELEASE_DATE, "--rehearsal"
+        )
+        extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
+        assert (
+            file_fern(filefern, gh, fern_remote, tmp_path, state, "test", *extra) == 1
+        )
+        assert gh.on(fern_names.changelog_rehearsal)[0].state == CLOSED
 
     def test_rehearsal_closes_a_docs_pr_held_by_holdbacks(
         self,
@@ -417,18 +583,19 @@ class TestFileFern:
         fernstate: ModuleType,
         checkpatch: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         fern_files: dict[str, str | bytes],
         tmp_path: Path,
     ) -> None:
-        gh.checks[f"{DOCS}-rehearsal"] = PASSING
+        gh.checks[fern_names.docs_rehearsal] = PASSING
         state = read_state(fernstate, gh, tmp_path, "--rehearsal")
         extra = docs_args(checkpatch, fern_files, tmp_path, EDITED_PAGE)
         extra += ["--held", "0"]
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "test", *extra) == 0
         )
-        assert gh.on(f"{DOCS}-rehearsal")[0].state == CLOSED
+        assert gh.on(fern_names.docs_rehearsal)[0].state == CLOSED
 
     def test_breaking_change_held_since_holdbacks_ran_is_not_filed(
         self,
@@ -436,6 +603,7 @@ class TestFileFern:
         fernstate: ModuleType,
         releasedata: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         make_item: Callable[..., object],
         make_notes: Callable[..., object],
@@ -444,14 +612,17 @@ class TestFileFern:
         fern_remote.commit_to_base(
             "chore: hold room tasks", {releasedata.HELD_ITEMS: LEDGER}
         )
-        gh.checks[CHANGELOG] = PASSING
+        gh.checks[fern_names.changelog] = PASSING
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
         items = [make_item(*SEND_RETRIES)]
         extra = notes_args(make_notes, items, tmp_path, breaking=(HELD_PR,))
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 1
         )
-        assert (gh.on(CHANGELOG), fern_remote.has_branch(CHANGELOG)) == ([], False)
+        assert (
+            gh.on(fern_names.changelog),
+            fern_remote.has_branch(fern_names.changelog),
+        ) == ([], False)
 
     def test_page_changed_in_fern_since_the_review_is_not_filed(
         self,
@@ -459,6 +630,7 @@ class TestFileFern:
         fernstate: ModuleType,
         checkpatch: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         fern_remote: FernRemote,
         fern_files: dict[str, str | bytes],
         tmp_path: Path,
@@ -471,4 +643,7 @@ class TestFileFern:
         assert (
             file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 1
         )
-        assert (gh.on(DOCS), fern_remote.has_branch(DOCS)) == ([], False)
+        assert (gh.on(fern_names.docs), fern_remote.has_branch(fern_names.docs)) == (
+            [],
+            False,
+        )

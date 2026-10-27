@@ -54,15 +54,12 @@ closed PR may keep its branch or have it deleted.
    stop, say so, and link
    `https://github.com/band-ai/band-sdk-python/actions/workflows/release-announce.yml`.
 2. `git -C <fern> fetch --prune origin`, then the branch check and worktree
-   above. Then list Fern's open PRs with
-   `gh pr list --repo thenvoi/fern --state open --limit 200 --json number,url,headRefName,changedFiles,files`
-   (`files` stops at 100 per PR; for a PR with more `changedFiles`, list them
-   with `gh api repos/thenvoi/fern/pulls/<n>/files --paginate --jq '.[].filename'`).
-   If one other than this release's own branch (or its rehearsal twin)
-   changes `fern/changelog/sdks/<release_date>.md` (`release_date` is in
-   `<bundle>/release-notes.json`), stop and link it: both PRs would write that
-   date file, so it merges first and this command runs again. Any branch name
-   counts; other SDKs and hand fixes use `docs/...` branches.
+   above. Then run
+   `uv run --script "$S/fernstate.py" <tag> --out <tmp>/state --date <release_date>`
+   (`release_date` is in `<bundle>/release-notes.json`; add `--rehearsal`
+   with `--rehearse`). When it fails because another open PR changes
+   `fern/changelog/sdks/<release_date>.md`, stop and link that PR: both PRs
+   would write that date file, so it merges first and this command runs again.
 3. Holdbacks: apply [holdbacks.md](holdbacks.md) to `<bundle>/release-notes.json`
    with `<fern>`'s ledger and docs summary. The bundle the workflow attached
    already leaves out what it held; show every further match and ask the
@@ -87,18 +84,19 @@ closed PR may keep its branch or have it deleted.
 
 ## Docs
 
-6. Range: `git fetch --tags origin`, then list the docs PRs into
-   `<tmp>/merged.json` with
-   `gh pr list --repo thenvoi/fern --state merged --search 'head:docs/python-sdk-band-sdk-v' --json number,headRefName`
-   and into `<tmp>/open.json` with the same and `--state open`. Run
-   `uv run --script "$S/docsrange.py" <tag> <tmp>/merged.json <tmp>/open.json`. It prints `baseline` and
+6. Range: `git fetch --tags origin`, then list the docs PRs with
+   `uv run --script "$S/fernstate.py" <tag> --out <tmp>/docs-state` and run
+   `uv run --script "$S/docsrange.py" <tag> <tmp>/docs-state/docs-merged.json <tmp>/docs-state/docs-open.json`. It prints `baseline` and
    `supersede`, or refuses when this release's or a newer one's docs are
    already merged (a review as of `<tag>` would repeat or roll them back), or
    when an open docs PR for a newer release already covers `<tag>`. Stop and
    say so, linking that PR: it must merge or be closed before `<tag>` gets a
    review of its own. Build the
    review input with
-   `uv run --script "$S/collectprs.py" <tag> --since <baseline> > <tmp>/review-prs.json`.
+   `uv run --script "$S/collectprs.py" <tag> --since <baseline> > <tmp>/review-all.json`,
+   then drop the held PRs with
+   `uv run --script "$S/withhold.py" <tmp>/review-all.json <bundle>/release-notes.json --ledger <fern>/.changelog/held-items.yml --held <index>... > <tmp>/review-prs.json`,
+   passing the indexes step 3 held.
 7. Check out the released source: `git worktree add --detach <tmp>/sdk <tag>`
    (first `git worktree remove --force <tmp>/sdk` if an earlier run left it; it
    is a read-only checkout, removed again after step 9 or 10).
@@ -110,11 +108,18 @@ closed PR may keep its branch or have it deleted.
    `scripts/docsreport.py` renders from docs.md's report, linking each claim to
    `https://github.com/band-ai/band-sdk-python/blob/<tag>/<path>#L<line>`,
    and `Supersedes #N` for each PR in `supersede`.
-10. Show the diff. After approval: commit, push as above,
+10. Check the edits with the workflow's rules: `git -C <fern> worktree add --detach <tmp>/base origin/dev`,
+    copy both trees without `.git`
+    (`rsync -a --exclude .git <tmp>/base/ <tmp>/pristine/` and
+    `rsync -a --exclude .git <worktree>/ <tmp>/edited/`), run
+    `uv run --script "$S/checkpatch.py" <tmp>/pristine <tmp>/edited --out <tmp>/patch.json`,
+    then `git -C <fern> worktree remove --force <tmp>/base`. A path violation
+    stops the docs PR; list each content violation under `## Do not merge` in
+    the PR body and show it to the maintainer.
+    Show the diff. After approval: commit, push as above,
     `gh pr create --repo thenvoi/fern --base dev --head <branch> --title "docs: Python SDK <tag>" --body-file <tmp>/docs-pr-body.md`,
     and, on confirmation, close each superseded PR with the comment
     `Superseded by #M`. Finally `git worktree remove --force <tmp>/sdk`.
 
 A person approves and merges both PRs in Fern; promotion from `dev` stays
-manual. `scripts/checkpatch.py` holds the path and content rules the
-workflow enforces on docs edits; apply them before approving here too.
+manual.

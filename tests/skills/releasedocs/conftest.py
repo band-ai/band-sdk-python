@@ -8,6 +8,7 @@ from types import ModuleType
 
 import pytest
 
+from tests.skills.releasedocs.fernnames import FernNames
 from tests.skills.releasedocs.fernremote import FernRemote
 from tests.skills.releasedocs.ghpeer import FakeGh
 from tests.skills.releasedocs.gitrepo import ThrowawayRepo
@@ -139,6 +140,11 @@ def fern_files(releasedata: ModuleType) -> dict[str, str | bytes]:
         DOCS_PAGE: DOCS_PAGE_TEXT,
         f"{releasedata.CHANGELOG_DIR}/2026-10-13.md": "---\ntags: []\n---\n",
     }
+
+
+@pytest.fixture
+def fern_names(releasedata: ModuleType) -> FernNames:
+    return FernNames.derive(releasedata)
 
 
 @pytest.fixture

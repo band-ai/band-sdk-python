@@ -18,7 +18,10 @@ from typing import Annotated, Self
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 SDK_TAG_PREFIX = "band-sdk-v"
-SDK_REPO_URL = "https://github.com/band-ai/band-sdk-python"
+SDK_REPO_NAME = "band-sdk-python"
+SDK_REPO_URL = f"https://github.com/band-ai/{SDK_REPO_NAME}"
+# The repository's name before its rename; its PR numbers carried over.
+FORMER_SDK_REPO_NAME = "thenvoi-sdk-python"
 
 FERN_REPO = "thenvoi/fern"
 FERN_BASE = "dev"

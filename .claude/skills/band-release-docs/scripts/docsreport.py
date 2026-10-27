@@ -16,12 +16,15 @@ from typing import Annotated
 
 from pydantic import AfterValidator, Field
 from releasedata import MAX_REVIEWED_PAGES, SDK_REPO_URL, Frozen, single_line
-from textsafety import pr_body_text
+from textsafety import or_none, pr_body_text
 
 # A repository-relative path: no scheme, no parent step, no leading slash.
 SOURCE_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[\w.@+/-]+$")
 # The section listing the content checks that keep a docs PR from merging.
 DO_NOT_MERGE = "Do not merge"
+SUPERSEDES = "Supersedes #"
+# Model text cannot forge this line: pr_body_text quotes every `#N` it writes.
+SUPERSEDES_LINE = re.compile(rf"^{SUPERSEDES}(\d+)$", re.MULTILINE)
 
 Line = Annotated[str, Field(min_length=1), AfterValidator(single_line)]
 
@@ -76,7 +79,7 @@ def source_link(tag: str, source: SourceRef) -> str:
 
 
 def bullets(lines: Sequence[str]) -> list[str]:
-    return [f"- {pr_body_text(line)}" for line in lines] or ["None."]
+    return or_none([f"- {pr_body_text(line)}" for line in lines])
 
 
 def heading(title: str) -> str:
@@ -110,18 +113,23 @@ def pr_body(
         ),
         section(
             "Claims",
-            [claim_line(tag, c.page, c.fact, c.source) for c in report.claims]
-            or ["None."],
+            or_none([claim_line(tag, c.page, c.fact, c.source) for c in report.claims]),
         ),
         section(
             "Also stale",
-            [claim_line(tag, d.page, d.issue, d.source) for d in report.also_stale]
-            or ["None."],
+            or_none(
+                [claim_line(tag, d.page, d.issue, d.source) for d in report.also_stale]
+            ),
         ),
         section("Pages missing", bullets(report.pages_missing)),
     ]
     if supersede:
-        blocks.append([*(f"Supersedes #{number}" for number in supersede), ""])
+        blocks.append([*(f"{SUPERSEDES}{number}" for number in supersede), ""])
     if do_not_merge:
         blocks.append(section(DO_NOT_MERGE, bullets(do_not_merge)))
     return "\n".join(line for block in blocks for line in block)
+
+
+def superseded(body: str) -> list[int]:
+    """The PRs a docs PR body, as ``pr_body`` rendered it, supersedes."""
+    return [int(number) for number in SUPERSEDES_LINE.findall(body)]

@@ -23,13 +23,14 @@ PRISTINE = {
     OUTSIDE: "# Rooms\n",
 }
 # Keeps the existing import, JSX tag, and allowed link, and adds an allowed
-# link, a relative link, and a snippet whose code imports, exports, and links.
+# link, an allowed autolink, a relative link, and a snippet whose code
+# imports, exports, links, and escapes a backtick.
 ALLOWED_EDIT = DOCS_PAGE_TEXT.replace(
     "Create an agent with `Agent.create()`.",
-    "Create an agent with `Agent.start({})`; see https://github.com/band-ai/band-sdk-python"
-    " and the [overview](../overview#agents).\n\n"
+    "Create an agent with `Agent.start({})`; see https://github.com/band-ai/band-sdk-python,"
+    " <https://docs.band.ai/sdks>, and the [overview](../overview#agents).\n\n"
     '```python\nimport asyncio\nURL = "http://localhost:4000"\n```\n\n'
-    "```bash\nexport BAND_API_KEY=key\n```",
+    "```bash\nexport BAND_API_KEY=key\necho \\`date\\`\n```",
 )
 
 
@@ -54,12 +55,6 @@ def make_symlink(pristine: Path, edited: Path) -> None:
         page.symlink_to(edited / OTHER_PAGE)
     except OSError:
         pytest.skip("this account cannot create symlinks")
-
-
-def edit_many_pages(pristine: Path, edited: Path) -> None:
-    pages = [f"fern/docs/pages/integrations/sdks/p{n}.mdx" for n in range(11)]
-    write_tree(pristine, dict.fromkeys(pages, "before\n"))
-    write_tree(edited, dict.fromkeys(pages, "after\n"))
 
 
 class TestCheckPatch:
@@ -102,7 +97,6 @@ class TestCheckPatch:
                 ),
                 {"NOT_UTF8"},
             ),
-            (edit_many_pages, {"TOO_MANY"}),
         ],
         ids=[
             "outside",
@@ -111,7 +105,6 @@ class TestCheckPatch:
             "rename",
             "symlink",
             "not-utf8",
-            "too-many",
         ],
     )
     def test_path_breach_stops_the_filing(
@@ -134,6 +127,37 @@ class TestCheckPatch:
             (tmp_path / "patch.json").exists(),
         ) == ({}, False)
 
+    def test_more_pages_than_the_cap_stops_the_filing(
+        self,
+        checkpatch: ModuleType,
+        releasedata: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+    ) -> None:
+        pages = [f"{PAGES}/p{n}.mdx" for n in range(releasedata.MAX_REVIEWED_PAGES + 1)]
+        write_tree(trees[0], dict.fromkeys(pages, "before\n"))
+        write_tree(trees[1], dict.fromkeys(pages, "after\n"))
+        with pytest.raises(checkpatch.PatchError) as raised:
+            checkpatch.check_patch(*trees)
+        assert [finding.kind for finding in raised.value.findings] == [
+            checkpatch.PathViolation.TOO_MANY
+        ]
+        assert run(checkpatch, trees, tmp_path) == 1
+
+    def test_more_lines_than_the_cap_files_the_pr_unmergeable(
+        self, checkpatch: ModuleType, trees: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        lines = range(checkpatch.MAX_CHANGED_LINES + 1)
+        write_tree(
+            trees[1],
+            {DOCS_PAGE: DOCS_PAGE_TEXT + "".join(f"Line {n}.\n" for n in lines)},
+        )
+        assert run(checkpatch, trees, tmp_path) == 0
+        check = json.loads((tmp_path / "patch.json").read_text("utf-8"))
+        assert [finding["kind"] for finding in check["content_violations"]] == [
+            checkpatch.ContentViolation.TOO_LONG
+        ]
+
     def test_editing_beside_an_existing_outside_link_stays_mergeable(
         self, checkpatch: ModuleType, trees: tuple[Path, Path], tmp_path: Path
     ) -> None:
@@ -144,23 +168,42 @@ class TestCheckPatch:
         assert read_outputs(tmp_path / "outputs")["mergeable"] == "true"
 
     @pytest.mark.parametrize(
-        ("edit", "kind"),
+        ("edit", "kinds"),
         [
-            (DOCS_PAGE_TEXT + 'import { Secret } from "@x";\n', "IMPORT"),
-            (DOCS_PAGE_TEXT + "<Callout>Run it.</Callout>\n", "JSX"),
-            (DOCS_PAGE_TEXT.replace("<Tabs>", "<Tabs onClick={go}>"), "JSX"),
-            (DOCS_PAGE_TEXT + '{globalThis.fetch("/x")}\n', "JSX"),
-            (DOCS_PAGE_TEXT + "\\`<Evil src={x} />\\`\n", "JSX"),
-            (DOCS_PAGE_TEXT + "\\`[x](https://evil.example)\\`\n", "LINK"),
-            (DOCS_PAGE_TEXT + "See https://band.ai.example.com/x.\n", "LINK"),
-            (DOCS_PAGE_TEXT + "See www.example.com.\n", "LINK"),
-            (DOCS_PAGE_TEXT + "[docs](javascript:alert(1))\n", "LINK"),
-            (DOCS_PAGE_TEXT + "[docs](//evil.example/x)\n", "LINK"),
-            (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/../evil)\n", "LINK"),
-            (DOCS_PAGE_TEXT + "[docs]: http://evil.example\n", "LINK"),
-            (DOCS_PAGE_TEXT + "[the guide](\n//evil.example/x)\n", "LINK"),
-            (DOCS_PAGE_TEXT + "[g]:\n//evil.example/x\n", "LINK"),
-            (DOCS_PAGE_TEXT + "".join(f"Line {n}.\n" for n in range(201)), "TOO_LONG"),
+            (DOCS_PAGE_TEXT + 'import { Secret } from "@x";\n', ["IMPORT"]),
+            (DOCS_PAGE_TEXT + "<Callout>Run it.</Callout>\n", ["JSX"]),
+            (DOCS_PAGE_TEXT.replace("<Tabs>", "<Tabs onClick={go}>"), ["JSX"]),
+            (DOCS_PAGE_TEXT + '{globalThis.fetch("/x")}\n', ["JSX"]),
+            (
+                DOCS_PAGE_TEXT + "\\`<Evil src={x} />\\`\n",
+                ["JSX", "ESCAPED_BACKTICK"],
+            ),
+            (
+                DOCS_PAGE_TEXT + "\\`[x](https://evil.example)\\`\n",
+                ["LINK", "ESCAPED_BACKTICK"],
+            ),
+            (
+                DOCS_PAGE_TEXT
+                + "Use `C:\\` then [docs](https://evil.example) and `x`.\n",
+                ["ESCAPED_BACKTICK"],
+            ),
+            (DOCS_PAGE_TEXT + "See https://band.ai.example.com/x.\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "See www.example.com.\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[docs](javascript:alert(1))\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[docs](//evil.example/x)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[d](&#104;ttps://evil.example)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[d](&#47;&#47;evil.example)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[d](https&#58;//evil.example)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[d](https\\://evil.example)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/../evil)\n", ["LINK"]),
+            (
+                DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/%2E%2e/evil)\n",
+                ["LINK"],
+            ),
+            (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/x/..)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[docs]: http://evil.example\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[the guide](\n//evil.example/x)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[g]:\n//evil.example/x\n", ["LINK"]),
         ],
         ids=[
             "import",
@@ -169,15 +212,21 @@ class TestCheckPatch:
             "mdx-expression",
             "jsx-in-escaped-backticks",
             "link-in-escaped-backticks",
+            "backslash-closing-a-code-span",
             "foreign-link",
             "bare-www-link",
             "script-link",
             "protocol-relative-link",
+            "entity-encoded-scheme",
+            "entity-encoded-protocol-relative-link",
+            "entity-encoded-colon",
+            "backslash-escaped-colon",
             "path-escaping-link",
+            "percent-encoded-path-escape",
+            "trailing-path-escape",
             "reference-definition",
             "link-split-across-lines",
             "reference-split-across-lines",
-            "line-cap",
         ],
     )
     def test_content_breach_files_the_pr_unmergeable(
@@ -186,7 +235,7 @@ class TestCheckPatch:
         trees: tuple[Path, Path],
         tmp_path: Path,
         edit: str,
-        kind: str,
+        kinds: list[str],
     ) -> None:
         write_tree(trees[1], {DOCS_PAGE: edit})
         assert run(checkpatch, trees, tmp_path) == 0
@@ -196,5 +245,5 @@ class TestCheckPatch:
         }
         check = json.loads((tmp_path / "patch.json").read_text("utf-8"))
         assert [finding["kind"] for finding in check["content_violations"]] == [
-            checkpatch.ContentViolation[kind]
+            checkpatch.ContentViolation[kind] for kind in kinds
         ]

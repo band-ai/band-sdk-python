@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
+from tests.skills.releasedocs.fernnames import FernNames
 from tests.skills.releasedocs.ghpeer import CLOSED, MERGED, OPEN, FakeGh
 from tests.skills.releasedocs.outputsfile import read_outputs
 from tests.skills.releasedocs.samples import RELEASE_DATE, RELEASE_TAG
-
-CHANGELOG_BRANCH = f"changelog/python-sdk-{RELEASE_TAG}"
-DOCS_BRANCH = f"docs/python-sdk-{RELEASE_TAG}"
 
 
 def run(fernstate: ModuleType, gh: FakeGh, tmp_path: Path, *extra: str) -> int:
@@ -43,13 +42,14 @@ class TestFernState:
         self,
         fernstate: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         tmp_path: Path,
         states: list[str],
         expected: str,
     ) -> None:
         for state in states:
-            gh.add_pr(CHANGELOG_BRANCH, state)
-            gh.add_pr(DOCS_BRANCH, state)
+            gh.add_pr(fern_names.changelog, state)
+            gh.add_pr(fern_names.docs, state)
         assert run(fernstate, gh, tmp_path, "--date", RELEASE_DATE) == 0
         assert read_outputs(tmp_path / "out") == {
             "changelog": expected,
@@ -57,83 +57,101 @@ class TestFernState:
         }
 
     def test_rehearsal_reads_the_rehearsal_branches(
-        self, fernstate: ModuleType, gh: FakeGh, tmp_path: Path
+        self,
+        fernstate: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        tmp_path: Path,
     ) -> None:
-        gh.add_pr(CHANGELOG_BRANCH, MERGED)
-        gh.add_pr(f"{DOCS_BRANCH}-rehearsal", OPEN)
+        gh.add_pr(fern_names.changelog, MERGED)
+        gh.add_pr(fern_names.docs_rehearsal, OPEN)
         assert run(fernstate, gh, tmp_path, "--date", RELEASE_DATE, "--rehearsal") == 0
         assert read_outputs(tmp_path / "out") == {"changelog": "file", "docs": "reuse"}
-        state = json.loads((tmp_path / "state" / "state.json").read_text("utf-8"))
+        state = json.loads(
+            (tmp_path / "state" / fernstate.STATE_FILE).read_text("utf-8")
+        )
         assert (state["changelog_branch"], state["docs_branch"]) == (
-            f"{CHANGELOG_BRANCH}-rehearsal",
-            f"{DOCS_BRANCH}-rehearsal",
+            fern_names.changelog_rehearsal,
+            fern_names.docs_rehearsal,
         )
 
     @pytest.mark.parametrize(
-        "files",
-        [
-            ["fern/changelog/sdks/2026-10-20.md"],
-            [f"fern/docs/page-{n}.mdx" for n in range(100)]
-            + ["fern/changelog/sdks/2026-10-20.md"],
-        ],
+        "unrelated",
+        [0, 100],
         ids=["listed", "past-the-first-100-files"],
     )
     def test_another_open_pr_on_the_date_file_stops(
         self,
         fernstate: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
-        files: list[str],
+        unrelated: int,
     ) -> None:
-        conflict = gh.add_pr("docs/typescript-hand-fix", OPEN, files=files)
+        files = [f"fern/docs/page-{n}.mdx" for n in range(unrelated)]
+        conflict = gh.add_pr(
+            "docs/typescript-hand-fix", OPEN, files=[*files, fern_names.date_file]
+        )
         assert run(fernstate, gh, tmp_path, "--date", RELEASE_DATE) == 1
         assert read_outputs(tmp_path / "out") == {}
         assert conflict.url in caplog.text
 
     @pytest.mark.parametrize(
         "branch",
-        [CHANGELOG_BRANCH, f"{CHANGELOG_BRANCH}-rehearsal"],
+        [lambda names: names.changelog, lambda names: names.changelog_rehearsal],
         ids=["own", "twin"],
     )
     def test_own_branch_and_its_twin_are_no_conflict(
-        self, fernstate: ModuleType, gh: FakeGh, tmp_path: Path, branch: str
+        self,
+        fernstate: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        tmp_path: Path,
+        branch: Callable[[FernNames], str],
     ) -> None:
-        gh.add_pr(branch, OPEN, files=[f"fern/changelog/sdks/{RELEASE_DATE}.md"])
+        gh.add_pr(branch(fern_names), OPEN, files=[fern_names.date_file])
         assert run(fernstate, gh, tmp_path, "--date", RELEASE_DATE) == 0
 
     @pytest.mark.parametrize(
-        ("extra", "branch_prs"),
-        [((), []), (("--date", RELEASE_DATE), [(CHANGELOG_BRANCH, MERGED)])],
+        ("extra", "earlier_filing"),
+        [
+            ((), lambda gh, names: None),
+            (
+                ("--date", RELEASE_DATE),
+                lambda gh, names: gh.add_pr(names.changelog, MERGED),
+            ),
+        ],
         ids=["every-item-held", "changelog-already-merged"],
     )
     def test_no_changelog_to_file_ignores_the_date_file(
         self,
         fernstate: ModuleType,
         gh: FakeGh,
+        fern_names: FernNames,
         tmp_path: Path,
         extra: tuple[str, ...],
-        branch_prs: list[tuple[str, str]],
+        earlier_filing: Callable[[FakeGh, FernNames], object],
     ) -> None:
-        for branch, state in branch_prs:
-            gh.add_pr(branch, state)
-        gh.add_pr(
-            "docs/hand-fix", OPEN, files=[f"fern/changelog/sdks/{RELEASE_DATE}.md"]
-        )
+        earlier_filing(gh, fern_names)
+        gh.add_pr("docs/hand-fix", OPEN, files=[fern_names.date_file])
         assert run(fernstate, gh, tmp_path, *extra) == 0
         assert read_outputs(tmp_path / "out") == {"changelog": "skip", "docs": "file"}
 
     def test_docs_listings_feed_docsrange(
-        self, fernstate: ModuleType, gh: FakeGh, tmp_path: Path
+        self,
+        fernstate: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        tmp_path: Path,
     ) -> None:
-        gh.add_pr("docs/python-sdk-band-sdk-v6.0.1", MERGED)
-        gh.add_pr("docs/python-sdk-band-sdk-v6.0.2", OPEN)
+        merged = gh.add_pr(fern_names.older_docs, MERGED)
+        pending = gh.add_pr(fern_names.docs, OPEN)
         gh.add_pr("docs/typescript-sdk-v1.0.0", MERGED)
         assert run(fernstate, gh, tmp_path) == 0
         state = tmp_path / "state"
-        assert json.loads((state / "docs-merged.json").read_text("utf-8")) == [
-            {"number": 1, "headRefName": "docs/python-sdk-band-sdk-v6.0.1"}
-        ]
-        assert json.loads((state / "docs-open.json").read_text("utf-8")) == [
-            {"number": 2, "headRefName": "docs/python-sdk-band-sdk-v6.0.2"}
+        listings = (fernstate.DOCS_MERGED_FILE, fernstate.DOCS_OPEN_FILE)
+        assert [json.loads((state / name).read_text("utf-8")) for name in listings] == [
+            [{"number": merged.number, "headRefName": merged.head}],
+            [{"number": pending.number, "headRefName": pending.head}],
         ]

@@ -9,10 +9,11 @@ of Fern ``dev`` (``--fern``). For each part it skips a merged branch PR, or
 commits this run's checked content, force-pushes it, and opens a new PR or
 updates the open one, so nothing pushed to the branch since is merged
 unchecked. It then waits until every check run on the PR's head succeeds and
-squash-merges it (live) or closes it (test). A docs PR whose content checks failed is opened but never
-merged; superseded docs PRs are closed once the docs PR merges. Appends each
-PR link to ``--outputs`` and ``--summary``, and fails when a part is left
-unmerged.
+squash-merges it (live); a rehearsal (test) closes it whatever its checks say.
+A docs PR whose content checks failed is opened but never merged. Once the
+docs PR is merged, by this run or an earlier one, the open docs PRs its body
+supersedes are closed (live). Appends each PR link to ``--outputs`` and
+``--summary``, and fails when a part is left unmerged.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import logging
 import shutil
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
@@ -31,7 +32,8 @@ from pathlib import Path
 
 from checkpatch import PatchCheck
 from collectprs import gh_output, git
-from docsreport import DocsReport, pr_body
+from docsrange import DOCS_PRS
+from docsreport import DocsReport, pr_body, superseded
 from fernstate import Action, BranchPr, FernState, Gh, action
 from holdbacks import (
     held_reasons,
@@ -56,6 +58,7 @@ logger = logging.getLogger(__name__)
 COMMITTER = ("band-release-bot", "release-bot@band.ai")
 # Fern runs two check workflows on every PR, both named `run`.
 MIN_CHECK_RUNS = 2
+COMPLETED = "completed"
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
 CHECK_POLL_SECONDS = 30
 CHECK_POLL_ATTEMPTS = 40
@@ -139,11 +142,10 @@ class StaleError(RuntimeError):
 
 def checks_state(runs: Sequence[CheckRun]) -> ChecksState:
     if any(
-        r.status == "completed" and r.conclusion not in PASSING_CONCLUSIONS
-        for r in runs
+        r.status == COMPLETED and r.conclusion not in PASSING_CONCLUSIONS for r in runs
     ):
         return ChecksState.FAILED
-    if len(runs) < MIN_CHECK_RUNS or any(r.status != "completed" for r in runs):
+    if len(runs) < MIN_CHECK_RUNS or any(r.status != COMPLETED for r in runs):
         return ChecksState.PENDING
     return ChecksState.PASSED
 
@@ -155,6 +157,7 @@ class Filer:
     mode: Mode
     tag: str
     poll: Poll
+    open_docs: Collection[int]
 
     def title(self, subject: str) -> str:
         prefix = "Rehearsal: " if self.mode is Mode.TEST else ""
@@ -252,24 +255,27 @@ class Filer:
         return state
 
     def settle(self, pr: FiledPr) -> Outcome:
-        """Merge (live) or close (test) a PR once its checks pass."""
+        """Merge (live) a PR once its checks pass; close (test) it whatever they say."""
         # A rehearsal closes its PRs anyway, so it still exercises the checks.
         if not pr.mergeable and self.mode is Mode.LIVE:
             return Outcome.DO_NOT_MERGE
-        match self.wait_for_checks(pr.sha):
+        state = self.wait_for_checks(pr.sha)
+        if self.mode is Mode.TEST:
+            # An open rehearsal would block a same-day live filing of another tag.
+            self.gh(
+                "pr", "close", str(pr.number), "--repo", FERN_REPO, "--delete-branch"
+            )
+        match state:
             case ChecksState.FAILED:
                 return Outcome.CHECKS_FAILED
             case ChecksState.PENDING:
                 return Outcome.CHECKS_PENDING
+            case ChecksState.PASSED if self.mode is Mode.TEST:
+                return Outcome.CLOSED
             case ChecksState.PASSED:
-                return self.finish(pr)
+                return self.merge(pr)
 
-    def finish(self, pr: FiledPr) -> Outcome:
-        if self.mode is Mode.TEST:
-            self.gh(
-                "pr", "close", str(pr.number), "--repo", FERN_REPO, "--delete-branch"
-            )
-            return Outcome.CLOSED
+    def merge(self, pr: FiledPr) -> Outcome:
         self.gh(
             "api",
             "-X",
@@ -282,17 +288,32 @@ class Filer:
         )
         return Outcome.MERGED
 
-    def close_superseded(self, merged: FiledPr, supersede: Sequence[int]) -> None:
-        for number in supersede:
-            self.gh(
-                "pr",
-                "close",
-                str(number),
-                "--repo",
-                FERN_REPO,
-                "--comment",
-                f"Superseded by #{merged.number}",
-            )
+    def close_superseded(self, docs_pr: int) -> None:
+        """Close the open PRs the merged docs PR supersedes; a re-run closes any left."""
+        if self.mode is not Mode.LIVE:
+            return
+        body = self.gh(
+            "pr",
+            "view",
+            str(docs_pr),
+            "--repo",
+            FERN_REPO,
+            "--json",
+            "body",
+            "--jq",
+            ".body",
+        )
+        for number in superseded(body):
+            if number in self.open_docs:
+                self.gh(
+                    "pr",
+                    "close",
+                    str(number),
+                    "--repo",
+                    FERN_REPO,
+                    "--comment",
+                    f"Superseded by #{docs_pr}",
+                )
 
     def file_changelog(
         self, branch: str, changelog: ChangelogInput, existing: BranchPr | None
@@ -344,18 +365,17 @@ class Filer:
         branch: str,
         changelog: ChangelogInput | None,
         existing: BranchPr | None,
-    ) -> tuple[FiledPr, list[int]] | None:
+    ) -> FiledPr | None:
         if changelog is None:
             return None
-        return self.file_changelog(branch, changelog, existing), []
+        return self.file_changelog(branch, changelog, existing)
 
     def new_docs(
         self, branch: str, docs: DocsInput | None, existing: BranchPr | None
-    ) -> tuple[FiledPr, list[int]] | None:
+    ) -> FiledPr | None:
         if docs is None or not docs.check.files:
             return None
-        supersede = docs.supersede if self.mode is Mode.LIVE else []
-        return self.file_docs(branch, docs, existing), supersede
+        return self.file_docs(branch, docs, existing)
 
 
 @dataclass(frozen=True)
@@ -364,30 +384,38 @@ class PartResult:
     url: str = ""
 
 
+def ignore_merge(number: int) -> None:
+    """A changelog PR has nothing to do once merged."""
+
+
 def run_part(
     filer: Filer,
     pr: BranchPr | None,
-    file_new: Callable[[BranchPr | None], tuple[FiledPr, list[int]] | None],
+    file_new: Callable[[BranchPr | None], FiledPr | None],
+    on_merged: Callable[[int], None],
 ) -> PartResult:
-    """Skip a merged PR, else file this run's content (updating an open PR); then settle it."""
+    """Skip a merged PR, else file this run's content (updating an open PR); then settle it.
+
+    ``on_merged`` runs for a merged PR, this run's or an earlier one's.
+    """
     try:
         match action(pr):
             case Action.SKIP if pr is not None:
+                on_merged(pr.number)
                 return PartResult(Outcome.ALREADY_MERGED, pr.url)
             case Action.REUSE:
                 existing = pr
             case _:
                 existing = None
-        new = file_new(existing)
-        if new is None:
+        filed = file_new(existing)
+        if filed is None:
             # An open PR this run can't vouch for is never merged.
             if existing is not None:
                 return PartResult(Outcome.LEFT_OPEN, existing.url)
             return PartResult(Outcome.NOTHING)
-        filed, supersede = new
         outcome = filer.settle(filed)
         if outcome is Outcome.MERGED:
-            filer.close_superseded(filed, supersede)
+            on_merged(filed.number)
     except (OSError, RuntimeError, ValueError) as exc:
         logger.error("error: %s", exc)
         return PartResult(Outcome.ERROR)
@@ -405,9 +433,13 @@ def file_all(
             filer,
             state.changelog_pr,
             partial(filer.new_changelog, state.changelog_branch, changelog),
+            ignore_merge,
         ),
         "docs": run_part(
-            filer, state.docs_pr, partial(filer.new_docs, state.docs_branch, docs)
+            filer,
+            state.docs_pr,
+            partial(filer.new_docs, state.docs_branch, docs),
+            filer.close_superseded,
         ),
     }
 
@@ -462,6 +494,12 @@ def main(
     parser.add_argument(
         "--state", type=Path, required=True, help="fernstate.py's state.json"
     )
+    parser.add_argument(
+        "--docs-open",
+        type=Path,
+        required=True,
+        help="fernstate.py's listing of the open docs PRs",
+    )
     parser.add_argument("--mode", type=Mode, choices=list(Mode), required=True)
     parser.add_argument(
         "--notes",
@@ -488,7 +526,10 @@ def main(
     args = parser.parse_args(argv)
 
     state = FernState.model_validate_json(args.state.read_bytes())
-    filer = Filer(gh, args.fern, args.mode, args.tag, poll)
+    open_docs = {
+        pr.number for pr in DOCS_PRS.validate_json(args.docs_open.read_bytes())
+    }
+    filer = Filer(gh, args.fern, args.mode, args.tag, poll, open_docs)
     results = file_all(filer, state, read_changelog(args), read_docs(args))
     record_results(results, args.outputs, args.summary)
     return 0 if all(result.outcome in SETTLED for result in results.values()) else 1

@@ -25,6 +25,7 @@ from releasedata import Category, Item, ReleaseNotes
 from textsafety import (
     has_unclosed_fence,
     mdx_text,
+    or_none,
     pr_body_text,
     without_fenced_code,
 )
@@ -246,7 +247,6 @@ def holdback_summary(item: Item, reason: str | None) -> str:
 
 
 def pr_body(notes: ReleaseNotes, holdbacks: list[str]) -> str:
-    holdbacks = holdbacks or ["None."]
     return "\n".join(
         [
             "## Summary",
@@ -263,7 +263,7 @@ def pr_body(notes: ReleaseNotes, holdbacks: list[str]) -> str:
             "",
             "## Holdbacks",
             "",
-            *holdbacks,
+            *or_none(holdbacks),
             "",
         ]
     )
