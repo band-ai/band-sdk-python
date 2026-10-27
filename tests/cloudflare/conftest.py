@@ -12,14 +12,16 @@ from typing import Any
 
 import httpx
 import pytest
+from filelock import FileLock
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from tests.cloudflare.client import WorkerRuntime
 from tests.cloudflare.contract import Scenario
 from tests.paths import EXAMPLES_ROOT
-from tests.ports import reserve_port
+from tests.ports import HeldPort
 
 EXAMPLE = EXAMPLES_ROOT / "cloudflare"
+WRANGLER = "wrangler@4.153.0"
 HARNESS_MODULES = ("contract.py", "kit.py", "lifecycle.py", "harness.py")
 # JSONC (comments, trailing commas) is valid JavaScript object-literal syntax.
 READ_JSONC = (
@@ -74,25 +76,31 @@ def runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WorkerRuntime]
         pytest.skip(
             "Set CLOUDFLARE_TESTS_ENABLED=true for real Python Worker runtime tests"
         )
-    subprocess.run(
-        ["uv", "run", "--locked", "pywrangler", "sync"],
-        cwd=EXAMPLE,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
     root = tmp_path_factory.mktemp("cloudflare")
-    harness_project(root)
-    port = reserve_port()
+    # xdist workers share the example's sync target; one syncs and copies at a time.
+    with FileLock(tmp_path_factory.getbasetemp().parent / "cloudflare-sync.lock"):
+        subprocess.run(
+            ["uv", "run", "--locked", "pywrangler", "sync"],
+            cwd=EXAMPLE,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        harness_project(root)
+    # Hold both until chosen so they differ; wrangler's inspector defaults to a fixed port.
+    with HeldPort() as http, HeldPort() as inspector:
+        port, inspector_port = http.port, inspector.port
     with (root / "runtime.log").open("w+") as log:
         process = subprocess.Popen(
             [
                 "npx",
                 "--yes",
-                "wrangler@4.153.0",
+                WRANGLER,
                 "dev",
                 "--port",
                 str(port),
+                "--inspector-port",
+                str(inspector_port),
                 "--show-interactive-dev-session=false",
             ],
             cwd=root,

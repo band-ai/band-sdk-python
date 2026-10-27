@@ -113,10 +113,10 @@ The Worker accepts only authenticated `POST /invocations` for its configured
 agent with a nonempty string room ID. There is no agent-ID fallback. The SDK
 still validates delivery envelopes and owns claims, completion, history and drain.
 The Worker shares cold-start work, waits for `/ping` after receiver startup,
-bounds readiness to 90 seconds, and destroys failed new boots before permitting
-another attempt. It never retries an invocation. Healthy containers shut down
-180 seconds after the Durable Object becomes inactive; request activity can
-extend their lifetime. Startup and idle constants live in `src/worker.py`.
+bounds readiness by `READINESS_SECONDS`, and destroys failed new boots before
+permitting another attempt. It never retries an invocation. Healthy containers
+shut down `IDLE_MS` after the Durable Object becomes inactive; request activity
+can extend their lifetime. Both constants live in `src/worker.py`.
 The Worker uses Python Workers and Durable Objects; the agent itself runs in the ordinary Python
 container, with no Pyodide restrictions on SDK dependencies.
 

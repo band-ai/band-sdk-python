@@ -10,12 +10,27 @@ from types import SimpleNamespace
 from typing import Any
 
 import js
-from contract import BODY, DESTROY_FAILURE, IMAGE, SETTINGS, VERSION_ID, Call
+from contract import (
+    BODY,
+    DESTROY_FAILURE,
+    IMAGE,
+    SETTINGS,
+    UPSTREAM_FAILURE,
+    VERSION_ID,
+    Call,
+)
 from pyodide.ffi import create_proxy
-from worker import CONTAINER_IMAGE_HEADER, ROOM_VERSION_HEADER, SECRET_SETTINGS
+from worker import (
+    AUTHORIZATION,
+    CONTAINER_IMAGE_HEADER,
+    ROOM_VERSION_HEADER,
+    SECRET_SETTINGS,
+)
 from workers import Request, Response
 
 HEALTHY = 200
+# An unready answer meaning the receiver port is not listening yet.
+REFUSED = "refused"
 
 
 class Container:
@@ -25,6 +40,7 @@ class Container:
         self.running = running
         self.images = SimpleNamespace(base=IMAGE)
         self.calls: list[Call] = []
+        self.idle_timeouts: list[int] = []
         self.injectors: dict[str, Any] = {}
         self.options: Any = None
         self.forwarded: list[dict[str, Any]] = []
@@ -36,7 +52,7 @@ class Container:
         self.ping_ready = asyncio.Event()
         self.ping_ready.set()
         self.ping_entered = asyncio.Event()
-        self.unready_answers: list[int] = []
+        self.unready_answers: list[int | str] = []
         self.fail_forward = False
         self.fail_destroy = False
 
@@ -54,6 +70,7 @@ class Container:
 
     async def setInactivityTimeout(self, timeout: int) -> None:
         self.calls.append(Call.IDLE)
+        self.idle_timeouts.append(timeout)
         self.idle_applied.set()
 
     def monitor(self) -> Any:
@@ -76,6 +93,7 @@ class Container:
             self.exit()
 
     async def inspect(self) -> Any:
+        self.calls.append(Call.INSPECT)
         return SimpleNamespace(image=IMAGE)
 
     def getTcpPort(self, port: int) -> Container:
@@ -93,8 +111,10 @@ class Container:
         if signal.aborted:
             # An aborted workerd fetch rejects with the signal's reason.
             await js.Promise.reject(signal.reason)
-        status = self.unready_answers.pop(0) if self.unready_answers else HEALTHY
-        return Response("", status=status).js_object
+        answer = self.unready_answers.pop(0) if self.unready_answers else HEALTHY
+        if answer == REFUSED:
+            await js.Promise.reject(js.Error.new("connection refused"))
+        return Response("", status=answer).js_object
 
     async def forward(self, request: Any) -> Any:
         self.calls.append(Call.FORWARD)
@@ -103,7 +123,7 @@ class Container:
         )
         if self.fail_forward:
             secrets = " ".join(SETTINGS[name] for name in SECRET_SETTINGS)
-            await js.Promise.reject(js.Error.new(f"{secrets} upstream failed"))
+            await js.Promise.reject(js.Error.new(f"{secrets} {UPSTREAM_FAILURE}"))
         return Response(await request.text(), status=201).js_object
 
 
@@ -151,15 +171,19 @@ class Clock:
         return self.now
 
     def call_at(self, deadline: float, callback: Any, *args: Any, **kwargs: Any) -> Any:
-        timer = SimpleNamespace(callback=callback, cancelled=False)
+        timer = SimpleNamespace(
+            deadline=deadline, callback=callback, cancelled=False, fired=False
+        )
         timer.cancel = lambda: setattr(timer, "cancelled", True)
         self.timers.append(timer)
         return timer
 
     def advance(self, seconds: float) -> None:
+        """Move time forward and fire each live timer that has come due."""
         self.now += seconds
         for timer in self.timers:
-            if not timer.cancelled:
+            if not (timer.cancelled or timer.fired) and timer.deadline <= self.now:
+                timer.fired = True
                 timer.callback()
 
     @contextmanager
@@ -227,14 +251,21 @@ def environment(settings: dict[str, Any], **bindings: Any) -> SimpleNamespace:
     )
 
 
-def invocation() -> Request:
-    token = SETTINGS["BRIDGE_TOKEN"]
-    return Request(
-        "https://worker/invocations",
-        method="POST",
-        body=BODY,
-        headers={"Authorization": f"Bearer {token}"},
-    )
+def invocation(
+    *,
+    method: str = "POST",
+    path: str = "/invocations",
+    authorization: str = f"Bearer {SETTINGS['BRIDGE_TOKEN']}",
+    body: str = BODY,
+) -> Request:
+    """Build the bridge's invocation request; a GET carries no body."""
+    arguments: dict[str, Any] = {
+        "method": method,
+        "headers": {AUTHORIZATION: authorization},
+    }
+    if method != "GET":
+        arguments["body"] = body
+    return Request(f"https://worker{path}", **arguments)
 
 
 async def observed(response: Response) -> dict[str, Any]:

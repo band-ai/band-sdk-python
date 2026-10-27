@@ -20,7 +20,12 @@ uv run --isolated examples/oneshot/run-bridge.py
 ```
 
 Do not invoke the script through `uv run python`: that bypasses its declared
-script dependencies. The receiver can similarly run directly with `uv run
+script dependencies.
+
+The receiver runs on two SDK builds. The Cloudflare image installs the released
+SDK pinned in `server.py.lock`; the AgentCore image installs this checkout's SDK.
+A receiver change that needs unreleased SDK code must wait for a release and a
+refreshed lock before the Cloudflare image can use it. The receiver can similarly run directly with `uv run
 --isolated examples/oneshot/server.py` when its credentials are supplied.
 
 HTTP targets optionally accept `bearer_token`. An explicitly empty token is

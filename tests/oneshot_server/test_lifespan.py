@@ -18,6 +18,7 @@ class TestLifespan:
     async def test_real_invoker_serves_after_startup_and_refuses_after_shutdown(
         self,
         receiver: ModuleType,
+        client: httpx.AsyncClient,
         platform_url: str,
         httpx_mock: HTTPXMock,
     ) -> None:
@@ -27,19 +28,15 @@ class TestLifespan:
             json=response.model_dump(mode="json"),
         )
         async with receiver.app.router.lifespan_context(receiver.app):
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=receiver.app),
-                base_url="http://receiver",
-            ) as client:
-                result = await client.post(
-                    "/invocations",
-                    json={
-                        "event_type": "room_added",
-                        "agent_id": "agent-1",
-                        "room_id": "room-1",
-                        "payload": {},
-                    },
-                )
+            result = await client.post(
+                "/invocations",
+                json={
+                    "event_type": "room_added",
+                    "agent_id": "agent-1",
+                    "room_id": "room-1",
+                    "payload": {},
+                },
+            )
             assert (result.status_code, result.json()) == (
                 200,
                 {"status": "ignored", "event_type": "room_added"},

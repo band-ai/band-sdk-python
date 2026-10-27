@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import js
 from contract import CRASH, Scenario
 from kit import (
+    REFUSED,
     Clock,
     Container,
     environment,
@@ -53,6 +54,7 @@ async def warm_reuse(ctx: Any, settings: dict[str, Any]) -> Observations:
     second = await room.fetch(invocation())
     return {
         "calls": container.calls,
+        "idle_timeouts": container.idle_timeouts,
         "statuses": [first.status, second.status],
     }
 
@@ -60,7 +62,7 @@ async def warm_reuse(ctx: Any, settings: dict[str, Any]) -> Observations:
 async def ping_retry(ctx: Any, settings: dict[str, Any]) -> Observations:
     container = Container()
     room = room_for(ctx, container, settings)
-    container.unready_answers = [503]
+    container.unready_answers = [REFUSED, 503]
     response = await room.fetch(invocation())
     return {"calls": container.calls, "status": response.status}
 
@@ -70,7 +72,11 @@ async def rehydration(ctx: Any, settings: dict[str, Any]) -> Observations:
     room = room_for(ctx, container, settings)
     await container.idle_applied.wait()
     response = await room.fetch(invocation())
-    return {"calls": container.calls, "status": response.status}
+    return {
+        "calls": container.calls,
+        "idle_timeouts": container.idle_timeouts,
+        "status": response.status,
+    }
 
 
 async def credentials(ctx: Any, settings: dict[str, Any]) -> Observations:
@@ -83,9 +89,7 @@ async def credentials(ctx: Any, settings: dict[str, Any]) -> Observations:
     options = json.loads(js.JSON.stringify(container.options))
     return {
         "status": response.status,
-        "image": options["image"],
-        "enable_internet": options["enableInternet"],
-        "env": options["env"],
+        "options": options,
         "keys_by_host": {
             urlsplit(sent["url"]).hostname: sent["key"] for sent in upstream
         },
@@ -126,16 +130,20 @@ async def stop_during_boot(ctx: Any, settings: dict[str, Any]) -> Observations:
 
 async def expire_readiness(room: Room, container: Container) -> Observations:
     container.ping_ready.clear()
+    container.ping_entered.clear()
     clock = Clock()
     with clock.installed(asyncio.get_running_loop()):
         async with asyncio.TaskGroup() as group:
             fetch = group.create_task(room.fetch(invocation()))
             await container.ping_entered.wait()
-            clock.advance(READINESS_SECONDS)
+            clock.advance(READINESS_SECONDS - 1)
+            fired_early = [timer.fired for timer in clock.timers]
+            clock.advance(1)
     return {
         "status": fetch.result().status,
         "calls": container.calls,
         "running": container.running,
+        "fired_early": fired_early,
         "deadline_timers_cancelled": [timer.cancelled for timer in clock.timers],
     }
 
@@ -195,6 +203,23 @@ async def forward_failure(ctx: Any, settings: dict[str, Any]) -> Observations:
     }
 
 
+async def retries_share_monitor(ctx: Any, settings: dict[str, Any]) -> Observations:
+    container = Container(running=True)
+    room = room_for(ctx, container, settings)
+    await container.idle_applied.wait()
+    statuses = [(await expire_readiness(room, container))["status"] for _ in range(3)]
+    container.ping_ready.set()
+    with recorded_logs(logger) as logs:
+        container.exit(js.Error.new(CRASH))
+        recovered = await room.fetch(invocation())
+    return {
+        "statuses": statuses,
+        "recovered": recovered.status,
+        "calls": container.calls,
+        "logs": logs,
+    }
+
+
 ROOM_SCENARIOS: dict[
     Scenario, Callable[[Any, dict[str, Any]], Awaitable[Observations]]
 ] = {
@@ -210,4 +235,5 @@ ROOM_SCENARIOS: dict[
     Scenario.CLEANUP_FAILURE: cleanup_failure,
     Scenario.CRASH_AFTER_READY: crash_after_ready,
     Scenario.FORWARD_FAILURE: forward_failure,
+    Scenario.RETRIES_SHARE_MONITOR: retries_share_monitor,
 }

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from types import ModuleType
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import NonCallableMagicMock, create_autospec
 
+import httpx
 import pytest
 
+from band.runtime.oneshot import OneShotInvoker
 from tests.loaders import load_script_module
 from tests.paths import EXAMPLES_ROOT
 
@@ -30,7 +33,17 @@ def receiver() -> ModuleType:
 
 
 @pytest.fixture
-def invoker(receiver: ModuleType) -> MagicMock:
-    invoker = MagicMock(handle_event=AsyncMock(return_value={"status": "done"}))
+async def client(receiver: ModuleType) -> AsyncIterator[httpx.AsyncClient]:
+    """Call the receiver app in process; lifespan runs only when a test enters it."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=receiver.app), base_url="http://receiver"
+    ) as client:
+        yield client
+
+
+@pytest.fixture
+def invoker(receiver: ModuleType) -> NonCallableMagicMock:
+    invoker = create_autospec(OneShotInvoker, instance=True)
+    invoker.handle_event.return_value = {"status": "done"}
     receiver.app.state.invoker = invoker
     return invoker

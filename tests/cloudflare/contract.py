@@ -28,6 +28,7 @@ class Scenario(StrEnum):
     CLEANUP_FAILURE = "cleanup-failure"
     CRASH_AFTER_READY = "crash-after-ready"
     FORWARD_FAILURE = "forward-failure"
+    RETRIES_SHARE_MONITOR = "retries-share-monitor"
 
 
 class Call(StrEnum):
@@ -38,6 +39,7 @@ class Call(StrEnum):
     IDLE = "idle"
     MONITOR = "monitor"
     PING = "ping"
+    INSPECT = "inspect"
     FORWARD = "forward"
     DESTROY = "destroy"
 
@@ -64,6 +66,10 @@ IMAGE = "qualified-image"
 MODEL = "model-under-test"
 CRASH = "receiver crashed"
 DESTROY_FAILURE = "destroy refused"
+UPSTREAM_FAILURE = "upstream failed"
+# How workerd renders a rejected JavaScript Error in Python.
+CRASH_ERROR = f"Error: {CRASH}"
+DESTROY_ERROR = f"Error: {DESTROY_FAILURE}"
 ENVELOPE = {
     "agent_id": SETTINGS["BAND_AGENT_ID"],
     "room_id": "room",

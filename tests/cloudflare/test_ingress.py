@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest import mock
 
 import pytest
 
 from tests.cloudflare.client import WorkerRuntime
-from tests.cloudflare.contract import BODY, ENVELOPE, MODEL, VERSION_ID, Scenario
+from tests.cloudflare.contract import (
+    BODY,
+    ENVELOPE,
+    MODEL,
+    SETTINGS,
+    VERSION_ID,
+    Scenario,
+)
 
 REQUIRED = (
     "BAND_AGENT_ID",
@@ -19,7 +25,7 @@ REQUIRED = (
     "BRIDGE_TOKEN",
 )
 OPTIONAL = ("ANTHROPIC_MODEL",)
-CONFIGURATION_FAILURE = (503, None, [["ERROR", mock.ANY]])
+PADDED = {**SETTINGS, "ANTHROPIC_MODEL": MODEL}
 
 
 @pytest.mark.timeout(120)
@@ -30,51 +36,45 @@ class TestIngress:
             list(OPTIONAL),
         )
 
-    @pytest.mark.parametrize("name", REQUIRED)
-    @pytest.mark.parametrize("value", [None, "", "   "])
-    def test_unset_required_setting_fails_closed_and_is_named(
-        self, runtime: WorkerRuntime, name: str, value: str | None
-    ) -> None:
-        result = runtime.run(Scenario.INGRESS, settings={name: value})
-        assert (
-            result["status"],
-            result["room"],
-            result["logs"],
-        ) == CONFIGURATION_FAILURE
-        assert result["logs"][0][1].endswith(name)
-
     @pytest.mark.parametrize(
-        "endpoint",
+        "settings,invalid",
         [
-            "http://app.band.ai",
-            "https://user:pass@app.band.ai",
-            "https://",
-            "garbage",
-            "https://app.band.ai:invalid",
-            "https://app.band.ai:99999",
+            *[
+                ({name: value}, name)
+                for name in REQUIRED
+                for value in (None, "", "   ")
+            ],
+            *[
+                ({"BAND_REST_URL": endpoint}, "BAND_REST_URL")
+                for endpoint in (
+                    "http://app.band.ai",
+                    "https://user:pass@app.band.ai",
+                    "https://",
+                    "garbage",
+                    "https://app.band.ai:invalid",
+                    "https://app.band.ai:99999",
+                )
+            ],
+            *[({name: f" {PADDED[name]} "}, name) for name in (*REQUIRED, *OPTIONAL)],
+            ({"ANTHROPIC_MODEL": "   "}, "ANTHROPIC_MODEL"),
         ],
     )
-    def test_invalid_endpoint_fails_closed_and_is_named(
-        self, runtime: WorkerRuntime, endpoint: str
+    def test_invalid_setting_fails_closed_and_is_named(
+        self,
+        runtime: WorkerRuntime,
+        constants: dict[str, Any],
+        settings: dict[str, str | None],
+        invalid: str,
     ) -> None:
-        result = runtime.run(Scenario.INGRESS, settings={"BAND_REST_URL": endpoint})
-        assert (
-            result["status"],
-            result["room"],
-            result["logs"],
-        ) == CONFIGURATION_FAILURE
-        assert result["logs"][0][1].endswith("BAND_REST_URL")
-
-    def test_blank_model_fails_closed_and_is_named(
-        self, runtime: WorkerRuntime
-    ) -> None:
-        result = runtime.run(Scenario.INGRESS, settings={"ANTHROPIC_MODEL": "   "})
-        assert (
-            result["status"],
-            result["room"],
-            result["logs"],
-        ) == CONFIGURATION_FAILURE
-        assert result["logs"][0][1].endswith("ANTHROPIC_MODEL")
+        result = runtime.run(Scenario.INGRESS, settings=settings)
+        assert result == {
+            "status": 503,
+            "body": constants["configuration_unavailable"],
+            "room": None,
+            "forwarded_body": None,
+            "worker_version": None,
+            "logs": [["ERROR", constants["invalid_settings_log"] % invalid]],
+        }
 
     @pytest.mark.parametrize("model", ["", MODEL])
     def test_empty_or_named_model_routes(
@@ -86,25 +86,39 @@ class TestIngress:
     @pytest.mark.parametrize(
         "case,status",
         [
-            ({"auth": ""}, 401),
-            ({"auth": "Bearer private-wrong"}, 401),
-            ({"auth": "Bearer x"}, 401),
-            ({"body": "{"}, 400),
-            ({"body": "[]"}, 400),
-            ({"body": "null"}, 400),
-            ({"path": "/ping"}, 404),
-            ({"method": "GET"}, 404),
-            ({"method": "PROPFIND"}, 404),
+            ({"request": {"authorization": ""}}, 401),
+            ({"request": {"authorization": "Bearer private-wrong"}}, 401),
+            ({"request": {"authorization": "Bearer x"}}, 401),
+            ({"request": {"body": "{"}}, 400),
+            ({"request": {"body": "[]"}}, 400),
+            ({"request": {"body": "null"}}, 400),
+            ({"request": {"path": "/ping"}}, 404),
+            ({"request": {"method": "GET"}}, 404),
+            ({"request": {"method": "PROPFIND"}}, 404),
+            # Combined faults pin the check order: settings, route, auth, then body.
+            ({"settings": {"BAND_API_KEY": None}, "request": {"path": "/ping"}}, 503),
+            ({"request": {"authorization": "", "path": "/ping"}}, 404),
+            ({"request": {"authorization": "", "body": "{"}}, 401),
             *[
-                ({"body": json.dumps({**ENVELOPE, "room_id": value})}, 400)
+                ({"request": {"body": json.dumps({**ENVELOPE, "room_id": value})}}, 400)
                 for value in (None, "", " ", 123, [], {})
             ],
             *[
-                ({"body": json.dumps({**ENVELOPE, "agent_id": value})}, 400)
+                (
+                    {"request": {"body": json.dumps({**ENVELOPE, "agent_id": value})}},
+                    400,
+                )
                 for value in ("other", None, 4)
             ],
             *[
-                ({"body": json.dumps({**ENVELOPE, "event_type": value})}, 400)
+                (
+                    {
+                        "request": {
+                            "body": json.dumps({**ENVELOPE, "event_type": value})
+                        }
+                    },
+                    400,
+                )
                 for value in (None, 4, "", " ")
             ],
         ],

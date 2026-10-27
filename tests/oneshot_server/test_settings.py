@@ -7,26 +7,42 @@ from types import ModuleType
 import pytest
 from pydantic import ValidationError
 
+CREDENTIALS = {
+    "BAND_AGENT_ID": "agent-1",
+    "BAND_API_KEY": "key-1",
+    "ANTHROPIC_API_KEY": "anthropic-1",
+}
+
 
 class TestSettings:
-    def test_requires_credentials(
-        self, receiver: ModuleType, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize("name", CREDENTIALS)
+    def test_each_credential_is_required(
+        self, receiver: ModuleType, monkeypatch: pytest.MonkeyPatch, name: str
     ) -> None:
-        monkeypatch.delenv("BAND_AGENT_ID", raising=False)
-        monkeypatch.delenv("BAND_API_KEY", raising=False)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        for setting, credential in CREDENTIALS.items():
+            monkeypatch.setenv(setting, credential)
+        monkeypatch.delenv(name)
+        with pytest.raises(ValidationError):
+            receiver.Settings()
+
+    @pytest.mark.parametrize("name", CREDENTIALS)
+    def test_empty_credential_counts_as_missing(
+        self, receiver: ModuleType, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        for setting, credential in CREDENTIALS.items():
+            monkeypatch.setenv(setting, credential)
+        monkeypatch.setenv(name, "")
         with pytest.raises(ValidationError):
             receiver.Settings()
 
     def test_loads_credentials(
         self, receiver: ModuleType, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("BAND_AGENT_ID", "agent-1")
-        monkeypatch.setenv("BAND_API_KEY", "key-1")
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-1")
+        for setting, credential in CREDENTIALS.items():
+            monkeypatch.setenv(setting, credential)
         settings = receiver.Settings()
         assert (
             settings.band_agent_id,
             settings.band_api_key,
             settings.anthropic_api_key,
-        ) == ("agent-1", "key-1", "anthropic-1")
+        ) == tuple(CREDENTIALS.values())

@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest import mock
 
 import pytest
 
 from tests.cloudflare.client import WorkerRuntime
 from tests.cloudflare.contract import (
     COLD_START,
-    CRASH,
-    DESTROY_FAILURE,
-    SETTINGS,
+    CRASH_ERROR,
+    DESTROY_ERROR,
+    UPSTREAM_FAILURE,
     Call,
     Scenario,
 )
+
+BOOTED = [*COLD_START, Call.INSPECT]
 
 
 @pytest.mark.timeout(120)
@@ -26,7 +27,7 @@ class TestRoomFailure:
         assert runtime.run(Scenario.CRASH_DURING_BOOT) == {
             "statuses": [503, 503, 503],
             "recovered": 201,
-            "calls": [*COLD_START, Call.DESTROY, *COLD_START, Call.FORWARD],
+            "calls": [*COLD_START, Call.DESTROY, *BOOTED, Call.FORWARD],
             "deadline_timers_cancelled": [True, True],
         }
 
@@ -45,6 +46,7 @@ class TestRoomFailure:
             "status": 503,
             "calls": [*COLD_START, Call.DESTROY],
             "running": False,
+            "fired_early": [False],
             "deadline_timers_cancelled": [True],
         }
 
@@ -55,52 +57,68 @@ class TestRoomFailure:
             "status": 503,
             "calls": [Call.IDLE, Call.MONITOR, Call.PING],
             "running": True,
+            "fired_early": [False],
             "deadline_timers_cancelled": [True],
         }
 
-    def test_cleanup_failure_keeps_the_startup_cause(
-        self, runtime: WorkerRuntime
+    def test_failed_retries_on_a_running_container_log_its_stop_once(
+        self, runtime: WorkerRuntime, constants: dict[str, Any]
     ) -> None:
-        result = runtime.run(Scenario.CLEANUP_FAILURE)
-        assert result == {
+        assert runtime.run(Scenario.RETRIES_SHARE_MONITOR) == {
+            "statuses": [503, 503, 503],
+            "recovered": 201,
+            "calls": [
+                Call.IDLE,
+                Call.MONITOR,
+                Call.PING,
+                Call.PING,
+                Call.PING,
+                *BOOTED,
+                Call.FORWARD,
+            ],
+            "logs": [["WARNING", constants["receiver_failed_log"] % CRASH_ERROR]],
+        }
+
+    def test_cleanup_failure_keeps_the_startup_cause(
+        self, runtime: WorkerRuntime, constants: dict[str, Any]
+    ) -> None:
+        assert runtime.run(Scenario.CLEANUP_FAILURE) == {
             "status": 503,
             "calls": [*COLD_START, Call.DESTROY],
             "logs": [
-                ["WARNING", mock.ANY],
-                ["WARNING", mock.ANY],
-                ["ERROR", mock.ANY],
+                ["WARNING", constants["receiver_failed_log"] % CRASH_ERROR],
+                ["WARNING", constants["cleanup_failed_log"] % DESTROY_ERROR],
+                ["ERROR", constants["receiver_unavailable_log"] % CRASH_ERROR],
             ],
         }
-        crashed, cleanup, unavailable = (message for _, message in result["logs"])
-        assert (CRASH in crashed, DESTROY_FAILURE in cleanup) == (True, True)
-        assert (CRASH in unavailable, DESTROY_FAILURE in unavailable) == (True, False)
 
     def test_crash_after_readiness_is_logged_and_the_next_request_restarts(
-        self, runtime: WorkerRuntime
+        self, runtime: WorkerRuntime, constants: dict[str, Any]
     ) -> None:
-        result = runtime.run(Scenario.CRASH_AFTER_READY)
-        assert result == {
+        assert runtime.run(Scenario.CRASH_AFTER_READY) == {
             "statuses": [201, 201],
-            "calls": [*COLD_START, Call.FORWARD, *COLD_START, Call.FORWARD],
-            "logs": [["WARNING", mock.ANY]],
+            "calls": [*BOOTED, Call.FORWARD, *BOOTED, Call.FORWARD],
+            "logs": [["WARNING", constants["receiver_failed_log"] % CRASH_ERROR]],
         }
-        assert CRASH in result["logs"][0][1]
 
     def test_forward_failure_keeps_the_container_and_redacts_secrets(
         self, runtime: WorkerRuntime, constants: dict[str, Any]
     ) -> None:
-        result = runtime.run(Scenario.FORWARD_FAILURE)
-        assert result == {
+        secrets = " ".join([constants["redacted"]] * len(constants["secret"]))
+        assert runtime.run(Scenario.FORWARD_FAILURE) == {
             "response": {
                 "status": 503,
-                "body": mock.ANY,
+                "body": constants["receiver_unavailable"],
                 "room_version": None,
                 "image": None,
             },
-            "calls": [*COLD_START, Call.FORWARD],
+            "calls": [*BOOTED, Call.FORWARD],
             "running": True,
-            "logs": [["ERROR", mock.ANY]],
+            "logs": [
+                [
+                    "ERROR",
+                    constants["receiver_unavailable_log"]
+                    % f"Error: {secrets} {UPSTREAM_FAILURE}",
+                ]
+            ],
         }
-        exposed = result["response"]["body"] + result["logs"][0][1]
-        secrets = [SETTINGS[name] for name in constants["secret"]]
-        assert [secret for secret in secrets if secret in exposed] == []

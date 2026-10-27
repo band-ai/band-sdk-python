@@ -29,13 +29,22 @@ class TestRoomBoot:
     ) -> None:
         assert runtime.run(Scenario.SHARED_BOOT) == {
             "calls_while_booting": [Call.INTERCEPT],
-            "calls": [*COLD_START, Call.FORWARD, Call.FORWARD, Call.FORWARD],
+            "calls": [
+                *COLD_START,
+                Call.INSPECT,
+                Call.FORWARD,
+                Call.FORWARD,
+                Call.FORWARD,
+            ],
             "responses": [SERVED] * 3,
         }
 
-    def test_warm_request_skips_readiness(self, runtime: WorkerRuntime) -> None:
+    def test_warm_request_skips_readiness(
+        self, runtime: WorkerRuntime, constants: dict[str, Any]
+    ) -> None:
         assert runtime.run(Scenario.WARM_REUSE) == {
-            "calls": [*COLD_START, Call.FORWARD, Call.FORWARD],
+            "calls": [*COLD_START, Call.INSPECT, Call.FORWARD, Call.FORWARD],
+            "idle_timeouts": [constants["idle_ms"]],
             "statuses": [201, 201],
         }
 
@@ -43,15 +52,16 @@ class TestRoomBoot:
         self, runtime: WorkerRuntime
     ) -> None:
         assert runtime.run(Scenario.PING_RETRY) == {
-            "calls": [*COLD_START, Call.PING, Call.FORWARD],
+            "calls": [*COLD_START, Call.PING, Call.PING, Call.INSPECT, Call.FORWARD],
             "status": 201,
         }
 
     def test_rehydrated_room_reuses_the_running_container(
-        self, runtime: WorkerRuntime
+        self, runtime: WorkerRuntime, constants: dict[str, Any]
     ) -> None:
         assert runtime.run(Scenario.REHYDRATION) == {
-            "calls": [Call.IDLE, Call.MONITOR, Call.PING, Call.FORWARD],
+            "calls": [Call.IDLE, Call.MONITOR, Call.PING, Call.INSPECT, Call.FORWARD],
+            "idle_timeouts": [constants["idle_ms"]],
             "status": 201,
         }
 
@@ -70,15 +80,18 @@ class TestRoomBoot:
         result = runtime.run(Scenario.CREDENTIALS, settings={"ANTHROPIC_MODEL": model})
         assert result == {
             "status": 201,
-            "image": IMAGE,
-            "enable_internet": False,
-            "env": {
-                "BAND_AGENT_ID": SETTINGS["BAND_AGENT_ID"],
-                "BAND_REST_URL": SETTINGS["BAND_REST_URL"],
-                "BAND_API_KEY": placeholder,
-                "ANTHROPIC_API_KEY": placeholder,
-                "PORT": str(constants["port"]),
-                **forwarded,
+            "options": {
+                "image": IMAGE,
+                "instance": constants["instance"],
+                "enableInternet": False,
+                "env": {
+                    "BAND_AGENT_ID": SETTINGS["BAND_AGENT_ID"],
+                    "BAND_REST_URL": SETTINGS["BAND_REST_URL"],
+                    "BAND_API_KEY": placeholder,
+                    "ANTHROPIC_API_KEY": placeholder,
+                    "PORT": str(constants["port"]),
+                    **forwarded,
+                },
             },
             "keys_by_host": {
                 BAND_HOST: SETTINGS["BAND_API_KEY"],

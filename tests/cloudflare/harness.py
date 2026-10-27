@@ -5,15 +5,24 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlsplit
 
-from contract import BAND_HOST, BODY, SETTINGS, Scenario
-from kit import Routing, environment, recorded_logs, upstream_requests
+from contract import BAND_HOST, SETTINGS, Scenario
+from kit import Routing, environment, invocation, recorded_logs, upstream_requests
 from lifecycle import ROOM_SCENARIOS
 from worker import (
     ANTHROPIC_HOST,
+    CLEANUP_FAILED_LOG,
+    CONFIGURATION_UNAVAILABLE,
     CONTAINER_HOST,
+    CONTAINER_INSTANCE,
+    IDLE_MS,
+    INVALID_SETTINGS_LOG,
     OPTIONAL_SETTINGS,
     PORT,
     PROXY_KEY,
+    RECEIVER_FAILED_LOG,
+    RECEIVER_UNAVAILABLE,
+    RECEIVER_UNAVAILABLE_LOG,
+    REDACTED,
     REQUIRED_SETTINGS,
     SECRET_SETTINGS,
     WORKER_VERSION_HEADER,
@@ -50,19 +59,8 @@ class Harness(DurableObject):
     async def ingress(self, case: dict[str, Any]) -> dict[str, Any]:
         routing = Routing()
         worker = Ingress(self.ctx, environment(case.get("settings", {}), ROOM=routing))
-        token = SETTINGS["BRIDGE_TOKEN"]
-        arguments = {
-            "method": case.get("method", "POST"),
-            "headers": {"Authorization": case.get("auth", f"Bearer {token}")},
-        }
-        if arguments["method"] != "GET":
-            arguments["body"] = case.get("body", BODY)
         with recorded_logs(logger) as logs:
-            response = await worker.fetch(
-                Request(
-                    "https://worker" + case.get("path", "/invocations"), **arguments
-                )
-            )
+            response = await worker.fetch(invocation(**case.get("request", {})))
         return {
             "status": response.status,
             "body": await response.text(),
@@ -99,6 +97,7 @@ class Harness(DurableObject):
 
 
 def constants() -> dict[str, Any]:
+    """Expose the Worker's own vocabulary so host assertions never retype it."""
     return {
         "required": REQUIRED_SETTINGS,
         "optional": OPTIONAL_SETTINGS,
@@ -107,6 +106,15 @@ def constants() -> dict[str, Any]:
         "port": PORT,
         "anthropic_host": ANTHROPIC_HOST,
         "container_host": CONTAINER_HOST,
+        "instance": CONTAINER_INSTANCE,
+        "idle_ms": IDLE_MS,
+        "redacted": REDACTED,
+        "configuration_unavailable": CONFIGURATION_UNAVAILABLE,
+        "receiver_unavailable": RECEIVER_UNAVAILABLE,
+        "invalid_settings_log": INVALID_SETTINGS_LOG,
+        "receiver_unavailable_log": RECEIVER_UNAVAILABLE_LOG,
+        "receiver_failed_log": RECEIVER_FAILED_LOG,
+        "cleanup_failed_log": CLEANUP_FAILED_LOG,
     }
 
 
