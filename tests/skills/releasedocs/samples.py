@@ -21,3 +21,35 @@ RECONNECT = ("Fixed", "Reconnect", "Rooms rejoin after a drop.")
 TOKEN_REDACTION = ("Security", "Token Redaction", "Keys never reach logs.")
 LEGACY_TOOLS = ("Removed", "Legacy Tools", "The deprecated tool names are gone.")
 TOOL_PREFIX = ("Changed", "Tool Prefix", "Tool names start with a prefix.")
+# A Fern docs page and the held-items ledger, as the Fern repository holds them.
+DOCS_PAGE = "fern/docs/pages/integrations/sdks/tutorials/agents.mdx"
+DOCS_PAGE_TEXT = """---
+title: Agents
+---
+
+import { Tabs } from "@components";
+
+<Tabs>
+Create an agent with `Agent.create()`.
+</Tabs>
+
+See the [reference](https://docs.band.ai/reference).
+"""
+LEDGER = """held_items:
+  - id: sdk-901-room-tasks
+    source: band-sdk-python#901
+    title: Room tasks
+    status: held
+    reason: Not public yet.
+    surfaces: [sdks, platform]
+    released_surfaces: []
+  - id: platform-77-billing
+    source: thenvoi-platform#77
+    title: Billing
+    status: held
+    reason: Platform only.
+    surfaces: [platform]
+    released_surfaces: []
+"""
+# The PR the ledger's sdks entry cites.
+HELD_PR = "901"

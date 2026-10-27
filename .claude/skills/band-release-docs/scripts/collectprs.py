@@ -284,6 +284,14 @@ def gh_failed(
     return RuntimeError(f"gh {' '.join(args[:2])} failed: {result.stderr.strip()}")
 
 
+def gh_output(*args: str) -> str:
+    """Run ``gh`` and return its stdout; raise on a non-zero exit."""
+    result = gh(*args)
+    if result.returncode != 0:
+        raise gh_failed(args, result)
+    return result.stdout
+
+
 def gh_release(tag: str) -> Release | None:
     """The release, or ``None`` when this token cannot see it."""
     args = (
@@ -302,11 +310,8 @@ def gh_release(tag: str) -> Release | None:
 
 
 def gh_pr_meta(number: int) -> PrMeta:
-    args = ("pr", "view", str(number), "--json", "title,body,labels")
-    result = gh(*args)
-    if result.returncode != 0:
-        raise gh_failed(args, result)
-    return PrMeta.model_validate_json(result.stdout)
+    output = gh_output("pr", "view", str(number), "--json", "title,body,labels")
+    return PrMeta.model_validate_json(output)
 
 
 def run(

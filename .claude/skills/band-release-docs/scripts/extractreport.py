@@ -16,13 +16,15 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic import ValidationError
-from releasedata import ChangelogReport
+from pydantic import BaseModel, ValidationError
+from reportschema import REPORT_MODELS, ReportKind
 
 logger = logging.getLogger(__name__)
 
 
-def extract_report(execution_file: Path) -> ChangelogReport:
+def extract_report(
+    execution_file: Path, kind: ReportKind = ReportKind.CHANGELOG
+) -> BaseModel:
     messages = json.loads(execution_file.read_text(encoding="utf-8"))
     results = [message for message in messages if message.get("type") == "result"]
     if not results:
@@ -30,7 +32,7 @@ def extract_report(execution_file: Path) -> ChangelogReport:
     output = results[-1].get("structured_output")
     if not output:
         raise ValueError("the result message carries no structured_output")
-    return ChangelogReport.model_validate(output)
+    return REPORT_MODELS[kind].model_validate(output)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -38,10 +40,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("execution_file", type=Path)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--kind",
+        type=ReportKind,
+        choices=list(ReportKind),
+        default=ReportKind.CHANGELOG,
+    )
     args = parser.parse_args(argv)
 
     try:
-        report = extract_report(args.execution_file)
+        report = extract_report(args.execution_file, args.kind)
     except ValidationError as exc:
         # Without the input: model text may hold a secret.
         errors = exc.errors(include_input=False, include_url=False)
@@ -54,7 +62,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.error("No report: %s", exc)
         return 1
     args.out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
-    logger.info("Report: %s, %d item(s)", report.status, len(report.items))
+    logger.info("Read the %s report", args.kind)
     return 0
 
 

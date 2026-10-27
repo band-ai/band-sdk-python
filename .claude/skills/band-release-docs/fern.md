@@ -1,10 +1,12 @@
 # Fern task (local): `/band-release-docs <tag> [--bundle <dir>] [--rehearse]`
 
-A maintainer runs this in Claude Code from this repository's checkout after
-`release-announce.yml` has attached the release's bundle. It files the Fern
-changelog PR from the bundle, then opens one Fern docs PR updating the Python
-SDK pages the release made stale. Every push, PR, and close waits for the
-maintainer to review the diff and approve.
+`release-announce.yml` files and merges both Fern PRs after every release.
+This is the manual recovery path its alerts point to: a maintainer runs it in
+Claude Code from this repository's checkout after the workflow has attached
+the release's bundle. It files the Fern changelog PR from the bundle, then
+opens one Fern docs PR updating the Python SDK pages the release made stale.
+Every push, PR, and close waits for the maintainer to review the diff and
+approve.
 
 `S` below is `.claude/skills/band-release-docs/scripts`, `<bundle>` is the
 directory holding the bundle, and `<tmp>` is a scratch directory outside this
@@ -12,19 +14,21 @@ checkout.
 
 ## Before starting
 
-- `gh auth status` must show push access to `thenvoi/fern`. This repository's
-  CI holds no Fern credential; the PRs are the maintainer's.
+- `gh auth status` must show push access to `thenvoi/fern`; the PRs are the
+  maintainer's.
 - Ask for a local `thenvoi/fern` clone, or `gh repo clone thenvoi/fern` into a
   temporary directory.
 - `--bundle <dir>` reads the bundle from a directory (for example
   `gh run download <run-id> --name bundle --dir <dir>`) instead of the release.
-- `--rehearse` uses `-rehearsal` branch suffixes and never pushes, opens,
+- `--rehearse` uses the rehearsal branches below and never pushes, opens,
   closes, or comments on anything. It still runs the existing-PR check on the
   real branch names and reports what it finds, without stopping.
 
 ## Branches
 
-Changelog: `changelog/python-sdk-<tag>`. Docs: `docs/python-sdk-<tag>`.
+Changelog: `CHANGELOG_BRANCH_PREFIX` + `<tag>`. Docs: `DOCS_BRANCH_PREFIX` +
+`<tag>`. `--rehearse` appends `REHEARSAL_SUFFIX`. All three are in
+`scripts/releasedata.py`.
 
 For each branch, first run
 `gh pr list --repo thenvoi/fern --head <branch> --state all --json number,state,url`.
@@ -54,16 +58,15 @@ closed PR may keep its branch or have it deleted.
    `gh pr list --repo thenvoi/fern --state open --limit 200 --json number,url,headRefName,changedFiles,files`
    (`files` stops at 100 per PR; for a PR with more `changedFiles`, list them
    with `gh api repos/thenvoi/fern/pulls/<n>/files --paginate --jq '.[].filename'`).
-   If one other than this release's own branch (or its `-rehearsal` twin)
+   If one other than this release's own branch (or its rehearsal twin)
    changes `fern/changelog/sdks/<release_date>.md` (`release_date` is in
    `<bundle>/release-notes.json`), stop and link it: both PRs would write that
    date file, so it merges first and this command runs again. Any branch name
    counts; other SDKs and hand fixes use `docs/...` branches.
-3. Holdbacks: compare each item in `<bundle>/release-notes.json` (numbered from 0)
-   against `<fern>/.changelog/held-items.yml` entries whose surfaces include
-   `sdks`, and against features marked hidden or Enterprise-gated in
-   `<fern>/docs-structure-summary.md`. Show every match and ask the maintainer
-   whether to hold it back; the ledger requires that confirmation.
+3. Holdbacks: apply [holdbacks.md](holdbacks.md) to `<bundle>/release-notes.json`
+   with `<fern>`'s ledger and docs summary. The bundle the workflow attached
+   already leaves out what it held; show every further match and ask the
+   maintainer whether to hold it back.
 4. Merge the entry:
    `uv run --script "$S/renderentry.py" <bundle>/release-notes.json --merge-into <worktree>/fern/changelog/sdks --drop <held index>... --pr-body <tmp>/pr-body.md`.
    It validates the entry against the [format reference](references/fern-changelog-format.md),
@@ -100,34 +103,18 @@ closed PR may keep its branch or have it deleted.
    (first `git worktree remove --force <tmp>/sdk` if an earlier run left it; it
    is a read-only checkout, removed again after step 9 or 10).
    Then the branch check and Fern worktree on the docs branch.
-8. Nominate at most `MAX_REVIEWED_PAGES = 10` pages anywhere under
-   `fern/docs/pages/integrations/sdks/` (including `tutorials/`). Start from
-   the files, titles, and bodies in `<tmp>/review-prs.json` and search the pages for
-   the names those PRs changed. Record each nomination as page, reason, and
-   source PRs. Review each page against the released source in `<tmp>/sdk`,
-   including every snippet's imports and names.
-   - Edit only what a PR in the range made wrong. Staleness that predates the
-     range is listed in the PR body, not edited.
-   - Follow the writing rules in Fern's `.claude/skills/write-docs/STYLE.md`
-     and `.claude/fern-docs-elements-guide.md`; their ledger and scoping steps
-     are for Fern's own docs work and do not apply here.
-   - Leave untouched any feature held in `.changelog/held-items.yml` or marked
-     hidden or Enterprise-gated in `docs-structure-summary.md` (step 3's
-     sources).
-   - Describe changes as of `<tag>`. Write no new pages.
+8. Review the pages by [docs.md](docs.md), with the Fern worktree as `<fern>`,
+   `<tmp>/sdk` as `<sdk>`, and `<tmp>/review-prs.json` as the review input.
 9. If nothing is stale, open no docs PR, say so, and remove `<tmp>/sdk`.
-   Otherwise write the PR
-   body to `<tmp>/docs-pr-body.md`: Summary; Pages reviewed (reason and source PRs for each); Claims (each
-   changed fact with a link to
-   `https://github.com/band-ai/band-sdk-python/blob/<tag>/<path>#L<line>`);
-   Also stale (drift predating the range, with the same links); Pages missing
-   (framework adapters exported from `src/band/adapters/` at the tag that no
-   page under `tutorials/` documents, where one page may cover several); and
-   `Supersedes #N` for each PR in `supersede`.
+   Otherwise write the PR body to `<tmp>/docs-pr-body.md` with the sections
+   `scripts/docsreport.py` renders from docs.md's report, linking each claim to
+   `https://github.com/band-ai/band-sdk-python/blob/<tag>/<path>#L<line>`,
+   and `Supersedes #N` for each PR in `supersede`.
 10. Show the diff. After approval: commit, push as above,
     `gh pr create --repo thenvoi/fern --base dev --head <branch> --title "docs: Python SDK <tag>" --body-file <tmp>/docs-pr-body.md`,
     and, on confirmation, close each superseded PR with the comment
     `Superseded by #M`. Finally `git worktree remove --force <tmp>/sdk`.
 
 A person approves and merges both PRs in Fern; promotion from `dev` stays
-manual.
+manual. `scripts/checkpatch.py` holds the path and content rules the
+workflow enforces on docs edits; apply them before approving here too.

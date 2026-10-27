@@ -22,11 +22,10 @@ from pathlib import Path
 
 from collectprs import GhModel, earlier_sdk_tags, release_version, tag_version
 from pydantic import BaseModel, TypeAdapter
-from releasedata import SDK_TAG_PREFIX
+from releasedata import DOCS_BRANCH_PREFIX, SDK_TAG_PREFIX
 
 logger = logging.getLogger(__name__)
 
-DOCS_BRANCH_PREFIX = "docs/python-sdk-"
 # A review never reaches further back than this many band-sdk releases.
 MAX_DOCS_RELEASES = 3
 

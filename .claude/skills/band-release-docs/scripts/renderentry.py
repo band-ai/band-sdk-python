@@ -7,8 +7,8 @@
 ``--out DIR`` writes the standalone ``<release_date>.md``. ``--merge-into DIR``
 adds the entry to that directory's date file as a release block above the
 earlier ones, leaving every other line unchanged, and writes the Fern PR body to
-``--pr-body``. Either way the standalone entry must pass ``validateentry.py``
-first.
+``--pr-body``. Either way ``--drop`` leaves out the held-back items, and the
+standalone entry must pass ``validateentry.py`` first.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import json
 import logging
 import re
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from releasedata import Category, Item, ReleaseNotes
@@ -219,15 +219,20 @@ def check_merge(existing: str, merged: str, standalone: str) -> None:
 
 def held_back(
     notes: ReleaseNotes, drop: Sequence[int]
-) -> tuple[ReleaseNotes, list[Item]]:
-    """Split ``notes`` into the notes to file and the items held back by index."""
+) -> tuple[ReleaseNotes, dict[int, Item]]:
+    """Split ``notes`` into the notes to file and the items held back, by index.
+
+    Refuses an unknown index, and a split that leaves nothing to file.
+    """
     unknown = sorted(set(drop) - set(range(len(notes.items))))
     if unknown:
         raise EntryError(
             f"no item has index {unknown}; items are numbered 0 to {len(notes.items) - 1}"
         )
-    held = [item for index, item in enumerate(notes.items) if index in drop]
+    held = {index: item for index, item in enumerate(notes.items) if index in drop}
     kept = [item for index, item in enumerate(notes.items) if index not in drop]
+    if not kept:
+        raise EntryError("every item is held back; there is no entry to file")
     return notes.model_copy(update={"items": kept}), held
 
 
@@ -235,8 +240,13 @@ def item_summary(item: Item) -> str:
     return pr_body_text(f"- **{item.label}** — {item.sentence}")
 
 
-def pr_body(notes: ReleaseNotes, held: list[Item]) -> str:
-    holdbacks = list(map(item_summary, held)) or ["None."]
+def holdback_summary(item: Item, reason: str | None) -> str:
+    summary = item_summary(item)
+    return f"{summary} ({pr_body_text(reason)})" if reason else summary
+
+
+def pr_body(notes: ReleaseNotes, holdbacks: list[str]) -> str:
+    holdbacks = holdbacks or ["None."]
     return "\n".join(
         [
             "## Summary",
@@ -259,20 +269,30 @@ def pr_body(notes: ReleaseNotes, held: list[Item]) -> str:
     )
 
 
-def write_standalone(notes: ReleaseNotes, directory: Path) -> Path:
-    text = checked_standalone(notes)
-    path = entry_path(directory, notes)
+def write_standalone(
+    notes: ReleaseNotes, directory: Path, drop: Sequence[int] = ()
+) -> Path:
+    kept, _ = held_back(notes, drop)
+    text = checked_standalone(kept)
+    path = entry_path(directory, kept)
     directory.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="")
     return path
 
 
 def merge_into(
-    notes: ReleaseNotes, directory: Path, drop: Sequence[int], body: Path
+    notes: ReleaseNotes,
+    directory: Path,
+    drop: Sequence[int],
+    body: Path,
+    reasons: Mapping[int, str] | None = None,
 ) -> Path:
+    """Merge the kept items into the date file; ``reasons`` explain each held index."""
     kept, held = held_back(notes, drop)
-    if not kept.items:
-        raise EntryError("every item is held back; there is no entry to file")
+    holdbacks = [
+        holdback_summary(item, (reasons or {}).get(index))
+        for index, item in held.items()
+    ]
     standalone = checked_standalone(kept)
     path = entry_path(directory, kept)
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
@@ -280,7 +300,7 @@ def merge_into(
     merged = merge_entry(existing, kept, standalone) if existing else standalone
     check_merge(existing, merged, standalone)
     # The PR body goes first so a bad --pr-body path leaves the date file untouched.
-    body.write_text(pr_body(kept, held), encoding="utf-8", newline="")
+    body.write_text(pr_body(kept, holdbacks), encoding="utf-8", newline="")
     path.write_text(merged, encoding="utf-8", newline="")
     return path
 
@@ -305,7 +325,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     notes = ReleaseNotes.model_validate_json(args.notes.read_text(encoding="utf-8"))
     try:
         if args.out is not None:
-            path = write_standalone(notes, args.out)
+            path = write_standalone(notes, args.out, args.drop)
         elif args.pr_body is None:
             parser.error("--merge-into needs --pr-body")
         else:

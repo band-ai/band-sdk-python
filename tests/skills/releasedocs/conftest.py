@@ -8,13 +8,23 @@ from types import ModuleType
 
 import pytest
 
+from tests.skills.releasedocs.fernremote import FernRemote
+from tests.skills.releasedocs.ghpeer import FakeGh
 from tests.skills.releasedocs.gitrepo import ThrowawayRepo
+from tests.skills.releasedocs.holdbackfiles import Inputs
 from tests.skills.releasedocs.samples import (
+    DOCS_PAGE,
+    DOCS_PAGE_TEXT,
+    HELD_PR,
+    LEDGER,
     PREVIOUS_TAG,
     PRODUCT,
+    RECONNECT,
     RELEASE_DATE,
     RELEASE_TAG,
     RELEASE_URL,
+    SEND_RETRIES,
+    TOKEN_REDACTION,
 )
 from tests.skills.releasedocs.scripts import release_scripts
 from tests.skills.releasedocs.webhookpeer import WebhookPeer, webhook_peer
@@ -92,6 +102,53 @@ def docsrange(scripts: Callable[[str], ModuleType]) -> ModuleType:
 
 
 @pytest.fixture
+def holdbacks(scripts: Callable[[str], ModuleType]) -> ModuleType:
+    return scripts("holdbacks")
+
+
+@pytest.fixture
+def fernstate(scripts: Callable[[str], ModuleType]) -> ModuleType:
+    return scripts("fernstate")
+
+
+@pytest.fixture
+def checkpatch(scripts: Callable[[str], ModuleType]) -> ModuleType:
+    return scripts("checkpatch")
+
+
+@pytest.fixture
+def docsreport(scripts: Callable[[str], ModuleType]) -> ModuleType:
+    return scripts("docsreport")
+
+
+@pytest.fixture
+def filefern(scripts: Callable[[str], ModuleType]) -> ModuleType:
+    return scripts("filefern")
+
+
+@pytest.fixture
+def fern_files(releasedata: ModuleType) -> dict[str, str | bytes]:
+    """The Fern files the filing reads: the ledger, a page, and a date file."""
+    return {
+        releasedata.HELD_ITEMS: LEDGER,
+        DOCS_PAGE: DOCS_PAGE_TEXT,
+        f"{releasedata.CHANGELOG_DIR}/2026-10-13.md": "---\ntags: []\n---\n",
+    }
+
+
+@pytest.fixture
+def fern_remote(
+    tmp_path: Path, releasedata: ModuleType, fern_files: dict[str, str | bytes]
+) -> FernRemote:
+    return FernRemote(tmp_path / "remote", releasedata.FERN_BASE, fern_files)
+
+
+@pytest.fixture
+def gh(releasedata: ModuleType, fern_remote: FernRemote) -> FakeGh:
+    return FakeGh(releasedata.FERN_REPO, releasedata.FERN_BASE, fern_remote)
+
+
+@pytest.fixture
 def repo(tmp_path: Path, collectprs: ModuleType) -> ThrowawayRepo:
     return ThrowawayRepo(tmp_path / "repo", collectprs.RELEASE_PLEASE_CONFIG)
 
@@ -133,3 +190,18 @@ def make_notes(releasedata: ModuleType) -> Callable[..., object]:
         )
 
     return build
+
+
+@pytest.fixture
+def inputs(
+    tmp_path: Path, make_item: Callable[..., object], make_notes: Callable[..., object]
+) -> Inputs:
+    """Three items; the second cites the PR the ledger holds from sdks."""
+    notes = make_notes(
+        [
+            make_item(*SEND_RETRIES, sources=("101",)),
+            make_item(*RECONNECT, sources=(HELD_PR,)),
+            make_item(*TOKEN_REDACTION, sources=("102",)),
+        ]
+    )
+    return Inputs(tmp_path, notes.model_dump_json())  # type: ignore[attr-defined]

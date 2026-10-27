@@ -1,34 +1,47 @@
-# Announces every band-sdk release on Slack and Discord and attaches its
+# Announces every band-sdk release on Slack and Discord, attaches its
 # release-notes bundle (release-notes.json, release-prs.json, and the
-# standalone Fern entry <release date>.md) to the GitHub Release.
+# standalone Fern entry <release date>.md) to the GitHub Release, and files
+# the Fern changelog and docs PRs into thenvoi/fern dev.
 #
-# Claude only judges and writes: it reads release-prs.json through Read, Glob,
-# and Grep confined to a checkout holding only the skill (plus the read-only
-# job token claude-code-action writes into .git/config), and returns one
-# structured report. The scripts in .claude/skills/band-release-docs/scripts
-# collect, validate, render, and post; model-written text moves only through
-# files and artifacts, never step outputs, env, or expressions in run scripts.
+# Claude only judges and writes: each session gets Read, Glob, and Grep (the
+# docs review adds Edit and Write) confined to its working directory, and
+# returns one structured report. The scripts in
+# .claude/skills/band-release-docs/scripts collect, validate, render, post,
+# and file; model-written text moves only through files and artifacts, never
+# step outputs, env, or expressions in run scripts.
+#
+# thenvoi/fern is private and this repository is public. Fern tokens come from
+# the release App, narrowed to thenvoi/fern; read tokens are revoked, and
+# fern/.git deleted, before Claude runs, and the write token is minted only
+# after every check passed (never in dry-run). No Fern content (pages, the
+# held-items ledger, diffs, model reasons) reaches an artifact, log, or
+# summary: the Fern jobs upload only the public bundle, Claude steps pin
+# show_full_output and step debug off, and scripts log counts and PR links.
+# holdbacks runs before anything is attached or posted and fails closed.
 #
 # Triggers: a successful release-event band-publish run for a band-sdk-v*
 # tag (live), or workflow_dispatch with a tag and a mode:
-#   live     attach the bundle, post to Slack and Discord (@everyone)
+#   live     attach the bundle, post to Slack and Discord (@everyone), file
+#            and squash-merge both Fern PRs
 #   test     keep the bundle as a workflow artifact; post once per channel
-#            prefixed "TEST — please ignore" with no ping; the Discord post is
-#            deleted by the job, the Slack post by a Slack admin
+#            prefixed "TEST — please ignore" with no ping (the Discord post is
+#            deleted by the job, the Slack post by a Slack admin); file both
+#            Fern PRs on -rehearsal branches, wait for Fern's checks, close them
 #   dry-run  run Claude and every gate; write the entry and the exact
-#            announcement text to the summary; attach and post nothing
+#            announcement text to the summary; attach, post, and file nothing
 # In every mode a failed job alerts Slack, naming the mode.
 # Releases published by a band-publish dispatch carry no release event, so
 # announce them by dispatching this workflow.
 #
-# Recovery: "Re-run failed jobs". collect, changelog, bundle, slack, and
-# discord are separate jobs, so a Discord failure after Slack posted re-posts
-# only to Discord.
+# Recovery: "Re-run failed jobs". Each step is its own job, so a Discord
+# failure after Slack posted re-posts only to Discord, and a fern re-run skips
+# merged Fern PRs and reuses open ones. /band-release-docs <tag> files the Fern
+# PRs by hand.
 # Re-announcing: a live run stops before Claude when the release already
 # carries release-notes.json. Delete that asset, then dispatch again.
 #
 # Job-level timeout-minutes cannot read env, so each job carries a literal
-# 10-minute backstop (30 for changelog).
+# backstop.
 
 name: release-announce
 
@@ -64,6 +77,13 @@ env:
   TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
   MODE: ${{ inputs.mode || 'live' }}
   SKILL: .claude/skills/band-release-docs
+  ANTHROPIC_MODEL: ${{ inputs.model || vars.ANTHROPIC_MODEL || 'sonnet' }}
+  # Fern facts; scripts/releasedata.py holds the same values.
+  FERN_OWNER: thenvoi
+  FERN_REPO_NAME: fern
+  FERN_BASE: dev
+  HELD_ITEMS: .changelog/held-items.yml
+  DOCS_STRUCTURE: docs-structure-summary.md
 
 jobs:
   collect:
@@ -125,7 +145,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      ANTHROPIC_MODEL: ${{ inputs.model || vars.ANTHROPIC_MODEL || 'sonnet' }}
       PRODUCT_NAME: Band Python SDK
       PRODUCT_LABEL: Python SDK
       PRODUCT_TAG: python
@@ -191,20 +210,17 @@ jobs:
           uv run --script "$SKILL/scripts/builditems.py" report.json release-prs.json \
             --product-name "$PRODUCT_NAME" --product-label "$PRODUCT_LABEL" \
             --product-tag "$PRODUCT_TAG" \
-            --out bundle/release-notes.json --outputs "$GITHUB_OUTPUT"
+            --out full/release-notes.json --outputs "$GITHUB_OUTPUT"
+          cp release-prs.json full/
 
-      - name: Render and validate the Fern entry
-        if: steps.build.outputs.has_entry == 'true'
-        run: |
-          uv run --script "$SKILL/scripts/renderentry.py" bundle/release-notes.json --out bundle/
-          cp release-prs.json bundle/
-
-      - name: Upload the bundle
+      # The full notes still carry the items holdbacks may remove, so nothing
+      # here prints them; holdbacks previews the filtered entry.
+      - name: Upload the full release notes
         if: steps.build.outputs.has_entry == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: bundle
-          path: bundle/
+          name: release-notes-full
+          path: full/
           overwrite: true
 
       - name: Summarize
@@ -214,26 +230,156 @@ jobs:
           {
             echo "Model: \`$ANTHROPIC_MODEL\`"
             echo
+            if [[ "$HAS_ENTRY" != true ]]; then
+              echo "Claude judged no user-facing changes; nothing is attached, posted, or filed."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Removes the items Fern's held-items ledger keeps unpublished, before
+  # anything is attached, posted, or filed. Any doubt fails closed.
+  holdbacks:
+    needs: changelog
+    if: needs.changelog.outputs.has_entry == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HOLDBACKS_MAX_TURNS: 20
+      HOLDBACKS_MAX_BUDGET_USD: 1
+      HOLDBACKS_TIMEOUT_MINUTES: 15
+    outputs:
+      has_entry: ${{ steps.holdbacks.outputs.has_entry }}
+      held: ${{ steps.holdbacks.outputs.held }}
+    steps:
+      - name: Checkout the skill only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: /${{ env.SKILL }}/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Download the full release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-notes-full
+          path: full
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Mint a Fern read token
+        id: fern-read
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ env.FERN_OWNER }}
+          repositories: ${{ env.FERN_REPO_NAME }}
+          permission-contents: read
+          skip-token-revoke: true
+
+      - name: Name the missing Fern setup
+        if: failure() && steps.fern-read.outcome == 'failure'
+        run: echo "::error::The release App has no installation on $FERN_OWNER/$FERN_REPO_NAME; nothing is attached, posted, or filed until it does."
+
+      - name: Fetch the held-items ledger and docs summary
+        env:
+          GH_TOKEN: ${{ steps.fern-read.outputs.token }}
+        run: |
+          for path in "$HELD_ITEMS" "$DOCS_STRUCTURE"; do
+            mkdir -p "fern/$(dirname "$path")"
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/$FERN_OWNER/$FERN_REPO_NAME/contents/$path?ref=$FERN_BASE" > "fern/$path"
+          done
+
+      - name: Revoke the Fern read token
+        if: always() && steps.fern-read.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.fern-read.outputs.token }}
+        run: gh api --method DELETE /installation/token
+
+      - name: Emit the holdbacks schema
+        id: holdbacks-schema
+        run: echo "schema=$(uv run --script "$SKILL/scripts/reportschema.py" --kind holdbacks)" >> "$GITHUB_OUTPUT"
+
+      # Debug output would print tool results (the ledger) to public logs.
+      - name: Review the holdbacks
+        id: holdbacks-claude
+        timeout-minutes: ${{ fromJSON(env.HOLDBACKS_TIMEOUT_MINUTES) }}
+        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
+        env:
+          ACTIONS_STEP_DEBUG: "false"
+        with:
+          anthropic_api_key: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          allowed_bots: band-release-please-public
+          show_full_output: "false"
+          display_report: "false"
+          prompt: >-
+            Follow ${{ env.SKILL }}/holdbacks.md for release ${{ env.TAG }}.
+            The items are in full/release-notes.json; the ledger and the docs
+            summary are under fern/.
+          claude_args: >-
+            --max-turns ${{ env.HOLDBACKS_MAX_TURNS }}
+            --max-budget-usd ${{ env.HOLDBACKS_MAX_BUDGET_USD }}
+            --tools Read,Glob,Grep
+            --restricted
+            --strict-mcp-config
+            --json-schema '${{ steps.holdbacks-schema.outputs.schema }}'
+
+      - name: Read the holdbacks report
+        env:
+          EXECUTION_FILE: ${{ steps.holdbacks-claude.outputs.execution_file }}
+        run: |
+          uv run --script "$SKILL/scripts/extractreport.py" "$EXECUTION_FILE" \
+            --kind holdbacks --out "$RUNNER_TEMP/holdbacks-report.json"
+
+      - name: Hold back the held items
+        id: holdbacks
+        run: |
+          uv run --script "$SKILL/scripts/holdbacks.py" full/release-notes.json full/release-prs.json \
+            --ledger "fern/$HELD_ITEMS" --report "$RUNNER_TEMP/holdbacks-report.json" \
+            --out bundle/ --outputs "$GITHUB_OUTPUT"
+
+      - name: Render and validate the Fern entry
+        if: steps.holdbacks.outputs.has_entry == 'true'
+        env:
+          HELD: ${{ steps.holdbacks.outputs.held }}
+        run: |
+          read -ra held <<< "$HELD"
+          uv run --script "$SKILL/scripts/renderentry.py" full/release-notes.json --out bundle/ --drop "${held[@]}"
+          cp full/release-prs.json bundle/
+
+      - name: Upload the bundle
+        if: steps.holdbacks.outputs.has_entry == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bundle
+          path: bundle/
+          overwrite: true
+
+      - name: Summarize
+        env:
+          HAS_ENTRY: ${{ steps.holdbacks.outputs.has_entry }}
+          HELD: ${{ steps.holdbacks.outputs.held }}
+        run: |
+          read -ra held <<< "$HELD"
+          {
+            echo "Held back: ${#held[@]} item(s)."
+            echo
             if [[ "$HAS_ENTRY" == true ]]; then
               echo '```md'
               cat bundle/*.md
               echo '```'
-              echo
-              if [[ "$MODE" == live ]]; then
-                echo "File the Fern changelog and docs PRs with \`/band-release-docs $TAG\`."
-              else
-                echo "File the Fern PRs from this run's artifact: \`gh run download $GITHUB_RUN_ID --name bundle --dir <dir>\`, then \`/band-release-docs $TAG --bundle <dir>\`."
-              fi
             else
-              echo "Claude judged no user-facing changes; nothing is attached or posted."
+              echo "Every item is held back; nothing is attached, posted, or filed as a changelog."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Runs in every mode so slack and discord can simply need it; only live
   # attaches.
   bundle:
-    needs: changelog
-    if: needs.changelog.outputs.has_entry == 'true'
+    needs: [changelog, holdbacks]
+    if: needs.holdbacks.outputs.has_entry == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -256,7 +402,8 @@ jobs:
         run: echo "Test mode, so the bundle stays a workflow artifact." >> "$GITHUB_STEP_SUMMARY"
 
   slack:
-    needs: bundle
+    needs: [changelog, holdbacks, bundle]
+    if: needs.holdbacks.outputs.has_entry == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -290,7 +437,8 @@ jobs:
         run: uv run --script "$SKILL/scripts/postslack.py" --message-file message.txt
 
   discord:
-    needs: bundle
+    needs: [changelog, holdbacks, bundle]
+    if: needs.holdbacks.outputs.has_entry == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -336,8 +484,250 @@ jobs:
           MESSAGE_ID: ${{ steps.post.outputs.message_id }}
         run: uv run --script "$SKILL/scripts/postdiscord.py" --delete "$MESSAGE_ID"
 
+  # Files the Fern changelog and docs PRs. Claude reviews the docs with no
+  # Fern token alive and no .git anywhere in its workspace; the edits are
+  # checked against a pristine copy before the write token exists.
+  fern:
+    needs: [changelog, holdbacks, bundle]
+    if: >-
+      always() && needs.holdbacks.result == 'success' &&
+      (needs.bundle.result == 'success' || needs.bundle.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Same-day releases share a date file, so they file one at a time.
+    concurrency:
+      group: fern-python-sdk
+      cancel-in-progress: false
+    env:
+      HAS_ENTRY: ${{ needs.holdbacks.outputs.has_entry }}
+      HELD: ${{ needs.holdbacks.outputs.held }}
+      DOCS_MAX_TURNS: 60
+      DOCS_MAX_BUDGET_USD: 5
+      DOCS_TIMEOUT_MINUTES: 30
+    outputs:
+      changelog_pr: ${{ steps.file.outputs.changelog_pr }}
+      docs_pr: ${{ steps.file.outputs.docs_pr }}
+    steps:
+      - name: Checkout with full history and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The workspace becomes Claude's working directory, which must hold no .git.
+      - name: Move the checkout out of the workspace
+        run: |
+          mv source "$RUNNER_TEMP/source"
+          {
+            echo "SRC=$RUNNER_TEMP/source"
+            echo "SCRIPTS=$RUNNER_TEMP/source/$SKILL/scripts"
+          } >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Download the full release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-notes-full
+          path: ${{ runner.temp }}/full
+
+      - name: Mint a Fern read token
+        id: fern-read
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ env.FERN_OWNER }}
+          repositories: ${{ env.FERN_REPO_NAME }}
+          permission-contents: read
+          permission-pull-requests: read
+          skip-token-revoke: true
+
+      - name: Check out Fern dev
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ env.FERN_OWNER }}/${{ env.FERN_REPO_NAME }}
+          ref: ${{ env.FERN_BASE }}
+          path: fern
+          token: ${{ steps.fern-read.outputs.token }}
+          persist-credentials: false
+
+      - name: Read the Fern state
+        id: state
+        env:
+          GH_TOKEN: ${{ steps.fern-read.outputs.token }}
+        run: |
+          args=("$TAG" --out "$RUNNER_TEMP/state" --outputs "$GITHUB_OUTPUT")
+          if [[ "$HAS_ENTRY" == true ]]; then
+            args+=(--date "$(jq -r .release_date "$RUNNER_TEMP/full/release-notes.json")")
+          fi
+          if [[ "$MODE" == test ]]; then args+=(--rehearsal); fi
+          uv run --script "$SCRIPTS/fernstate.py" "${args[@]}"
+
+      - name: Pick the docs range
+        if: steps.state.outputs.docs == 'file'
+        run: |
+          uv run --script "$SCRIPTS/docsrange.py" "$TAG" \
+            "$RUNNER_TEMP/state/docs-merged.json" "$RUNNER_TEMP/state/docs-open.json" \
+            --repo "$SRC" > "$RUNNER_TEMP/range.json"
+
+      - name: Collect the review's PRs
+        if: steps.state.outputs.docs == 'file'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          baseline=$(jq -r .baseline "$RUNNER_TEMP/range.json")
+          uv run --script "$SCRIPTS/collectprs.py" "$TAG" --since "$baseline" --repo "$SRC" > review-prs.json
+
+      - name: Revoke the Fern read token
+        if: always() && steps.fern-read.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.fern-read.outputs.token }}
+        run: gh api --method DELETE /installation/token
+
+      - name: Drop Fern's git directory
+        if: always()
+        run: rm -rf fern/.git
+
+      - name: Prepare the review workspace
+        if: steps.state.outputs.docs == 'file'
+        run: |
+          mkdir sdk
+          git -C "$SRC" archive "$TAG" | tar -x -C sdk
+          cp "$SRC/$SKILL/docs.md" docs.md
+          cp -a fern "$RUNNER_TEMP/pristine"
+
+      - name: Emit the docs schema
+        id: docs-schema
+        if: steps.state.outputs.docs == 'file'
+        run: echo "schema=$(uv run --script "$SCRIPTS/reportschema.py" --kind docs)" >> "$GITHUB_OUTPUT"
+
+      # Debug output would print tool results (Fern pages) to public logs.
+      - name: Review the docs
+        id: docs-claude
+        if: steps.state.outputs.docs == 'file'
+        timeout-minutes: ${{ fromJSON(env.DOCS_TIMEOUT_MINUTES) }}
+        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
+        env:
+          ACTIONS_STEP_DEBUG: "false"
+        with:
+          anthropic_api_key: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          allowed_bots: band-release-please-public
+          show_full_output: "false"
+          display_report: "false"
+          prompt: >-
+            Follow docs.md in the working directory for release ${{ env.TAG }}.
+            The Fern checkout is fern/, the released source is sdk/, and the
+            review input is review-prs.json.
+          claude_args: >-
+            --max-turns ${{ env.DOCS_MAX_TURNS }}
+            --max-budget-usd ${{ env.DOCS_MAX_BUDGET_USD }}
+            --tools Read,Glob,Grep,Edit,Write
+            --restricted
+            --strict-mcp-config
+            --permission-mode acceptEdits
+            --permission-prompts none
+            --json-schema '${{ steps.docs-schema.outputs.schema }}'
+
+      - name: Read the docs report
+        if: steps.state.outputs.docs == 'file'
+        env:
+          EXECUTION_FILE: ${{ steps.docs-claude.outputs.execution_file }}
+        run: |
+          uv run --script "$SCRIPTS/extractreport.py" "$EXECUTION_FILE" \
+            --kind docs --out "$RUNNER_TEMP/docs-report.json"
+
+      - name: Check the docs edits
+        id: patch
+        if: steps.state.outputs.docs == 'file'
+        run: |
+          uv run --script "$SCRIPTS/checkpatch.py" "$RUNNER_TEMP/pristine" fern \
+            --out "$RUNNER_TEMP/patch.json" --outputs "$GITHUB_OUTPUT"
+
+      - name: Mint a Fern write token
+        id: fern-write
+        if: env.MODE != 'dry-run'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ env.FERN_OWNER }}
+          repositories: ${{ env.FERN_REPO_NAME }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
+
+      - name: Re-read the Fern state
+        id: fresh
+        if: env.MODE != 'dry-run'
+        env:
+          GH_TOKEN: ${{ steps.fern-write.outputs.token }}
+        run: |
+          args=("$TAG" --out "$RUNNER_TEMP/fresh")
+          if [[ "$HAS_ENTRY" == true ]]; then
+            args+=(--date "$(jq -r .release_date "$RUNNER_TEMP/full/release-notes.json")")
+          fi
+          if [[ "$MODE" == test ]]; then args+=(--rehearsal); fi
+          uv run --script "$SCRIPTS/fernstate.py" "${args[@]}"
+
+      - name: Re-pick the docs range
+        if: env.MODE != 'dry-run' && steps.state.outputs.docs == 'file'
+        run: |
+          uv run --script "$SCRIPTS/docsrange.py" "$TAG" \
+            "$RUNNER_TEMP/fresh/docs-merged.json" "$RUNNER_TEMP/fresh/docs-open.json" \
+            --repo "$SRC" > "$RUNNER_TEMP/range.json"
+
+      - name: Check out Fern dev for filing
+        if: env.MODE != 'dry-run'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ env.FERN_OWNER }}/${{ env.FERN_REPO_NAME }}
+          ref: ${{ env.FERN_BASE }}
+          path: fern-write
+          token: ${{ steps.fern-write.outputs.token }}
+
+      - name: File the Fern PRs
+        id: file
+        if: env.MODE != 'dry-run'
+        env:
+          GH_TOKEN: ${{ steps.fern-write.outputs.token }}
+          DOCS: ${{ steps.state.outputs.docs }}
+          CHANGED: ${{ steps.patch.outputs.changed }}
+        run: |
+          args=("$TAG" --fern fern-write --state "$RUNNER_TEMP/fresh/state.json" --mode "$MODE" \
+            --outputs "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY")
+          if [[ "$HAS_ENTRY" == true ]]; then
+            read -ra held <<< "$HELD"
+            args+=(--notes "$RUNNER_TEMP/full/release-notes.json" --held "${held[@]}")
+          fi
+          if [[ "$DOCS" == file && "$CHANGED" != 0 ]]; then
+            args+=(--docs-check "$RUNNER_TEMP/patch.json" --docs-report "$RUNNER_TEMP/docs-report.json" \
+              --docs-range "$RUNNER_TEMP/range.json" --edited fern --pristine "$RUNNER_TEMP/pristine")
+          fi
+          uv run --script "$SCRIPTS/filefern.py" "${args[@]}"
+
+      - name: Summarize
+        if: always()
+        env:
+          CHANGELOG: ${{ steps.state.outputs.changelog }}
+          DOCS: ${{ steps.state.outputs.docs }}
+          CHANGED: ${{ steps.patch.outputs.changed }}
+          MERGEABLE: ${{ steps.patch.outputs.mergeable }}
+        run: |
+          {
+            echo "Fern changelog: ${CHANGELOG:-not decided}; docs: ${DOCS:-not decided}."
+            if [[ -n "$CHANGED" ]]; then
+              echo "Docs review: $CHANGED page(s) edited; content checks passed: $MERGEABLE."
+            fi
+            if [[ "$MODE" == dry-run ]]; then echo "Dry run: nothing is filed."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   alert:
-    needs: [collect, changelog, bundle, slack, discord]
+    needs: [collect, changelog, holdbacks, bundle, slack, discord, fern]
     if: failure()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -357,7 +747,11 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FERN_PRS: ${{ needs.fern.outputs.changelog_pr }} ${{ needs.fern.outputs.docs_pr }}
         run: |
           failed=$(jq -r '[to_entries[] | select(.value.result == "failure") | .key] | join(", ")' <<< "$NEEDS")
-          printf 'release-announce failed for %s (%s): %s\n%s\n' "$TAG" "$MODE" "$failed" "$RUN_URL" \
-            | uv run --script "$SKILL/scripts/postslack.py"
+          {
+            printf 'release-announce failed for %s (%s): %s\n%s\n' "$TAG" "$MODE" "$failed" "$RUN_URL"
+            if [[ -n "${FERN_PRS// }" ]]; then printf 'Fern PRs: %s\n' "$FERN_PRS"; fi
+            printf 'Recover by hand with /band-release-docs %s.\n' "$TAG"
+          } | uv run --script "$SKILL/scripts/postslack.py"
