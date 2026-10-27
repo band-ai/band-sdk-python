@@ -227,6 +227,34 @@ class TestCheckPatch:
         assert read_outputs(tmp_path / "outputs")["mergeable"] == "true"
 
     @pytest.mark.parametrize(
+        "added",
+        [
+            "Use `C:\\` for the path.",
+            "Wrapped `code\nspan` here.",
+            "Type \\`x\\` here.",
+            "- [a]: https://docs.band.ai/sdks\n\nSee [the docs][a].",
+            "- Run it:\n\n  ```bash\n  open [x](//evil.example)\n  ```",
+        ],
+        ids=[
+            "code-span-ending-in-a-backslash",
+            "wrapped-code-span",
+            "escaped-backticks",
+            "definition-in-a-list-item",
+            "fence-in-a-list-item",
+        ],
+    )
+    def test_adding_code_or_an_allowed_link_stays_mergeable(
+        self,
+        checkpatch: ModuleType,
+        trees: tuple[Path, Path],
+        tmp_path: Path,
+        added: str,
+    ) -> None:
+        write_tree(trees[1], {OTHER_PAGE: f"# Overview\n\n{added}\n"})
+        assert run(checkpatch, trees, tmp_path) == 0
+        assert read_outputs(tmp_path / "outputs")["mergeable"] == "true"
+
+    @pytest.mark.parametrize(
         ("edit", "kinds"),
         [
             (DOCS_PAGE_TEXT + 'import { Secret } from "@x";\n', ["IMPORT"]),
@@ -235,16 +263,16 @@ class TestCheckPatch:
             (DOCS_PAGE_TEXT + '{globalThis.fetch("/x")}\n', ["JSX"]),
             (
                 DOCS_PAGE_TEXT + "\\`<Evil src={x} />\\`\n",
-                ["JSX", "ESCAPED_BACKTICK"],
+                ["JSX"],
             ),
             (
                 DOCS_PAGE_TEXT + "\\`[x](https://evil.example)\\`\n",
-                ["LINK", "ESCAPED_BACKTICK"],
+                ["LINK"],
             ),
             (
                 DOCS_PAGE_TEXT
                 + "Use `C:\\` then [docs](https://evil.example) and `x`.\n",
-                ["ESCAPED_BACKTICK"],
+                ["LINK"],
             ),
             (DOCS_PAGE_TEXT + "See https://band.ai.example.com/x.\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "See www.example.com.\n", ["LINK"]),
@@ -260,36 +288,47 @@ class TestCheckPatch:
                 ["LINK"],
             ),
             (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/x/..)\n", ["LINK"]),
-            (DOCS_PAGE_TEXT + "[docs]: http://evil.example\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "\n[d]: http://evil.example\n\nSee [d].\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "[the guide](\n//evil.example/x)\n", ["LINK"]),
-            (DOCS_PAGE_TEXT + "[g]:\n//evil.example/x\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "\n[g]:\n//evil.example/x\n\nSee [g].\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "- [a]: //evil.example\n\nSee [docs][a].\n", ["LINK"]),
             (DOCS_PAGE_TEXT + "> [a]: //evil.example\n\nSee [docs][a].\n", ["LINK"]),
             (
-                DOCS_PAGE_TEXT + "[a\\]b]: //evil.example\n\nSee [docs][a\\]b].\n",
+                DOCS_PAGE_TEXT + "\n[a\\]b]: //evil.example\n\nSee [docs][a\\]b].\n",
                 ["LINK"],
             ),
             (
                 DOCS_PAGE_TEXT + "Intro `one\n***\n[x](//evil.example) two` end.\n",
-                ["WRAPPED_CODE"],
+                ["LINK"],
             ),
             (
                 DOCS_PAGE_TEXT + "Intro `one\n---\n[x](//evil.example) two` end.\n",
-                ["WRAPPED_CODE"],
+                ["LINK"],
             ),
             (
                 DOCS_PAGE_TEXT + "Intro `one\n> [x](//evil.example) two` end.\n",
-                ["WRAPPED_CODE"],
+                ["LINK"],
             ),
             (
                 DOCS_PAGE_TEXT + "Intro `one\n___\n<Danger /> two` end.\n",
-                ["WRAPPED_CODE"],
+                ["JSX"],
             ),
             (
                 DOCS_PAGE_TEXT
                 + "- item\n  ```\n  code\n[x](https://evil.example/)\n    ```\n",
-                ["INDENTED_FENCE"],
+                ["LINK"],
             ),
+            (
+                DOCS_PAGE_TEXT + "Intro `one\n    ***\n[x](//evil.example) two` end.\n",
+                ["LINK"],
+            ),
+            (
+                DOCS_PAGE_TEXT + "Intro\n    ```\n```\n[x](//evil.example)\n```\n",
+                ["LINK"],
+            ),
+            (DOCS_PAGE_TEXT + "![logo](//evil.example/logo.png)\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[x](java&#9;script:alert(1))\n", ["LINK"]),
+            (DOCS_PAGE_TEXT + "[x](/\\evil.example)\n", ["LINK"]),
         ],
         ids=[
             "import",
@@ -321,6 +360,11 @@ class TestCheckPatch:
             "code-span-into-a-blockquote",
             "jsx-in-a-code-span-across-a-break",
             "list-item-fence-hiding-a-link",
+            "code-span-across-an-indented-thematic-break",
+            "indented-fence-closer-after-a-paragraph",
+            "foreign-image",
+            "tab-inside-a-scheme",
+            "backslash-read-as-a-slash",
         ],
     )
     def test_content_breach_files_the_pr_unmergeable(
