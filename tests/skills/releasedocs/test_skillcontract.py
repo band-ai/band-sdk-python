@@ -7,7 +7,7 @@ import pytest
 from tests.paths import RELEASE_DOCS_SKILL
 
 REFERENCE = "references/fern-changelog-format.md"
-GUIDES = ["SKILL.md", "changelog.md"]
+GUIDES = ["SKILL.md", "changelog.md", "fern.md"]
 # Rules that belong only in the reference; a copy in a guide is how entries drifted.
 REFERENCE_ONLY = ['tags: ["', "- **Python SDK:**", "### Migration"]
 

@@ -218,6 +218,12 @@ jobs:
               echo '```md'
               cat bundle/*.md
               echo '```'
+              echo
+              if [[ "$MODE" == live ]]; then
+                echo "File the Fern changelog and docs PRs with \`/band-release-docs $TAG\`."
+              else
+                echo "File the Fern PRs from this run's artifact: \`gh run download $GITHUB_RUN_ID --name bundle --dir <dir>\`, then \`/band-release-docs $TAG --bundle <dir>\`."
+              fi
             else
               echo "Claude judged no user-facing changes; nothing is attached or posted."
             fi
