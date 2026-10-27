@@ -3,7 +3,7 @@ credentials a caller can present, and the raw requests that reach each route."""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -38,27 +38,40 @@ class Credential(StrEnum):
     """What a caller puts in its ``Authorization`` header."""
 
     VALID = "valid"
+    # The scheme is case-insensitive (RFC 9110).
+    LOWERCASE_SCHEME = "lowercase-scheme"
     MISSING = "missing"
     WRONG_TOKEN = "wrong-token"
     WRONG_SCHEME = "wrong-scheme"
     BARE_TOKEN = "bare-token"
+    # The valid header first, so trusting the first one would accept it.
+    DUPLICATED = "duplicated"
 
 
-REFUSED_CREDENTIALS = [c for c in Credential if c is not Credential.VALID]
+ACCEPTED_CREDENTIALS = [Credential.VALID, Credential.LOWERCASE_SCHEME]
+REFUSED_CREDENTIALS = [c for c in Credential if c not in ACCEPTED_CREDENTIALS]
 
 
-def credential_headers(credential: Credential) -> dict[str, str]:
+def credential_headers(credential: Credential) -> Sequence[tuple[str, str]]:
+    """The ``Authorization`` headers presenting ``credential``, in order."""
     match credential:
         case Credential.VALID:
-            return local_mcp_auth_headers(AUTH_TOKEN)
+            return [*local_mcp_auth_headers(AUTH_TOKEN).items()]
+        case Credential.LOWERCASE_SCHEME:
+            return [(LOCAL_MCP_AUTH_HEADER, f"bearer {AUTH_TOKEN}")]
         case Credential.MISSING:
-            return {}
+            return []
         case Credential.WRONG_TOKEN:
-            return local_mcp_auth_headers("not-the-token")
+            return [*local_mcp_auth_headers("not-the-token").items()]
         case Credential.WRONG_SCHEME:
-            return {LOCAL_MCP_AUTH_HEADER: f"Basic {AUTH_TOKEN}"}
+            return [(LOCAL_MCP_AUTH_HEADER, f"Basic {AUTH_TOKEN}")]
         case Credential.BARE_TOKEN:
-            return {LOCAL_MCP_AUTH_HEADER: AUTH_TOKEN}
+            return [(LOCAL_MCP_AUTH_HEADER, AUTH_TOKEN)]
+        case Credential.DUPLICATED:
+            return [
+                *credential_headers(Credential.VALID),
+                *credential_headers(Credential.WRONG_TOKEN),
+            ]
 
 
 class Served(StrEnum):
@@ -171,10 +184,10 @@ class GuardedServers:
         async with self.http.stream(
             route.method,
             self.url(route),
-            headers={
-                "Accept": "application/json, text/event-stream",
-                **credential_headers(credential),
-            },
+            headers=[
+                ("Accept", "application/json, text/event-stream"),
+                *credential_headers(credential),
+            ],
             json=body if body is not None else route.body,
         ) as response:
             return response.status_code
@@ -207,7 +220,7 @@ async def guarded_servers() -> AsyncIterator[GuardedServers]:
         httpx.AsyncClient() as http,
         sse_client(
             room_bound.room_sse_url(ROOM),
-            headers=credential_headers(Credential.VALID),
+            headers=dict(credential_headers(Credential.VALID)),
             on_session_created=session_ids.append,
         ) as (read_stream, write_stream),
         ClientSession(read_stream, write_stream) as session,

@@ -1,8 +1,10 @@
-"""Claude session managers whose CLI children are real processes."""
+"""Claude session managers whose CLI children are real processes, and
+private MCP config files kept under the test's own directory."""
 
 from __future__ import annotations
 
 import sys
+import tempfile
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +13,7 @@ import pytest
 import pytest_asyncio
 from claude_agent_sdk import ClaudeAgentOptions
 
+from band.integrations.claude_sdk.mcpconfig import McpConfigFiles
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
 from band.workspaces import RoomWorkspaces
 from tests.adapters.claude_sdk.process import WorkspaceProcess, launch_children
@@ -49,3 +52,11 @@ async def launches(
         for child in launched.children:
             child.refuse_close = False
         await manager.stop()
+
+
+@pytest.fixture
+def mcp_config_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> McpConfigFiles:
+    """Config files whose directories ``mkdtemp`` makes under ``tmp_path``,
+    so whatever a test leaves behind is cleaned up with it."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    return McpConfigFiles()

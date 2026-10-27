@@ -13,6 +13,7 @@ from band.integrations.mcp.local_server import (
     BearerTokenGuard,
 )
 from tests.mcp.loopbackauth.kit import (
+    ACCEPTED_CREDENTIALS,
     AUTH_TOKEN,
     REFUSED_CREDENTIALS,
     SERVER_NAME,
@@ -32,7 +33,7 @@ def websocket_scope(credential: Credential) -> dict[str, Any]:
     """A websocket upgrade to the SSE message endpoint presenting ``credential``."""
     headers = [
         (name.lower().encode(), value.encode())
-        for name, value in credential_headers(credential).items()
+        for name, value in credential_headers(credential)
     ]
     return {
         "type": "websocket",
@@ -71,5 +72,8 @@ class TestWebsocketGuard:
             {"type": "websocket.close", "code": WS_1008_POLICY_VIOLATION, "reason": ""}
         ]
 
-    async def test_an_authorized_upgrade_reaches_the_app(self) -> None:
-        assert await upgrade(Credential.VALID) == [REACHED]
+    @pytest.mark.parametrize("credential", ACCEPTED_CREDENTIALS)
+    async def test_an_authorized_upgrade_reaches_the_app(
+        self, credential: Credential
+    ) -> None:
+        assert await upgrade(credential) == [REACHED]

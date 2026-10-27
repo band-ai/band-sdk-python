@@ -3,12 +3,14 @@ dials, and the headers they carry, reach it only through a private file."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server
 
-from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG
+from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG, MCP_SERVERS_KEY
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
 from band.integrations.mcp.local_server import local_mcp_auth_headers
 from tests.adapters.claude_sdk.fakecli import (
@@ -80,3 +82,27 @@ class TestMcpServerSplit:
         assert in_file == {"band": BAND_SERVER}
         assert argv.count(MCP_CONFIG_ARG) == 2
         assert not any(TOKEN in arg for arg in argv)
+
+    async def test_a_caller_config_file_path_reaches_the_cli_unchanged(
+        self, claude: FakeClaude, tmp_path: Path
+    ) -> None:
+        """The caller's file is already private to it; no copy is written."""
+        servers_file = tmp_path / "servers.json"
+        servers_file.write_text(
+            json.dumps({MCP_SERVERS_KEY: {"band": BAND_SERVER}}), encoding="utf-8"
+        )
+        manager = ClaudeSessionManager(
+            ClaudeAgentOptions(model=MODEL, mcp_servers=servers_file)
+        )
+        claude.script(thinking("hi"))
+        try:
+            await exchange(manager.room("room-a"), "hi")
+        finally:
+            await manager.stop()
+
+        [cli] = claude.sessions
+        assert (cli.options.mcp_servers, cli.mcp_servers) == (
+            servers_file,
+            {"band": BAND_SERVER},
+        )
+        assert MCP_CONFIG_FLAG not in cli.options.extra_args

@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -41,7 +42,9 @@ class McpConfigFiles:
     """One ``<room_id>.json`` per room in a directory private to this user.
 
     The directory is created on the first write (``mkdtemp``: mode ``0700`` on
-    POSIX; on Windows under the user's own temp directory) and removed by
+    POSIX; on Windows under the user's own temp directory), created afresh
+    once it is no longer private (a temp reaper removed it while the agent
+    idled, and another user may have taken its name), and removed by
     ``remove()``; ``discard()`` deletes a disposed room's file. A room's file
     is replaced whole for each CLI start, so a failed write never leaves a
     partial file behind.
@@ -91,6 +94,21 @@ class McpConfigFiles:
         return f"{quote(room_id, safe='')}.json"
 
     def _ensure_directory(self) -> Path:
-        if self._directory is None:
+        if self._directory is None or not _is_private_directory(self._directory):
             self._directory = Path(tempfile.mkdtemp(prefix=MCP_CONFIG_DIR_PREFIX))
         return self._directory
+
+
+def _is_private_directory(path: Path) -> bool:
+    """Whether ``path`` is a directory only this user can open, as ``mkdtemp``
+    made it."""
+    try:
+        status = path.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(status.st_mode):
+        return False
+    if os.name == "nt":
+        # The user's own temp directory, which other users cannot write.
+        return True
+    return status.st_uid == os.getuid() and stat.S_IMODE(status.st_mode) == 0o700

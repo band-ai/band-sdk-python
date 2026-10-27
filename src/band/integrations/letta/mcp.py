@@ -41,15 +41,25 @@ _MCP_URL_PATHS: dict[str, str] = {
 }
 
 
+def _echoes_request(error: Exception) -> bool:
+    """Whether ``error`` is a Letta API error, whose text carries the response
+    ``body``, which can echo the submitted config and its bearer token."""
+    return hasattr(error, "body")
+
+
 def _registration_failure(error: Exception) -> str:
-    """``error``, described without a Letta API error's text: that text
-    carries the response ``body``, which can echo the submitted config and
-    its bearer token."""
-    if not hasattr(error, "body"):
+    """``error``, described without a Letta API error's text."""
+    if not _echoes_request(error):
         return str(error)
     status = getattr(error, "status_code", None)
     name = type(error).__name__
     return name if status is None else f"{name} (HTTP {status})"
+
+
+def _safe_cause(error: Exception) -> Exception | None:
+    """``error`` to chain, or ``None`` for a Letta API error: a logged
+    traceback prints the whole chain."""
+    return None if _echoes_request(error) else error
 
 
 async def bounded_teardown(
@@ -211,13 +221,13 @@ class LettaMCPBridge:
             self.server_id = server_id
             self._last_server_url = server_url
             logger.info("Discovered %d MCP tools: %s", len(self.tool_ids), tool_names)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- re-raised, chained only when its text cannot echo the token
             failure = _registration_failure(e)
             logger.error("Failed to register MCP server: %s", failure)
             raise RuntimeError(
                 f"MCP server registration failed. Ensure the Band MCP server "
                 f"is reachable by Letta at {server_url}: {failure}"
-            ) from e
+            ) from _safe_cause(e)
 
     async def release(self, client: Any) -> None:
         """Relinquish the local tool-path cache without deregistering from Letta.
@@ -379,10 +389,13 @@ class LettaMCPBridge:
             await client.mcp_servers.update(
                 server_id, config=self._registration_config(server_url)
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- re-raised, chained only when its text cannot echo the token
             if getattr(error, "status_code", None) == HTTPStatus.NOT_FOUND:
                 self._forget_registration()
-            raise
+            raise RuntimeError(
+                f"Repointing MCP server registration {server_id} failed: "
+                f"{_registration_failure(error)}"
+            ) from _safe_cause(error)
         self._last_server_url = server_url
         logger.info("Repointed MCP server registration %s at %s", server_id, server_url)
 

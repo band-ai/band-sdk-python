@@ -37,7 +37,7 @@ from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.routing import BaseRoute, Mount, Route
-from starlette.status import WS_1008_POLICY_VIOLATION
+from starlette.status import HTTP_401_UNAUTHORIZED, WS_1008_POLICY_VIOLATION
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocketClose
 
@@ -116,6 +116,11 @@ def _listen(sock: socket.socket) -> socket.socket:
     return sock
 
 
+def _room_path(segment: str) -> str:
+    """The path of the room ``segment`` names on a room-bound server."""
+    return f"{LOCAL_MCP_ROOMS_PATH}/{segment}"
+
+
 def _is_power_of_ten(count: int) -> bool:
     return str(count).rstrip("0") == "1"
 
@@ -126,7 +131,7 @@ def _refusal(scope: Scope) -> ASGIApp:
         return WebSocketClose(code=WS_1008_POLICY_VIOLATION)
     return PlainTextResponse(
         "Unauthorized",
-        status_code=401,
+        status_code=HTTP_401_UNAUTHORIZED,
         headers={"WWW-Authenticate": LOCAL_MCP_AUTH_SCHEME},
     )
 
@@ -189,10 +194,10 @@ class BearerTokenGuard:
     def _redacted(self, path: str) -> str:
         """``path`` with its room id masked; ``UNKNOWN_ROUTE`` for a path the
         server does not serve, so no caller-chosen text reaches the log."""
-        room_prefix = f"{LOCAL_MCP_ROOMS_PATH}/"
+        room_prefix = _room_path("")
         if path.startswith(room_prefix):
             _, _, rest = path.removeprefix(room_prefix).partition("/")
-            path = f"{room_prefix}{REDACTED_ROOM}/{rest}"
+            path = f"{_room_path(REDACTED_ROOM)}/{rest}"
         return path if path in self._routes else UNKNOWN_ROUTE
 
 
@@ -307,7 +312,7 @@ class LocalMCPServer:
 
     def _room_origin(self, room_id: str) -> str:
         self._require_room_bound(True)
-        return f"{self._origin}{LOCAL_MCP_ROOMS_PATH}/{quote(room_id, safe='')}"
+        return f"{self._origin}{_room_path(quote(room_id, safe=''))}"
 
     def _require_room_bound(self, expected: bool) -> None:
         if self._room_bound == expected:
@@ -447,7 +452,7 @@ class LocalMCPServer:
         if self._room_bound:
             engine_routes = [
                 Mount(
-                    f"{LOCAL_MCP_ROOMS_PATH}/{{{ROOM_PATH_PARAM}}}",
+                    _room_path(f"{{{ROOM_PATH_PARAM}}}"),
                     routes=engine_routes,
                 )
             ]
@@ -482,9 +487,7 @@ class LocalMCPServer:
         paths = (self._sse_path, self._http_path, self._message_path)
         if not self._room_bound:
             return frozenset(paths)
-        return frozenset(
-            f"{LOCAL_MCP_ROOMS_PATH}/{REDACTED_ROOM}{path}" for path in paths
-        )
+        return frozenset(f"{_room_path(REDACTED_ROOM)}{path}" for path in paths)
 
     def _reserve_socket(self) -> tuple[socket.socket, int]:
         # Port 0 -> ask the OS for any free port (race-free, ideal for tests)

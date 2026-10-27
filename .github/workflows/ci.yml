@@ -411,7 +411,7 @@ jobs:
         from band.integrations.mcp.local_server import LocalMCPServer
 
         async def main() -> None:
-            async with LocalMCPServer('smoke', [], port_min=0, port_max=0):
+            async with LocalMCPServer('smoke', [], auth_token='smoke', port_min=0, port_max=0):
                 pass
 
         asyncio.run(main())

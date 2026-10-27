@@ -39,6 +39,12 @@ CASES = [
     pytest.param(
         Credential.VALID, MULTI_ROOM_SSE, HTTPStatus.OK, id="valid-multi-room-sse"
     ),
+    pytest.param(
+        Credential.LOWERCASE_SCHEME,
+        ROOM_HTTP,
+        HTTPStatus.OK,
+        id="lowercase-scheme-room-http",
+    ),
     *(
         pytest.param(
             credential, route, HTTPStatus.UNAUTHORIZED, id=f"{credential}-{name}"

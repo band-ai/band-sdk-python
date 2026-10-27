@@ -473,20 +473,21 @@ class ClaudeSessionManager:
         """
         if not isinstance(mcp_servers, dict):
             return {"mcp_servers": mcp_servers}
+        in_process = {
+            name: config
+            for name, config in mcp_servers.items()
+            if is_in_process(config)
+        }
         dialed = {
             name: config
             for name, config in mcp_servers.items()
-            if not is_in_process(config)
+            if name not in in_process
         }
         if not dialed:
             return {"mcp_servers": mcp_servers}
         config_file = self._mcp_config_files.write(room_id, dialed)
         return {
-            "mcp_servers": {
-                name: config
-                for name, config in mcp_servers.items()
-                if is_in_process(config)
-            },
+            "mcp_servers": in_process,
             "extra_args": {
                 **self.base_options.extra_args,
                 MCP_CONFIG_FLAG: str(config_file),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -29,7 +30,11 @@ from tests.adapters.lettakit import (
     make_mock_tool_page,
     make_platform_message,
 )
-from tests.adapters.lettamcp.kit import _stale_tool_error, letta_registering_one_tool
+from tests.adapters.lettamcp.kit import (
+    _stale_tool_error,
+    letta_registering_one_tool,
+    registered_on_a_dead_fake_server,
+)
 from tests.mcpbackends import (
     FAKE_AUTH_TOKEN,
     FakeBandMCPBackend,
@@ -40,8 +45,9 @@ from tests.mcpbackends import (
 LETTA_MCP_SERVERS_URL = "http://letta.test/v1/mcp-servers/"
 
 
-async def reject_echoing_the_config(**submitted: Any) -> None:
-    """Refuse a create the way Letta's 422 does: echoing what it was sent."""
+async def reject_echoing_the_config(*_: Any, **submitted: Any) -> None:
+    """Refuse a create or update the way Letta's 422 does: echoing what it
+    was sent."""
     body = {"detail": [{"msg": "invalid", "input": submitted}]}
     raise UnprocessableEntityError(
         f"Error code: 422 - {body}",
@@ -50,6 +56,11 @@ async def reject_echoing_the_config(**submitted: Any) -> None:
         ),
         body=body,
     )
+
+
+def reported(error: BaseException) -> str:
+    """``error`` as ``logger.exception`` prints it, cause chain included."""
+    return "".join(traceback.format_exception(error))
 
 
 class TestSelfHostedMCPLifecycle:
@@ -297,6 +308,27 @@ class TestSelfHostedMCPLifecycle:
         assert bridge.server_id == "mcp-earlier"
 
     @pytest.mark.asyncio
+    async def test_adopted_external_row_keeps_the_operators_config(self) -> None:
+        """External mode sends no headers, so rewriting the shared row would
+        wipe any the operator registered it with."""
+        url = "http://localhost:8002/sse"
+        bridge = LettaAdapter(
+            config=LettaAdapterConfig(
+                mcp=LettaMCPConfig(mode="external", server_url=url)
+            )
+        )._mcp
+        client = letta_registering_one_tool()
+        client.mcp_servers.list.return_value = [
+            make_mock_mcp_server("mcp-shared", name="band", url=url)
+        ]
+
+        await bridge.ensure_ready(client)
+
+        client.mcp_servers.create.assert_not_awaited()
+        client.mcp_servers.update.assert_not_awaited()
+        assert bridge.server_id == "mcp-shared"
+
+    @pytest.mark.asyncio
     async def test_register_uses_fresh_name_when_stale_url_is_ephemeral(self) -> None:
         adapter = LettaAdapter()
         mock_client = AsyncMock()
@@ -533,7 +565,24 @@ class TestSelfHostedMCPLifecycle:
             await bridge.ensure_ready(client)
 
         assert str(failed.value).endswith(": UnprocessableEntityError (HTTP 422)")
-        assert FAKE_AUTH_TOKEN not in caplog.text
+        assert FAKE_AUTH_TOKEN not in caplog.text + reported(failed.value)
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_repoint_never_reports_the_echoed_token(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        bridge, client = await registered_on_a_dead_fake_server()
+        client.mcp_servers.update.side_effect = reject_echoing_the_config
+
+        with (
+            backends_created_by(),
+            pytest.raises(RuntimeError) as failed,
+        ):
+            await bridge.ensure_ready(client)
+
+        assert str(failed.value).endswith(": UnprocessableEntityError (HTTP 422)")
+        assert FAKE_AUTH_TOKEN not in caplog.text + reported(failed.value)
 
     @pytest.mark.asyncio
     async def test_discovery_failure_leaves_registration_not_ready(self) -> None:

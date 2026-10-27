@@ -5,9 +5,13 @@ from __future__ import annotations
 
 import os
 import stat
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
+from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_DIR_PREFIX
 from band.integrations.mcp import BandMCPTransport
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 from tests.adapters.claude_sdk.fakecli import cli_mcp_config_file
@@ -15,9 +19,37 @@ from tests.adapters.claude_sdk.helpers import OpenRoom, sdk_cli_argv
 from tests.adapters.roompeer import MCP_CONFIG_ARG
 from tests.mcpclient import bearer_token
 
-POSIX_ONLY = pytest.mark.skipif(
-    os.name == "nt", reason="Windows file modes are not access control"
-)
+
+def posix_modes(config: Path) -> tuple[int, int]:
+    """The file's and its directory's permission bits."""
+    return (
+        stat.S_IMODE(config.stat().st_mode),
+        stat.S_IMODE(config.parent.stat().st_mode),
+    )
+
+
+def windows_location(config: Path) -> tuple[Path, bool]:
+    """The directory holding the file's directory, and whether that one is
+    this server's own."""
+    return config.parent.parent, config.parent.name.startswith(MCP_CONFIG_DIR_PREFIX)
+
+
+# Windows file modes are not access control: there the file is private by
+# living in the user's own temp directory.
+PRIVACY = [
+    pytest.param(
+        posix_modes,
+        (0o600, 0o700),
+        marks=pytest.mark.skipif(os.name == "nt", reason="POSIX modes"),
+        id="posix-modes",
+    ),
+    pytest.param(
+        windows_location,
+        (Path(tempfile.gettempdir()), True),
+        marks=pytest.mark.skipif(os.name != "nt", reason="Windows temp"),
+        id="nt-user-temp",
+    ),
+]
 
 
 class TestMcpConfigFile:
@@ -44,19 +76,18 @@ class TestMcpConfigFile:
         assert not any(token in arg for arg in argv)
         assert not any(token in value for value in cli.options.env.values())
 
-    @POSIX_ONLY
+    @pytest.mark.parametrize(("privacy", "private"), PRIVACY)
     async def test_the_file_is_private_to_this_user(
-        self, claude_room: OpenRoom
+        self,
+        claude_room: OpenRoom,
+        privacy: Callable[[Path], object],
+        private: object,
     ) -> None:
         room = await claude_room()
         room.claude.script([room.model_reply("hi")])
         await room.send("hello")
 
-        config = cli_mcp_config_file(room.claude.sessions[0].options)
-        assert (
-            stat.S_IMODE(config.stat().st_mode),
-            stat.S_IMODE(config.parent.stat().st_mode),
-        ) == (0o600, 0o700)
+        assert privacy(cli_mcp_config_file(room.claude.sessions[0].options)) == private
 
     async def test_turns_on_an_unchanged_server_reuse_one_cli(
         self, claude_room: OpenRoom
