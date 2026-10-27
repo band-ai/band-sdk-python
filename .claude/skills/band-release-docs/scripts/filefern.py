@@ -47,6 +47,8 @@ MIN_CHECK_RUNS = 2
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
 CHECK_POLL_SECONDS = 30
 CHECK_POLL_ATTEMPTS = 40
+# The review reads the released source, where a held feature still lives.
+HOLDBACKS_ACTIVE = "features are held back: check that none is documented"
 
 
 class Mode(StrEnum):
@@ -109,6 +111,7 @@ class DocsInput:
     edited: Path
     pristine: Path
     supersede: list[int]
+    holds_back: bool
 
 
 class StaleError(RuntimeError):
@@ -304,12 +307,14 @@ class Filer:
                 )
             shutil.copyfile(docs.edited / path, target)
         violations = [str(finding) for finding in docs.check.content_violations]
+        if docs.holds_back or load_ledger(self.fern / HELD_ITEMS):
+            violations.append(HOLDBACKS_ACTIVE)
         body = pr_body(docs.report, self.tag, docs.supersede, violations)
         return self.open_pr(
             branch,
             self.title("docs: Python SDK"),
             body,
-            mergeable=docs.check.mergeable,
+            mergeable=not violations,
             existing=existing,
         )
 
@@ -410,6 +415,7 @@ def read_docs(args: argparse.Namespace) -> DocsInput | None:
         edited=args.edited,
         pristine=args.pristine,
         supersede=json.loads(args.docs_range.read_text("utf-8"))["supersede"],
+        holds_back=bool(args.held),
     )
 
 

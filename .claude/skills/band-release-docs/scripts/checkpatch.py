@@ -20,6 +20,7 @@ import argparse
 import difflib
 import logging
 import re
+from collections import Counter
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -39,8 +40,12 @@ ALLOWED_LINK_PREFIXES = (
     "https://pypi.org/project/band-sdk/",
 )
 IMPORT_LINE = re.compile(r"^\s*(?:import|export)\b")
-# An MDX/JSX tag name; `<https://...>` autolinks are not tags.
-JSX_TAG = re.compile(r"</?([A-Za-z][\w.-]*)(?=[\s/>])")
+# A whole MDX/JSX tag with its attributes, or an MDX `{expression}`;
+# `<https://...>` autolinks are not tags.
+MDX_CONSTRUCT = re.compile(r"<(?![\w+.-]+:)/?[A-Za-z][^>]*>|\{[^{}]*\}?")
+# A Markdown link or reference-definition target.
+LINK_TARGET = re.compile(r"\]\(\s*<?([^)\s>]+)|^\s*\[[^\]]+\]:\s*<?(\S+?)>?\s*$")
+SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
 
 
 class PathViolation(StrEnum):
@@ -54,7 +59,7 @@ class PathViolation(StrEnum):
 
 class ContentViolation(StrEnum):
     IMPORT = "adds an import or export"
-    JSX = "adds a JSX tag"
+    JSX = "adds or changes a JSX tag or MDX expression"
     LINK = "links outside the allowed sites"
     TOO_LONG = f"changes more than {MAX_CHANGED_LINES} lines"
 
@@ -161,12 +166,40 @@ def diff_lines(before: str, after: str) -> tuple[list[str], int]:
     return [line[1:] for line in changed if line.startswith("+")], len(changed)
 
 
-def jsx_tags(text: str) -> set[str]:
-    return set(JSX_TAG.findall(CODE_PATTERN.sub("", text)))
+def mdx_constructs(text: str) -> Counter[str]:
+    """Tags and expressions outside code; import lines have their own rule."""
+    prose = CODE_PATTERN.sub("", text).splitlines()
+    kept = "\n".join(line for line in prose if not IMPORT_LINE.match(line))
+    return Counter(MDX_CONSTRUCT.findall(kept))
 
 
-def is_allowed_link(url: str) -> bool:
-    return url.startswith(ALLOWED_LINK_PREFIXES)
+def is_allowed_url(url: str) -> bool:
+    """An absolute URL on an allowed site, with no step out of its path."""
+    path = url.lower().replace("%2e", ".")
+    return (
+        url.startswith(ALLOWED_LINK_PREFIXES)
+        and "/../" not in path
+        and not path.endswith("/..")
+    )
+
+
+def is_allowed_target(target: str) -> bool:
+    """A link target: a relative path or anchor, or an allowed URL."""
+    if target.startswith("//") or SCHEME.match(target):
+        return is_allowed_url(target)
+    return True
+
+
+def links_allowed(lines: Sequence[str]) -> bool:
+    urls = [url for line in lines for url in URL_PATTERN.findall(line)]
+    targets = [
+        target
+        for line in lines
+        for match in LINK_TARGET.findall(line)
+        for target in match
+        if target
+    ]
+    return all(map(is_allowed_url, urls)) and all(map(is_allowed_target, targets))
 
 
 def page_violations(path: str, before: str, after: str) -> tuple[list[Finding], int]:
@@ -175,10 +208,9 @@ def page_violations(path: str, before: str, after: str) -> tuple[list[Finding], 
     kinds = []
     if any(IMPORT_LINE.match(line) for line in added):
         kinds.append(ContentViolation.IMPORT)
-    if jsx_tags(after) - jsx_tags(before):
+    if mdx_constructs(after) - mdx_constructs(before):
         kinds.append(ContentViolation.JSX)
-    links = [url for line in added for url in URL_PATTERN.findall(line)]
-    if not all(map(is_allowed_link, links)):
+    if not links_allowed(added):
         kinds.append(ContentViolation.LINK)
     return [Finding(path=path, kind=kind) for kind in kinds], count
 

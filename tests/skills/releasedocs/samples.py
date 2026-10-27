@@ -51,5 +51,9 @@ LEDGER = """held_items:
     surfaces: [platform]
     released_surfaces: []
 """
+# The same ledger once its sdks entry shipped: nothing is held from the SDK.
+RELEASED_LEDGER = LEDGER.replace(
+    "released_surfaces: []", "released_surfaces: [sdks]", 1
+)
 # The PR the ledger's sdks entry cites.
 HELD_PR = "901"

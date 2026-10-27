@@ -26,9 +26,11 @@ from tests.skills.releasedocs.samples import (
     DOCS_PAGE,
     DOCS_PAGE_TEXT,
     HELD_PR,
+    LEDGER,
     RECONNECT,
     RELEASE_DATE,
     RELEASE_TAG,
+    RELEASED_LEDGER,
     SEND_RETRIES,
     TOKEN_REDACTION,
 )
@@ -176,6 +178,7 @@ class TestFileFern:
 
     def test_held_items_are_left_out_and_explained_in_the_pr(
         self,
+        releasedata: ModuleType,
         filefern: ModuleType,
         fernstate: ModuleType,
         holdbacks: ModuleType,
@@ -185,6 +188,9 @@ class TestFileFern:
         make_notes: Callable[..., object],
         tmp_path: Path,
     ) -> None:
+        fern_remote.commit_to_base(
+            "chore: hold room tasks", {releasedata.HELD_ITEMS: LEDGER}
+        )
         gh.checks[CHANGELOG] = PASSING
         state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
         items = [
@@ -307,7 +313,44 @@ class TestFileFern:
         )
         (docs,) = gh.on(DOCS)
         assert (docs.state, older.state) == (OPEN, OPEN)
-        assert f"## Do not merge\n\n- `{DOCS_PAGE}`: adds a JSX tag\n" in docs.body
+        assert (
+            f"## Do not merge\n\n- `{DOCS_PAGE}`: adds or changes a JSX tag or MDX expression\n"
+            in docs.body
+        )
+
+    @pytest.mark.parametrize(
+        ("ledger", "held"),
+        [(LEDGER, []), (RELEASED_LEDGER, ["0"])],
+        ids=["ledger-holds-a-feature", "release-holds-an-item"],
+    )
+    def test_active_holdbacks_open_the_docs_pr_unmerged(
+        self,
+        releasedata: ModuleType,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        checkpatch: ModuleType,
+        gh: FakeGh,
+        fern_remote: FernRemote,
+        fern_files: dict[str, str | bytes],
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+        ledger: str,
+        held: list[str],
+    ) -> None:
+        fern_remote.commit_to_base(
+            "chore: update holdbacks", {releasedata.HELD_ITEMS: ledger}
+        )
+        gh.checks[DOCS] = PASSING
+        state = read_state(fernstate, gh, tmp_path)
+        extra = docs_args(checkpatch, fern_files, tmp_path, EDITED_PAGE)
+        extra += ["--held", *held]
+        assert (
+            file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 1
+        )
+        (docs,) = gh.on(DOCS)
+        assert docs.state == OPEN
+        assert f"## Do not merge\n\n- {filefern.HOLDBACKS_ACTIVE}\n" in docs.body
 
     def test_open_pr_this_run_has_nothing_to_file_for_is_never_merged(
         self,

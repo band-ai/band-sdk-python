@@ -16,13 +16,13 @@ from tests.skills.releasedocs.samples import (
     DOCS_PAGE,
     DOCS_PAGE_TEXT,
     HELD_PR,
-    LEDGER,
     PREVIOUS_TAG,
     PRODUCT,
     RECONNECT,
     RELEASE_DATE,
     RELEASE_TAG,
     RELEASE_URL,
+    RELEASED_LEDGER,
     SEND_RETRIES,
     TOKEN_REDACTION,
 )
@@ -135,7 +135,7 @@ def filefern(scripts: Callable[[str], ModuleType]) -> ModuleType:
 def fern_files(releasedata: ModuleType) -> dict[str, str | bytes]:
     """The Fern files the filing reads: the ledger, a page, and a date file."""
     return {
-        releasedata.HELD_ITEMS: LEDGER,
+        releasedata.HELD_ITEMS: RELEASED_LEDGER,
         DOCS_PAGE: DOCS_PAGE_TEXT,
         f"{releasedata.CHANGELOG_DIR}/2026-10-13.md": "---\ntags: []\n---\n",
     }

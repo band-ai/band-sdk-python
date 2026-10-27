@@ -293,6 +293,7 @@ class TestAnnounceWorkflow:
 
     def test_fern_filings_run_one_at_a_time(self) -> None:
         assert job("fern")["concurrency"] == {
-            "group": "fern-python-sdk",
+            "group": "fern-python-sdk-${{ inputs.mode == 'dry-run' && github.run_id"
+            " || inputs.mode || 'live' }}",
             "cancel-in-progress": "false",
         }

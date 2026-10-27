@@ -494,9 +494,11 @@ jobs:
       (needs.bundle.result == 'success' || needs.bundle.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    # Same-day releases share a date file, so they file one at a time.
+    # Same-day releases share a date file, so they file one at a time. GitHub
+    # keeps one pending job per group, so a dry-run (which files nothing) or
+    # a rehearsal never displaces a live filing.
     concurrency:
-      group: fern-python-sdk
+      group: fern-python-sdk-${{ inputs.mode == 'dry-run' && github.run_id || inputs.mode || 'live' }}
       cancel-in-progress: false
     env:
       HAS_ENTRY: ${{ needs.holdbacks.outputs.has_entry }}

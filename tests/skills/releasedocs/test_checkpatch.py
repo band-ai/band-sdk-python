@@ -22,10 +22,12 @@ PRISTINE = {
     OTHER_PAGE: "# Overview\n",
     OUTSIDE: "# Rooms\n",
 }
-# Keeps the existing import, JSX tag, and allowed link, and adds an allowed link.
+# Keeps the existing import, JSX tag, and allowed link, and adds an allowed
+# link, a relative link, and braces inside code.
 ALLOWED_EDIT = DOCS_PAGE_TEXT.replace(
     "Create an agent with `Agent.create()`.",
-    "Create an agent with `Agent.start()`; see https://github.com/band-ai/band-sdk-python.",
+    "Create an agent with `Agent.start({})`; see https://github.com/band-ai/band-sdk-python"
+    " and the [overview](../overview#agents).",
 )
 
 
@@ -135,10 +137,29 @@ class TestCheckPatch:
         [
             (DOCS_PAGE_TEXT + 'import { Secret } from "@x";\n', "IMPORT"),
             (DOCS_PAGE_TEXT + "<Callout>Run it.</Callout>\n", "JSX"),
+            (DOCS_PAGE_TEXT.replace("<Tabs>", "<Tabs onClick={go}>"), "JSX"),
+            (DOCS_PAGE_TEXT + '{globalThis.fetch("/x")}\n', "JSX"),
             (DOCS_PAGE_TEXT + "See https://band.ai.example.com/x.\n", "LINK"),
+            (DOCS_PAGE_TEXT + "See www.example.com.\n", "LINK"),
+            (DOCS_PAGE_TEXT + "[docs](javascript:alert(1))\n", "LINK"),
+            (DOCS_PAGE_TEXT + "[docs](//evil.example/x)\n", "LINK"),
+            (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/../evil)\n", "LINK"),
+            (DOCS_PAGE_TEXT + "[docs]: http://evil.example\n", "LINK"),
             (DOCS_PAGE_TEXT + "".join(f"Line {n}.\n" for n in range(201)), "TOO_LONG"),
         ],
-        ids=["import", "jsx-tag", "foreign-link", "line-cap"],
+        ids=[
+            "import",
+            "jsx-tag",
+            "jsx-attribute",
+            "mdx-expression",
+            "foreign-link",
+            "bare-www-link",
+            "script-link",
+            "protocol-relative-link",
+            "path-escaping-link",
+            "reference-definition",
+            "line-cap",
+        ],
     )
     def test_content_breach_files_the_pr_unmergeable(
         self,

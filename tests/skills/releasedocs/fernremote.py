@@ -46,7 +46,15 @@ class FernRemote:
         """Land ``files`` on the base branch, as another team's merge would."""
         write_tree(self.seed, files)
         run_git("-C", str(self.seed), "add", "--all")
-        run_git("-C", str(self.seed), "commit", "--quiet", "--message", subject)
+        run_git(
+            "-C",
+            str(self.seed),
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "--message",
+            subject,
+        )
         run_git("-C", str(self.seed), "push", "--quiet", "origin", f"HEAD:{self.base}")
 
     def clone(self, dest: Path) -> Path:
