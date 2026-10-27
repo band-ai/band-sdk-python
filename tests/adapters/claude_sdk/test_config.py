@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, get_args
-from unittest.mock import ANY
 
 import pytest
 import yaml
@@ -15,10 +14,10 @@ from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE,
     APPROVAL_TIMED_OUT_TEMPLATE,
     APPROVAL_UNAUTHORIZED_MESSAGE,
+    BAND_MCP_TOKEN_ENV,
     ClaudePermissionMode,
     ClaudeSDKAdapterConfig,
 )
-from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import WRITE_NOTE, OpenRoom
 from tests.baseline.decisions import ModelDecision
@@ -90,8 +89,11 @@ class TestHostConfig:
         assert options.permission_mode == ClaudePermissionMode.ACCEPT_EDITS
         assert options.setting_sources == ["project"]
         assert Path(options.cwd) == tmp_path
-        assert options.env == {"GITHUB_TOKEN": "per-agent-token"}
-        assert options.extra_args == {"debug-to-stderr": None, MCP_CONFIG_FLAG: ANY}
+        assert options.env == {
+            "GITHUB_TOKEN": "per-agent-token",
+            BAND_MCP_TOKEN_ENV: room.mcp_backend.auth_token,
+        }
+        assert options.extra_args == {"debug-to-stderr": None}
 
     @pytest.mark.looptime
     async def test_the_approval_wait_and_the_model_share_one_turn_limit(

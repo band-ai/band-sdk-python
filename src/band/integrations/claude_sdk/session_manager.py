@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any
 
 from band.core.exceptions import RoomClosingError
 from band.core.retention import (
@@ -29,11 +29,6 @@ from band.core.retention import (
     RoomRetentionConfig,
 )
 from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
-from band.integrations.claude_sdk.mcpconfig import (
-    MCP_CONFIG_FLAG,
-    McpConfigFiles,
-    is_in_process,
-)
 from band.workspaces import RoomWorkspaces
 
 try:
@@ -57,9 +52,6 @@ except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-
-# ``ClaudeAgentOptions.mcp_servers``: servers by name, or a config file path.
-McpServers: TypeAlias = "dict[str, McpServerConfig] | str | Path"
 
 # A room's CLI starts as an owned acquisition that its turn waits on for at
 # most ``transition_timeout_s``; the SDK waits at least this long for the CLI
@@ -148,8 +140,6 @@ class ClaudeRoomSession:
         self.session_id: str | None = None
         self.client: ClaudeSDKClient | None = None
         self.transport: Transport | None = None
-        # The MCP servers the held CLI was started with.
-        self._mcp_servers: McpServers | None = None
         self._manager = manager
         self._reader: asyncio.Task[None] | None = None
         self._turn: TurnStream | None = None
@@ -224,7 +214,7 @@ class ClaudeRoomSession:
         current ones."""
         if self.client is None:
             return
-        if self._mcp_servers != self._manager.mcp_servers(self.room_id):
+        if self.client.options.mcp_servers != self._manager.mcp_servers(self.room_id):
             logger.info("Room %s: MCP servers changed; replacing its CLI", self.room_id)
             self.recover("Band MCP servers changed")
 
@@ -274,16 +264,12 @@ class ClaudeRoomSession:
         self._manager.discard(self)
 
     async def _connect(self, generation: int, *, resume: str | None) -> None:
-        mcp_servers = self._manager.mcp_servers(self.room_id)
-        options = self._manager.options_for(
-            self, generation, resume=resume, mcp_servers=mcp_servers
-        )
+        options = self._manager.options_for(self, generation, resume=resume)
         transport = create_transport(options)
         client = ClaudeSDKClient(options=options, transport=transport)
         # Retain both before connect: SDK disconnect cannot close a subprocess
         # when startup fails before its Query is constructed.
         self.client, self.transport = client, transport
-        self._mcp_servers = mcp_servers
         try:
             await client.connect()
         except Exception as error:
@@ -318,7 +304,7 @@ class ClaudeRoomSession:
             await self.transport.close()
         if self._reader is not None:
             await self._reader
-        self.client = self.transport = self._reader = self._mcp_servers = None
+        self.client = self.transport = self._reader = None
 
     async def _read(self, client: ClaudeSDKClient, generation: int) -> None:
         """The CLI's only reader, across turns, from connect to disconnect."""
@@ -407,11 +393,6 @@ class ClaudeSessionManager:
             on_disposed: Called with a room's id once its final release is
                 confirmed, even if the leave that started it stopped waiting.
         """
-        if MCP_CONFIG_FLAG in base_options.extra_args:
-            raise ValueError(
-                f"extra_args[{MCP_CONFIG_FLAG!r}] would replace the MCP config "
-                "file this manager writes; pass those servers in mcp_servers"
-            )
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
         self._mcp_servers_factory = mcp_servers_factory
@@ -422,7 +403,6 @@ class ClaudeSessionManager:
             settle_grace_s=settle_grace_s,
         )
         self._rooms: dict[str, ClaudeRoomSession] = {}
-        self._mcp_config_files = McpConfigFiles()
 
     def room(self, room_id: str) -> ClaudeRoomSession:
         """The room's session record, registered on first use."""
@@ -438,24 +418,19 @@ class ClaudeSessionManager:
         """The room's session record, if any; never registers one."""
         return self._rooms.get(room_id)
 
-    def mcp_servers(self, room_id: str) -> McpServers:
+    def mcp_servers(self, room_id: str) -> dict[str, McpServerConfig] | str | Path:
         if self._mcp_servers_factory is None:
             return self.base_options.mcp_servers
         return self._mcp_servers_factory(room_id)
 
     def options_for(
-        self,
-        session: ClaudeRoomSession,
-        generation: int,
-        *,
-        resume: str | None,
-        mcp_servers: McpServers,
+        self, session: ClaudeRoomSession, generation: int, *, resume: str | None
     ) -> ClaudeAgentOptions:
         """``base_options`` with one room session's overrides applied.
 
         ``dataclasses.replace()`` shallow-copies every base field.
         """
-        overrides = self._mcp_overrides(session.room_id, mcp_servers)
+        overrides: dict[str, Any] = {"mcp_servers": self.mcp_servers(session.room_id)}
         if self._workspaces is not None:
             overrides["cwd"] = self._workspaces.claim(session.room_id)
         if resume:
@@ -464,42 +439,10 @@ class ClaudeSessionManager:
             overrides["can_use_tool"] = self._can_use_tool_factory(session, generation)
         return dataclasses.replace(self.base_options, **overrides)
 
-    def _mcp_overrides(self, room_id: str, mcp_servers: McpServers) -> dict[str, Any]:
-        """The CLI's MCP servers, keeping any headers out of its argv.
-
-        Servers the CLI dials go to the room's private config file, passed as
-        an extra ``--mcp-config``; in-process ``sdk`` servers stay in the dict,
-        where the SDK serves them. A path is passed on as given.
-        """
-        if not isinstance(mcp_servers, dict):
-            return {"mcp_servers": mcp_servers}
-        in_process = {
-            name: config
-            for name, config in mcp_servers.items()
-            if is_in_process(config)
-        }
-        dialed = {
-            name: config
-            for name, config in mcp_servers.items()
-            if name not in in_process
-        }
-        if not dialed:
-            return {"mcp_servers": mcp_servers}
-        config_file = self._mcp_config_files.write(room_id, dialed)
-        return {
-            "mcp_servers": in_process,
-            "extra_args": {
-                **self.base_options.extra_args,
-                MCP_CONFIG_FLAG: str(config_file),
-            },
-        }
-
     def discard(self, session: ClaudeRoomSession) -> None:
-        """Forget a disposed room, delete its MCP config file and release its
-        workspace claim."""
+        """Forget a disposed room and release its workspace claim."""
         if self._rooms.get(session.room_id) is session:
             del self._rooms[session.room_id]
-            self._mcp_config_files.discard(session.room_id)
             if self._on_disposed is not None:
                 self._on_disposed(session.room_id)
         if self._workspaces is not None:
@@ -515,11 +458,9 @@ class ClaudeSessionManager:
             await session.retained.dispose()
 
     async def stop(self) -> None:
-        """Dispose every room, then delete their MCP config files; a failed or
-        unfinished room stays owned for a retry, and the manager never serves
-        again."""
+        """Dispose every room; a failed or unfinished room stays owned for a
+        retry, and the manager never serves again."""
         await self._retention.stop()
-        self._mcp_config_files.remove()
 
     def has_session(self, room_id: str) -> bool:
         """Whether the room has a CLI process held."""

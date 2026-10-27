@@ -126,7 +126,6 @@ from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
     DedupingAgentTools,
 )
-from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
 from band.integrations.claude_sdk.session_manager import (
     CLI_STARTUP_TIMEOUT_S,  # noqa: F401 -- re-exported for adapter configs
@@ -140,6 +139,7 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
+from band.integrations.mcp.local_server import local_mcp_auth_headers
 from band.runtime.activity import permission_wait
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -210,7 +210,7 @@ SDK_OWNED_CLI_FLAGS: frozenset[str] = frozenset(
         "fallback-model",
         "input-format",
         "max-thinking-tokens",
-        MCP_CONFIG_FLAG,
+        "mcp-config",
         "model",
         "output-format",
         "permission-mode",
@@ -246,6 +246,11 @@ BAND_UNSAFE_CLI_FLAGS: frozenset[str] = frozenset(
 )
 RESERVED_CLI_FLAGS: frozenset[str] = SDK_OWNED_CLI_FLAGS | BAND_UNSAFE_CLI_FLAGS
 
+# The CLI expands ``${VAR}`` in MCP header values from its own environment, so
+# the Band MCP server's token travels there, not in the argv others can read.
+BAND_MCP_TOKEN_ENV = "BAND_MCP_TOKEN"
+BAND_MCP_TOKEN_REF = f"${{{BAND_MCP_TOKEN_ENV}}}"
+
 
 class ClaudeCLIOptions(BaseAdapterConfig):
     """How the Claude CLI process is launched; never how Band is wired into it.
@@ -257,7 +262,8 @@ class ClaudeCLIOptions(BaseAdapterConfig):
             load without changing ``cwd`` or ``setting_sources``.
         add_dirs: Additional directories Claude may access (``--add-dir``).
         env: Extra environment variables for the CLI process only; the host's
-            ``os.environ`` is left untouched.
+            ``os.environ`` is left untouched. ``BAND_MCP_TOKEN_ENV`` is
+            reserved for the Band MCP server's token.
         extra_args: Additional CLI flags by bare name, ``{"flag": "value"}``
             or ``{"flag": None}`` for a bare flag. Flags in
             ``RESERVED_CLI_FLAGS`` are rejected.
@@ -281,6 +287,16 @@ class ClaudeCLIOptions(BaseAdapterConfig):
                 f"extra_args may not set adapter-owned CLI flags: {reserved}"
             )
         return extra_args
+
+    @field_validator("env")
+    @classmethod
+    def _reject_reserved_env(cls, env: dict[str, str]) -> dict[str, str]:
+        if BAND_MCP_TOKEN_ENV in env:
+            raise ValueError(
+                f"env may not set {BAND_MCP_TOKEN_ENV}, which carries the Band "
+                "MCP server's token"
+            )
+        return env
 
     def sdk_fields(self) -> dict[str, Any]:
         """The ``ClaudeAgentOptions`` fields these options own."""
@@ -791,6 +807,8 @@ class ClaudeSDKAdapter(
         if self.config.max_thinking_tokens:
             sdk_options.thinking = self._thinking(self.config.max_thinking_tokens)
 
+        sdk_options.env[BAND_MCP_TOKEN_ENV] = mcp_backend.auth_token
+
         # Set working directory if configured
         if self.config.cwd:
             sdk_options.cwd = self.config.cwd
@@ -844,14 +862,15 @@ class ClaudeSDKAdapter(
         )
 
     def _room_mcp_servers(self, room_id: str) -> dict[str, McpServerConfig]:
-        """A room session's MCP servers: the Band endpoint bound to that room."""
+        """A room session's MCP servers: the Band endpoint bound to that room,
+        its token taken from the CLI's environment."""
         if (backend := self._mcp.current) is None:
             raise RuntimeError("Band MCP backend is not started")
         return {
             BAND_MCP_SERVER_NAME: McpHttpServerConfig(
                 type="http",
                 url=backend.endpoint(BandMCPTransport.HTTP, room_id),
-                headers=backend.headers,
+                headers=local_mcp_auth_headers(BAND_MCP_TOKEN_REF),
             )
         }
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import ANY
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
@@ -16,15 +15,14 @@ from claude_agent_sdk.types import (
 )
 
 from band.adapters.claude_sdk import (
+    BAND_MCP_TOKEN_ENV,
     SDK_OWNED_CLI_FLAGS,
     ClaudeApprovalOptions,
     ClaudeCLIOptions,
     ClaudeSDKAdapterConfig,
 )
 from band.core.types import Emit
-from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG
 from band.integrations.claude_sdk.transport import create_transport
-from tests.adapters.claude_sdk.fakecli import cli_mcp_servers
 from tests.adapters.claude_sdk.helpers import (
     SEND_MESSAGE_MCP_NAME,
     ClaudeRoom,
@@ -84,9 +82,12 @@ class TestCliOptions:
 
         assert options.plugins == [{"type": "local", "path": str(tmp_path / "plugin")}]
         assert options.cli_path == cli.cli_path
-        assert options.env == {"ANTHROPIC_API_KEY": "per-agent-key"}
+        assert options.env == {
+            "ANTHROPIC_API_KEY": "per-agent-key",
+            BAND_MCP_TOKEN_ENV: room.mcp_backend.auth_token,
+        }
         assert options.add_dirs == [str(tmp_path / "shared")]
-        assert options.extra_args == {"debug-to-stderr": None, MCP_CONFIG_FLAG: ANY}
+        assert options.extra_args == {"debug-to-stderr": None}
 
     async def test_plugins_leave_band_wiring_in_place(
         self, claude_room: OpenRoom, tmp_path: Path
@@ -97,7 +98,7 @@ class TestCliOptions:
 
         options = await _cli_options(room)
 
-        assert list(cli_mcp_servers(options)) == ["band"]
+        assert list(options.mcp_servers) == ["band"]
         assert SEND_MESSAGE_MCP_NAME in options.allowed_tools
         assert options.setting_sources == []
 
@@ -140,11 +141,15 @@ class TestCliOptions:
         assert options.thinking.get("display") == display
 
     @pytest.mark.parametrize(
-        "flag", [MCP_CONFIG_FLAG, "effort", "settings", "dangerously-skip-permissions"]
+        "flag", ["mcp-config", "effort", "settings", "dangerously-skip-permissions"]
     )
     def test_extra_args_cannot_replace_adapter_owned_flags(self, flag: str) -> None:
         with pytest.raises(ValueError, match="adapter-owned CLI flags"):
             ClaudeCLIOptions(extra_args={flag: "x"})
+
+    def test_env_cannot_replace_the_band_mcp_token(self) -> None:
+        with pytest.raises(ValueError, match=BAND_MCP_TOKEN_ENV):
+            ClaudeCLIOptions(env={BAND_MCP_TOKEN_ENV: "x"})
 
     def test_extra_args_keys_are_bare_flag_names(self) -> None:
         with pytest.raises(ValueError, match="bare flag names"):

@@ -245,7 +245,7 @@ class ClaudeRoom:
         """The Band MCP server config each CLI session (any room) was started
         with, in order."""
         return [
-            session.mcp_servers[BAND_MCP_SERVER_NAME]
+            session.dialed_server(BAND_MCP_SERVER_NAME)
             for session in self.claude.sessions
         ]
 

@@ -17,7 +17,6 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -28,9 +27,9 @@ from mcp import ClientSession
 
 from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
 from band.integrations.claude_sdk import session_manager
-from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG, MCP_SERVERS_KEY
 from band.integrations.mcp import BandMCPTransport
 from tests.adapters.hold import Hold
+from tests.adapters.roompeer import dialed_server
 from tests.baseline.decisions import ModelDecision, ToolCall
 from tests.mcpclient import mcp_session
 
@@ -194,30 +193,6 @@ class FakeClaude:
         assert not self._turns, f"{len(self._turns)} scripted turn(s) never ran"
 
 
-def read_mcp_config(path: str | Path) -> dict[str, Any]:
-    """The servers in a ``--mcp-config`` file."""
-    return json.loads(Path(path).read_text(encoding="utf-8"))[MCP_SERVERS_KEY]
-
-
-def cli_mcp_config_file(options: ClaudeAgentOptions) -> Path:
-    """The private config file ``options`` pass the CLI as an extra
-    ``--mcp-config``."""
-    return Path(options.extra_args[MCP_CONFIG_FLAG])
-
-
-def cli_mcp_servers(options: ClaudeAgentOptions) -> dict[str, Any]:
-    """The MCP servers a CLI started with ``options`` reads at start, merged
-    from every ``--mcp-config`` it gets, as the CLI merges them."""
-    match options.mcp_servers:
-        case dict() as servers:
-            inline = dict(servers)
-        case path:
-            inline = read_mcp_config(path)
-    if (extra := options.extra_args.get(MCP_CONFIG_FLAG)) is None:
-        return inline
-    return {**inline, **read_mcp_config(extra)}
-
-
 @contextmanager
 def scripted_claude() -> Iterator[FakeClaude]:
     """The scripted Claude CLI behind every ``ClaudeSDKClient`` opened inside.
@@ -237,7 +212,6 @@ class FakeCLISession(Transport):
     def __init__(self, claude: FakeClaude, options: ClaudeAgentOptions) -> None:
         self.claude = claude
         self.options = options
-        self.mcp_servers = cli_mcp_servers(options)
         self.permission_mode = options.permission_mode
         self.session_id = options.resume or claude.new_session_id()
         self.notes = claude.notes.setdefault(self.session_id, [])
@@ -559,14 +533,21 @@ class FakeCLISession(Transport):
         content = [block.model_dump(exclude_none=True) for block in result.content]
         return content, result.isError
 
+    def dialed_server(self, server: str) -> dict[str, Any]:
+        """The MCP server config this CLI dials ``server`` with: its headers
+        expanded from the variables the SDK adds to the CLI's environment."""
+        servers = self.options.mcp_servers
+        assert isinstance(servers, dict), servers
+        return dialed_server(servers[server], self.options.env)
+
     def _mcp(self, server: str) -> AbstractAsyncContextManager[ClientSession]:
         """A session to the MCP server the CLI was configured with, dialed by
         its URL and headers."""
-        config = self.mcp_servers[server]
+        config = self.dialed_server(server)
         return mcp_session(
             config["url"],
             BandMCPTransport(config["type"]),
-            headers=config.get("headers", {}),
+            headers=config["headers"],
         )
 
     def _tool_result(self, tool_use_id: str, content: Any, *, is_error: bool) -> None:

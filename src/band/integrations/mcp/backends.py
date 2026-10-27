@@ -67,8 +67,18 @@ class BandMCPBackend:
         return self.local_server.is_running
 
     @property
+    def auth_token(self) -> str:
+        """The bearer token ``headers`` present."""
+        return self.local_server.auth_token
+
+    @property
     def headers(self) -> dict[str, str]:
-        """The headers a consumer sends with every request to ``endpoint()``."""
+        """The headers a consumer sends with every request to ``endpoint()``.
+
+        For example ``sse_client(backend.endpoint(BandMCPTransport.SSE),
+        headers=backend.headers)``, or an ``httpx.AsyncClient(headers=...)``
+        passed to ``streamable_http_client`` as its ``http_client``.
+        """
         return self.local_server.auth_headers
 
     def endpoint(self, transport: BandMCPTransport, room_id: str | None = None) -> str:

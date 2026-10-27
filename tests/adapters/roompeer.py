@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,6 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG, MCP_SERVERS_KEY
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 
 WRITE_PREFIX = "WRITE="
@@ -40,8 +40,11 @@ HOLD_POLL_S = 0.01
 # Flags that fail or hold a peer's start while their file exists.
 FAIL_STARTUP_ARG = "--fail-startup"
 HOLD_STARTUP_ARG = "--hold-startup"
-# The Claude CLI's flag naming its MCP config file.
-MCP_CONFIG_ARG = f"--{MCP_CONFIG_FLAG}"
+# The Claude CLI's flag carrying its MCP servers as JSON, and their key.
+MCP_CONFIG_ARG = "--mcp-config"
+MCP_SERVERS_KEY = "mcpServers"
+# A ``${VAR}`` reference the Claude CLI expands in an MCP header value.
+ENV_REFERENCE = re.compile(r"\$\{(\w+)\}")
 
 
 class PeerCommand(StrEnum):
@@ -82,10 +85,27 @@ def reply_text(tool_name: str, value: str) -> str:
     return read_reply(value) if tool_name == "Read" else value
 
 
-def band_server(mcp_config: Path) -> dict[str, Any]:
-    """The Band MCP server in a Claude CLI ``--mcp-config`` file."""
-    config = json.loads(mcp_config.read_text(encoding="utf-8"))
-    return config[MCP_SERVERS_KEY][BAND_MCP_SERVER_NAME]
+def expand_env(value: str, environ: Mapping[str, str]) -> str:
+    """``value`` with each ``${VAR}`` set in ``environ`` expanded, as the
+    Claude CLI expands MCP header values; an unset one stays as written."""
+    return ENV_REFERENCE.sub(lambda ref: environ.get(ref[1], ref[0]), value)
+
+
+def dialed_server(
+    config: Mapping[str, Any], environ: Mapping[str, str]
+) -> dict[str, Any]:
+    """An MCP server config with its headers as the Claude CLI sends them."""
+    headers = {
+        name: expand_env(value, environ)
+        for name, value in config.get("headers", {}).items()
+    }
+    return {**config, "headers": headers}
+
+
+def band_server(mcp_config: str) -> dict[str, Any]:
+    """The Band MCP server in a Claude CLI ``--mcp-config`` JSON argument."""
+    config = json.loads(mcp_config)[MCP_SERVERS_KEY][BAND_MCP_SERVER_NAME]
+    return dialed_server(config, os.environ)
 
 
 async def reply(server: dict[str, Any], content: str) -> None:
@@ -306,7 +326,7 @@ def main() -> None:
     parser.add_argument(FAIL_STARTUP_ARG, type=Path)
     parser.add_argument(HOLD_STARTUP_ARG, type=Path)
     parser.add_argument("--stay", action="store_true")
-    parser.add_argument(MCP_CONFIG_ARG, type=Path)
+    parser.add_argument(MCP_CONFIG_ARG)
     parser.add_argument("--home", type=Path, default=Path(CODEX_HOME))
     options = parser.parse_args()
     tool_name = ""

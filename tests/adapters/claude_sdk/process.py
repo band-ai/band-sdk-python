@@ -11,7 +11,6 @@ from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from band.integrations.claude_sdk import transport
-from band.integrations.claude_sdk.mcpconfig import MCP_CONFIG_FLAG
 from tests.adapters.roompeer import CLEANUP_FAILURE, MCP_CONFIG_ARG
 from tests.paths import ROOM_PEER
 
@@ -74,9 +73,11 @@ class WorkspacePeer(WorkspaceProcess):
             str(ROOM_PEER),
             *self.arguments,
         ]
-        # As the SDK passes the manager's config file to the real CLI.
-        if (mcp_config := self._options.extra_args.get(MCP_CONFIG_FLAG)) is not None:
-            command.extend([MCP_CONFIG_ARG, mcp_config])
+        # The MCP servers exactly as the SDK passes them to the real CLI.
+        sdk_argv = SubprocessCLITransport._build_command(self)
+        if MCP_CONFIG_ARG in sdk_argv:
+            at = sdk_argv.index(MCP_CONFIG_ARG)
+            command.extend(sdk_argv[at : at + 2])
         return command
 
 

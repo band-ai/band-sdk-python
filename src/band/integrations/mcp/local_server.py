@@ -284,6 +284,11 @@ class LocalMCPServer:
         return self._port
 
     @property
+    def auth_token(self) -> str:
+        """The bearer token every request but the health check must present."""
+        return self._auth_token
+
+    @property
     def auth_headers(self) -> dict[str, str]:
         """The headers every request but the health check must carry."""
         return local_mcp_auth_headers(self._auth_token)
