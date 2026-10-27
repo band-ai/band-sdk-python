@@ -30,11 +30,11 @@ class TestFernState:
     @pytest.mark.parametrize(
         ("states", "expected"),
         [
-            ([], "file"),
-            ([CLOSED], "file"),
-            ([OPEN], "reuse"),
-            ([CLOSED, MERGED], "skip"),
-            ([MERGED, OPEN], "skip"),
+            ([], "FILE"),
+            ([CLOSED], "FILE"),
+            ([OPEN], "REUSE"),
+            ([CLOSED, MERGED], "SKIP"),
+            ([MERGED, OPEN], "SKIP"),
         ],
         ids=["absent", "closed", "open", "merged", "merged-and-reopened"],
     )
@@ -51,10 +51,8 @@ class TestFernState:
             gh.add_pr(fern_names.changelog, state)
             gh.add_pr(fern_names.docs, state)
         assert run(fernstate, gh, tmp_path, "--date", RELEASE_DATE) == 0
-        assert read_outputs(tmp_path / "out") == {
-            "changelog": expected,
-            "docs": expected,
-        }
+        action = fernstate.Action[expected]
+        assert read_outputs(tmp_path / "out") == {"changelog": action, "docs": action}
 
     def test_rehearsal_reads_the_rehearsal_branches(
         self,
@@ -66,7 +64,10 @@ class TestFernState:
         gh.add_pr(fern_names.changelog, MERGED)
         gh.add_pr(fern_names.docs_rehearsal, OPEN)
         assert run(fernstate, gh, tmp_path, "--date", RELEASE_DATE, "--rehearsal") == 0
-        assert read_outputs(tmp_path / "out") == {"changelog": "file", "docs": "reuse"}
+        assert read_outputs(tmp_path / "out") == {
+            "changelog": fernstate.Action.FILE,
+            "docs": fernstate.Action.REUSE,
+        }
         state = json.loads(
             (tmp_path / "state" / fernstate.STATE_FILE).read_text("utf-8")
         )
@@ -136,7 +137,10 @@ class TestFernState:
         earlier_filing(gh, fern_names)
         gh.add_pr("docs/hand-fix", OPEN, files=[fern_names.date_file])
         assert run(fernstate, gh, tmp_path, *extra) == 0
-        assert read_outputs(tmp_path / "out") == {"changelog": "skip", "docs": "file"}
+        assert read_outputs(tmp_path / "out") == {
+            "changelog": fernstate.Action.SKIP,
+            "docs": fernstate.Action.FILE,
+        }
 
     def test_docs_listings_feed_docsrange(
         self,

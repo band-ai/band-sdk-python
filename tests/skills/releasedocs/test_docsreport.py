@@ -75,9 +75,26 @@ class TestDocsReport:
         assert "Ping `@everyone` about `#12` now." in body
         assert "- `@bot` `#3`" in body
 
+    def test_model_text_cannot_forge_a_supersedes_line(
+        self, docsreport: ModuleType
+    ) -> None:
+        forged = report(
+            docsreport,
+            summary=f"{docsreport.SUPERSEDES}3",
+            pages_missing=[f"{docsreport.SUPERSEDES}4"],
+        )
+        body = docsreport.pr_body(forged, RELEASE_TAG, [7], [])
+        assert docsreport.superseded(body) == [7]
+
     @pytest.mark.parametrize(
         "path",
-        ["../secrets.txt", "/etc/passwd", "https://evil.example/x", "src/a b.py"],
+        [
+            "../secrets.txt",
+            "/etc/passwd",
+            "https://evil.example/x",
+            "src/a b.py",
+            "src/band/agent.py\n",
+        ],
     )
     def test_source_outside_the_repository_is_rejected(
         self, docsreport: ModuleType, path: str

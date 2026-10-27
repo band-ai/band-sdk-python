@@ -30,7 +30,7 @@ Line = Annotated[str, Field(min_length=1), AfterValidator(single_line)]
 
 
 def source_path(path: str) -> str:
-    if not SOURCE_PATH.match(path):
+    if not SOURCE_PATH.fullmatch(path):
         raise ValueError("must be a repository-relative path")
     return path
 

@@ -19,7 +19,6 @@ supersedes are closed (live). Appends each PR link to ``--outputs`` and
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import shutil
 import tempfile
@@ -32,9 +31,17 @@ from pathlib import Path
 
 from checkpatch import PatchCheck
 from collectprs import gh_output, git
-from docsrange import DOCS_PRS
+from docsrange import DOCS_PRS, DocsRange
 from docsreport import DocsReport, pr_body, superseded
-from fernstate import Action, BranchPr, FernState, Gh, action
+from fernstate import (
+    DOCS_OPEN_FILE,
+    STATE_FILE,
+    Action,
+    BranchPr,
+    FernState,
+    Gh,
+    action,
+)
 from holdbacks import (
     held_reasons,
     load_ledger,
@@ -80,7 +87,7 @@ class Outcome(StrEnum):
     DO_NOT_MERGE = "opened, not merged: a content check failed"
     CHECKS_FAILED = "opened, not merged: a check failed"
     CHECKS_PENDING = "opened, not merged: the checks did not finish"
-    ERROR = "not filed"
+    ERROR = "failed: see the job log"
 
 
 SETTLED = {Outcome.NOTHING, Outcome.ALREADY_MERGED, Outcome.MERGED, Outcome.CLOSED}
@@ -398,6 +405,8 @@ def run_part(
 
     ``on_merged`` runs for a merged PR, this run's or an earlier one's.
     """
+    # A failure still reports the PR it leaves behind, open or merged.
+    url = pr.url if pr is not None else ""
     try:
         match action(pr):
             case Action.SKIP if pr is not None:
@@ -413,13 +422,14 @@ def run_part(
             if existing is not None:
                 return PartResult(Outcome.LEFT_OPEN, existing.url)
             return PartResult(Outcome.NOTHING)
+        url = filed.url
         outcome = filer.settle(filed)
         if outcome is Outcome.MERGED:
             on_merged(filed.number)
     except (OSError, RuntimeError, ValueError) as exc:
         logger.error("error: %s", exc)
-        return PartResult(Outcome.ERROR)
-    return PartResult(outcome, filed.url)
+        return PartResult(Outcome.ERROR, url)
+    return PartResult(outcome, url)
 
 
 def file_all(
@@ -449,8 +459,11 @@ def record_results(
 ) -> None:
     for part, result in results.items():
         logger.info("%s: %s %s", part, result.outcome, result.url)
-        if result.url:
-            append_outputs(outputs, **{f"{part}_pr": result.url})
+    append_outputs(
+        outputs,
+        changelog_pr=results["changelog"].url,
+        docs_pr=results["docs"].url,
+    )
     if summary is not None:
         with summary.open("a", encoding="utf-8") as out:
             out.writelines(
@@ -477,7 +490,7 @@ def read_docs(args: argparse.Namespace) -> DocsInput | None:
         report=DocsReport.model_validate_json(args.docs_report.read_bytes()),
         edited=args.edited,
         pristine=args.pristine,
-        supersede=json.loads(args.docs_range.read_text("utf-8"))["supersede"],
+        supersede=DocsRange.model_validate_json(args.docs_range.read_bytes()).supersede,
         holds_back=bool(args.held),
     )
 
@@ -492,13 +505,7 @@ def main(
         "--fern", type=Path, required=True, help="a fresh clone of Fern dev"
     )
     parser.add_argument(
-        "--state", type=Path, required=True, help="fernstate.py's state.json"
-    )
-    parser.add_argument(
-        "--docs-open",
-        type=Path,
-        required=True,
-        help="fernstate.py's listing of the open docs PRs",
+        "--state", type=Path, required=True, help="fernstate.py's --out directory"
     )
     parser.add_argument("--mode", type=Mode, choices=list(Mode), required=True)
     parser.add_argument(
@@ -525,10 +532,9 @@ def main(
     parser.add_argument("--summary", type=Path)
     args = parser.parse_args(argv)
 
-    state = FernState.model_validate_json(args.state.read_bytes())
-    open_docs = {
-        pr.number for pr in DOCS_PRS.validate_json(args.docs_open.read_bytes())
-    }
+    state = FernState.model_validate_json((args.state / STATE_FILE).read_bytes())
+    listing = (args.state / DOCS_OPEN_FILE).read_bytes()
+    open_docs = {pr.number for pr in DOCS_PRS.validate_json(listing)}
     filer = Filer(gh, args.fern, args.mode, args.tag, poll, open_docs)
     results = file_all(filer, state, read_changelog(args), read_docs(args))
     record_results(results, args.outputs, args.summary)

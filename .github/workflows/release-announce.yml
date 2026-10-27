@@ -583,8 +583,7 @@ jobs:
         if: steps.state.outputs.docs != 'skip'
         continue-on-error: true
         run: |
-          uv run --script "$SCRIPTS/docsrange.py" "$TAG" \
-            "$RUNNER_TEMP/state/docs-merged.json" "$RUNNER_TEMP/state/docs-open.json" \
+          uv run --script "$SCRIPTS/docsrange.py" "$TAG" "$RUNNER_TEMP/state" \
             --repo "$SRC" > "$RUNNER_TEMP/range.json"
 
       - name: Collect the review's PRs
@@ -714,8 +713,7 @@ jobs:
         if: env.MODE != 'dry-run' && steps.patch.outcome == 'success'
         continue-on-error: true
         run: |
-          uv run --script "$SCRIPTS/docsrange.py" "$TAG" \
-            "$RUNNER_TEMP/fresh/docs-merged.json" "$RUNNER_TEMP/fresh/docs-open.json" \
+          uv run --script "$SCRIPTS/docsrange.py" "$TAG" "$RUNNER_TEMP/fresh" \
             --repo "$SRC" > "$RUNNER_TEMP/range.json"
 
       - name: Check out Fern dev for filing
@@ -738,8 +736,7 @@ jobs:
         run: |
           # Held indexes also keep the docs PR from merging when every item is held.
           read -ra held <<< "$HELD"
-          args=("$TAG" --fern fern-write --state "$RUNNER_TEMP/fresh/state.json" \
-            --docs-open "$RUNNER_TEMP/fresh/docs-open.json" --mode "$MODE" \
+          args=("$TAG" --fern fern-write --state "$RUNNER_TEMP/fresh" --mode "$MODE" \
             --held "${held[@]}" --outputs "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY")
           if [[ "$HAS_ENTRY" == true ]]; then
             args+=(--notes "$RUNNER_TEMP/full/release-notes.json" --release-prs "$RUNNER_TEMP/full/release-prs.json")

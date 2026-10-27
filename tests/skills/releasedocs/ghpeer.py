@@ -88,6 +88,13 @@ class FakeGh:
         (pr,) = [pr for pr in self.prs if pr.number == int(value)]
         return pr
 
+    def open_pr(self, value: str) -> FakePr:
+        """The open PR numbered ``value``; the filing never closes any other."""
+        pr = self.number(value)
+        if pr.state != OPEN:
+            raise RuntimeError(f"gh pr close failed: #{pr.number} is {pr.state}")
+        return pr
+
     def __call__(self, *args: str) -> str:
         match args:
             case (
@@ -210,10 +217,10 @@ class FakeGh:
                 pr.state = MERGED
                 return "{}"
             case ("pr", "close", number, "--repo", self.repo, "--delete-branch"):
-                self.number(number).state = CLOSED
+                self.open_pr(number).state = CLOSED
                 return ""
             case ("pr", "close", number, "--repo", self.repo, "--comment", comment):
-                pr = self.number(number)
+                pr = self.open_pr(number)
                 if pr.number in self.failing_closes:
                     self.failing_closes.remove(pr.number)
                     raise RuntimeError("gh pr close failed")

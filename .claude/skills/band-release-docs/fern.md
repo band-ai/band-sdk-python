@@ -86,7 +86,7 @@ closed PR may keep its branch or have it deleted.
 
 6. Range: `git fetch --tags origin`, then list the docs PRs with
    `uv run --script "$S/fernstate.py" <tag> --out <tmp>/docs-state` and run
-   `uv run --script "$S/docsrange.py" <tag> <tmp>/docs-state/docs-merged.json <tmp>/docs-state/docs-open.json`. It prints `baseline` and
+   `uv run --script "$S/docsrange.py" <tag> <tmp>/docs-state`. It prints `baseline` and
    `supersede`, or refuses when this release's or a newer one's docs are
    already merged (a review as of `<tag>` would repeat or roll them back), or
    when an open docs PR for a newer release already covers `<tag>`. Stop and

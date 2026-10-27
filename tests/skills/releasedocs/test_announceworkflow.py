@@ -116,6 +116,7 @@ class TestAnnounceWorkflow:
             ("holdbacks", "holdbacks"),
             ("state", "fernstate"),
             ("patch", "checkpatch"),
+            ("file", "filefern"),
         ],
     )
     def test_gates_read_only_outputs_the_script_writes(

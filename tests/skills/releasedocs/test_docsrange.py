@@ -25,11 +25,20 @@ def expected(docsrange: ModuleType, baseline: str, supersede: list[int]) -> obje
     return docsrange.DocsRange(baseline=baseline, supersede=supersede)
 
 
-def gh_listing(path: Path, *branches: tuple[int, str]) -> Path:
-    """Write ``gh pr list --json number,headRefName`` output."""
-    rows = [{"number": number, "headRefName": name} for number, name in branches]
-    path.write_text(json.dumps(rows), encoding="utf-8")
-    return path
+def fern_state(
+    fernstate: ModuleType,
+    root: Path,
+    merged: list[tuple[int, str]],
+    open_prs: list[tuple[int, str]],
+) -> Path:
+    """Write the docs PR listings into a state directory, as ``fernstate.py`` does."""
+    for name, branches in (
+        (fernstate.DOCS_MERGED_FILE, merged),
+        (fernstate.DOCS_OPEN_FILE, open_prs),
+    ):
+        rows = [{"number": number, "headRefName": head} for number, head in branches]
+        (root / name).write_text(json.dumps(rows), encoding="utf-8")
+    return root
 
 
 class TestDocsRange:
@@ -145,9 +154,10 @@ class TestDocsRange:
             docsrange, "band-sdk-v6.10.0", []
         )
 
-    def test_command_reads_gh_listings_and_earlier_tags_from_history(
+    def test_command_reads_the_fern_state_and_earlier_tags_from_history(
         self,
         docsrange: ModuleType,
+        fernstate: ModuleType,
         repo: ThrowawayRepo,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
@@ -163,11 +173,10 @@ class TestDocsRange:
         repo.git("switch", "--quiet", "main")
         repo.commit("feat: 6.13.0", {"src/band/a.py": "6.13.0"})
         repo.tag(TAG)
-        merged = gh_listing(tmp_path / "merged.json")
-        open_prs = gh_listing(
-            tmp_path / "open.json", (7, "docs/python-sdk-band-sdk-v6.12.0")
+        state = fern_state(
+            fernstate, tmp_path, [], [(7, "docs/python-sdk-band-sdk-v6.12.0")]
         )
-        argv = [TAG, str(merged), str(open_prs), "--repo", str(repo.root)]
+        argv = [TAG, str(state), "--repo", str(repo.root)]
         assert docsrange.main(argv) == 0
         assert json.loads(capsys.readouterr().out) == {
             "baseline": "band-sdk-v6.10.0",
@@ -182,6 +191,7 @@ class TestDocsRange:
     def test_command_logs_why_there_is_no_range(
         self,
         docsrange: ModuleType,
+        fernstate: ModuleType,
         repo: ThrowawayRepo,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
@@ -190,18 +200,19 @@ class TestDocsRange:
     ) -> None:
         repo.commit("feat: first release", {"src/band/a.py": "1.0.0"})
         repo.tag("band-sdk-v1.0.0")
-        listing = gh_listing(tmp_path / "prs.json")
-        argv = [tag, str(listing), str(listing), "--repo", str(repo.root)]
+        state = fern_state(fernstate, tmp_path, [], [])
+        argv = [tag, str(state), "--repo", str(repo.root)]
         assert docsrange.main(argv) == 1
         assert error in caplog.text
 
     def test_command_logs_a_malformed_listing(
         self,
         docsrange: ModuleType,
+        fernstate: ModuleType,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        listing = tmp_path / "prs.json"
-        listing.write_text('[{"number": 1}]', encoding="utf-8")
-        assert docsrange.main([TAG, str(listing), str(listing)]) == 1
+        state = fern_state(fernstate, tmp_path, [], [])
+        (state / fernstate.DOCS_OPEN_FILE).write_text('[{"number": 1}]', "utf-8")
+        assert docsrange.main([TAG, str(state)]) == 1
         assert "headRefName" in caplog.text

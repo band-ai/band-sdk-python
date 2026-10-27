@@ -15,6 +15,7 @@ from tests.skills.releasedocs.samples import (
     LEDGER,
     LEDGER_ID,
     LEDGER_REASON,
+    PLATFORM_SOURCE,
     RELEASED_LEDGER,
 )
 
@@ -41,8 +42,14 @@ class TestHoldbacks:
             RELEASED_LEDGER,
             LEDGER.replace("surfaces: [sdks, platform]", "surfaces: [platform]"),
             LEDGER.replace(HELD_SOURCE, f"band-sdk-typescript#{HELD_PR}"),
+            RELEASED_LEDGER.replace(PLATFORM_SOURCE, "https://example.invalid/pull/77"),
         ],
-        ids=["already-released", "other-surface", "other-repo"],
+        ids=[
+            "already-released",
+            "other-surface",
+            "other-repo",
+            "unparsed-source-of-another-surface",
+        ],
     )
     def test_entry_not_held_from_this_sdk_holds_nothing(
         self, holdbacks: ModuleType, inputs: Inputs, ledger: str

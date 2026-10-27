@@ -21,6 +21,7 @@ from tests.skills.releasedocs.ghpeer import (
     PASSING,
     PENDING,
     FakeGh,
+    check_run,
 )
 from tests.skills.releasedocs.holdbackfiles import release_prs
 from tests.skills.releasedocs.outputsfile import read_outputs
@@ -43,18 +44,11 @@ from tests.skills.releasedocs.samples import (
 EDITED_PAGE = DOCS_PAGE_TEXT.replace("Agent.create()", "Agent.start()")
 
 
-def read_state(
-    fernstate: ModuleType, gh: FakeGh, tmp_path: Path, *extra: str
-) -> list[str]:
-    """Record the Fern state; return the filing's arguments that point at it."""
+def read_state(fernstate: ModuleType, gh: FakeGh, tmp_path: Path, *extra: str) -> Path:
+    """Record the Fern state; return the directory the filing reads it from."""
     out = tmp_path / "state"
     assert fernstate.main([RELEASE_TAG, "--out", str(out), *extra], gh=gh) == 0
-    return [
-        "--state",
-        str(out / fernstate.STATE_FILE),
-        "--docs-open",
-        str(out / fernstate.DOCS_OPEN_FILE),
-    ]
+    return out
 
 
 def docs_args(
@@ -110,7 +104,7 @@ def file_fern(
     gh: FakeGh,
     remote: FernRemote,
     tmp_path: Path,
-    state: list[str],
+    state: Path,
     mode: str,
     *extra: str,
     wait: Callable[[], None] = lambda: None,
@@ -119,7 +113,7 @@ def file_fern(
     dest = tmp_path / "fern-write"
     shutil.rmtree(dest, ignore_errors=True)
     fern = remote.clone(dest)
-    argv = [RELEASE_TAG, "--fern", str(fern), *state, "--mode", mode]
+    argv = [RELEASE_TAG, "--fern", str(fern), "--state", str(state), "--mode", mode]
     argv += ["--outputs", str(tmp_path / "outputs"), *extra]
     return filefern.main(argv, gh=gh, poll=filefern.Poll(2, wait))
 
@@ -192,9 +186,10 @@ class TestFileFern:
             "--format=%an <%ae>%n%B",
             fern_names.changelog,
         )
+        name, email = filefern.COMMITTER
         assert (
             commit.strip()
-            == f"band-release-bot <release-bot@band.ai>\ndocs(changelog): Python SDK {RELEASE_TAG}"
+            == f"{name} <{email}>\ndocs(changelog): Python SDK {RELEASE_TAG}"
         )
 
     @pytest.mark.parametrize(
@@ -305,7 +300,10 @@ class TestFileFern:
             gh.on(fern_names.changelog),
             fern_remote.has_branch(fern_names.changelog),
         ) == ([merged], False)
-        assert read_outputs(tmp_path / "outputs") == {"changelog_pr": merged.url}
+        assert read_outputs(tmp_path / "outputs") == {
+            "changelog_pr": merged.url,
+            "docs_pr": "",
+        }
 
     @pytest.mark.parametrize(
         "checks", [FAILING, PENDING, PARTIAL], ids=["failed", "unfinished", "partial"]
@@ -331,8 +329,32 @@ class TestFileFern:
         (pr,) = gh.on(fern_names.changelog)
         assert (pr.state, read_outputs(tmp_path / "outputs")) == (
             OPEN,
-            {"changelog_pr": pr.url},
+            {"changelog_pr": pr.url, "docs_pr": ""},
         )
+
+    @pytest.mark.parametrize("conclusion", ["neutral", "skipped"])
+    def test_neutral_or_skipped_check_still_merges(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        fern_remote: FernRemote,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+        conclusion: str,
+    ) -> None:
+        gh.checks[fern_names.changelog] = [
+            check_run("completed", "success"),
+            check_run("completed", conclusion),
+        ]
+        state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
+        extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
+        assert (
+            file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 0
+        )
+        assert gh.on(fern_names.changelog)[0].state == MERGED
 
     def test_checks_still_running_at_first_merge_once_they_pass(
         self,
@@ -449,14 +471,34 @@ class TestFileFern:
         gh.checks[fern_names.docs] = PASSING
         gh.failing_closes.add(older.number)
         state = read_state(fernstate, gh, tmp_path)
+        summary = tmp_path / "summary.md"
         extra = docs_args(
             checkpatch, fern_files, tmp_path, EDITED_PAGE, (older.number,)
         )
         assert (
-            file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 1
+            file_fern(
+                filefern,
+                gh,
+                fern_remote,
+                tmp_path,
+                state,
+                "live",
+                *extra,
+                "--summary",
+                str(summary),
+            )
+            == 1
         )
         (docs,) = gh.on(fern_names.docs)
         assert (docs.state, older.state) == (MERGED, OPEN)
+        # The failed run still links the merged docs PR.
+        assert read_outputs(tmp_path / "outputs") == {
+            "changelog_pr": "",
+            "docs_pr": docs.url,
+        }
+        assert summary.read_text("utf-8").splitlines()[-1] == (
+            f"- Fern docs: {filefern.Outcome.ERROR} {docs.url}"
+        )
         # The re-run's docs chain skips the merged PR, so it files no docs.
         state = read_state(fernstate, gh, tmp_path)
         assert file_fern(filefern, gh, fern_remote, tmp_path, state, "live") == 0
@@ -516,8 +558,33 @@ class TestFileFern:
         assert file_fern(filefern, gh, fern_remote, tmp_path, state, "live") == 1
         assert (earlier.state, read_outputs(tmp_path / "outputs")) == (
             OPEN,
-            {"docs_pr": earlier.url},
+            {"changelog_pr": "", "docs_pr": earlier.url},
         )
+
+    def test_rerun_after_the_superseded_prs_closed_closes_nothing_again(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        checkpatch: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        fern_remote: FernRemote,
+        fern_files: dict[str, str | bytes],
+        tmp_path: Path,
+    ) -> None:
+        older = gh.add_pr(fern_names.older_docs, OPEN)
+        gh.checks[fern_names.docs] = PASSING
+        state = read_state(fernstate, gh, tmp_path)
+        extra = docs_args(
+            checkpatch, fern_files, tmp_path, EDITED_PAGE, (older.number,)
+        )
+        assert (
+            file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 0
+        )
+        state = read_state(fernstate, gh, tmp_path)
+        assert file_fern(filefern, gh, fern_remote, tmp_path, state, "live") == 0
+        (docs,) = gh.on(fern_names.docs)
+        assert older.comments == [f"Superseded by #{docs.number}"]
 
     def test_test_mode_closes_both_rehearsal_prs_unmerged(
         self,

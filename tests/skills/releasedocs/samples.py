@@ -48,6 +48,8 @@ HELD_PR = "901"
 HELD_SOURCE = f"band-sdk-python#{HELD_PR}"
 LEDGER_ID = "sdk-901-room-tasks"
 LEDGER_REASON = "Not public yet."
+# The source of the ledger's platform-only entry.
+PLATFORM_SOURCE = "thenvoi-platform#77"
 LEDGER = f"""held_items:
   - id: {LEDGER_ID}
     source: {HELD_SOURCE}
@@ -57,7 +59,7 @@ LEDGER = f"""held_items:
     surfaces: [sdks, platform]
     released_surfaces: []
   - id: platform-77-billing
-    source: thenvoi-platform#77
+    source: {PLATFORM_SOURCE}
     title: Billing
     status: held
     reason: Platform only.
