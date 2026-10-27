@@ -26,7 +26,7 @@ from band.testing import FakeAgentTools
 from tests.mcpclient import (
     STORE_MEMORY_ARGS,
     advertised_arguments,
-    mcp_session,
+    backend_session,
     started_backend,
     tool_arguments,
 )
@@ -73,7 +73,7 @@ async def test_room_endpoint_advertises_no_chat_id(
 ) -> None:
     async with (
         room_backend(rooms, room_bound=True) as backend,
-        mcp_session(backend.endpoint(transport, ROOM_A), transport) as session,
+        backend_session(backend, transport, ROOM_A) as session,
     ):
         tools = (await session.list_tools()).tools
 
@@ -92,7 +92,7 @@ async def test_call_lands_in_its_endpoints_room(
 ) -> None:
     async with (
         room_backend(rooms, room_bound=True) as backend,
-        mcp_session(backend.endpoint(transport, ROOM_A), transport) as session,
+        backend_session(backend, transport, ROOM_A) as session,
     ):
         await session.call_tool(BandTool.STORE_MEMORY, STORE_MEMORY_ARGS)
         await session.call_tool(
@@ -112,8 +112,8 @@ async def test_custom_tool_records_its_effect_on_its_rooms_turn(
     room_args = {} if room_bound else {"chat_id": ROOM_B}
     async with (
         room_backend(rooms, room_bound=room_bound) as backend,
-        mcp_session(
-            backend.endpoint(BandMCPTransport.HTTP, ROOM_B if room_bound else None)
+        backend_session(
+            backend, BandMCPTransport.HTTP, ROOM_B if room_bound else None
         ) as session,
     ):
         await session.call_tool("lookup", {"query": "q", **room_args})
@@ -131,8 +131,8 @@ async def test_rooms_share_one_server_without_crossing(
 ) -> None:
     async with room_backend(rooms, room_bound=True) as backend:
         for room_id in (ROOM_A, ROOM_B, ROOM_B):
-            async with mcp_session(
-                backend.endpoint(BandMCPTransport.HTTP, room_id)
+            async with backend_session(
+                backend, BandMCPTransport.HTTP, room_id
             ) as session:
                 await session.call_tool(BandTool.STORE_MEMORY, STORE_MEMORY_ARGS)
 
@@ -146,7 +146,7 @@ async def test_multi_room_endpoint_routes_by_chat_id(
 ) -> None:
     async with (
         room_backend(rooms, room_bound=False) as backend,
-        mcp_session(backend.endpoint(BandMCPTransport.HTTP)) as session,
+        backend_session(backend) as session,
     ):
         assert "chat_id" in await advertised_arguments(session, BandTool.STORE_MEMORY)
         await session.call_tool(

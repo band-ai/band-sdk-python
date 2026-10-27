@@ -53,7 +53,9 @@ class OpencodeClientProtocol(Protocol):
 
     async def abort_session(self, session_id: str) -> None: ...
 
-    async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]: ...
+    async def register_mcp_server(
+        self, *, name: str, url: str, headers: dict[str, str]
+    ) -> dict[str, Any]: ...
 
     async def disconnect_mcp_server(self, name: str) -> None: ...
 
@@ -194,13 +196,15 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         )
         response.raise_for_status()
 
-    async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]:
+    async def register_mcp_server(
+        self, *, name: str, url: str, headers: dict[str, str]
+    ) -> dict[str, Any]:
         response = await self._client.post(
             "/mcp",
             params=self._query_params(),
             json={
                 "name": name,
-                "config": {"type": "remote", "url": url},
+                "config": {"type": "remote", "url": url, "headers": headers},
             },
         )
         response.raise_for_status()

@@ -62,7 +62,9 @@ async def test_a_crashed_server_is_re_registered_on_its_new_port(
         await send("after the crash", bootstrap=False)
 
         crashed, live = client.registered_mcp_servers
-        served = await served_tool_names(live["url"], BandMCPTransport.SSE)
+        served = await served_tool_names(
+            live["url"], BandMCPTransport.SSE, headers=live["headers"]
+        )
     finally:
         await adapter.on_cleanup("room-1")
 

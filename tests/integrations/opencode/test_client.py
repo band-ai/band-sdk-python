@@ -324,10 +324,17 @@ async def test_register_mcp_server_sends_remote_config(
 ) -> None:
     client = make_client(fake_server)
     try:
-        await client.register_mcp_server(name="band", url="http://127.0.0.1:9999/sse")
+        headers = {"Authorization": "Bearer band-token"}
+        await client.register_mcp_server(
+            name="band", url="http://127.0.0.1:9999/sse", headers=headers
+        )
         assert fake_server.requests[-1]["body"] == {
             "name": "band",
-            "config": {"type": "remote", "url": "http://127.0.0.1:9999/sse"},
+            "config": {
+                "type": "remote",
+                "url": "http://127.0.0.1:9999/sse",
+                "headers": headers,
+            },
         }
     finally:
         await client.close()

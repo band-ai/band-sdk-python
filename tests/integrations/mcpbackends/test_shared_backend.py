@@ -41,7 +41,10 @@ class TestSharedBandMCPBackend:
             url = replacement.endpoint(BandMCPTransport.HTTP)
             assert replacement is not crashed
             assert crashed.endpoint(BandMCPTransport.HTTP) != url
-            assert await served_tool_names(url) == {ONE_TOOL.name}
+            # The replacement still accepts the headers its consumers hold.
+            assert await served_tool_names(url, headers=crashed.headers) == {
+                ONE_TOOL.name
+            }
 
     async def test_a_replacement_avoids_the_dead_servers_port(self) -> None:
         with backends_created_by() as starts:

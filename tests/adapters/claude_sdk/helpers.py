@@ -11,7 +11,9 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
-from claude_agent_sdk.types import Message
+from claude_agent_sdk import ClaudeAgentOptions
+from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+from claude_agent_sdk.types import Message, _configure_can_use_tool
 
 from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE,
@@ -67,6 +69,16 @@ async def exchange(session: ClaudeRoomSession, prompt: str) -> list[Message]:
         with session.listening() as stream:
             await client.query(prompt)
             return [message async for message in stream.until_result()]
+
+
+def sdk_cli_argv(options: ClaudeAgentOptions) -> list[str]:
+    """The argv the SDK's own connect path would launch the CLI with."""
+    transport = SubprocessCLITransport(
+        prompt="", options=_configure_can_use_tool(options)
+    )
+    # _build_command refuses to run until connect() has located the binary.
+    transport._cli_path = "claude"
+    return transport._build_command()
 
 
 def with_approvals(
@@ -229,12 +241,18 @@ class ClaudeRoom:
         ]
 
     @property
-    def session_band_urls(self) -> list[str]:
-        """The Band MCP URL each CLI session (any room) was started with, in order."""
+    def session_band_servers(self) -> list[dict[str, Any]]:
+        """The Band MCP server config each CLI session (any room) was started
+        with, in order."""
         return [
-            session.options.mcp_servers[BAND_MCP_SERVER_NAME]["url"]
+            session.mcp_servers[BAND_MCP_SERVER_NAME]
             for session in self.claude.sessions
         ]
+
+    @property
+    def session_band_urls(self) -> list[str]:
+        """The Band MCP URL each CLI session (any room) was started with, in order."""
+        return [server["url"] for server in self.session_band_servers]
 
     @property
     def session_band_ports(self) -> list[int | None]:

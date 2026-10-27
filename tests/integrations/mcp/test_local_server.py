@@ -9,8 +9,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from band_rest import ListAgentChatParticipantsResponse
 from mcp import ClientSession
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent
@@ -18,6 +16,7 @@ from pydantic import BaseModel
 
 import band.integrations.mcp.local_server as local_server_mod
 from band.core.exceptions import BandToolError
+from band.integrations.mcp import BandMCPTransport
 from band.integrations.mcp.engine import (
     EngineSpec,
     MCPToolRegistration,
@@ -32,7 +31,10 @@ from band.integrations.mcp.local_server import (
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import AgentTools
 from tests.lifecycle import elapsed, held_open, running
+from tests.mcpclient import mcp_session
 from tests.ports import HeldAdjacentPorts, HeldPort
+
+AUTH_TOKEN = "test-local-mcp-token"
 
 
 class EchoInput(BaseModel):
@@ -190,6 +192,7 @@ class TestLocalMcpServer:
         MCP clients reach back over the docker bridge); construction must not
         reject it."""
         server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
             name="test-local-mcp",
             tool_registrations=[],
             host="0.0.0.0",
@@ -199,6 +202,7 @@ class TestLocalMcpServer:
     @pytest.mark.asyncio
     async def test_serves_sse_tools_on_localhost(self) -> None:
         server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
             name="test-local-mcp",
             tool_registrations=[_echo_tool_registration()],
             port_min=0,
@@ -208,11 +212,9 @@ class TestLocalMcpServer:
         async with running(server):
             assert server.url.startswith(f"http://{LOCAL_MCP_HOST}:")
 
-            async with (
-                sse_client(server.url) as (read_stream, write_stream),
-                ClientSession(read_stream, write_stream) as session,
-            ):
-                await session.initialize()
+            async with mcp_session(
+                server.url, BandMCPTransport.SSE, headers=server.auth_headers
+            ) as session:
                 await _session_lists_only_echo(session)
                 await _call_echo(session, "hello")
 
@@ -233,6 +235,7 @@ class TestLocalMcpServer:
         timeout).
         """
         server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
             name="test-local-mcp-stop",
             tool_registrations=[],
             port_min=0,
@@ -242,11 +245,9 @@ class TestLocalMcpServer:
 
             async def connect(ready: asyncio.Event) -> None:
                 with suppress(Exception):
-                    async with (
-                        sse_client(server.url) as (read_stream, write_stream),
-                        ClientSession(read_stream, write_stream) as session,
+                    async with mcp_session(
+                        server.url, BandMCPTransport.SSE, headers=server.auth_headers
                     ):
-                        await session.initialize()
                         ready.set()
                         await asyncio.sleep(60)  # never closes on its own
 
@@ -266,6 +267,7 @@ class TestLocalMcpServer:
     @pytest.mark.asyncio
     async def test_serves_streamable_http_tools_on_localhost(self) -> None:
         server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
             name="test-local-mcp-http",
             tool_registrations=[_echo_tool_registration()],
             port_min=0,
@@ -275,15 +277,9 @@ class TestLocalMcpServer:
         async with running(server):
             assert server.http_url.startswith(f"http://{LOCAL_MCP_HOST}:")
 
-            async with (
-                streamablehttp_client(server.http_url) as (
-                    read_stream,
-                    write_stream,
-                    _,
-                ),
-                ClientSession(read_stream, write_stream) as session,
-            ):
-                await session.initialize()
+            async with mcp_session(
+                server.http_url, headers=server.auth_headers
+            ) as session:
                 await _session_lists_only_echo(session)
                 await _call_echo(session, "hello")
 
@@ -294,7 +290,11 @@ class TestLocalMcpServer:
         ``await self._serve_task`` re-raised past the cleanup code below it,
         leaking the socket and leaving stale state for the next start()."""
         server = LocalMCPServer(
-            name="test-crash", tool_registrations=[], port_min=0, port_max=0
+            auth_token=AUTH_TOKEN,
+            name="test-crash",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
         )
         reserved_socket, port = server._reserve_socket()
         server._socket = reserved_socket
@@ -315,7 +315,11 @@ class TestLocalMcpServer:
         config) needs a way to notice its serve task died on its own --
         ``is_running`` is that check, independent of ``stop()`` ever running."""
         server = LocalMCPServer(
-            name="test-is-running", tool_registrations=[], port_min=0, port_max=0
+            auth_token=AUTH_TOKEN,
+            name="test-is-running",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
         )
         reserved_socket, port = server._reserve_socket()
         server._socket = reserved_socket
@@ -367,6 +371,7 @@ class TestLocalMcpServer:
         monkeypatch.setattr(local_server_mod, "build_engine", spy_build_engine)
 
         server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
             name="test-host-forwarding",
             tool_registrations=[],
             host="0.0.0.0",
@@ -387,7 +392,11 @@ class TestLocalMcpServer:
         reserved socket, not leak a bound-and-listening fd."""
 
         server = LocalMCPServer(
-            name="test-engine-failure", tool_registrations=[], port_min=0, port_max=0
+            auth_token=AUTH_TOKEN,
+            name="test-engine-failure",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
         )
         real_reserve_socket = server._reserve_socket
         reserved: list[socket.socket] = []
@@ -417,6 +426,7 @@ class TestLocalMcpServer:
         the lifecycle lock, sees the first's already-running server and
         no-ops rather than binding a second socket."""
         server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
             name="test-concurrent-start",
             tool_registrations=[],
             port_min=0,
@@ -445,6 +455,7 @@ class TestLocalMcpServer:
         """Session managers are single-use (mcp.server.streamable_http_manager);
         a second start() must construct a fresh engine, not reuse a stale one."""
         server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
             name="test-start-stop-start",
             tool_registrations=[_echo_tool_registration()],
             port_min=0,
@@ -455,14 +466,8 @@ class TestLocalMcpServer:
         await server.stop()
         async with (
             running(server),
-            streamablehttp_client(server.http_url) as (
-                read_stream,
-                write_stream,
-                _,
-            ),
-            ClientSession(read_stream, write_stream) as session,
+            mcp_session(server.http_url, headers=server.auth_headers) as session,
         ):
-            await session.initialize()
             await _call_echo(session, "hi")
 
     @pytest.mark.asyncio
@@ -476,6 +481,7 @@ class TestLocalMcpServer:
         with HeldAdjacentPorts(LOCAL_MCP_HOST) as held:
             port = held.port
             server = LocalMCPServer(
+                auth_token=AUTH_TOKEN,
                 name="test-avoid-port",
                 tool_registrations=[],
                 port_min=port,
@@ -491,6 +497,7 @@ class TestLocalMcpServer:
         with HeldPort(LOCAL_MCP_HOST) as held:
             port = held.port
             server = LocalMCPServer(
+                auth_token=AUTH_TOKEN,
                 name="test-avoid-only-port",
                 tool_registrations=[],
                 port_min=port,
@@ -506,7 +513,11 @@ class TestLocalMcpServer:
         """Whoever still holds a dead server's URL compares it with the live
         one; reading it must not fail once the server is stopped."""
         server = LocalMCPServer(
-            name="test-stopped-urls", tool_registrations=[], port_min=0, port_max=0
+            auth_token=AUTH_TOKEN,
+            name="test-stopped-urls",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
         )
         async with running(server):
             url = server.http_url
@@ -517,7 +528,11 @@ class TestLocalMcpServer:
     async def test_a_cancelled_start_leaves_nothing_running(self) -> None:
         """Whoever cancelled the start never got the server back to stop it."""
         server = LocalMCPServer(
-            name="test-cancelled-start", tool_registrations=[], port_min=0, port_max=0
+            auth_token=AUTH_TOKEN,
+            name="test-cancelled-start",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
         )
         starting = asyncio.create_task(server.start())
         async with asyncio.timeout(1):

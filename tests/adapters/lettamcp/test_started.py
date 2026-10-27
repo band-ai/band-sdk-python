@@ -101,6 +101,7 @@ class TestLettaAdapterOnStarted:
         assert create_kwargs["config"] == {
             "mcp_server_type": "sse",
             "server_url": f"http://host.docker.internal:{fake_backend.local_server.port}/sse",
+            "custom_headers": fake_backend.headers,
         }
         assert adapter._mcp.backend.current is fake_backend
         assert adapter._mcp.server_id == mock_server.id

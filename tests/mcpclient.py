@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.types import Tool
 
 from band.integrations.mcp import (
@@ -20,6 +21,8 @@ from band.integrations.mcp import (
 )
 from band.integrations.mcp.engine import RoomToolResolver
 from band.integrations.mcp.local_server import (
+    LOCAL_MCP_AUTH_HEADER,
+    LOCAL_MCP_AUTH_SCHEME,
     LOCAL_MCP_HTTP_PATH,
     LOCAL_MCP_ROOMS_PATH,
     LOCAL_MCP_SSE_PATH,
@@ -42,6 +45,13 @@ _TRANSPORT_PATHS: dict[BandMCPTransport, str] = {
     BandMCPTransport.HTTP: LOCAL_MCP_HTTP_PATH,
     BandMCPTransport.SSE: LOCAL_MCP_SSE_PATH,
 }
+
+
+def bearer_token(headers: Mapping[str, str]) -> str:
+    """The bearer token a Band MCP server's ``headers`` present."""
+    scheme, _, token = headers[LOCAL_MCP_AUTH_HEADER].partition(" ")
+    assert scheme == LOCAL_MCP_AUTH_SCHEME, scheme
+    return token
 
 
 def endpoint_path(
@@ -93,22 +103,48 @@ async def crash_backend(owner: SharedBandMCPBackend) -> BandMCPBackend:
 
 
 @asynccontextmanager
-async def mcp_session(
-    url: str, transport: BandMCPTransport = BandMCPTransport.HTTP
-) -> AsyncIterator[ClientSession]:
-    """An initialized MCP client session to ``url``, closed on exit."""
-    streams: AbstractAsyncContextManager[tuple[Any, ...]]
+async def _client_streams(
+    url: str, transport: BandMCPTransport, headers: Mapping[str, str]
+) -> AsyncIterator[tuple[Any, ...]]:
+    """The read/write streams of an MCP client dialing ``url`` with ``headers``."""
     match transport:
         case BandMCPTransport.HTTP:
-            streams = streamable_http_client(url)
+            async with (
+                create_mcp_http_client(headers=dict(headers)) as http,
+                streamable_http_client(url, http_client=http) as streams,
+            ):
+                yield streams
         case BandMCPTransport.SSE:
-            streams = sse_client(url)
+            async with sse_client(url, headers=dict(headers)) as streams:
+                yield streams
+
+
+@asynccontextmanager
+async def mcp_session(
+    url: str,
+    transport: BandMCPTransport = BandMCPTransport.HTTP,
+    *,
+    headers: Mapping[str, str],
+) -> AsyncIterator[ClientSession]:
+    """An initialized MCP client session to ``url`` sending ``headers`` with
+    every request, closed on exit."""
     async with (
-        streams as (read_stream, write_stream, *_),
+        _client_streams(url, transport, headers) as (read_stream, write_stream, *_),
         ClientSession(read_stream, write_stream) as session,
     ):
         await session.initialize()
         yield session
+
+
+def backend_session(
+    backend: BandMCPBackend,
+    transport: BandMCPTransport = BandMCPTransport.HTTP,
+    room_id: str | None = None,
+) -> AbstractAsyncContextManager[ClientSession]:
+    """A session to ``backend``'s endpoint, sending the headers it requires."""
+    return mcp_session(
+        backend.endpoint(transport, room_id), transport, headers=backend.headers
+    )
 
 
 def advertised_server(servers: Sequence[Any], name: str) -> Any:
@@ -121,11 +157,23 @@ def advertised_server(servers: Sequence[Any], name: str) -> Any:
     return config
 
 
+def advertised_headers(config: Any) -> dict[str, str]:
+    """The headers an advertised ACP MCP server config tells the agent to send."""
+    return {header.name: header.value for header in config.headers}
+
+
+def advertised_session(config: Any) -> AbstractAsyncContextManager[ClientSession]:
+    """A session to an advertised ACP MCP server config, dialed as told."""
+    return mcp_session(
+        config.url, BandMCPTransport(config.type), headers=advertised_headers(config)
+    )
+
+
 async def call_advertised_tool(
     config: Any, tool_name: str, arguments: dict[str, Any]
 ) -> Any:
     """Call ``tool_name`` on an advertised MCP server config."""
-    async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
+    async with advertised_session(config) as client:
         result = await client.call_tool(tool_name, arguments)
     if result.isError:
         raise RuntimeError(f"MCP tool {tool_name!r} failed: {result.content}")
@@ -133,10 +181,13 @@ async def call_advertised_tool(
 
 
 async def served_tool_names(
-    url: str, transport: BandMCPTransport = BandMCPTransport.HTTP
+    url: str,
+    transport: BandMCPTransport = BandMCPTransport.HTTP,
+    *,
+    headers: Mapping[str, str],
 ) -> set[str]:
     """The names of the tools the Band MCP server at ``url`` lists."""
-    async with mcp_session(url, transport) as session:
+    async with mcp_session(url, transport, headers=headers) as session:
         return {tool.name for tool in (await session.list_tools()).tools}
 
 

@@ -14,9 +14,15 @@ from band.integrations.acp.client_adapter import (
 from band.integrations.mcp import BandMCPTransport
 from band.runtime.formatters import SENDER_METADATA_INSTRUCTION
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS
+from band.runtime.tools import BandTool
 from tests.integrations.acp.clientadapter.kit import CODEX
 from tests.mcpbackends import backends_created_by
-from tests.mcpclient import endpoint_path
+from tests.mcpclient import (
+    advertised_headers,
+    advertised_session,
+    bearer_token,
+    endpoint_path,
+)
 
 
 class TestACPClientAdapterLocalMcpConfig:
@@ -24,30 +30,36 @@ class TestACPClientAdapterLocalMcpConfig:
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_returns_http_config(self) -> None:
-        """Should expose the room's endpoint on the shared HTTP MCP server."""
+        """Should expose the room's endpoint on the shared HTTP MCP server, with
+        the headers that server requires."""
         adapter = ACPClientAdapter(CODEX)
 
         try:
             server = await adapter._get_or_start_band_mcp_server(
                 "room-1", BandMCPTransport.HTTP
             )
+            async with advertised_session(server) as session:
+                listed = await session.list_tools()
         finally:
             await adapter.cleanup_all()
 
         assert server.name == "band"
         assert urlsplit(server.url).path == endpoint_path(room_id="room-1")
-        assert server.headers == []
+        assert BandTool.SEND_MESSAGE in {tool.name for tool in listed.tools}
         assert server.type == "http"
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_returns_sse_config(self) -> None:
-        """Should expose shared SSE when the ACP agent only supports SSE MCP."""
+        """Should expose shared SSE, with the headers that server requires, when
+        the ACP agent only supports SSE MCP."""
         adapter = ACPClientAdapter(CODEX)
 
         try:
             server = await adapter._get_or_start_band_mcp_server(
                 "room-1", BandMCPTransport.SSE
             )
+            async with advertised_session(server) as session:
+                listed = await session.list_tools()
         finally:
             await adapter.cleanup_all()
 
@@ -55,8 +67,26 @@ class TestACPClientAdapterLocalMcpConfig:
         assert urlsplit(server.url).path == endpoint_path(
             BandMCPTransport.SSE, room_id="room-1"
         )
-        assert server.headers == []
+        assert BandTool.SEND_MESSAGE in {tool.name for tool in listed.tools}
         assert server.type == "sse"
+
+    @pytest.mark.asyncio
+    async def test_band_mcp_token_stays_out_of_the_agent_env(self) -> None:
+        """The token reaches the agent only in the ACP session's MCP config."""
+        adapter = ACPClientAdapter(
+            ACPClientAdapterConfig(command="codex", env={"EXTRA": "value"})
+        )
+
+        try:
+            server = await adapter._get_or_start_band_mcp_server(
+                "room-1", BandMCPTransport.HTTP
+            )
+            env = adapter._spawn_env()
+        finally:
+            await adapter.cleanup_all()
+
+        token = bearer_token(advertised_headers(server))
+        assert not any(token in value for value in env.values())
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_reuses_shared_server(self) -> None:

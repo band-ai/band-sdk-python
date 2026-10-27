@@ -17,8 +17,10 @@ from typing import Any
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
-from band.runtime.tools import BandTool
+from band.integrations.claude_sdk.mcpconfig import MCP_SERVERS_KEY
+from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 
 WRITE_PREFIX = "WRITE="
 MEMO_PREFIX = "MEMO="
@@ -38,6 +40,8 @@ HOLD_POLL_S = 0.01
 # Flags that fail or hold a peer's start while their file exists.
 FAIL_STARTUP_ARG = "--fail-startup"
 HOLD_STARTUP_ARG = "--hold-startup"
+# The Claude CLI's flag naming its MCP config file.
+MCP_CONFIG_ARG = "--mcp-config"
 
 
 class PeerCommand(StrEnum):
@@ -78,9 +82,16 @@ def reply_text(tool_name: str, value: str) -> str:
     return read_reply(value) if tool_name == "Read" else value
 
 
-async def reply(url: str, content: str) -> None:
+def band_server(mcp_config: Path) -> dict[str, Any]:
+    """The Band MCP server in a Claude CLI ``--mcp-config`` file."""
+    config = json.loads(mcp_config.read_text(encoding="utf-8"))
+    return config[MCP_SERVERS_KEY][BAND_MCP_SERVER_NAME]
+
+
+async def reply(server: dict[str, Any], content: str) -> None:
     async with (
-        streamable_http_client(url) as (read, write, *_),
+        create_mcp_http_client(headers=server["headers"]) as http,
+        streamable_http_client(server["url"], http_client=http) as (read, write, *_),
         ClientSession(read, write) as session,
     ):
         await session.initialize()
@@ -295,7 +306,7 @@ def main() -> None:
     parser.add_argument(FAIL_STARTUP_ARG, type=Path)
     parser.add_argument(HOLD_STARTUP_ARG, type=Path)
     parser.add_argument("--stay", action="store_true")
-    parser.add_argument("--band-url")
+    parser.add_argument(MCP_CONFIG_ARG, type=Path)
     parser.add_argument("--home", type=Path, default=Path(CODEX_HOME))
     options = parser.parse_args()
     tool_name = ""
@@ -357,8 +368,13 @@ def main() -> None:
                     if denied
                     else perform(tool_name, response["response"]["updatedInput"])
                 )
-                if options.band_url is not None and not denied:
-                    asyncio.run(reply(options.band_url, reply_text(tool_name, result)))
+                if options.mcp_config is not None and not denied:
+                    asyncio.run(
+                        reply(
+                            band_server(options.mcp_config),
+                            reply_text(tool_name, result),
+                        )
+                    )
                 emit(
                     {
                         "type": "assistant",

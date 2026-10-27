@@ -23,7 +23,8 @@ async def test_rooms_dial_their_own_band_endpoint_on_one_server(
     await other_room.send("hi")
 
     endpoints = room.session_band_urls
-    async with mcp_session(endpoints[0]) as session:
+    first = room.session_band_servers[0]
+    async with mcp_session(first["url"], headers=first["headers"]) as session:
         advertised = await advertised_arguments(session, BandTool.SEND_MESSAGE)
     urls = [urlsplit(endpoint) for endpoint in endpoints]
 

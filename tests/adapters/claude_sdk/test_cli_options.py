@@ -12,7 +12,6 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 from claude_agent_sdk.types import (
     PermissionResultAllow,
     ToolPermissionContext,
-    _configure_can_use_tool,
 )
 
 from band.adapters.claude_sdk import (
@@ -23,10 +22,12 @@ from band.adapters.claude_sdk import (
 )
 from band.core.types import Emit
 from band.integrations.claude_sdk.transport import create_transport
+from tests.adapters.claude_sdk.fakecli import cli_mcp_servers
 from tests.adapters.claude_sdk.helpers import (
     SEND_MESSAGE_MCP_NAME,
     ClaudeRoom,
     OpenRoom,
+    sdk_cli_argv,
 )
 from tests.paths import host_absolute_path
 
@@ -58,14 +59,9 @@ async def _cli_options(
 
 def _emitted_flags(options: ClaudeAgentOptions) -> set[str]:
     """The ``--flags`` the SDK's own connect path would launch the CLI with."""
-    transport = SubprocessCLITransport(
-        prompt="", options=_configure_can_use_tool(options)
-    )
-    # _build_command refuses to run until connect() has located the binary.
-    transport._cli_path = "claude"
     return {
         token.removeprefix("--").partition("=")[0]
-        for token in transport._build_command()
+        for token in sdk_cli_argv(options)
         if token.startswith("--")
     }
 
@@ -98,7 +94,7 @@ async def test_plugins_leave_band_wiring_in_place(
 
     options = await _cli_options(room)
 
-    assert list(options.mcp_servers) == ["band"]
+    assert list(cli_mcp_servers(options)) == ["band"]
     assert SEND_MESSAGE_MCP_NAME in options.allowed_tools
     assert options.setting_sources == []
 

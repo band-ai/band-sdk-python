@@ -180,6 +180,10 @@ class LettaMCPBridge:
                         effective_name,
                         server.id,
                     )
+                    if self._config.mode == "self_host":
+                        # The row may carry an earlier process's token, and
+                        # Letta's read-back of headers is not relied on.
+                        await self._point_registration_at(client, server.id, server_url)
             if server is None:
                 server = await self._create(client, effective_name, server_url)
 
@@ -281,9 +285,19 @@ class LettaMCPBridge:
             host = self._config.bind_host
         return f"http://{host}:{port}{_MCP_URL_PATHS[self._config.transport]}"
 
-    def _registration_config(self, server_url: str) -> dict[str, str]:
-        """The config Letta stores on a registration, on create and update alike."""
-        return {"mcp_server_type": self._config.transport, "server_url": server_url}
+    def _registration_config(self, server_url: str) -> dict[str, Any]:
+        """The config Letta stores on a registration, on create and update alike.
+
+        A self-hosted registration carries the Band MCP server's bearer
+        headers; external mode starts no backend and sends none.
+        """
+        config: dict[str, Any] = {
+            "mcp_server_type": self._config.transport,
+            "server_url": server_url,
+        }
+        if (backend := self.backend.current) is not None:
+            config["custom_headers"] = backend.headers
+        return config
 
     def _served_url(self, backend: BandMCPBackend) -> str:
         return self.advertised_url(backend.local_server.port)

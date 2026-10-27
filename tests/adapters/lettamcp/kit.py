@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock
 
 from band.adapters.letta import (
@@ -66,14 +67,24 @@ async def registered_on_a_dead_fake_server() -> tuple[LettaMCPBridge, AsyncMock]
     return bridge, client
 
 
-def registered_urls(client: AsyncMock) -> list[str]:
-    """Every URL handed to Letta, by create or update, in order."""
+def registered_configs(client: AsyncMock) -> list[dict[str, Any]]:
+    """Every registration config handed to Letta, creates then updates."""
     calls = [
         *client.mcp_servers.create.await_args_list,
         *client.mcp_servers.update.await_args_list,
     ]
-    return [call.kwargs["config"]["server_url"] for call in calls]
+    return [call.kwargs["config"] for call in calls]
 
 
-async def serves_band_tools(url: str) -> bool:
-    return BandTool.SEND_MESSAGE in await served_tool_names(url, BandMCPTransport.SSE)
+def registered_urls(client: AsyncMock) -> list[str]:
+    """Every URL handed to Letta, creates then updates."""
+    return [config["server_url"] for config in registered_configs(client)]
+
+
+async def serves_band_tools(config: dict[str, Any]) -> bool:
+    """Whether a registration ``config``, dialed as Letta dials it, reaches
+    the Band tools."""
+    served = await served_tool_names(
+        config["server_url"], BandMCPTransport.SSE, headers=config["custom_headers"]
+    )
+    return BandTool.SEND_MESSAGE in served

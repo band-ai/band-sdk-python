@@ -7,11 +7,20 @@ the tool-registration list, this module only runs the server once it has one.
 Every ``start()``/``stop()`` routes through one lock with cleanup in
 ``finally``, so a serve-task crash always closes the socket and resets
 state, and concurrent start/stop calls can't race.
+
+Every route but the health check requires the server's bearer token
+(``auth_headers``). The token keeps other OS users on the host, and network
+peers of a non-loopback bind, from acting as the agent. It does not stop a
+process running as the agent's own OS user, which can read the token; nor a
+caller of a consumer that holds it (an unauthenticated ``opencode serve``
+reaches the Band tools through OpenCode); nor the published ``band-mcp``
+CLI's own transport, which this server is not.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import random
 import socket
@@ -23,9 +32,12 @@ from urllib.parse import quote
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.routing import BaseRoute, Mount, Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from band.integrations.mcp.engine import (
     ROOM_PATH_PARAM,
@@ -50,6 +62,17 @@ LOCAL_MCP_HTTP_PATH = "/mcp"
 LOCAL_MCP_MESSAGE_PATH = "/messages/"
 LOCAL_MCP_HEALTH_PATH = "/healthz"
 LOCAL_MCP_ROOMS_PATH = "/rooms"
+LOCAL_MCP_AUTH_HEADER = "Authorization"
+LOCAL_MCP_AUTH_SCHEME = "Bearer"
+# How a refused request's route is logged: room ids and unserved paths masked.
+REDACTED_ROOM = "<room>"
+UNKNOWN_ROUTE = "<unknown>"
+
+
+def local_mcp_auth_headers(token: str) -> dict[str, str]:
+    """The request headers a local MCP server serving ``token`` accepts."""
+    return {LOCAL_MCP_AUTH_HEADER: f"{LOCAL_MCP_AUTH_SCHEME} {token}"}
+
 
 # The process-global sse_starlette shutdown-drain footgun (see
 # band.integrations.uvicorn_server's docstring) is disabled by importing
@@ -87,6 +110,82 @@ def _listen(sock: socket.socket) -> socket.socket:
     return sock
 
 
+def _is_power_of_ten(count: int) -> bool:
+    return str(count).rstrip("0") == "1"
+
+
+class BearerTokenGuard:
+    """ASGI middleware answering 401 to every HTTP request outside
+    ``open_paths`` that lacks ``Authorization: Bearer <token>``.
+
+    Refusals are counted per redacted route and logged on the 1st, 10th,
+    100th, ... so a caller retrying in a loop cannot flood the log. Lifespan
+    events pass through; the server mounts no websocket routes.
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        token: str,
+        open_paths: frozenset[str],
+        routes: frozenset[str],
+        server_name: str,
+    ) -> None:
+        self._app = app
+        self._token = token.encode()
+        self._open_paths = open_paths
+        self._routes = routes
+        self._server_name = server_name
+        self._refusals: dict[str, int] = {}
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope["path"] in self._open_paths
+            or self._authorized(Headers(scope=scope))
+        ):
+            await self._app(scope, receive, send)
+            return
+        self._record_refusal(scope["path"])
+        refusal = PlainTextResponse(
+            "Unauthorized",
+            status_code=401,
+            headers={"WWW-Authenticate": LOCAL_MCP_AUTH_SCHEME},
+        )
+        await refusal(scope, receive, send)
+
+    def _authorized(self, headers: Headers) -> bool:
+        values = headers.getlist(LOCAL_MCP_AUTH_HEADER)
+        if len(values) != 1:
+            return False
+        scheme, _, credentials = values[0].partition(" ")
+        return scheme.lower() == LOCAL_MCP_AUTH_SCHEME.lower() and hmac.compare_digest(
+            credentials.encode(), self._token
+        )
+
+    def _record_refusal(self, path: str) -> None:
+        route = self._redacted(path)
+        count = self._refusals[route] = self._refusals.get(route, 0) + 1
+        if _is_power_of_ten(count):
+            logger.warning(
+                "Local MCP server %s refused an unauthenticated request to %s "
+                "(%s refused there so far)",
+                self._server_name,
+                route,
+                count,
+            )
+
+    def _redacted(self, path: str) -> str:
+        """``path`` with its room id masked; ``UNKNOWN_ROUTE`` for a path the
+        server does not serve, so no caller-chosen text reaches the log."""
+        room_prefix = f"{LOCAL_MCP_ROOMS_PATH}/"
+        if path.startswith(room_prefix):
+            _, _, rest = path.removeprefix(room_prefix).partition("/")
+            path = f"{room_prefix}{REDACTED_ROOM}/{rest}"
+        return path if path in self._routes else UNKNOWN_ROUTE
+
+
 class LocalMCPServer:
     """A local MCP server with SSE and streamable HTTP endpoints.
 
@@ -100,6 +199,10 @@ class LocalMCPServer:
     take their room from the request path (``room_from_connection``);
     address it with ``room_sse_url``/``room_http_url``.
 
+    Every request except the health check must carry ``auth_headers``
+    (``auth_token`` as a bearer token) or gets 401. One token covers every
+    room the server serves.
+
     Lifecycle is an async context manager (``async with LocalMCPServer(...)
     as server:``); ``start()``/``stop()`` remain as the escape hatch for
     non-lexical lifetimes (``BandMCPBackend`` in ``backends.py`` holds its
@@ -112,6 +215,7 @@ class LocalMCPServer:
         name: str,
         tool_registrations: Sequence[MCPToolRegistration],
         *,
+        auth_token: str,
         host: str = LOCAL_MCP_HOST,
         port_min: int = LOCAL_MCP_PORT_MIN,
         port_max: int = LOCAL_MCP_PORT_MAX,
@@ -123,6 +227,8 @@ class LocalMCPServer:
     ) -> None:
         if port_min > port_max:
             raise ValueError("port_min must be less than or equal to port_max")
+        if not auth_token:
+            raise ValueError("auth_token must not be empty")
 
         registrations = list(tool_registrations)
         validate_unique_tool_names(registrations)
@@ -137,6 +243,7 @@ class LocalMCPServer:
         self._room_bound = room_bound
         self._avoid_port = avoid_port
         self._tool_registrations = registrations
+        self._auth_token = auth_token
 
         self._lifecycle_lock = asyncio.Lock()
         self._uvicorn_server: uvicorn.Server | None = None
@@ -158,6 +265,11 @@ class LocalMCPServer:
         if self._port is None:
             raise RuntimeError("Local MCP server has not started")
         return self._port
+
+    @property
+    def auth_headers(self) -> dict[str, str]:
+        """The headers every request but the health check must carry."""
+        return local_mcp_auth_headers(self._auth_token)
 
     @property
     def url(self) -> str:
@@ -344,6 +456,24 @@ class LocalMCPServer:
                 *engine_routes,
                 Route(LOCAL_MCP_HEALTH_PATH, endpoint=healthz, methods=["GET"]),
             ],
+            middleware=[
+                Middleware(
+                    BearerTokenGuard,
+                    token=self._auth_token,
+                    open_paths=frozenset({LOCAL_MCP_HEALTH_PATH}),
+                    routes=self._guarded_routes(),
+                    server_name=self._name,
+                )
+            ],
+        )
+
+    def _guarded_routes(self) -> frozenset[str]:
+        """Every route the guard protects, room ids redacted."""
+        paths = (self._sse_path, self._http_path, self._message_path)
+        if not self._room_bound:
+            return frozenset(paths)
+        return frozenset(
+            f"{LOCAL_MCP_ROOMS_PATH}/{REDACTED_ROOM}{path}" for path in paths
         )
 
     def _reserve_socket(self) -> tuple[socket.socket, int]:

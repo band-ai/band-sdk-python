@@ -25,7 +25,7 @@ from tests.adapters.lettakit import (
     make_mock_tool_page,
     make_platform_message,
 )
-from tests.adapters.lettamcp.kit import _stale_tool_error
+from tests.adapters.lettamcp.kit import _stale_tool_error, letta_registering_one_tool
 from tests.mcpbackends import FakeBandMCPBackend, backends_created_by, hold_backend
 
 
@@ -243,6 +243,35 @@ class TestSelfHostedMCPLifecycle:
                 server_name="band-compose",
                 server_url="http://live:2/sse",
             )
+
+    @pytest.mark.asyncio
+    async def test_adopted_fixed_name_row_is_rewritten_with_current_headers(
+        self,
+    ) -> None:
+        """A row an earlier process registered at this same URL still carries
+        that process's bearer token, so adopting it rewrites its config."""
+        bridge = LettaAdapter(
+            config=LettaAdapterConfig(mcp=LettaMCPConfig(server_name="band-compose"))
+        )._mcp
+        backend = await hold_backend(bridge.backend)
+        url = bridge.advertised_url(backend.local_server.port)
+        client = letta_registering_one_tool()
+        client.mcp_servers.list.return_value = [
+            make_mock_mcp_server("mcp-earlier", name="band-compose", url=url)
+        ]
+
+        await bridge.ensure_ready(client)
+
+        client.mcp_servers.create.assert_not_awaited()
+        client.mcp_servers.update.assert_awaited_once_with(
+            "mcp-earlier",
+            config={
+                "mcp_server_type": "sse",
+                "server_url": url,
+                "custom_headers": backend.headers,
+            },
+        )
+        assert bridge.server_id == "mcp-earlier"
 
     @pytest.mark.asyncio
     async def test_register_uses_fresh_name_when_stale_url_is_ephemeral(self) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -65,6 +66,11 @@ class BandMCPBackend:
         """False once the backing local server has crashed or stopped."""
         return self.local_server.is_running
 
+    @property
+    def headers(self) -> dict[str, str]:
+        """The headers a consumer sends with every request to ``endpoint()``."""
+        return self.local_server.auth_headers
+
     def endpoint(self, transport: BandMCPTransport, room_id: str | None = None) -> str:
         """Return the URL a consumer dials: its room's, or the multi-room one.
 
@@ -124,9 +130,13 @@ def _build_allowed_tools(
 
 
 async def create_band_mcp_backend(
-    settings: BandMCPBackendSettings, *, avoid_port: int | None = None
+    settings: BandMCPBackendSettings,
+    *,
+    auth_token: str,
+    avoid_port: int | None = None,
 ) -> BandMCPBackend:
-    """Start a Band MCP server, serving both transports, as ``settings`` describe."""
+    """Start a Band MCP server, serving both transports, as ``settings``
+    describe, to callers presenting ``auth_token``."""
     additional_tools = list(settings.additional_tools)
     local_server = LocalMCPServer(
         name=BAND_MCP_SERVER_NAME,
@@ -136,6 +146,7 @@ async def create_band_mcp_backend(
             tool_definitions=settings.tool_definitions,
             room_from_connection=settings.room_bound,
         ),
+        auth_token=auth_token,
         host=settings.host,
         port_min=settings.port_min,
         port_max=settings.port_max,
@@ -165,10 +176,16 @@ class SharedBandMCPBackend:
     ``settings`` is read at each start, replacements included, since
     capabilities (and with them the tool definitions) are only settled when
     the agent starts.
+
+    Every server it starts, replacements included, requires the one bearer
+    token minted here, so a consumer's headers stay valid for the owner's
+    whole life and only a replacement's URL changes. The token spans every
+    room the adapter serves -- the reach its Band API key already has.
     """
 
     def __init__(self, settings: Callable[[], BandMCPBackendSettings]) -> None:
         self._settings = settings
+        self._auth_token = secrets.token_urlsafe(32)
         self._backend: BandMCPBackend | None = None
         self._closed = False
         # A final close owns its backend until the stop is confirmed.
@@ -288,5 +305,6 @@ class SharedBandMCPBackend:
             await replacing.stop()
         return await create_band_mcp_backend(
             self._settings(),
+            auth_token=self._auth_token,
             avoid_port=replacing.local_server.port if replacing else None,
         )

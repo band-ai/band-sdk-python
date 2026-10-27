@@ -17,6 +17,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -27,6 +28,7 @@ from mcp import ClientSession
 
 from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
 from band.integrations.claude_sdk import session_manager
+from band.integrations.claude_sdk.mcpconfig import MCP_SERVERS_KEY
 from band.integrations.mcp import BandMCPTransport
 from tests.adapters.hold import Hold
 from tests.baseline.decisions import ModelDecision, ToolCall
@@ -192,6 +194,17 @@ class FakeClaude:
         assert not self._turns, f"{len(self._turns)} scripted turn(s) never ran"
 
 
+def cli_mcp_servers(options: ClaudeAgentOptions) -> dict[str, Any]:
+    """The MCP servers a CLI started with ``options`` reads at start: the
+    SDK's inline dict, or the ``--mcp-config`` file a path names."""
+    match options.mcp_servers:
+        case dict() as servers:
+            return servers
+        case path:
+            config = json.loads(Path(path).read_text(encoding="utf-8"))
+            return config[MCP_SERVERS_KEY]
+
+
 @contextmanager
 def scripted_claude() -> Iterator[FakeClaude]:
     """The scripted Claude CLI behind every ``ClaudeSDKClient`` opened inside.
@@ -211,6 +224,7 @@ class FakeCLISession(Transport):
     def __init__(self, claude: FakeClaude, options: ClaudeAgentOptions) -> None:
         self.claude = claude
         self.options = options
+        self.mcp_servers = cli_mcp_servers(options)
         self.permission_mode = options.permission_mode
         self.session_id = options.resume or claude.new_session_id()
         self.notes = claude.notes.setdefault(self.session_id, [])
@@ -533,11 +547,14 @@ class FakeCLISession(Transport):
         return content, result.isError
 
     def _mcp(self, server: str) -> AbstractAsyncContextManager[ClientSession]:
-        """A session to the MCP server the options name, dialed by its URL."""
-        servers = self.options.mcp_servers
-        assert isinstance(servers, dict), servers
-        config = servers[server]
-        return mcp_session(config["url"], BandMCPTransport(config["type"]))
+        """A session to the MCP server the CLI was configured with, dialed by
+        its URL and headers."""
+        config = self.mcp_servers[server]
+        return mcp_session(
+            config["url"],
+            BandMCPTransport(config["type"]),
+            headers=config.get("headers", {}),
+        )
 
     def _tool_result(self, tool_use_id: str, content: Any, *, is_error: bool) -> None:
         self._emit(

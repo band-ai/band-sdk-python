@@ -447,11 +447,13 @@ class TestLifecycle:
                 self.release_registration = asyncio.Event()
 
             async def register_mcp_server(
-                self, *, name: str, url: str
+                self, *, name: str, url: str, headers: dict[str, str]
             ) -> dict[str, Any]:
                 self.registration_started.set()
                 await self.release_registration.wait()
-                return await super().register_mcp_server(name=name, url=url)
+                return await super().register_mcp_server(
+                    name=name, url=url, headers=headers
+                )
 
         fake_client = SlowRegistrationClient()
         adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)

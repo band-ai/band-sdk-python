@@ -52,7 +52,7 @@ class TestRoomOptions:
         [cli] = claude.sessions
         assert cli.options.cwd == str(tmp_path / "room-a")
         assert cli.options.resume == "sess-earlier"
-        assert cli.options.mcp_servers == {"band": {"type": "http", "url": "room-a"}}
+        assert cli.mcp_servers == {"band": {"type": "http", "url": "room-a"}}
         assert cli.options.model == base.model
         assert base.resume is None and base.mcp_servers == {}
         assert bindings == [("room-a", 1)]

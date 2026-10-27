@@ -27,6 +27,7 @@ import pytest
 from acp import spawn_agent_process
 from acp.exceptions import RequestError
 from acp.schema import (
+    HttpHeader,
     HttpMcpServer,
     SessionConfigOptionSelect,
     SetSessionConfigOptionResponse,
@@ -106,6 +107,7 @@ _E2E_ENABLED = os.environ.get("E2E_TESTS_ENABLED", "").strip().lower() in {
 _CODEX_ACP_COMMAND = shutil.which("codex-acp")
 _INIT_TIMEOUT = 30
 _PROMPT_TIMEOUT = 120
+AUTH_TOKEN = "codex-acp-test-token"
 _DYNAMIC_CONFIG_OPTION_IDS = ("model", "reasoning_effort")
 pytestmark = [
     pytest.mark.skipif(
@@ -334,6 +336,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
         return json.dumps({"echo": arguments["message"]})
 
     local_server = LocalMCPServer(
+        auth_token=AUTH_TOKEN,
         name="test-codex-http-mcp",
         tool_registrations=[
             MCPToolRegistration(
@@ -357,7 +360,10 @@ async def test_codex_acp_http_mcp_server_tool_call(
                         type="http",
                         name="smoke",
                         url=local_server.http_url,
-                        headers=[],
+                        headers=[
+                            HttpHeader(name=name, value=value)
+                            for name, value in local_server.auth_headers.items()
+                        ],
                     )
                 ],
             ),
@@ -422,6 +428,7 @@ async def test_codex_acp_band_mcp_tool_call(
     )
     agent_tools = AgentTools("room-123", rest)
     local_server = LocalMCPServer(
+        auth_token=AUTH_TOKEN,
         name="test-band-http-mcp",
         tool_registrations=build_band_mcp_tool_registrations(agent_tools),
         port_min=55120,
@@ -438,7 +445,10 @@ async def test_codex_acp_band_mcp_tool_call(
                         type="http",
                         name="band",
                         url=local_server.http_url,
-                        headers=[],
+                        headers=[
+                            HttpHeader(name=name, value=value)
+                            for name, value in local_server.auth_headers.items()
+                        ],
                     )
                 ],
             ),

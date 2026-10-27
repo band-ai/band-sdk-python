@@ -15,6 +15,7 @@ from tests.adapters.lettakit import (
 )
 from tests.adapters.lettamcp.kit import (
     _stale_tool_error,
+    registered_configs,
     registered_on_a_dead_fake_server,
     registered_on_real_server,
     registered_urls,
@@ -34,11 +35,10 @@ class TestSelfHostedMCPCrash:
 
             await bridge.ensure_ready(client)
 
-            live_url = registered_urls(client)[-1]
             assert client.mcp_servers.update.await_args.args == ("mcp-server-1",)
             assert client.mcp_servers.create.await_count == 1
             assert (bridge.server_id, bridge.tool_ids) == ("mcp-server-1", ["t1"])
-            assert await serves_band_tools(live_url)
+            assert await serves_band_tools(registered_configs(client)[-1])
 
     @pytest.mark.asyncio
     async def test_a_released_crashed_server_is_replaced_before_registering(
@@ -50,7 +50,7 @@ class TestSelfHostedMCPCrash:
 
             await bridge.ensure_ready(client)
 
-            assert await serves_band_tools(registered_urls(client)[-1])
+            assert await serves_band_tools(registered_configs(client)[-1])
 
     @pytest.mark.asyncio
     async def test_a_released_crashed_server_keeps_its_fixed_name_registration(
@@ -72,7 +72,7 @@ class TestSelfHostedMCPCrash:
 
             assert client.mcp_servers.create.await_count == 1
             assert bridge.server_id == "mcp-server-1"
-            assert await serves_band_tools(registered_urls(client)[-1])
+            assert await serves_band_tools(registered_configs(client)[-1])
 
     @pytest.mark.asyncio
     async def test_a_transient_repoint_failure_is_retried_on_the_same_row(

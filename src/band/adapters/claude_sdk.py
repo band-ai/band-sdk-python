@@ -850,6 +850,7 @@ class ClaudeSDKAdapter(
             BAND_MCP_SERVER_NAME: McpHttpServerConfig(
                 type="http",
                 url=backend.endpoint(BandMCPTransport.HTTP, room_id),
+                headers=backend.headers,
             )
         }
 
