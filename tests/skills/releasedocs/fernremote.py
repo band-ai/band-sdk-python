@@ -37,6 +37,7 @@ class FernRemote:
             ("user.name", "Fern Tester"),
             ("user.email", "fern-tester@example.invalid"),
             ("commit.gpgsign", "false"),
+            ("core.autocrlf", "false"),
         ):
             run_git("-C", str(self.seed), "config", key, value)
         run_git("-C", str(self.seed), "remote", "add", "origin", str(self.bare))
@@ -58,7 +59,17 @@ class FernRemote:
         run_git("-C", str(self.seed), "push", "--quiet", "origin", f"HEAD:{self.base}")
 
     def clone(self, dest: Path) -> Path:
-        run_git("clone", "--quiet", "--branch", self.base, str(self.bare), str(dest))
+        # Git for Windows defaults to CRLF checkouts; keep the seeded bytes.
+        run_git(
+            "clone",
+            "--quiet",
+            "--config",
+            "core.autocrlf=false",
+            "--branch",
+            self.base,
+            str(self.bare),
+            str(dest),
+        )
         return dest
 
     def head(self, branch: str) -> str:
