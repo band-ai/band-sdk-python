@@ -58,8 +58,8 @@ read, and apply the existing skills relevant to the task. Reassess when the work
 changes, such as moving from investigation to implementation, testing, or review.
 Skill discovery alone does not load its instructions.
 
-Follow each skill's activation rules; `band-code-review` requires explicit
-invocation. Read the referenced `SKILL.md` directly when automatic loading is
+Follow each skill's activation rules; `band-code-review` runs only when a user
+explicitly asks for it. Read the referenced `SKILL.md` directly when automatic loading is
 unavailable. Reference only skills that actually exist; disclose missing guidance
 when it materially affects the work. Workflow execution follows
 [the shared runtime guidance](.claude/skills/workflow-runtime.md).
