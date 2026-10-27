@@ -134,6 +134,15 @@ class TestCheckPatch:
             (tmp_path / "patch.json").exists(),
         ) == ({}, False)
 
+    def test_editing_beside_an_existing_outside_link_stays_mergeable(
+        self, checkpatch: ModuleType, trees: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        line = "[LangGraph](https://langchain-ai.github.io/langgraph/) runs graphs"
+        write_tree(trees[0], {OTHER_PAGE: f"# Overview\n\n{line}.\n"})
+        write_tree(trees[1], {OTHER_PAGE: f"# Overview\n\n{line} well.\n"})
+        assert run(checkpatch, trees, tmp_path) == 0
+        assert read_outputs(tmp_path / "outputs")["mergeable"] == "true"
+
     @pytest.mark.parametrize(
         ("edit", "kind"),
         [
@@ -147,6 +156,8 @@ class TestCheckPatch:
             (DOCS_PAGE_TEXT + "[docs](//evil.example/x)\n", "LINK"),
             (DOCS_PAGE_TEXT + "[repo](https://github.com/band-ai/../evil)\n", "LINK"),
             (DOCS_PAGE_TEXT + "[docs]: http://evil.example\n", "LINK"),
+            (DOCS_PAGE_TEXT + "[the guide](\n//evil.example/x)\n", "LINK"),
+            (DOCS_PAGE_TEXT + "[g]:\n//evil.example/x\n", "LINK"),
             (DOCS_PAGE_TEXT + "".join(f"Line {n}.\n" for n in range(201)), "TOO_LONG"),
         ],
         ids=[
@@ -160,6 +171,8 @@ class TestCheckPatch:
             "protocol-relative-link",
             "path-escaping-link",
             "reference-definition",
+            "link-split-across-lines",
+            "reference-split-across-lines",
             "line-cap",
         ],
     )

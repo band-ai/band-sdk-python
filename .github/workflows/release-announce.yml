@@ -568,15 +568,21 @@ jobs:
           if [[ "$MODE" == test ]]; then args+=(--rehearsal); fi
           uv run --script "$SCRIPTS/fernstate.py" "${args[@]}"
 
+      # A docs refusal must not hold back the changelog; each docs step needs
+      # the one before it, and the job fails after filing when one failed.
       - name: Pick the docs range
+        id: docs-range
         if: steps.state.outputs.docs != 'skip'
+        continue-on-error: true
         run: |
           uv run --script "$SCRIPTS/docsrange.py" "$TAG" \
             "$RUNNER_TEMP/state/docs-merged.json" "$RUNNER_TEMP/state/docs-open.json" \
             --repo "$SRC" > "$RUNNER_TEMP/range.json"
 
       - name: Collect the review's PRs
-        if: steps.state.outputs.docs != 'skip'
+        id: review-all
+        if: steps.docs-range.outcome == 'success'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -585,7 +591,9 @@ jobs:
           uv run --script "$SCRIPTS/collectprs.py" "$TAG" --since "$baseline" --repo "$SRC" > "$RUNNER_TEMP/review-all.json"
 
       - name: Withhold held PRs from the review
-        if: steps.state.outputs.docs != 'skip'
+        id: review-input
+        if: steps.review-all.outcome == 'success'
+        continue-on-error: true
         run: |
           read -ra held <<< "$HELD"
           uv run --script "$SCRIPTS/withhold.py" "$RUNNER_TEMP/review-all.json" \
@@ -603,23 +611,23 @@ jobs:
         run: rm -rf fern/.git
 
       - name: Prepare the review workspace
-        if: steps.state.outputs.docs != 'skip'
+        if: steps.review-input.outcome == 'success'
         run: |
-          mkdir sdk
+          mkdir sdk scripts
           git -C "$SRC" archive "$TAG" | tar -x -C sdk
           cp "$SRC/$SKILL/docs.md" docs.md
+          cp "$SCRIPTS/checkpatch.py" "$SCRIPTS/releasedata.py" scripts/
           cp -a fern "$RUNNER_TEMP/pristine"
 
       - name: Emit the docs schema
         id: docs-schema
-        if: steps.state.outputs.docs != 'skip'
+        if: steps.review-input.outcome == 'success'
         run: echo "schema=$(uv run --script "$SCRIPTS/reportschema.py" --kind docs)" >> "$GITHUB_OUTPUT"
 
       # Debug output would print tool results (Fern pages) to public logs.
       - name: Review the docs
         id: docs-claude
-        if: steps.state.outputs.docs != 'skip'
-        # A failed review must not hold back the changelog; the job still fails below.
+        if: steps.review-input.outcome == 'success'
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(env.DOCS_TIMEOUT_MINUTES) }}
         uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
@@ -698,7 +706,9 @@ jobs:
           uv run --script "$SCRIPTS/fernstate.py" "${args[@]}"
 
       - name: Re-pick the docs range
-        if: env.MODE != 'dry-run' && steps.state.outputs.docs != 'skip'
+        id: docs-rerange
+        if: env.MODE != 'dry-run' && steps.patch.outcome == 'success'
+        continue-on-error: true
         run: |
           uv run --script "$SCRIPTS/docsrange.py" "$TAG" \
             "$RUNNER_TEMP/fresh/docs-merged.json" "$RUNNER_TEMP/fresh/docs-open.json" \
@@ -719,6 +729,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.fern-write.outputs.token }}
           PATCH: ${{ steps.patch.outcome }}
+          RERANGE: ${{ steps.docs-rerange.outcome }}
           CHANGED: ${{ steps.patch.outputs.changed }}
         run: |
           # Held indexes also keep the docs PR from merging when every item is held.
@@ -726,16 +737,18 @@ jobs:
           args=("$TAG" --fern fern-write --state "$RUNNER_TEMP/fresh/state.json" --mode "$MODE" \
             --held "${held[@]}" --outputs "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY")
           if [[ "$HAS_ENTRY" == true ]]; then
-            args+=(--notes "$RUNNER_TEMP/full/release-notes.json")
+            args+=(--notes "$RUNNER_TEMP/full/release-notes.json" --release-prs "$RUNNER_TEMP/full/release-prs.json")
           fi
-          if [[ "$PATCH" == success && "$CHANGED" != 0 ]]; then
+          if [[ "$PATCH" == success && "$RERANGE" == success && "$CHANGED" != 0 ]]; then
             args+=(--docs-check "$RUNNER_TEMP/patch.json" --docs-report "$RUNNER_TEMP/docs-report.json" \
               --docs-range "$RUNNER_TEMP/range.json" --edited "$RUNNER_TEMP/edited" --pristine "$RUNNER_TEMP/pristine")
           fi
           uv run --script "$SCRIPTS/filefern.py" "${args[@]}"
 
       - name: Fail on a failed docs review
-        if: steps.state.outputs.docs != 'skip' && steps.patch.outcome != 'success'
+        if: >-
+          steps.state.outputs.docs != 'skip' &&
+          (steps.patch.outcome != 'success' || steps.docs-rerange.outcome == 'failure')
         run: |
           echo "::error::The docs review or its edit check failed; no docs PR was filed."
           exit 1

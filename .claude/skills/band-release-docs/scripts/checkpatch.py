@@ -43,8 +43,10 @@ IMPORT_LINE = re.compile(r"^\s*(?:import|export)\b")
 # A whole MDX/JSX tag with its attributes, or an MDX `{expression}`;
 # `<https://...>` autolinks are not tags.
 MDX_CONSTRUCT = re.compile(r"<(?![\w+.-]+:)/?[A-Za-z][^>]*>|\{[^{}]*\}?")
-# A Markdown link or reference-definition target.
-LINK_TARGET = re.compile(r"\]\(\s*<?([^)\s>]+)|^\s*\[[^\]]+\]:\s*<?(\S+?)>?\s*$")
+# A Markdown link or reference-definition target, which may follow a line break.
+LINK_TARGET = re.compile(
+    r"\]\(\s*<?([^)\s>]+)|^[ \t]*\[[^\]]+\]:\s*<?([^\s>]+)", re.MULTILINE
+)
 SCHEME = re.compile(r"^[A-Za-z][\w+.-]*:")
 
 
@@ -197,16 +199,19 @@ def is_allowed_target(target: str) -> bool:
     return True
 
 
-def links_allowed(lines: Sequence[str]) -> bool:
-    urls = [url for line in lines for url in URL_PATTERN.findall(line)]
-    targets = [
-        target
-        for line in lines
-        for match in LINK_TARGET.findall(line)
-        for target in match
-        if target
-    ]
-    return all(map(is_allowed_url, urls)) and all(map(is_allowed_target, targets))
+def links(text: str) -> tuple[set[str], set[str]]:
+    """The bare URLs and the link targets in the page's prose."""
+    prose = "\n".join(prose_lines(text))
+    targets = {t for match in LINK_TARGET.findall(prose) for t in match if t}
+    return set(URL_PATTERN.findall(prose)), targets
+
+
+def new_links_allowed(before: str, after: str) -> bool:
+    """Every URL and link target the edit adds is allowed; existing ones stay."""
+    (urls_before, targets_before), (urls, targets) = links(before), links(after)
+    return all(map(is_allowed_url, urls - urls_before)) and all(
+        map(is_allowed_target, targets - targets_before)
+    )
 
 
 def page_violations(path: str, before: str, after: str) -> tuple[list[Finding], int]:
@@ -218,7 +223,7 @@ def page_violations(path: str, before: str, after: str) -> tuple[list[Finding], 
         kinds.append(ContentViolation.IMPORT)
     if mdx_constructs(after) - mdx_constructs(before):
         kinds.append(ContentViolation.JSX)
-    if not links_allowed(added):
+    if not new_links_allowed(before, after):
         kinds.append(ContentViolation.LINK)
     return [Finding(path=path, kind=kind) for kind in kinds], count
 

@@ -33,9 +33,21 @@ from checkpatch import PatchCheck
 from collectprs import gh_output, git
 from docsreport import DocsReport, pr_body
 from fernstate import Action, BranchPr, FernState, Gh, action
-from holdbacks import held_reasons, ledger_matches, load_ledger
+from holdbacks import (
+    held_reasons,
+    ledger_matches,
+    load_ledger,
+    refuse_held_breaking,
+)
 from pydantic import BaseModel
-from releasedata import CHANGELOG_DIR, FERN_BASE, FERN_REPO, HELD_ITEMS, ReleaseNotes
+from releasedata import (
+    CHANGELOG_DIR,
+    FERN_BASE,
+    FERN_REPO,
+    HELD_ITEMS,
+    ReleaseNotes,
+    ReleasePrs,
+)
 from renderentry import merge_into
 from stepoutputs import append_outputs
 
@@ -102,6 +114,13 @@ class FiledPr:
     url: str
     sha: str
     mergeable: bool
+
+
+@dataclass(frozen=True)
+class ChangelogInput:
+    notes: ReleaseNotes
+    held: list[int]
+    release: ReleasePrs
 
 
 @dataclass(frozen=True)
@@ -234,7 +253,8 @@ class Filer:
 
     def settle(self, pr: FiledPr) -> Outcome:
         """Merge (live) or close (test) a PR once its checks pass."""
-        if not pr.mergeable:
+        # A rehearsal closes its PRs anyway, so it still exercises the checks.
+        if not pr.mergeable and self.mode is Mode.LIVE:
             return Outcome.DO_NOT_MERGE
         match self.wait_for_checks(pr.sha):
             case ChecksState.FAILED:
@@ -275,16 +295,14 @@ class Filer:
             )
 
     def file_changelog(
-        self,
-        branch: str,
-        notes: ReleaseNotes,
-        held: Sequence[int],
-        existing: BranchPr | None,
+        self, branch: str, changelog: ChangelogInput, existing: BranchPr | None
     ) -> FiledPr:
         self.start_branch(branch)
+        notes = changelog.notes
         entries = load_ledger(self.fern / HELD_ITEMS)
+        refuse_held_breaking(changelog.release, entries)
         # A re-run reuses the holdbacks job's indexes; the fresh ledger may hold more.
-        held = sorted(set(held) | set(ledger_matches(notes, entries)))
+        held = sorted(set(changelog.held) | set(ledger_matches(notes, entries)))
         reasons = held_reasons(notes, held, entries)
         with tempfile.TemporaryDirectory() as scratch:
             body = Path(scratch) / "pr-body.md"
@@ -324,12 +342,12 @@ class Filer:
     def new_changelog(
         self,
         branch: str,
-        changelog: tuple[ReleaseNotes, list[int]] | None,
+        changelog: ChangelogInput | None,
         existing: BranchPr | None,
     ) -> tuple[FiledPr, list[int]] | None:
         if changelog is None:
             return None
-        return self.file_changelog(branch, *changelog, existing), []
+        return self.file_changelog(branch, changelog, existing), []
 
     def new_docs(
         self, branch: str, docs: DocsInput | None, existing: BranchPr | None
@@ -370,7 +388,7 @@ def run_part(
         outcome = filer.settle(filed)
         if outcome is Outcome.MERGED:
             filer.close_superseded(filed, supersede)
-    except (RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.error("error: %s", exc)
         return PartResult(Outcome.ERROR)
     return PartResult(outcome, filed.url)
@@ -379,7 +397,7 @@ def run_part(
 def file_all(
     filer: Filer,
     state: FernState,
-    changelog: tuple[ReleaseNotes, list[int]] | None,
+    changelog: ChangelogInput | None,
     docs: DocsInput | None,
 ) -> dict[str, PartResult]:
     return {
@@ -407,6 +425,16 @@ def record_results(
                 f"- Fern {part}: {result.outcome} {result.url}\n"
                 for part, result in results.items()
             )
+
+
+def read_changelog(args: argparse.Namespace) -> ChangelogInput | None:
+    if args.notes is None:
+        return None
+    return ChangelogInput(
+        notes=ReleaseNotes.model_validate_json(args.notes.read_bytes()),
+        held=args.held,
+        release=ReleasePrs.model_validate_json(args.release_prs.read_bytes()),
+    )
 
 
 def read_docs(args: argparse.Namespace) -> DocsInput | None:
@@ -441,6 +469,9 @@ def main(
         help="the full release-notes.json; omit to file no changelog",
     )
     parser.add_argument(
+        "--release-prs", type=Path, help="the release's release-prs.json, with --notes"
+    )
+    parser.add_argument(
         "--held", type=int, nargs="*", default=[], help="held item indexes"
     )
     parser.add_argument(
@@ -457,13 +488,8 @@ def main(
     args = parser.parse_args(argv)
 
     state = FernState.model_validate_json(args.state.read_bytes())
-    changelog = (
-        (ReleaseNotes.model_validate_json(args.notes.read_bytes()), args.held)
-        if args.notes
-        else None
-    )
     filer = Filer(gh, args.fern, args.mode, args.tag, poll)
-    results = file_all(filer, state, changelog, read_docs(args))
+    results = file_all(filer, state, read_changelog(args), read_docs(args))
     record_results(results, args.outputs, args.summary)
     return 0 if all(result.outcome in SETTLED for result in results.values()) else 1
 

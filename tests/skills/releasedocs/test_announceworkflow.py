@@ -189,8 +189,12 @@ class TestAnnounceWorkflow:
         assert drop < step_position("fern", uses(CLAUDE_ACTION))
 
     def test_docs_review_runs_when_an_open_pr_is_refiled(self) -> None:
-        review = job("fern")["steps"][step_position("fern", uses(CLAUDE_ACTION))]
-        assert review["if"] == "steps.state.outputs.docs != 'skip'"
+        """The docs chain starts on file and reuse alike, and the review needs it."""
+        steps = job("fern")["steps"]
+        first = steps[step_position("fern", has_id("docs-range"))]
+        review = steps[step_position("fern", uses(CLAUDE_ACTION))]
+        assert first["if"] == "steps.state.outputs.docs != 'skip'"
+        assert review["if"] == "steps.review-input.outcome == 'success'"
 
     def test_held_prs_are_withheld_before_the_docs_review(self) -> None:
         withhold = step_position("fern", lambda s: "withhold.py" in s.get("run", ""))
@@ -206,7 +210,7 @@ class TestAnnounceWorkflow:
             for i, step in enumerate(job("fern")["steps"])
             if uses("actions/checkout")(step)
         ]
-        assert step_position("fern", uses(CLAUDE_ACTION)) < clear < checkouts[-1]
+        assert step_position("fern", uses(CLAUDE_ACTION)) + 1 == clear < checkouts[-1]
 
     def test_cancelled_runs_file_nothing_and_a_displaced_filing_alerts(self) -> None:
         assert job("fern")["if"].startswith("!cancelled() && ")
@@ -301,7 +305,8 @@ class TestAnnounceWorkflow:
             "fern", lambda s: s.get("name") == "Fail on a failed docs review"
         )
         assert steps[fail]["if"] == (
-            "steps.state.outputs.docs != 'skip' && steps.patch.outcome != 'success'"
+            "steps.state.outputs.docs != 'skip' && (steps.patch.outcome != 'success'"
+            " || steps.docs-rerange.outcome == 'failure')"
         )
         assert step_position("fern", has_id("file")) < fail
 

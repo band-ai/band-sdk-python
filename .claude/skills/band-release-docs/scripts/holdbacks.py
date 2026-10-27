@@ -34,6 +34,7 @@ SDK_REPO_NAME = "band-sdk-python"
 # A ledger source: `<repo>#<number>`, the repo optionally owner-qualified.
 LEDGER_SOURCE = re.compile(r"^(?:[\w.-]+/)?(?P<repo>[\w.-]+)#(?P<number>\d+)$")
 FLAGGED_BY_REVIEW = "flagged by the holdbacks review"
+HELD_BREAKING = "the breaking change is held; file this release by hand"
 
 Model = TypeVar("Model", bound=BaseModel)
 
@@ -110,10 +111,16 @@ def held_indexes(
     unknown = sorted(set(report.held) - set(range(len(notes.items))))
     if unknown:
         raise HoldbacksError(f"the review flagged unknown item index(es) {unknown}")
-    breaking = release.breaking_sources
-    if report.hold_breaking or any(entry.cites(breaking) for entry in entries):
-        raise HoldbacksError("the breaking change is held; file this release by hand")
+    if report.hold_breaking:
+        raise HoldbacksError(HELD_BREAKING)
+    refuse_held_breaking(release, entries)
     return sorted(set(report.held) | set(ledger_matches(notes, entries)))
+
+
+def refuse_held_breaking(release: ReleasePrs, entries: Sequence[LedgerEntry]) -> None:
+    """The breaking block has no item index to drop, so a held one stops filing."""
+    if any(entry.cites(release.breaking_sources) for entry in entries):
+        raise HoldbacksError(HELD_BREAKING)
 
 
 def held_reasons(

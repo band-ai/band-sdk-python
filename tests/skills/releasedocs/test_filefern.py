@@ -21,6 +21,7 @@ from tests.skills.releasedocs.ghpeer import (
     PENDING,
     FakeGh,
 )
+from tests.skills.releasedocs.holdbackfiles import release_prs
 from tests.skills.releasedocs.outputsfile import read_outputs
 from tests.skills.releasedocs.samples import (
     DOCS_PAGE,
@@ -89,11 +90,16 @@ def docs_args(
 
 
 def notes_args(
-    make_notes: Callable[..., object], items: list[object], tmp_path: Path, *held: int
+    make_notes: Callable[..., object],
+    items: list[object],
+    tmp_path: Path,
+    *held: int,
+    breaking: tuple[str, ...] = (),
 ) -> list[str]:
-    path = tmp_path / "release-notes.json"
+    path, prs = tmp_path / "release-notes.json", tmp_path / "release-prs.json"
     path.write_text(make_notes(items).model_dump_json(), encoding="utf-8")  # type: ignore[attr-defined]
-    return ["--notes", str(path), "--held", *map(str, held)]
+    prs.write_text(json.dumps(release_prs(breaking)), encoding="utf-8")
+    return ["--notes", str(path), "--release-prs", str(prs), "--held", *map(str, held)]
 
 
 def file_fern(
@@ -404,6 +410,48 @@ class TestFileFern:
         )
         assert (changelog.state, docs.state, older.state) == (CLOSED, CLOSED, OPEN)
         assert (gh.on(CHANGELOG), gh.on(DOCS)) == ([], [])
+
+    def test_rehearsal_closes_a_docs_pr_held_by_holdbacks(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        checkpatch: ModuleType,
+        gh: FakeGh,
+        fern_remote: FernRemote,
+        fern_files: dict[str, str | bytes],
+        tmp_path: Path,
+    ) -> None:
+        gh.checks[f"{DOCS}-rehearsal"] = PASSING
+        state = read_state(fernstate, gh, tmp_path, "--rehearsal")
+        extra = docs_args(checkpatch, fern_files, tmp_path, EDITED_PAGE)
+        extra += ["--held", "0"]
+        assert (
+            file_fern(filefern, gh, fern_remote, tmp_path, state, "test", *extra) == 0
+        )
+        assert gh.on(f"{DOCS}-rehearsal")[0].state == CLOSED
+
+    def test_breaking_change_held_since_holdbacks_ran_is_not_filed(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        releasedata: ModuleType,
+        gh: FakeGh,
+        fern_remote: FernRemote,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+    ) -> None:
+        fern_remote.commit_to_base(
+            "chore: hold room tasks", {releasedata.HELD_ITEMS: LEDGER}
+        )
+        gh.checks[CHANGELOG] = PASSING
+        state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
+        items = [make_item(*SEND_RETRIES)]
+        extra = notes_args(make_notes, items, tmp_path, breaking=(HELD_PR,))
+        assert (
+            file_fern(filefern, gh, fern_remote, tmp_path, state, "live", *extra) == 1
+        )
+        assert (gh.on(CHANGELOG), fern_remote.has_branch(CHANGELOG)) == ([], False)
 
     def test_page_changed_in_fern_since_the_review_is_not_filed(
         self,
