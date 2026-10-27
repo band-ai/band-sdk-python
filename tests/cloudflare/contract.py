@@ -54,6 +54,9 @@ COLD_START = [
     Call.PING,
 ]
 
+CREATED = 201
+UPSTREAM_BODY = "upstream answer"
+MODEL_SETTING = "ANTHROPIC_MODEL"
 BAND_HOST = "app.band.ai"
 SETTINGS = {
     "BAND_AGENT_ID": "agent",

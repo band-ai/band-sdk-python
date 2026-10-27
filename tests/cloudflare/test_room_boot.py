@@ -11,15 +11,17 @@ from tests.cloudflare.contract import (
     BAND_HOST,
     BODY,
     COLD_START,
+    CREATED,
     IMAGE,
     MODEL,
+    MODEL_SETTING,
     SETTINGS,
     VERSION_ID,
     Call,
     Scenario,
 )
 
-SERVED = {"status": 201, "body": BODY, "room_version": VERSION_ID, "image": IMAGE}
+SERVED = {"status": CREATED, "body": BODY, "room_version": VERSION_ID, "image": IMAGE}
 
 
 @pytest.mark.timeout(120)
@@ -45,7 +47,7 @@ class TestRoomBoot:
         assert runtime.run(Scenario.WARM_REUSE) == {
             "calls": [*COLD_START, Call.INSPECT, Call.FORWARD, Call.FORWARD],
             "idle_timeouts": [constants["idle_ms"]],
-            "statuses": [201, 201],
+            "statuses": [CREATED, CREATED],
         }
 
     def test_readiness_retries_until_the_receiver_is_healthy(
@@ -53,7 +55,7 @@ class TestRoomBoot:
     ) -> None:
         assert runtime.run(Scenario.PING_RETRY) == {
             "calls": [*COLD_START, Call.PING, Call.PING, Call.INSPECT, Call.FORWARD],
-            "status": 201,
+            "status": CREATED,
         }
 
     def test_rehydrated_room_reuses_the_running_container(
@@ -62,12 +64,12 @@ class TestRoomBoot:
         assert runtime.run(Scenario.REHYDRATION) == {
             "calls": [Call.IDLE, Call.MONITOR, Call.PING, Call.INSPECT, Call.FORWARD],
             "idle_timeouts": [constants["idle_ms"]],
-            "status": 201,
+            "status": CREATED,
         }
 
     @pytest.mark.parametrize(
         "model,forwarded",
-        [(None, {}), ("", {}), (MODEL, {"ANTHROPIC_MODEL": MODEL})],
+        [(None, {}), ("", {}), (MODEL, {MODEL_SETTING: MODEL})],
     )
     def test_container_gets_placeholders_while_injectors_hold_the_keys(
         self,
@@ -77,9 +79,9 @@ class TestRoomBoot:
         forwarded: dict[str, str],
     ) -> None:
         placeholder = constants["proxy_key"]
-        result = runtime.run(Scenario.CREDENTIALS, settings={"ANTHROPIC_MODEL": model})
+        result = runtime.run(Scenario.CREDENTIALS, settings={MODEL_SETTING: model})
         assert result == {
-            "status": 201,
+            "status": CREATED,
             "options": {
                 "image": IMAGE,
                 "instance": constants["instance"],
@@ -89,7 +91,7 @@ class TestRoomBoot:
                     "BAND_REST_URL": SETTINGS["BAND_REST_URL"],
                     "BAND_API_KEY": placeholder,
                     "ANTHROPIC_API_KEY": placeholder,
-                    "PORT": str(constants["port"]),
+                    constants["port_setting"]: str(constants["port"]),
                     **forwarded,
                 },
             },
@@ -99,7 +101,7 @@ class TestRoomBoot:
             },
             "forwarded": [
                 {
-                    "url": f"http://{constants['container_host']}"
+                    "url": f"{constants['http']}//{constants['container_host']}"
                     f"{constants['invocations_path']}",
                     "authorization": None,
                 }

@@ -11,6 +11,7 @@ from tests.cloudflare.contract import (
     ABORTED_PROBE,
     COLD_START,
     CRASH_ERROR,
+    CREATED,
     DESTROY_ERROR,
     UPSTREAM_FAILURE,
     Call,
@@ -33,7 +34,7 @@ class TestRoomFailure:
     ) -> None:
         assert runtime.run(Scenario.CRASH_DURING_BOOT) == {
             "statuses": [503, 503, 503],
-            "recovered": 201,
+            "recovered": CREATED,
             "calls": [*COLD_START, Call.DESTROY, *BOOTED, Call.FORWARD],
             "deadline_timers_cancelled": [True, True],
         }
@@ -56,6 +57,7 @@ class TestRoomFailure:
             "fired_early": [False],
             "deadline_timers_cancelled": [True],
             "logs": [
+                ["INFO", constants["cold_start_log"]],
                 ["INFO", constants["receiver_stopped_log"]],
                 ["ERROR", deadline_log(constants)],
             ],
@@ -70,7 +72,10 @@ class TestRoomFailure:
             "running": True,
             "fired_early": [False],
             "deadline_timers_cancelled": [True],
-            "logs": [["ERROR", deadline_log(constants)]],
+            "logs": [
+                ["INFO", constants["reattach_log"]],
+                ["ERROR", deadline_log(constants)],
+            ],
         }
 
     def test_failed_retries_on_a_running_container_log_its_stop_once(
@@ -78,7 +83,7 @@ class TestRoomFailure:
     ) -> None:
         assert runtime.run(Scenario.RETRIES_SHARE_MONITOR) == {
             "statuses": [503, 503, 503],
-            "recovered": 201,
+            "recovered": CREATED,
             "calls": [
                 Call.IDLE,
                 Call.MONITOR,
@@ -88,7 +93,11 @@ class TestRoomFailure:
                 *BOOTED,
                 Call.FORWARD,
             ],
-            "logs": [["WARNING", constants["receiver_failed_log"] % CRASH_ERROR]],
+            "logs": [
+                ["INFO", constants["cold_start_log"]],
+                ["WARNING", constants["receiver_failed_log"] % CRASH_ERROR],
+                ["INFO", constants["ready_log"]],
+            ],
         }
 
     def test_cleanup_failure_keeps_the_startup_cause(
@@ -98,6 +107,7 @@ class TestRoomFailure:
             "status": 503,
             "calls": [*COLD_START, Call.DESTROY],
             "logs": [
+                ["INFO", constants["cold_start_log"]],
                 ["WARNING", constants["receiver_failed_log"] % CRASH_ERROR],
                 ["WARNING", constants["cleanup_failed_log"] % DESTROY_ERROR],
                 ["ERROR", constants["receiver_unavailable_log"] % CRASH_ERROR],
@@ -108,9 +118,15 @@ class TestRoomFailure:
         self, runtime: WorkerRuntime, constants: dict[str, Any]
     ) -> None:
         assert runtime.run(Scenario.CRASH_AFTER_READY) == {
-            "statuses": [201, 201],
+            "statuses": [CREATED, CREATED],
             "calls": [*BOOTED, Call.FORWARD, *BOOTED, Call.FORWARD],
-            "logs": [["WARNING", constants["receiver_failed_log"] % CRASH_ERROR]],
+            "logs": [
+                ["INFO", constants["cold_start_log"]],
+                ["INFO", constants["ready_log"]],
+                ["WARNING", constants["receiver_failed_log"] % CRASH_ERROR],
+                ["INFO", constants["cold_start_log"]],
+                ["INFO", constants["ready_log"]],
+            ],
         }
 
     def test_forward_failure_keeps_the_container_and_redacts_secrets(
@@ -127,10 +143,12 @@ class TestRoomFailure:
             "calls": [*BOOTED, Call.FORWARD],
             "running": True,
             "logs": [
+                ["INFO", constants["cold_start_log"]],
+                ["INFO", constants["ready_log"]],
                 [
                     "ERROR",
                     constants["receiver_unavailable_log"]
                     % f"Error: {secrets} {UPSTREAM_FAILURE}",
-                ]
+                ],
             ],
         }

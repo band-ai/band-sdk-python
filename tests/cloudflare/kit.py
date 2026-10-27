@@ -12,9 +12,11 @@ from typing import Any
 import js
 from contract import (
     BODY,
+    CREATED,
     DESTROY_FAILURE,
     IMAGE,
     SETTINGS,
+    UPSTREAM_BODY,
     UPSTREAM_FAILURE,
     VERSION_ID,
     Call,
@@ -25,6 +27,7 @@ from worker import (
     AUTHORIZATION,
     CONTAINER_IMAGE_HEADER,
     INVOCATIONS_PATH,
+    PROXY_KEY,
     ROOM_VERSION_HEADER,
     SECRET_SETTINGS,
 )
@@ -127,7 +130,7 @@ class Container:
         if self.fail_forward:
             secrets = " ".join(SETTINGS[name] for name in SECRET_SETTINGS)
             await js.Promise.reject(js.Error.new(f"{secrets} {UPSTREAM_FAILURE}"))
-        return Response(await request.text(), status=201).js_object
+        return Response(await request.text(), status=CREATED).js_object
 
 
 async def settled_or_aborted(gate: asyncio.Event, signal: Any) -> None:
@@ -160,7 +163,7 @@ class Routing:
 
     async def fetch(self, request: Request) -> Response:
         self.body = await request.text()
-        return Response(self.body, status=201)
+        return Response(self.body, status=CREATED)
 
 
 class Clock:
@@ -233,7 +236,7 @@ def upstream_requests() -> Iterator[list[dict[str, Any]]]:
             }
         )
         return Response(
-            "redirect", status=302, headers={"Location": "https://example.com/"}
+            UPSTREAM_BODY, status=302, headers={"Location": "https://example.com/"}
         ).js_object
 
     proxy = create_proxy(upstream)
@@ -252,6 +255,11 @@ def environment(settings: dict[str, Any], **bindings: Any) -> SimpleNamespace:
         **{name: value for name, value in values.items() if value is not None},
         VERSION=SimpleNamespace(id=VERSION_ID),
     )
+
+
+def outbound(url: str, **options: Any) -> Any:
+    """Build a request as the container's clients send it, with the placeholder key."""
+    return Request(url, headers={API_KEY_HEADER: PROXY_KEY}, **options).js_object
 
 
 def invocation(

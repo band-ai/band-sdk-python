@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+from types import ModuleType
 from unittest.mock import NonCallableMagicMock
 
 import httpx
-import pytest
 
 from band.runtime.oneshot import OneShotEnvelopeError
 
 
 class TestRoutes:
-    async def test_ping_reports_healthy(self, client: httpx.AsyncClient) -> None:
+    async def test_ping_reports_healthy(
+        self, receiver: ModuleType, client: httpx.AsyncClient
+    ) -> None:
         response = await client.get("/ping")
-        assert (response.status_code, response.json()) == (200, {"status": "Healthy"})
+        assert (response.status_code, response.json()) == (
+            200,
+            {"status": receiver.HEALTHY},
+        )
 
     async def test_invocation_body_reaches_the_invoker_unchanged(
         self, client: httpx.AsyncClient, invoker: NonCallableMagicMock
@@ -24,7 +29,10 @@ class TestRoutes:
         invoker.handle_event.assert_awaited_once_with(body)
 
     async def test_malformed_json_is_rejected_before_invocation(
-        self, client: httpx.AsyncClient, invoker: NonCallableMagicMock
+        self,
+        receiver: ModuleType,
+        client: httpx.AsyncClient,
+        invoker: NonCallableMagicMock,
     ) -> None:
         response = await client.post(
             "/invocations",
@@ -33,25 +41,29 @@ class TestRoutes:
         )
         assert (response.status_code, response.json()) == (
             400,
-            {"detail": "invalid JSON body"},
+            {"detail": receiver.INVALID_JSON},
         )
         invoker.handle_event.assert_not_awaited()
 
-    @pytest.mark.parametrize(
-        "error,status,detail",
-        [
-            (OneShotEnvelopeError("missing room_id"), 400, "missing room_id"),
-            (RuntimeError("private failure"), 500, "invocation failed"),
-        ],
-    )
-    async def test_invoker_errors_map_to_sanitized_http_errors(
+    async def test_envelope_error_maps_to_400_with_its_reason(
+        self, client: httpx.AsyncClient, invoker: NonCallableMagicMock
+    ) -> None:
+        invoker.handle_event.side_effect = OneShotEnvelopeError("missing room_id")
+        response = await client.post("/invocations", json={})
+        assert (response.status_code, response.json()) == (
+            400,
+            {"detail": "missing room_id"},
+        )
+
+    async def test_unexpected_error_maps_to_a_sanitized_500(
         self,
+        receiver: ModuleType,
         client: httpx.AsyncClient,
         invoker: NonCallableMagicMock,
-        error: Exception,
-        status: int,
-        detail: str,
     ) -> None:
-        invoker.handle_event.side_effect = error
+        invoker.handle_event.side_effect = RuntimeError("private failure")
         response = await client.post("/invocations", json={})
-        assert (response.status_code, response.json()) == (status, {"detail": detail})
+        assert (response.status_code, response.json()) == (
+            500,
+            {"detail": receiver.INVOCATION_FAILED},
+        )

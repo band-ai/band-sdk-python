@@ -6,24 +6,39 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from contract import BAND_HOST, SETTINGS, Scenario
-from kit import Routing, environment, invocation, recorded_logs, upstream_requests
+from kit import (
+    Routing,
+    environment,
+    invocation,
+    outbound,
+    recorded_logs,
+    upstream_requests,
+)
 from lifecycle import ROOM_SCENARIOS
 from worker import (
     ANTHROPIC_HOST,
     CLEANUP_FAILED_LOG,
+    COLD_START_LOG,
     CONFIGURATION_UNAVAILABLE,
     CONTAINER_HOST,
     CONTAINER_INSTANCE,
+    FORBIDDEN_UPSTREAM,
+    HTTP,
     IDLE_MS,
     INVALID_ENVELOPE,
+    INVALID_ENVELOPE_LOG,
     INVALID_ROUTING,
+    INVALID_ROUTING_LOG,
     INVALID_SETTINGS_LOG,
     INVOCATIONS_PATH,
     NOT_FOUND,
     OPTIONAL_SETTINGS,
     PORT,
+    PORT_SETTING,
     PROXY_KEY,
     READINESS_EXCEEDED,
+    READY_LOG,
+    REATTACH_LOG,
     RECEIVER_FAILED_LOG,
     RECEIVER_STOPPED_LOG,
     RECEIVER_UNAVAILABLE,
@@ -32,6 +47,7 @@ from worker import (
     REQUIRED_SETTINGS,
     SECRET_SETTINGS,
     UNAUTHORIZED,
+    UNAUTHORIZED_LOG,
     UNKNOWN_IMAGE,
     WORKER_VERSION_HEADER,
     KeyInjector,
@@ -84,24 +100,25 @@ class Harness(DurableObject):
                 {"props": {"host": BAND_HOST, "key": SETTINGS["BAND_API_KEY"]}}
             )
         )
-        with upstream_requests() as upstream:
-            allowed = await injector.fetch(
-                Request(f"https://{BAND_HOST}/redirect", redirect="manual").js_object
-            )
-            other_host = await injector.fetch(
-                Request("https://example.com/wrong").js_object
-            )
-            insecure = await injector.fetch(
-                Request(f"http://{BAND_HOST}/wrong").js_object
-            )
-        return {
-            "statuses": {
-                "allowed": allowed.status,
-                "other_host": other_host.status,
-                "insecure": insecure.status,
-            },
-            "upstream": upstream,
+        targets = {
+            "allowed": f"https://{BAND_HOST}/redirect",
+            "other_host": "https://example.com/wrong",
+            "other_port": f"https://{BAND_HOST}:8443/wrong",
+            "lookalike_host": f"https://{BAND_HOST}.example.com/wrong",
+            "insecure": f"http://{BAND_HOST}/wrong",
         }
+        with upstream_requests() as upstream:
+            outcomes = {
+                name: await answered(
+                    await injector.fetch(outbound(url, redirect="manual"))
+                )
+                for name, url in targets.items()
+            }
+        return {"outcomes": outcomes, "upstream": upstream}
+
+
+async def answered(response: Any) -> list[Any]:
+    return [response.status, await response.text()]
 
 
 def constants() -> dict[str, Any]:
@@ -121,6 +138,15 @@ def constants() -> dict[str, Any]:
         "unknown_image": UNKNOWN_IMAGE,
         "configuration_unavailable": CONFIGURATION_UNAVAILABLE,
         "not_found": NOT_FOUND,
+        "forbidden_upstream": FORBIDDEN_UPSTREAM,
+        "port_setting": PORT_SETTING,
+        "http": HTTP,
+        "unauthorized_log": UNAUTHORIZED_LOG,
+        "invalid_envelope_log": INVALID_ENVELOPE_LOG,
+        "invalid_routing_log": INVALID_ROUTING_LOG,
+        "cold_start_log": COLD_START_LOG,
+        "reattach_log": REATTACH_LOG,
+        "ready_log": READY_LOG,
         "unauthorized": UNAUTHORIZED,
         "invalid_envelope": INVALID_ENVELOPE,
         "invalid_routing": INVALID_ROUTING,

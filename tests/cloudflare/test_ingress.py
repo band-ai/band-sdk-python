@@ -10,22 +10,22 @@ import pytest
 from tests.cloudflare.client import WorkerRuntime
 from tests.cloudflare.contract import (
     BODY,
+    CREATED,
     ENVELOPE,
     MODEL,
+    MODEL_SETTING,
     SETTINGS,
     VERSION_ID,
     Scenario,
 )
 
-REQUIRED = (
-    "BAND_AGENT_ID",
-    "BAND_REST_URL",
-    "BAND_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "BRIDGE_TOKEN",
-)
-OPTIONAL = ("ANTHROPIC_MODEL",)
-PADDED = {**SETTINGS, "ANTHROPIC_MODEL": MODEL}
+REQUIRED = tuple(SETTINGS)
+OPTIONAL = (MODEL_SETTING,)
+PADDED = {**SETTINGS, MODEL_SETTING: MODEL}
+UNAUTHORIZED = ("unauthorized", [("WARNING", "unauthorized_log")])
+BAD_ENVELOPE = ("invalid_envelope", [("WARNING", "invalid_envelope_log")])
+BAD_ROUTING = ("invalid_routing", [("WARNING", "invalid_routing_log")])
+NOT_FOUND = ("not_found", [])
 
 
 @pytest.mark.timeout(120)
@@ -56,7 +56,7 @@ class TestIngress:
                 )
             ],
             *[({name: f" {PADDED[name]} "}, name) for name in (*REQUIRED, *OPTIONAL)],
-            ({"ANTHROPIC_MODEL": "   "}, "ANTHROPIC_MODEL"),
+            ({MODEL_SETTING: "   "}, MODEL_SETTING),
         ],
     )
     def test_invalid_setting_fails_closed_and_is_named(
@@ -77,47 +77,33 @@ class TestIngress:
         }
 
     @pytest.mark.parametrize(
-        "case,status,body,invalid",
+        "case,status,rejection",
         [
-            ({"request": {"authorization": ""}}, 401, "unauthorized", []),
-            (
-                {"request": {"authorization": "Bearer private-wrong"}},
-                401,
-                "unauthorized",
-                [],
-            ),
-            ({"request": {"authorization": "Bearer x"}}, 401, "unauthorized", []),
-            ({"request": {"body": "{"}}, 400, "invalid_envelope", []),
-            ({"request": {"body": "[]"}}, 400, "invalid_envelope", []),
-            ({"request": {"body": "null"}}, 400, "invalid_envelope", []),
-            ({"request": {"path": "/ping"}}, 404, "not_found", []),
-            ({"request": {"method": "GET"}}, 404, "not_found", []),
-            ({"request": {"method": "PROPFIND"}}, 404, "not_found", []),
+            ({"request": {"authorization": ""}}, 401, UNAUTHORIZED),
+            ({"request": {"authorization": "Bearer private-wrong"}}, 401, UNAUTHORIZED),
+            ({"request": {"authorization": "Bearer x"}}, 401, UNAUTHORIZED),
+            ({"request": {"body": "{"}}, 400, BAD_ENVELOPE),
+            ({"request": {"body": "[]"}}, 400, BAD_ENVELOPE),
+            ({"request": {"body": "null"}}, 400, BAD_ENVELOPE),
+            ({"request": {"path": "/ping"}}, 404, NOT_FOUND),
+            ({"request": {"method": "GET"}}, 404, NOT_FOUND),
+            ({"request": {"method": "PROPFIND"}}, 404, NOT_FOUND),
             # Combined faults pin the check order: settings, route, auth, then body.
             (
                 {"settings": {"BAND_API_KEY": None}, "request": {"path": "/ping"}},
                 503,
-                "configuration_unavailable",
-                ["BAND_API_KEY"],
+                (
+                    "configuration_unavailable",
+                    [("ERROR", "invalid_settings_log", "BAND_API_KEY")],
+                ),
             ),
-            (
-                {"request": {"authorization": "", "path": "/ping"}},
-                404,
-                "not_found",
-                [],
-            ),
-            (
-                {"request": {"authorization": "", "body": "{"}},
-                401,
-                "unauthorized",
-                [],
-            ),
+            ({"request": {"authorization": "", "path": "/ping"}}, 404, NOT_FOUND),
+            ({"request": {"authorization": "", "body": "{"}}, 401, UNAUTHORIZED),
             *[
                 (
                     {"request": {"body": json.dumps({**ENVELOPE, field: value})}},
                     400,
-                    "invalid_routing",
-                    [],
+                    BAD_ROUTING,
                 )
                 for field, values in (
                     ("room_id", (None, "", " ", 123, [], {})),
@@ -134,9 +120,9 @@ class TestIngress:
         constants: dict[str, Any],
         case: dict[str, Any],
         status: int,
-        body: str,
-        invalid: list[str],
+        rejection: tuple[str, list[tuple[str, ...]]],
     ) -> None:
+        body, logs = rejection
         assert runtime.run(Scenario.INGRESS, **case) == {
             "status": status,
             "body": constants[body],
@@ -144,18 +130,19 @@ class TestIngress:
             "forwarded_body": None,
             "worker_version": None,
             "logs": [
-                ["ERROR", constants["invalid_settings_log"] % name] for name in invalid
+                [level, constants[message] % tuple(args)]
+                for level, message, *args in logs
             ],
         }
 
     @pytest.mark.parametrize(
-        "settings", [{}, {"ANTHROPIC_MODEL": ""}, {"ANTHROPIC_MODEL": MODEL}]
+        "settings", [{}, {MODEL_SETTING: ""}, {MODEL_SETTING: MODEL}]
     )
     def test_routes_original_body_to_exact_room(
         self, runtime: WorkerRuntime, settings: dict[str, str]
     ) -> None:
         assert runtime.run(Scenario.INGRESS, settings=settings) == {
-            "status": 201,
+            "status": CREATED,
             "body": BODY,
             "room": ENVELOPE["room_id"],
             "forwarded_body": BODY,

@@ -9,10 +9,7 @@ import pytest
 from band_rest.core.api_error import ApiError
 from pytest_httpx import HTTPXMock
 
-from tests.oneshot_server.kit import CREDENTIALS
-from tests.runtime.conftest import make_link_mock
-
-AGENT_ME_PATH = "/api/v1/agent/me"
+from tests.oneshot_server.kit import AGENT_ME, AGENT_ME_PATH, CREDENTIALS
 
 
 class TestLifespan:
@@ -23,10 +20,9 @@ class TestLifespan:
         platform_url: str,
         httpx_mock: HTTPXMock,
     ) -> None:
-        response = await make_link_mock().rest.agent_api_identity.get_agent_me()
         httpx_mock.add_response(
             url=platform_url + AGENT_ME_PATH,
-            json=response.model_dump(mode="json"),
+            json=AGENT_ME.model_dump(mode="json"),
         )
         async with receiver.app.router.lifespan_context(receiver.app):
             result = await client.post(
@@ -42,7 +38,7 @@ class TestLifespan:
                 200,
                 {"status": "ignored", "event_type": "room_added"},
             )
-            assert receiver.app.state.invoker.agent_name == response.data.name
+            assert receiver.app.state.invoker.agent_name == AGENT_ME.data.name
         with pytest.raises(RuntimeError, match="startup"):
             await receiver.app.state.invoker.handle_event({"event_type": "room_added"})
 

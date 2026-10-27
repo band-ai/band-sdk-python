@@ -17,11 +17,11 @@ from kit import (
     environment,
     invocation,
     observed,
+    outbound,
     recorded_logs,
     upstream_requests,
 )
 from worker import READINESS_SECONDS, Room, logger
-from workers import Request
 
 Observations = dict[str, Any]
 
@@ -85,7 +85,7 @@ async def credentials(ctx: Any, settings: dict[str, Any]) -> Observations:
     response = await room.fetch(invocation())
     with upstream_requests() as upstream:
         for host, injector in container.injectors.items():
-            await injector.fetch(Request(f"https://{host}/probe").js_object)
+            await injector.fetch(outbound(f"https://{host}/probe"))
     options = json.loads(js.JSON.stringify(container.options))
     return {
         "status": response.status,

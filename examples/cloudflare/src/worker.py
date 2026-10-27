@@ -35,6 +35,8 @@ BRIDGE_TOKEN_SETTING = "BRIDGE_TOKEN"
 SECRET_SETTINGS = (BAND_KEY_SETTING, ANTHROPIC_KEY_SETTING, BRIDGE_TOKEN_SETTING)
 REQUIRED_SETTINGS = (AGENT_ID_SETTING, REST_URL_SETTING, *SECRET_SETTINGS)
 OPTIONAL_SETTINGS = ("ANTHROPIC_MODEL",)
+PORT_SETTING = "PORT"
+HTTP = "http:"
 HTTPS = "https:"
 INVOCATIONS_PATH = "/invocations"
 AUTHORIZATION = "Authorization"
@@ -46,6 +48,7 @@ UNKNOWN_IMAGE = "unknown"
 REDACTED = "[redacted]"
 CONFIGURATION_UNAVAILABLE = "Configuration unavailable"
 NOT_FOUND = "Not found"
+FORBIDDEN_UPSTREAM = "Forbidden upstream"
 UNAUTHORIZED = "Unauthorized"
 INVALID_ENVELOPE = "Invalid JSON envelope"
 INVALID_ROUTING = "Invalid invocation routing"
@@ -55,6 +58,12 @@ RECEIVER_UNAVAILABLE_LOG = "Room receiver unavailable: %s"
 RECEIVER_FAILED_LOG = "Room receiver failed: %s"
 CLEANUP_FAILED_LOG = "Room receiver cleanup failed: %s"
 RECEIVER_STOPPED_LOG = "Room receiver stopped"
+COLD_START_LOG = "Room receiver starting"
+REATTACH_LOG = "Room receiver reattaching"
+READY_LOG = "Room receiver ready"
+UNAUTHORIZED_LOG = "Ingress rejected: bearer mismatch"
+INVALID_ENVELOPE_LOG = "Ingress rejected: invalid JSON envelope"
+INVALID_ROUTING_LOG = "Ingress rejected: routing mismatch"
 READINESS_EXCEEDED = "Receiver readiness deadline exceeded; last probe: %s"
 
 
@@ -85,6 +94,11 @@ def secure_endpoint(url: str) -> bool:
     )
 
 
+def optional_value(env: Any, name: str) -> Any:
+    """Return an optional setting, or None when it is unset or empty."""
+    return getattr(env, name, None) or None
+
+
 def invalid_settings(env: Any) -> list[str]:
     """Name each setting that makes the Worker fail closed."""
     invalid = [
@@ -93,7 +107,7 @@ def invalid_settings(env: Any) -> list[str]:
     invalid += [
         name
         for name in OPTIONAL_SETTINGS
-        if getattr(env, name, None) and not trimmed(getattr(env, name))
+        if (value := optional_value(env, name)) is not None and not trimmed(value)
     ]
     if REST_URL_SETTING not in invalid and not secure_endpoint(
         getattr(env, REST_URL_SETTING)
@@ -121,7 +135,7 @@ class KeyInjector(WorkerEntrypoint):
     async def fetch(self, request: Request) -> Response:
         target = js.URL.new(request.url)
         if target.protocol != HTTPS or target.host != self.ctx.props.host:
-            return Response("Forbidden upstream", status=403)
+            return Response(FORBIDDEN_UPSTREAM, status=403)
         headers = js.Headers.new(request.js_object.headers)
         headers.set(API_KEY_HEADER, self.ctx.props.key)
         forwarded = js.Request.new(
@@ -166,6 +180,7 @@ class Room(DurableObject):
         termination = None
         readiness = None
         abort = js.AbortController.new()
+        logger.info(COLD_START_LOG if starting else REATTACH_LOG)
         try:
             if starting:
                 await self.start(container)
@@ -189,6 +204,7 @@ class Room(DurableObject):
             raise
         finally:
             abort.abort()
+        logger.info(READY_LOG)
         inspection = await container.inspect()
         self.image = (inspection and inspection.image) or UNKNOWN_IMAGE
 
@@ -216,13 +232,13 @@ class Room(DurableObject):
             {
                 AGENT_ID_SETTING: getattr(self.env, AGENT_ID_SETTING),
                 REST_URL_SETTING: getattr(self.env, REST_URL_SETTING),
-                "PORT": str(PORT),
+                PORT_SETTING: str(PORT),
             }
             | dict.fromkeys(proxied.values(), PROXY_KEY)
             | {
-                name: getattr(self.env, name)
+                name: value
                 for name in OPTIONAL_SETTINGS
-                if getattr(self.env, name, None)
+                if (value := optional_value(self.env, name)) is not None
             }
         )
         container.start(
@@ -256,35 +272,36 @@ class Room(DurableObject):
         port = self.ctx.container.getTcpPort(PORT)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + READINESS_SECONDS
+        expiry = js.AbortController.new()
+        timer = loop.call_at(deadline, expiry.abort)
+        signals = js.AbortSignal.any(to_js([signal, expiry.signal]))
         outcome = "none"
-        while not signal.aborted and loop.time() < deadline:
-            controller = js.AbortController.new()
-            timer = loop.call_at(deadline, controller.abort)
-            try:
-                signals = js.AbortSignal.any(to_js([signal, controller.signal]))
-                response = await port.fetch(
-                    f"http://{CONTAINER_HOST}/ping",
-                    runtime_options({"signal": signals}),
-                )
-                if response.body:
-                    await response.body.cancel()
-                if response.ok:
-                    return
-                outcome = f"HTTP {response.status}"
-            except (JsException, OSError) as error:
-                outcome = str(error)
-            finally:
-                timer.cancel()
-            remaining = deadline - loop.time()
-            if remaining > 0:
-                await asyncio.sleep(min(PING_INTERVAL_SECONDS, remaining))
+        try:
+            while not signals.aborted and loop.time() < deadline:
+                try:
+                    response = await port.fetch(
+                        f"{HTTP}//{CONTAINER_HOST}/ping",
+                        runtime_options({"signal": signals}),
+                    )
+                    if response.body:
+                        await response.body.cancel()
+                    if response.ok:
+                        return
+                    outcome = f"HTTP {response.status}"
+                except (JsException, OSError) as error:
+                    outcome = str(error)
+                remaining = deadline - loop.time()
+                if remaining > 0:
+                    await asyncio.sleep(min(PING_INTERVAL_SECONDS, remaining))
+        finally:
+            timer.cancel()
         raise RuntimeError(READINESS_EXCEEDED % outcome)
 
     async def fetch(self, request: Request) -> Response:
         try:
             await self.ensure_ready()
             target = js.URL.new(request.url)
-            target.protocol = "http:"
+            target.protocol = HTTP
             target.hostname = CONTAINER_HOST
             target.port = ""
             forwarded = js.Request.new(target, request.js_object)
@@ -316,6 +333,7 @@ class Default(WorkerEntrypoint):
         actual = request.headers.get(AUTHORIZATION, "").encode()
         expected = f"Bearer {getattr(self.env, BRIDGE_TOKEN_SETTING)}".encode()
         if not hmac.compare_digest(actual, expected):
+            logger.warning(UNAUTHORIZED_LOG)
             return Response(UNAUTHORIZED, status=401)
         body = await request.text()
         try:
@@ -323,12 +341,14 @@ class Default(WorkerEntrypoint):
             if not isinstance(envelope, dict):
                 raise ValueError("Expected an object")
         except ValueError:
+            logger.warning(INVALID_ENVELOPE_LOG)
             return Response(INVALID_ENVELOPE, status=400)
         if (
             envelope.get("agent_id") != getattr(self.env, AGENT_ID_SETTING)
             or not nonempty(envelope.get("room_id"))
             or not nonempty(envelope.get("event_type"))
         ):
+            logger.warning(INVALID_ROUTING_LOG)
             return Response(INVALID_ROUTING, status=400)
         upstream = await self.env.ROOM.getByName(envelope["room_id"]).fetch(
             Request(request, body=body)

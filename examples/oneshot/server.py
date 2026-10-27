@@ -58,6 +58,9 @@ from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
 
 LogSettings().for_application().configure()
 logger = logging.getLogger(__name__)
+HEALTHY = "Healthy"
+INVALID_JSON = "invalid JSON body"
+INVOCATION_FAILED = "invocation failed"
 
 
 class Settings(BaseSettings):
@@ -130,7 +133,7 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/ping")
 async def ping() -> dict[str, str]:
     """Report readiness once startup has loaded the agent."""
-    return {"status": "Healthy"}
+    return {"status": HEALTHY}
 
 
 @app.post("/invocations")
@@ -152,14 +155,14 @@ async def invocations(request: Request) -> dict[str, Any]:
     try:
         body = await request.json()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail="invalid JSON body") from e
+        raise HTTPException(status_code=400, detail=INVALID_JSON) from e
     try:
         return await invoker.handle_event(body)
     except OneShotEnvelopeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
-        logger.exception("invocation failed")
-        raise HTTPException(status_code=500, detail="invocation failed")
+        logger.exception(INVOCATION_FAILED)
+        raise HTTPException(status_code=500, detail=INVOCATION_FAILED)
 
 
 def main() -> None:
