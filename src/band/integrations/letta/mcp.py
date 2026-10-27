@@ -41,6 +41,10 @@ _MCP_URL_PATHS: dict[str, str] = {
 }
 
 
+# How a failed Letta API call is described: its class and HTTP status only.
+API_FAILURE_WITH_STATUS = "{name} (HTTP {status})"
+
+
 def _echoes_request(error: Exception) -> bool:
     """Whether ``error`` is a Letta API error, whose text carries the response
     ``body``, which can echo the submitted config and its bearer token."""
@@ -58,7 +62,9 @@ def _registration_failure(error: Exception) -> str:
         return str(error)
     status = _status_code(error)
     name = type(error).__name__
-    return name if status is None else f"{name} (HTTP {status})"
+    if status is None:
+        return name
+    return API_FAILURE_WITH_STATUS.format(name=name, status=status)
 
 
 def _safe_cause(error: Exception) -> Exception | None:

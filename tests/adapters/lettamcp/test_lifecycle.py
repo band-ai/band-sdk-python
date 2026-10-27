@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import traceback
 from collections.abc import Awaitable, Callable
+from http import HTTPStatus
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -20,6 +21,7 @@ from band.adapters.letta import (
 )
 from band.converters.letta import LettaSessionState
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.integrations.letta.mcp import API_FAILURE_WITH_STATUS
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.lettakit import (
@@ -78,7 +80,11 @@ Rejection = Callable[..., Awaitable[None]]
 REJECTIONS = [
     pytest.param(
         reject_echoing_the_config,
-        ": UnprocessableEntityError (HTTP 422)",
+        ": "
+        + API_FAILURE_WITH_STATUS.format(
+            name=UnprocessableEntityError.__name__,
+            status=HTTPStatus.UNPROCESSABLE_ENTITY,
+        ),
         None,
         id="api-error-with-status",
     ),

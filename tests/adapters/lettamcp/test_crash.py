@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+from http import HTTPStatus
 
 import pytest
+from letta_client import NotFoundError
 
 from band.adapters.letta import (
     LettaAdapterConfig,
     LettaMCPConfig,
 )
+from band.integrations.letta.mcp import API_FAILURE_WITH_STATUS
 from tests.adapters.lettakit import (
     make_mock_mcp_server,
 )
@@ -104,7 +107,9 @@ class TestSelfHostedMCPCrash:
 
         with backends_created_by(), pytest.raises(RuntimeError) as raised:
             await bridge.ensure_ready(client)
-        assert "NotFoundError (HTTP 404)" in str(raised.value)
+        assert API_FAILURE_WITH_STATUS.format(
+            name=NotFoundError.__name__, status=HTTPStatus.NOT_FOUND
+        ) in str(raised.value)
         assert "no such server" not in str(raised.value)
         assert bridge.server_id is None
 

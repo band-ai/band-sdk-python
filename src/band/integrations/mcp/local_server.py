@@ -218,8 +218,8 @@ class LocalMCPServer:
     address it with ``room_sse_url``/``room_http_url``.
 
     Every request except the health check must carry ``auth_headers``
-    (``auth_token`` as a bearer token) or gets 401. One token covers every
-    room the server serves.
+    (``auth_token`` as a bearer token) or is refused (see
+    ``BearerTokenGuard``). One token covers every room the server serves.
 
     Lifecycle is an async context manager (``async with LocalMCPServer(...)
     as server:``); ``start()``/``stop()`` remain as the escape hatch for
