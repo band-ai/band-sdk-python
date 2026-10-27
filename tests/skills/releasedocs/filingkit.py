@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -87,9 +88,8 @@ def file_fern(
     wait: Callable[[], None] = lambda: None,
 ) -> int:
     """File from a fresh clone, as each workflow run does; ``wait`` runs between polls."""
-    dest = tmp_path / "fern-write"
-    shutil.rmtree(dest, ignore_errors=True)
-    fern = remote.clone(dest)
+    # A new directory per run: Windows can't delete a clone's read-only objects.
+    fern = remote.clone(Path(tempfile.mkdtemp(prefix="fern-write-", dir=tmp_path)))
     argv = [RELEASE_TAG, "--fern", str(fern), "--state", str(state), "--mode", mode]
     argv += ["--outputs", str(tmp_path / "outputs"), *extra]
     return filefern.main(argv, gh=gh, poll=filefern.Poll(2, wait))
