@@ -50,10 +50,11 @@ class ContractJournal:
         )
         if page.through is not None:
             arguments += ("--through", str(page.through))
+        # One token per text option: a value that starts with "-" stays a value.
         if page.kind is not None:
-            arguments += ("--kind", page.kind)
+            arguments += ("--kind=" + page.kind,)
         if page.query:
-            arguments += ("--query", page.query)
+            arguments += ("--query=" + page.query,)
         return await self._run(arguments)
 
     async def backup(self, destination: Path) -> JsonObject:

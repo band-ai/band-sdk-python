@@ -10,6 +10,7 @@ import pytest
 
 from band.contracts.journal import ContractJournal
 from band.contracts.models import RuntimeConfig
+from remote_agent import cli
 
 
 class TestOperator:
@@ -49,3 +50,30 @@ class TestOperator:
         result = await getattr(operator, operation)(*arguments)
         assert result == {"replayable": False}
         assert calls == [expected]
+
+    @pytest.mark.parametrize("text", ["-error", "--after", "-"])
+    async def test_journal_text_that_looks_like_an_option_reaches_the_search(
+        self, text: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        commands: list[tuple[str, ...]] = []
+        searches: list[dict[str, Any]] = []
+
+        async def run(self: ContractJournal, args: tuple[str, ...]) -> dict[str, Any]:
+            commands.append(args)
+            return {}
+
+        def search(source: str, **page: Any) -> dict[str, Any]:
+            searches.append(page)
+            return {}
+
+        monkeypatch.setattr(ContractJournal, "_run", run)
+        monkeypatch.setattr(cli, "require_runtime", lambda: None)
+        monkeypatch.setattr(cli.operations, "journal", search)
+        operator = ContractJournal(
+            Path("state"), runtime=RuntimeConfig(python=Path(sys.executable))
+        )
+        await operator.journal(kind=text, query=text)
+        assert cli.main(list(commands[0])) == 0
+        assert searches == [
+            {"after": 0, "through": None, "limit": 50, "kind": text, "query": text}
+        ]
