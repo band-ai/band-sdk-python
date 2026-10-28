@@ -643,6 +643,7 @@ def _build_antigravity_acp(
         "gemini_api_key": api_key,
         "command": antigravity_command(s),
         "gemini_home": os.path.join(sandbox.name, "antigravity-home"),
+        "retention": {"transition_timeout_s": 90},
         "approval_mode": "auto_decline",
     }
     if workspace_for_room is None:

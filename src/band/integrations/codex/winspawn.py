@@ -813,10 +813,18 @@ class WindowsProcess:
         )
         # Cancelling connect must not discard a helper created by the transport.
         await asyncio.shield(self._creation)
+        logger.info(
+            "Windows helper diagnostic created pid=%s",
+            getattr(self.process, "pid", None),
+        )
         if self.closing or self._read_fd is None:
             raise SpawnFailure(None)
         self._status = asyncio.create_task(self._ready(target_env))
         line = await asyncio.shield(self._status)
+        logger.info(
+            "Windows helper diagnostic acknowledged pid=%s",
+            getattr(self.process, "pid", None),
+        )
         if self.closing:
             raise SpawnFailure(None)
         if line != _READY:
@@ -856,6 +864,9 @@ class WindowsProcess:
         try:
             self.process.stdin.write(encode_environment(env))
             await self.process.stdin.drain()
+            logger.info(
+                "Windows helper diagnostic environment sent pid=%s", self.process.pid
+            )
             return await _read_status(self._read_fd, _SPAWN_ACK_S)
         finally:
             self._close_status_pipe()
