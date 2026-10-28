@@ -13,9 +13,8 @@ from tests.adapters.opencode.resume.kit import (
     recorded,
     room_input,
     room_tools,
+    started,
 )
-
-AGENT_NAME = "OpenCode Agent"
 
 
 class TestRestore:
@@ -25,16 +24,14 @@ class TestRestore:
         seeding_client = FakeOpencodeClient(
             prompt_event_sequences=[answer("sess-1", "msg-1")]
         )
-        seeding = make_adapter(seeding_client, emit=())
-        await seeding.on_started(AGENT_NAME, "A coding agent")
+        seeding = await started(make_adapter(seeding_client, emit=()))
         seeded = room_tools()
         await seeding.on_event(room_input(seeded, history=TRANSCRIPT, bootstrap=True))
 
         restarted_client = FakeOpencodeClient(
             prompt_event_sequences=[answer("sess-1", "msg-2")]
         )
-        restarted = make_adapter(restarted_client, emit=())
-        await restarted.on_started(AGENT_NAME, "A coding agent")
+        restarted = await started(make_adapter(restarted_client, emit=()))
         await restarted.on_event(
             room_input(
                 room_tools(), history=[*TRANSCRIPT, *seeded.events_sent], bootstrap=True
@@ -53,8 +50,7 @@ class TestRestore:
                 answer("sess-1", "msg-2"),
             ]
         )
-        adapter = make_adapter(client)
-        await adapter.on_started(AGENT_NAME, "A coding agent")
+        adapter = await started(make_adapter(client))
         history = await recorded("sess-1")
 
         await adapter.on_event(

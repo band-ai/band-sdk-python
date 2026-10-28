@@ -43,7 +43,7 @@ class OpencodeHistoryConverter(HistoryConverter[OpencodeSessionState]):
 
 def _session_registrations(raw: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     """The MCP registration that recorded each OpenCode session in ``raw``."""
-    metadata = [message.get("metadata") for message in raw]
+    metadata = (message.get("metadata") for message in raw)
     return {
         entry[OpencodeMetadataKey.SESSION]: entry[OpencodeMetadataKey.MCP_SERVER_NAME]
         for entry in metadata

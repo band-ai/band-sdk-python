@@ -14,6 +14,7 @@ from tests.adapters.opencode.resume.kit import (
     prompts,
     room_input,
     room_tools,
+    started,
 )
 
 
@@ -27,8 +28,7 @@ class TestFailedSeed:
                 answer("sess-2", "msg-2"),
             ]
         )
-        adapter = make_adapter(client, emit=())
-        await adapter.on_started("OpenCode Agent", "A coding agent")
+        adapter = await started(make_adapter(client, emit=()))
         failed, retried = room_tools(), room_tools()
 
         await adapter.on_event(room_input(failed, history=TRANSCRIPT, bootstrap=True))

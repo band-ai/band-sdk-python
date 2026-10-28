@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from band.adapters.opencode import OpencodeAdapter
 from band.converters.helpers import build_replay_messages
 from band.converters.opencode import OPENCODE_RESUME_RECORD
 from band.core.types import AgentInput, HistoryProvider
@@ -33,6 +34,12 @@ TRANSCRIPT: list[dict[str, Any]] = [
     }
 ]
 REPLAYED = build_replay_messages(TRANSCRIPT)
+
+
+async def started(adapter: OpencodeAdapter) -> OpencodeAdapter:
+    """``adapter`` once the runtime has started it."""
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    return adapter
 
 
 def room_tools() -> FakeAgentTools:
