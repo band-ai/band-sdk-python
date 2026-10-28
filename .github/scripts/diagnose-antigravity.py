@@ -90,6 +90,20 @@ async def main() -> None:
         done, _ = await asyncio.wait({closing}, timeout=10)
         if done:
             await closing
+            identities = {(row["ProcessId"], row["CreationDate"]) for row in rows}
+            remaining = [
+                row
+                for row in await processes()
+                if (row["ProcessId"], row["CreationDate"]) in identities
+            ]
+            logger.info("After shutdown owned processes: %s", remaining)
+            if remaining:
+                raise RuntimeError("Native shutdown left recorded processes alive")
+            logger.info(
+                "Closed streams: stdout_eof=%s stderr_eof=%s",
+                process.stdout.at_eof(),
+                process.stderr.at_eof(),
+            )
             logger.info("Native session/new shutdown completed without inference")
             return
         logger.error(
