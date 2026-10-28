@@ -345,6 +345,10 @@ jobs:
         path: ${{ runner.tool_cache }}/antigravity-archives
         key: ${{ steps.antigravity-cache.outputs.cache-primary-key }}
 
+    - name: Check Windows ACP process ownership
+      if: matrix.lane == 'google' && matrix.os == 'windows' && inputs.first_attempt_diagnostics
+      run: uv run --no-sync --all-packages pytest tests/integrations/acp/windowsownership/ -q --no-cov -p no:rerunfailures
+
     - name: Diagnose Windows Antigravity shutdown
       if: matrix.lane == 'google' && matrix.os == 'windows' && inputs.first_attempt_diagnostics
       env:

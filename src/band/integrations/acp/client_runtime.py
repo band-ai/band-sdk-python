@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import AbstractAsyncContextManager, contextmanager, suppress
 from typing import Any, cast
@@ -41,11 +42,13 @@ from band.integrations.acp.stderr import (
 )
 from band.integrations.acp.stream import ChunkSink
 from band.integrations.acp.transport import (
+    ACP_DEFAULT_STDIO_LIMIT_BYTES,
     ACP_STDIO_LIMIT_BYTES,
     ACPConnectionProtocol,
     ACPSpawnContextProtocol,
     tcp_spawn_process,
 )
+from band.integrations.acp.windows import WindowsACPProcess
 from band.integrations.mcp.backends import BandMCPTransport
 
 __all__ = [
@@ -117,6 +120,7 @@ class ACPRuntime(ACPSessionOperations):
         self._exit_attempted = False
         self._closure: asyncio.Task[None] | None = None
         self._stderr = ACPStderrDrain(logger)
+        self._windows: WindowsACPProcess | None = None
 
     async def start(self) -> None:
         """Spawn the ACP agent subprocess and initialize its connection."""
@@ -147,6 +151,22 @@ class ACPRuntime(ACPSessionOperations):
         self,
     ) -> AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]]:
         self._client = self._client_factory()
+        if sys.platform == "win32" and self._spawn_process is spawn_agent_process:
+            self._windows = WindowsACPProcess()
+            return self._windows.connect(
+                cast(Client, self._client),
+                self._command,
+                env=self._env,
+                cwd=self._cwd,
+                limit=(
+                    ACP_STDIO_LIMIT_BYTES
+                    if self._pass_builtin_transport_options
+                    else ACP_DEFAULT_STDIO_LIMIT_BYTES
+                ),
+                use_unstable_protocol=(
+                    self._pass_builtin_transport_options and self._use_unstable_protocol
+                ),
+            )
         spawn_kwargs: dict[str, Any] = {}
         if self._pass_builtin_transport_options:
             spawn_kwargs["transport_kwargs"] = {"limit": ACP_STDIO_LIMIT_BYTES}
@@ -232,6 +252,15 @@ class ACPRuntime(ACPSessionOperations):
         at once for a process that already exited, while a descendant that
         inherited stdout can still hold it.
         """
+        if self._windows is not None:
+            try:
+                await self._windows.close()
+            finally:
+                # A failed/cancelled enter can still have created the helper.
+                if self._transport is None and self._windows.process is not None:
+                    self._transport = self._windows.process
+                    self._stderr.start(self._windows.process)
+                    self._stderr.expect_exit()
         process = self._transport
         with _warning_while_held(process):
             if not self._exit_attempted and self._ctx is not None:
@@ -261,6 +290,7 @@ class ACPRuntime(ACPSessionOperations):
         self._transport = None
         self._exit_attempted = False
         self._closure = None
+        self._windows = None
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
         self._agent_mcp_http = False

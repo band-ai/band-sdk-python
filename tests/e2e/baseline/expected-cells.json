@@ -3331,10 +3331,17 @@
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
       "adapter": "antigravity_acp",
       "lanes": [
-        "google"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
       ],
-      "status": "pass",
-      "reason": null
+      "status": "na",
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
@@ -3368,7 +3375,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
@@ -3425,7 +3432,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
@@ -3502,7 +3509,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
@@ -3553,10 +3560,17 @@
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
       "adapter": "antigravity_acp",
       "lanes": [
-        "google"
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
       ],
-      "status": "pass",
-      "reason": null
+      "status": "na",
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -3590,7 +3604,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -3647,7 +3661,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -3724,7 +3738,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -8142,6 +8156,22 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "ACP adapter does not emit per-turn token usage"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -8163,7 +8193,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
@@ -8220,7 +8250,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
@@ -8288,7 +8318,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
