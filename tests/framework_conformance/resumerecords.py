@@ -22,7 +22,11 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import MessageType
 from band.runtime.sessionresume import ResumeRecord
 from band.testing.fake_tools import FakeAgentTools
-from tests.framework_conformance.resumeprobes import acp, claudesdk, omp, opencode
+from tests.framework_conformance.resumeprobes import acp, claudesdk, omp
+from tests.framework_conformance.resumeprobes.opencode import (
+    seed_failure as opencode_seed_failure,
+)
+from tests.framework_conformance.resumeprobes.opencode import seed_opencode
 from tests.framework_conformance.resumeprobes.probe import ResumeProbe
 
 RESUME_PROBES: dict[str, ResumeProbe] = {
@@ -37,7 +41,7 @@ RESUME_PROBES: dict[str, ResumeProbe] = {
     ),
     "OmpAdapter": ResumeProbe(OMP_RESUME_RECORD, omp.seed_omp, omp.seed_failure),
     "OpencodeAdapter": ResumeProbe(
-        OPENCODE_RESUME_RECORD, opencode.seed_opencode, opencode.seed_failure
+        OPENCODE_RESUME_RECORD, seed_opencode, opencode_seed_failure
     ),
 }
 
