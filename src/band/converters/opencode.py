@@ -64,5 +64,6 @@ def _session_registrations(raw: Iterable[Mapping[str, Any]]) -> dict[str, str]:
         if isinstance(entry, Mapping)
         and isinstance(entry.get(OpencodeMetadataKey.ROOM), str)
         and isinstance(entry.get(OpencodeMetadataKey.SESSION), str)
+        and entry[OpencodeMetadataKey.SESSION]
         and isinstance(entry.get(OpencodeMetadataKey.MCP_SERVER_NAME), str)
     }

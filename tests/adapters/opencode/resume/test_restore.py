@@ -28,12 +28,14 @@ class TestRestore:
             prompt_event_sequences=[answer("sess-1", "msg-2")]
         )
         restarted = await started(make_adapter(restarted_client, emit=()))
+        restarted_tools = room_tools()
         await restarted.on_event(
-            room_input(room_tools(), history=history, bootstrap=True)
+            room_input(restarted_tools, history=history, bootstrap=True)
         )
 
         assert restarted_client.created_sessions == []
         assert prompts(restarted_client) == [("sess-1", False)]
+        assert restarted_tools.events_sent == []
 
     async def test_a_failed_prompt_keeps_the_restored_session(
         self, make_adapter: Callable[..., OpencodeAdapter]

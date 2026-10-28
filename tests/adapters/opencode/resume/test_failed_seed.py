@@ -109,3 +109,27 @@ class TestFailedSeed:
         assert OPENCODE_RESUME_RECORD.candidates(retried.events_sent) == {
             ROOM_ID: "sess-2"
         }
+
+    async def test_a_failed_prompt_after_the_seed_keeps_the_session(
+        self, make_adapter: Callable[..., OpencodeAdapter]
+    ) -> None:
+        client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                answer("sess-1", "msg-1"),
+                [event_session_error("sess-1", "provider unavailable")],
+                answer("sess-1", "msg-3"),
+            ]
+        )
+        adapter = await started(make_adapter(client, emit=()))
+
+        await adapter.on_event(
+            room_input(room_tools(), history=TRANSCRIPT, bootstrap=True)
+        )
+        await adapter.on_event(room_input(room_tools(), history=[], bootstrap=False))
+        await adapter.on_event(room_input(room_tools(), history=[], bootstrap=False))
+
+        assert prompts(client) == [
+            ("sess-1", True),
+            ("sess-1", False),
+            ("sess-1", False),
+        ]

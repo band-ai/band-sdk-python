@@ -63,7 +63,7 @@ class ApprovalTurn:
             self.adapter,
             make_platform_message(content="approve req-1"),
             tools_protocol(FakeAgentTools(participants=ROOM_MEMBERS)),
-            OpencodeSessionState(room_to_session={"room-1": "sess-1"}),
+            OpencodeSessionState(),
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,

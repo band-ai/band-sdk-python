@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from band import BandConnectionError
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.converters.opencode import OpencodeHistoryConverter
+from band.converters.opencode import OPENCODE_RESUME_RECORD, OpencodeHistoryConverter
 from band.core.types import Capability
 from band.integrations.mcp import BandMCPTransport
 from band.integrations.opencode.types import OpencodeSessionState
@@ -369,6 +369,7 @@ class TestSetup:
             tools_protocol(tools),
             OpencodeSessionState(
                 room_to_session={"room-1": "sess-missing"},
+                session_registrations={"sess-missing": adapter._mcp_server_name},
                 replay_messages=[
                     "[Alice]: Earlier question",
                     "[OpenCode Agent]: Earlier answer",
@@ -385,6 +386,9 @@ class TestSetup:
         assert "Recovered room history" in prompt_text
         assert "[Alice]: Earlier question" in prompt_text
         assert "[OpenCode Agent]: Earlier answer" in prompt_text
+        assert OPENCODE_RESUME_RECORD.candidates(tools.events_sent) == {
+            "room-1": "sess-1"
+        }
 
     async def test_capability_gating_controls_registered_tool_set(
         self, make_adapter, tools

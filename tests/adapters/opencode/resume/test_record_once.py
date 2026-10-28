@@ -59,3 +59,17 @@ class TestRecordOnce:
         assert OPENCODE_RESUME_RECORD.candidates(later.events_sent) == {
             ROOM_ID: "sess-1"
         }
+
+    async def test_a_reply_that_fails_to_post_still_records_the_session(
+        self, make_adapter: Callable[..., OpencodeAdapter]
+    ) -> None:
+        client = FakeOpencodeClient(prompt_event_sequences=[answer("sess-1", "msg-1")])
+        adapter = await started(make_adapter(client, emit=()))
+        tools = room_tools()
+        tools.send_message_error = RuntimeError("reply rejected")
+
+        await adapter.on_event(room_input(tools, history=TRANSCRIPT, bootstrap=True))
+
+        assert OPENCODE_RESUME_RECORD.candidates(tools.events_sent) == {
+            ROOM_ID: "sess-1"
+        }

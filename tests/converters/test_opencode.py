@@ -53,8 +53,11 @@ class TestOpencodeHistoryConverter:
         not_a_record = _record("room-1", "sess-1", "band_agent", MessageType.TEXT)
         roomless = _record("room-1", "sess-2", "band_agent")
         del roomless["metadata"][OpencodeMetadataKey.ROOM]
+        sessionless = _record("room-1", "", "band_agent")
 
-        state = OpencodeHistoryConverter().convert([not_a_record, roomless])
+        state = OpencodeHistoryConverter().convert(
+            [not_a_record, roomless, sessionless]
+        )
 
         assert (state.room_to_session, state.session_registrations) == ({}, {})
 
