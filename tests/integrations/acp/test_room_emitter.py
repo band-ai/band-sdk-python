@@ -153,10 +153,7 @@ class TestRoomTurnEmitterEmitGating:
     async def run_turn(
         self, tools: FakeAgentTools, emit: frozenset[Emit] | None
     ) -> None:
-        emitter = RoomTurnEmitter(
-            tools,
-            emit=emit,
-        )
+        emitter = RoomTurnEmitter(tools, emit=emit)
         async with emitter:
             for chunk in self._chunks():
                 await emitter.emit(chunk)
@@ -206,11 +203,7 @@ class TestRoomTurnEmitterEmitGating:
         )
         result = ACPToolResult(call=call, output="sent", status=ToolStatus.COMPLETED)
         tools = FakeAgentTools()
-        emitter = RoomTurnEmitter(
-            tools,
-            emit=frozenset(),
-            records_tool_effects=True,
-        )
+        emitter = RoomTurnEmitter(tools, emit=frozenset(), records_tool_effects=True)
 
         async with emitter:
             await emitter.emit(CollectedChunk(chunk_type=ChunkType.TEXT, content="hi"))
@@ -284,9 +277,7 @@ async def closing_messages(
 ) -> list[str]:
     """Run one turn of ``chunks`` and return the messages it posted."""
     emitter = RoomTurnEmitter(
-        tools,
-        emit=emit,
-        records_tool_effects=records_tool_effects,
+        tools, emit=emit, records_tool_effects=records_tool_effects
     )
     async with emitter:
         for chunk in chunks:
@@ -409,10 +400,7 @@ class TestRoomTurnEmitterClosingThought:
         """A rejected prompt (e.g. busy) owns no work: a reply streamed during
         it belongs to another turn and must not suppress the retry's answer."""
         tools = FakeAgentTools()
-        emitter = RoomTurnEmitter(
-            tools,
-            records_tool_effects=True,
-        )
+        emitter = RoomTurnEmitter(tools, records_tool_effects=True)
 
         with pytest.raises(RuntimeError):
             async with emitter:
@@ -539,9 +527,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
         """A custom tool declared ``REPLY`` can be refused upstream (its
         arguments failed the MCP schema) before its handler runs."""
         tools = FakeAgentTools()
-        emitter = RoomTurnEmitter(
-            tools,
-        )
+        emitter = RoomTurnEmitter(tools)
         async with emitter:
             await emitter.emit(tool_result_chunk("post_answer", ToolStatus.FAILED))
             await emitter.emit(text("I posted the answer."))
@@ -567,10 +553,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
     @pytest.mark.asyncio
     async def test_a_denied_reply_permission_still_owes_the_reply(self) -> None:
         tools = FakeAgentTools()
-        emitter = RoomTurnEmitter(
-            tools,
-            emit=frozenset(),
-        )
+        emitter = RoomTurnEmitter(tools, emit=frozenset())
         async with emitter:
             await emitter.open_permission(
                 call=ACPToolCall(
