@@ -88,7 +88,7 @@ class TestFailedSeed:
         tools = room_with_earlier_message()
         with pytest.raises(RuntimeError, match="model unavailable"):
             await run_message(adapter, tools)
-        tools.fetch_context_error = ConnectionError("Band REST unavailable")
+        tools.fetch_room_context_error = ConnectionError("Band REST unavailable")
 
         await run_message(adapter, tools, is_session_bootstrap=False)
 
