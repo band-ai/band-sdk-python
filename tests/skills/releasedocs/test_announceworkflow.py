@@ -7,10 +7,8 @@ every release would skip announcing with a green run and no alert.
 from __future__ import annotations
 
 import ast
-import json
 import re
 from collections.abc import Callable
-from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -24,12 +22,7 @@ SKILL_CHECKOUT = "/${{ env.SKILL }}/"
 CLAUDE_ACTION = "anthropics/claude-code-action"
 TOKEN_ACTION = "actions/create-github-app-token"
 UPLOAD_ACTION = "actions/upload-artifact"
-# The artifact holding the unfiltered release notes, shared between jobs.
-FULL_NOTES = "release-notes-full"
-# The jobs that read private Fern content.
-FERN_JOBS = ("holdbacks", "fern")
-REVOKE = "gh api --method DELETE /installation/token"
-# The fern job runs the scripts from a checkout moved out of the workspace.
+# Trusted scripts use the skill checkout or the filing job's own source.
 SCRIPT_RUN = re.compile(r"(?:\$SKILL/scripts|\$SCRIPTS)/(\w+\.py)")
 
 
@@ -76,14 +69,6 @@ def has_id(step_id: str) -> Callable[[dict[str, Any]], bool]:
     return lambda step: step.get("id") == step_id
 
 
-def claude_steps() -> dict[str, dict[str, Any]]:
-    """The Claude steps that read Fern content, by job."""
-    return {
-        name: job(name)["steps"][step_position(name, uses(CLAUDE_ACTION))]
-        for name in FERN_JOBS
-    }
-
-
 def outputs_read(step: str) -> set[str]:
     return set(re.findall(rf"steps\.{step}\.outputs\.(\w+)", workflow_text()))
 
@@ -103,6 +88,23 @@ def outputs_written(script: str) -> set[str]:
 
 
 class TestAnnounceWorkflow:
+    def test_reusable_only_with_explicit_contract(self) -> None:
+        config = workflow()
+        assert set(config["on"]) == {"workflow_call"}
+        assert set(config["on"]["workflow_call"]["inputs"]) == {
+            "tag",
+            "mode",
+            "model",
+            "app_client_id",
+        }
+        assert set(config["on"]["workflow_call"]["secrets"]) == {
+            "anthropic_api_key",
+            "slack_webhook_url",
+            "discord_webhook_url",
+            "app_private_key",
+        }
+        assert "concurrency" not in config
+
     def test_every_script_it_runs_exists(self) -> None:
         scripts = set(SCRIPT_RUN.findall(workflow_text()))
         assert scripts
@@ -113,10 +115,12 @@ class TestAnnounceWorkflow:
     @pytest.mark.parametrize(
         ("step", "script"),
         [
+            ("scan", "scanreleases"),
             ("collect", "collectprs"),
             ("build", "builditems"),
             ("holdbacks", "holdbacks"),
             ("state", "fernstate"),
+            ("fresh", "fernstate"),
             ("patch", "checkpatch"),
             ("file", "filefern"),
         ],
@@ -125,231 +129,253 @@ class TestAnnounceWorkflow:
         self, step: str, script: str
     ) -> None:
         assert SCRIPT_RUN.findall(step_run(step)) == [f"{script}.py"]
-        read = outputs_read(step)
-        assert read
-        assert read - outputs_written(script) == set()
+        assert outputs_read(step)
+        assert outputs_read(step) <= outputs_written(script)
 
-    def test_every_checkout_of_the_skill_fetches_it(self) -> None:
-        assert REPO_ROOT / workflow()["env"]["SKILL"] == RELEASE_DOCS_SKILL
-        sparse = [
-            step["with"]["sparse-checkout"]
-            for step in all_steps()
-            if "sparse-checkout" in step.get("with", {})
+    def test_scan_and_manual_tags_feed_every_downstream_job(self) -> None:
+        assert job("scan")["if"] == "inputs.tag == ''"
+        assert job("scan")["outputs"]["tag"] == "${{ steps.scan.outputs.tag }}"
+        for name in (
+            "collect",
+            "changelog",
+            "holdbacks",
+            "slack",
+            "discord",
+            "docs",
+            "file",
+            "alert",
+        ):
+            assert "scan" in needs(name)
+            assert (
+                job(name)["env"]["TAG"] == "${{ inputs.tag || needs.scan.outputs.tag }}"
+            )
+            assert "!cancelled()" in job(name)["if"] or name == "alert"
+        assert "needs.scan.outputs.tag != ''" in job("collect")["if"]
+
+    def test_every_checkout_names_its_repository_and_revision(self) -> None:
+        checkouts = [
+            step["with"] for step in all_steps() if uses("actions/checkout")(step)
         ]
-        assert sparse
-        assert set(sparse) == {SKILL_CHECKOUT}
+        assert checkouts
+        for checkout in checkouts:
+            assert "repository" in checkout
+            assert "ref" in checkout
+            assert (checkout["repository"], checkout["ref"]) in {
+                ("${{ job.workflow_repository }}", "${{ job.workflow_sha }}"),
+                ("${{ job.workflow_repository }}", "${{ env.TAG }}"),
+                ("${{ github.repository }}", "${{ env.FERN_BASE }}"),
+            }
+            assert checkout.get("sparse-checkout", SKILL_CHECKOUT) == SKILL_CHECKOUT
+        fern = [
+            checkout
+            for checkout in checkouts
+            if checkout["repository"] == "${{ github.repository }}"
+        ]
+        assert [checkout["path"] for checkout in fern] == ["fern", "fern", "fern-write"]
+        assert REPO_ROOT / workflow()["env"]["SKILL"] == RELEASE_DOCS_SKILL
 
-    def test_claude_gets_only_the_read_tools(self) -> None:
-        (claude,) = [s for s in all_steps() if s.get("id") == "claude"]
-        flags = claude["with"]["claude_args"].split()
-        assert {"--restricted", "--strict-mcp-config"} <= set(flags)
-        assert flags[flags.index("--tools") + 1] == "Read,Glob,Grep"
+    def test_sdk_commands_do_not_inherit_the_fern_repository(self) -> None:
+        for step in all_steps():
+            if "collectprs.py" in step.get("run", ""):
+                assert step["env"]["GH_REPO"] == "${{ job.workflow_repository }}"
+        assert "--repo sdk" in step_run("collect")
+        assert '--caller "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID"' in step_run(
+            "collect"
+        )
+
+    def test_marker_is_live_only_and_last_in_collect(
+        self, releasedata: ModuleType
+    ) -> None:
+        marker = job("collect")["steps"][-1]
+        assert uses(UPLOAD_ACTION)(marker)
+        assert (
+            marker["if"]
+            == "steps.collect.outputs.proceed == 'true' && env.MODE == 'live'"
+        )
+        assert marker["with"] == {
+            "name": "${{ env.ANNOUNCED_MARKER_PREFIX }}${{ env.TAG }}",
+            "path": "${{ runner.temp }}/marker/tag",
+            "retention-days": "${{ env.MARKER_RETENTION_DAYS }}",
+            "overwrite": "true",
+            "if-no-files-found": "error",
+        }
+        assert "printf" in job("collect")["steps"][-2]["run"]
+        assert releasedata.LOOKBACK_DAYS < releasedata.MARKER_RETENTION_DAYS
+        assert "gh release upload" not in workflow_text()
+
+    @pytest.mark.parametrize("name", ["slack", "discord"])
+    def test_nothing_is_posted_before_holdbacks(self, name: str) -> None:
+        assert {"changelog", "holdbacks"} <= needs(name)
+        assert "needs.holdbacks.outputs.has_entry == 'true'" in job(name)["if"]
+        post = next(
+            step
+            for step in job(name)["steps"]
+            if step["name"] == f"Post to {name.title()}"
+        )
+        assert post["if"] == "env.MODE != 'dry-run'"
 
     def test_announcement_targets_exist(self, announcement: ModuleType) -> None:
         targets = set(re.findall(r"--target ([\w-]+)", workflow_text()))
         assert targets == {target.value for target in announcement.Target}
 
-    def test_bundle_carries_the_asset_the_live_guard_looks_for(
-        self, collectprs: ModuleType
-    ) -> None:
-        notes = re.search(r'builditems\.py".*?--out (\S+)', workflow_text(), re.DOTALL)
-        assert notes is not None
-        assert Path(notes[1]).name == collectprs.ANNOUNCED_ASSET
-
-    @pytest.mark.parametrize("name", ["bundle", "slack", "discord"])
-    def test_nothing_is_attached_or_posted_before_holdbacks(self, name: str) -> None:
-        assert {"changelog", "holdbacks"} <= needs(name)
-        assert job(name)["if"] == "needs.holdbacks.outputs.has_entry == 'true'"
-
-    def test_holdbacks_passes_on_only_public_safe_outputs(self) -> None:
-        assert set(job("holdbacks")["outputs"]) == {"has_entry", "held"}
-
-    def test_changelog_shares_the_full_notes_and_prints_no_entry(self) -> None:
-        (upload,) = [s for s in job("changelog")["steps"] if uses(UPLOAD_ACTION)(s)]
-        assert upload["with"]["name"] == FULL_NOTES
-        summary = job("changelog")["steps"][-1]["run"]
-        assert ("cat " in summary, "/band-release-docs" in summary) == (False, False)
-
     @pytest.mark.parametrize(
-        ("name", "uploads"), [("holdbacks", ["bundle"]), ("fern", [])]
-    )
-    def test_fern_jobs_upload_only_the_public_bundle(
-        self, name: str, uploads: list[str]
-    ) -> None:
-        steps = [s for s in job(name)["steps"] if uses(UPLOAD_ACTION)(s)]
-        assert [step["with"]["name"] for step in steps] == uploads
-
-    @pytest.mark.parametrize("name", FERN_JOBS)
-    def test_fern_read_token_is_revoked_before_claude_runs(self, name: str) -> None:
-        claude = step_position(name, uses(CLAUDE_ACTION))
-        assert step_position(name, has_id("fern-read")) < claude
-        assert step_position(name, lambda s: s.get("run") == REVOKE) < claude
-        step = job(name)["steps"][claude]
-        assert "fern-" not in json.dumps(step)
-
-    @pytest.mark.parametrize("name", FERN_JOBS)
-    def test_fern_jobs_refuse_debug_logging_before_anything_runs(
-        self, name: str
-    ) -> None:
-        """Debug logging prints step outputs, such as Claude's report, to the log."""
-        first = job(name)["steps"][0]
-        assert first["if"] == "runner.debug == '1'"
-        assert first["run"].rstrip().endswith("exit 1")
-
-    def test_fern_git_directory_is_gone_before_the_docs_review(self) -> None:
-        drop = step_position("fern", lambda s: s.get("run") == "rm -rf fern/.git")
-        assert drop < step_position("fern", uses(CLAUDE_ACTION))
-
-    def test_docs_review_runs_when_an_open_pr_is_refiled(self) -> None:
-        """The docs chain starts on file and reuse alike, and the review needs it."""
-        steps = job("fern")["steps"]
-        first = steps[step_position("fern", has_id("docs-range"))]
-        review = steps[step_position("fern", uses(CLAUDE_ACTION))]
-        assert first["if"] == "steps.state.outputs.docs != 'skip'"
-        assert review["if"] == "steps.review-input.outcome == 'success'"
-
-    def test_held_prs_are_withheld_before_the_docs_review(self) -> None:
-        withhold = step_position("fern", lambda s: "withhold.py" in s.get("run", ""))
-        assert "> review-prs.json" in job("fern")["steps"][withhold]["run"]
-        assert withhold < step_position("fern", uses(CLAUDE_ACTION))
-
-    def test_workspace_is_cleared_between_the_review_and_filing(self) -> None:
-        clear = step_position(
-            "fern", lambda s: "find . -mindepth 1" in s.get("run", "")
-        )
-        checkouts = [
-            i
-            for i, step in enumerate(job("fern")["steps"])
-            if uses("actions/checkout")(step)
-        ]
-        assert step_position("fern", uses(CLAUDE_ACTION)) + 1 == clear < checkouts[-1]
-
-    def test_cancelled_runs_file_nothing_and_a_displaced_filing_alerts(self) -> None:
-        assert job("fern")["if"].startswith("!cancelled() && ")
-        assert "contains(needs.*.result, 'cancelled')" in job("alert")["if"]
-
-    @pytest.mark.parametrize("name", FERN_JOBS)
-    def test_claude_steps_cannot_print_tool_results(self, name: str) -> None:
-        step = claude_steps()[name]
-        assert step["env"] == {"ACTIONS_STEP_DEBUG": "false"}
-        assert (step["with"]["show_full_output"], step["with"]["display_report"]) == (
-            "false",
-            "false",
-        )
-
-    @pytest.mark.parametrize(
-        ("name", "tools", "permissions"),
+        ("name", "tools"),
         [
-            ("holdbacks", "Read,Glob,Grep", {}),
-            (
-                "fern",
-                "Read,Glob,Grep,Edit,Write",
-                {"--permission-mode": "acceptEdits", "--permission-prompts": "none"},
-            ),
+            ("changelog", "Read,Glob,Grep"),
+            ("holdbacks", "Read,Glob,Grep"),
+            ("docs", "Read,Glob,Grep,Edit,Write"),
         ],
     )
-    def test_claude_flags_are_pinned(
-        self, name: str, tools: str, permissions: dict[str, str]
+    def test_models_have_restricted_tools_and_explicit_bot_access(
+        self, name: str, tools: str
     ) -> None:
-        args = claude_steps()[name]["with"]["claude_args"].split()
+        step = job(name)["steps"][step_position(name, uses(CLAUDE_ACTION))]
+        args = step["with"]["claude_args"].split()
         assert args[args.index("--tools") + 1] == tools
+        assert step_position(
+            name, lambda s: "releaseconfig.py" in s.get("run", "")
+        ) < step_position(name, uses(CLAUDE_ACTION))
         assert {"--restricted", "--strict-mcp-config", "--json-schema"} <= set(args)
-        assert {
-            arg: args[index + 1]
-            for index, arg in enumerate(args)
-            if arg.startswith("--permission")
-        } == permissions
+        assert step["with"]["allowed_bots"] == "${{ env.ALLOWED_BOTS }}"
+        assert step["with"]["show_full_output"] == "false"
+        assert step["with"]["display_report"] == "false"
+        assert step["with"]["anthropic_api_key"] == "${{ secrets.anthropic_api_key }}"
 
-    def test_mdx_reader_installs_without_scripts_after_the_review(self) -> None:
-        install = step_position("fern", has_id("mdx-reader"))
-        assert step_position("fern", uses(CLAUDE_ACTION)) < install
-        assert install < step_position("fern", has_id("patch"))
+    def test_pristine_and_scripts_are_outside_the_review_workspace(self) -> None:
+        prepare = job("docs")["steps"][
+            step_position("docs", lambda s: s["name"] == "Prepare the review workspace")
+        ]
+        assert 'cp -a fern "$RUNNER_TEMP/pristine"' in prepare["run"]
+        assert 'rm -rf "$RUNNER_TEMP/pristine/.git" fern/.git' in prepare["run"]
+        assert prepare["run"].index("cp -a fern") < prepare["run"].index("rm -rf")
+        assert step_position(
+            "docs", lambda s: s["name"] == "Prepare trusted SDK inputs"
+        ) < step_position("docs", uses(CLAUDE_ACTION))
+        assert step_position(
+            "docs", lambda s: s["name"] == "Prepare the review workspace"
+        ) < step_position("docs", uses(CLAUDE_ACTION))
+        assert 'cp "$SRC/$SKILL/docs.md" docs.md' in prepare["run"]
+        trusted = next(
+            step
+            for step in job("docs")["steps"]
+            if step["name"] == "Prepare trusted SDK inputs"
+        )
+        assert trusted["env"] == {
+            "WORKFLOW_REPOSITORY": "${{ job.workflow_repository }}",
+            "WORKFLOW_SHA": "${{ job.workflow_sha }}",
+        }
+        assert (
+            'git clone --quiet "https://github.com/$WORKFLOW_REPOSITORY.git" "$RUNNER_TEMP/source"'
+            in trusted["run"]
+        )
+        assert 'checkout --quiet "$WORKFLOW_SHA"' in trusted["run"]
+        schema = job("docs")["steps"][step_position("docs", has_id("docs-schema"))]
+        assert schema["if"] == "steps.review-workspace.outcome == 'success'"
+
+    def test_review_artifact_contains_original_edited_and_report(self) -> None:
+        package = next(
+            step
+            for step in job("docs")["steps"]
+            if step["name"] == "Package the reviewed trees"
+        )
+        assert (
+            '"$RUNNER_TEMP/pristine" "$RUNNER_TEMP/docs-review/pristine"'
+            in package["run"]
+        )
+        assert 'fern "$RUNNER_TEMP/docs-review/edited"' in package["run"]
+        assert (
+            '"$RUNNER_TEMP/docs-report.json" "$RUNNER_TEMP/docs-review/docs-report.json"'
+            in package["run"]
+        )
+        upload = job("docs")["steps"][-1]
+        assert upload["with"]["name"] == "docs-review"
+        assert upload["with"]["include-hidden-files"] == "true"
+
+    def test_filing_rechecks_with_trusted_scripts_before_minting_write_token(
+        self,
+    ) -> None:
+        assert not any(uses(CLAUDE_ACTION)(step) for step in job("file")["steps"])
+        patch = step_run("patch")
+        assert (
+            'uv run --script "$SCRIPTS/checkpatch.py" "$RUNNER_TEMP/docs-review/pristine" "$RUNNER_TEMP/docs-review/edited"'
+            in patch
+        )
+        assert '--out "$RUNNER_TEMP/patch.json" --outputs "$GITHUB_OUTPUT"' in patch
+        assert step_position("file", has_id("patch")) < step_position(
+            "file", has_id("fern-write")
+        )
+        assert '--pristine "$RUNNER_TEMP/docs-review/pristine"' in step_run("file")
+        assert '--edited "$RUNNER_TEMP/docs-review/edited"' in step_run("file")
+        assert '--repo "$SRC"' in step_run("docs-rerange")
         assert (
             step_run("mdx-reader") == 'npm ci --ignore-scripts --prefix "$SCRIPTS/mdx"'
         )
 
-    def test_edit_check_step_outlasts_its_reader_timeout(
-        self, scripts: Callable[[str], ModuleType]
-    ) -> None:
-        """A stalled check fails in the step's time, leaving the job time to
-        file the changelog; the reader's own timeout reports why first."""
-        patch = job("fern")["steps"][step_position("fern", has_id("patch"))]
-        minutes = int(patch["timeout-minutes"])
-        assert scripts("checkpatch").READER_TIMEOUT_SECONDS < minutes * 60
-        assert minutes < int(job("fern")["timeout-minutes"])
-
-    def test_write_token_follows_the_edit_check_and_skips_dry_run(self) -> None:
-        write = step_position("fern", has_id("fern-write"))
-        assert step_position("fern", has_id("patch")) < write
-        assert job("fern")["steps"][write]["if"] == "env.MODE != 'dry-run'"
-
-    @pytest.mark.parametrize(
-        ("name", "token_steps"),
-        [("holdbacks", ["fern-read"]), ("fern", ["fern-read", "fern-write"])],
-    )
-    def test_every_fern_token_is_narrowed_to_the_fern_repository(
-        self, name: str, token_steps: list[str]
-    ) -> None:
-        tokens = [step for step in job(name)["steps"] if uses(TOKEN_ACTION)(step)]
-        assert [step["id"] for step in tokens] == token_steps
-        assert {
-            (step["with"]["owner"], step["with"]["repositories"]) for step in tokens
-        } == {("${{ env.FERN_OWNER }}", "${{ env.FERN_REPO_NAME }}")}
-        assert all(
-            any(key.startswith("permission-") for key in step["with"])
-            for step in tokens
-        )
-
-    def test_fern_facts_match_the_scripts(self, releasedata: ModuleType) -> None:
-        env = workflow()["env"]
-        assert (
-            f"{env['FERN_OWNER']}/{env['FERN_REPO_NAME']}",
-            env["FERN_BASE"],
-            env["HELD_ITEMS"],
-            env["DOCS_STRUCTURE"],
-        ) == (
-            releasedata.FERN_REPO,
-            releasedata.FERN_BASE,
-            releasedata.HELD_ITEMS,
-            releasedata.DOCS_STRUCTURE,
-        )
-
-    def test_filing_always_gets_the_held_items(self) -> None:
-        """Held indexes drop items from the changelog and, even when every
-        item is held, keep the docs PR from merging."""
-        run = step_run("file")
-        held = run.index('--held "${held[@]}"')
-        assert held < run.index('if [[ "$HAS_ENTRY" == true ]]')
-        assert '--notes "$RUNNER_TEMP/full/release-notes.json"' in run
-        (download,) = [
-            s
-            for s in job("fern")["steps"]
-            if s.get("with", {}).get("name") == FULL_NOTES
-        ]
-        assert download["with"]["path"] == "${{ runner.temp }}/full"
-
-    def test_a_failed_docs_review_still_files_the_changelog_and_fails(
+    def test_only_filing_mints_a_narrow_write_token_and_checks_use_builtin_token(
         self,
     ) -> None:
-        steps = job("fern")["steps"]
-        review = steps[step_position("fern", uses(CLAUDE_ACTION))]
-        assert review["continue-on-error"] == "true"
-        assert '$PATCH" == success' in step_run("file")
-        fail = step_position(
-            "fern", lambda s: s.get("name") == "Fail on a failed docs review"
-        )
-        assert steps[fail]["if"] == (
-            "steps.state.outputs.docs != 'skip' && (steps.patch.outcome != 'success'"
-            " || steps.docs-rerange.outcome == 'failure')"
-        )
-        assert step_position("fern", has_id("file")) < fail
-
-    def test_alert_covers_holdbacks_and_fern(self) -> None:
-        assert {"holdbacks", "fern"} <= needs("alert")
-
-    def test_fern_filings_run_one_at_a_time(self) -> None:
-        assert job("fern")["concurrency"] == {
-            "group": "fern-python-sdk-${{ inputs.mode == 'dry-run' && github.run_id"
-            " || inputs.mode || 'live' }}",
-            "cancel-in-progress": "false",
+        tokens = [
+            (name, step)
+            for name, spec in workflow()["jobs"].items()
+            for step in spec["steps"]
+            if uses(TOKEN_ACTION)(step)
+        ]
+        assert len(tokens) == 1
+        name, token = tokens[0]
+        assert name == "file"
+        assert token["if"] == "env.MODE != 'dry-run'"
+        assert token["with"] == {
+            "client-id": "${{ inputs.app_client_id }}",
+            "private-key": "${{ secrets.app_private_key }}",
+            "owner": "${{ env.FERN_OWNER }}",
+            "repositories": "${{ env.FERN_REPO_NAME }}",
+            "permission-contents": "write",
+            "permission-pull-requests": "write",
         }
+        filer = job("file")["steps"][step_position("file", has_id("file"))]
+        assert (filer["env"]["GH_TOKEN"], filer["env"]["CHECKS_TOKEN"]) == (
+            "${{ steps.fern-write.outputs.token }}",
+            "${{ github.token }}",
+        )
+
+    def test_per_job_permissions_keep_models_read_only(self) -> None:
+        expected = {name: {"contents": "read"} for name in workflow()["jobs"]}
+        for name in ("scan", "collect"):
+            expected[name] |= {"actions": "read", "pull-requests": "read"}
+        expected["docs"]["pull-requests"] = "read"
+        expected["file"] |= {"checks": "read", "pull-requests": "read"}
+        assert {
+            name: spec["permissions"] for name, spec in workflow()["jobs"].items()
+        } == expected
+
+    def test_a_failed_docs_review_still_files_changelog_then_fails(self) -> None:
+        assert (
+            job("file")["if"] == "!cancelled() && needs.holdbacks.result == 'success'"
+        )
+        for step in job("docs")["steps"]:
+            if step.get("id") in {
+                "docs-range",
+                "review-all",
+                "review-input",
+                "docs-claude",
+                "docs-report",
+            }:
+                assert step["continue-on-error"] == "true"
+        assert '$PATCH" == success' in step_run("file")
+        assert '--held "${held[@]}"' in step_run("file")
+        assert step_run("file").index("--held") < step_run("file").index(
+            'if [[ "$HAS_ENTRY"'
+        )
+        fail = step_position(
+            "file", lambda step: step["name"] == "Fail on a failed docs review"
+        )
+        assert step_position("file", has_id("file")) < fail
+        assert (
+            "needs.docs.outputs.review != 'success'" in job("file")["steps"][fail]["if"]
+        )
+        assert {"scan", "holdbacks", "docs", "file"} <= needs("alert")
+        assert "contains(needs.*.result, 'cancelled')" in job("alert")["if"]
+
+    def test_filing_group_cannot_collide_with_caller(self) -> None:
+        assert job("file")["concurrency"]["group"].startswith("release-docs-filing-")
+        assert job("file")["concurrency"]["cancel-in-progress"] == "false"

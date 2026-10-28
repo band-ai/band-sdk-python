@@ -68,6 +68,22 @@ class FakeGh:
         self.prs: list[FakePr] = []
         self.checks: dict[str, list[dict[str, str | None]]] = {}
         self.failing_closes: set[int] = set()
+        self.artifacts: list[dict[str, object]] = []
+        self.releases: list[dict[str, object]] = []
+        self.sdk_repo: str | None = None
+        self.allow_checks = True
+
+    def add_marker(self, name: str, run_id: int, *, expired: bool = False) -> None:
+        self.artifacts.append(
+            {"name": name, "expired": expired, "workflow_run": {"id": run_id}}
+        )
+
+    def read_checks(self, *args: str) -> str:
+        match args:
+            case ("api", path) if match := CHECK_RUNS.match(path):
+                (pr,) = [p for p in self.prs if match[1] in (p.sha, *p.earlier_heads)]
+                return json.dumps({"check_runs": self.checks.get(pr.head, [])})
+        raise AssertionError(f"unsupported check-read command: {args}")
 
     def add_pr(
         self,
@@ -98,6 +114,32 @@ class FakeGh:
 
     def __call__(self, *args: str) -> str:
         match args:
+            case ("api", path, "--paginate", "--slurp") if (
+                self.sdk_repo and path == f"repos/{self.sdk_repo}/releases"
+            ):
+                return json.dumps([self.releases])
+            case (
+                "api",
+                path,
+                "--method",
+                "GET",
+                "-f",
+                name,
+                "--paginate",
+                "--slurp",
+            ) if path == f"repos/{self.repo}/actions/artifacts":
+                assert name.startswith("name=")
+                return json.dumps(
+                    [
+                        {
+                            "artifacts": [
+                                a
+                                for a in self.artifacts
+                                if a["name"] == name.removeprefix("name=")
+                            ]
+                        }
+                    ]
+                )
             case (
                 "pr",
                 "list",
@@ -210,8 +252,8 @@ class FakeGh:
                 assert self.remote is not None, "this test has no remote to read"
                 return self.remote.committer_email(self.number(match[1]).sha) + "\n"
             case ("api", path) if match := CHECK_RUNS.match(path):
-                (pr,) = [p for p in self.prs if match[1] in (p.sha, *p.earlier_heads)]
-                return json.dumps({"check_runs": self.checks.get(pr.head, [])})
+                assert self.allow_checks, "write token cannot read checks"
+                return self.read_checks(*args)
             case ("api", "-X", "PUT", path, "-f", "merge_method=squash", "-f", sha) if (
                 match := MERGE.match(path)
             ):

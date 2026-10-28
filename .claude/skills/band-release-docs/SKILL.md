@@ -1,6 +1,6 @@
 ---
 name: band-release-docs
-description: Release notes for band-sdk releases. CI's release-announce workflow uses the changelog, holdbacks, and docs tasks to write the changelog items, hold back unpublished features, and review the Fern docs pages. Start the local Fern task (/band-release-docs <tag> [--bundle <dir>] [--rehearse]) only when a user explicitly asks to file or rehearse the Fern changelog and docs PRs for a named band-sdk-v* tag; never because a release, changelog, or docs topic comes up.
+description: Release notes for band-sdk releases. Fern's scheduled caller of the reusable release-announce workflow uses the changelog, holdbacks, and docs tasks to write the changelog items, hold back unpublished features, and review the Fern docs pages. Start the local Fern task (/band-release-docs <tag> [--bundle <dir>] [--rehearse]) only when a user explicitly asks to file or rehearse the Fern changelog and docs PRs for a named band-sdk-v* tag; never because a release, changelog, or docs topic comes up.
 ---
 
 # Release Docs
@@ -14,9 +14,9 @@ announcements, and perform every side effect.
 
 | Task | Where it runs | Guide |
 |---|---|---|
-| `changelog` | CI, `.github/workflows/release-announce.yml` | [changelog.md](changelog.md) |
-| `holdbacks` | CI, the same workflow | [holdbacks.md](holdbacks.md) |
-| `docs` | CI, the same workflow (from a copy of `docs.md`) | [docs.md](docs.md) |
+| `changelog` | Fern CI, the reusable `.github/workflows/release-announce.yml` | [changelog.md](changelog.md) |
+| `holdbacks` | Fern CI, the same workflow | [holdbacks.md](holdbacks.md) |
+| `docs` | Fern CI, the same workflow (from a copy of `docs.md`) | [docs.md](docs.md) |
 | Fern changelog and docs PRs (manual recovery) | locally, `/band-release-docs <tag>` | [fern.md](fern.md) |
 
 When the prompt names a CI task's guide, follow it. Otherwise this is the
@@ -24,6 +24,13 @@ local command: follow `fern.md` with `$ARGUMENTS`.
 
 The entry format has one source, [the format reference](references/fern-changelog-format.md),
 enforced by `scripts/validateentry.py`; guides link to it rather than restate it.
+
+The workflow runs in Fern, so its inputs, logs and artifacts stay private.
+Download the bundle with `gh run download <run-id> --repo thenvoi/fern --name bundle --dir <dir>`,
+then use `/band-release-docs <tag> --bundle <dir>` for local recovery.
+Live runs recognize another run's announcement marker or a merged changelog PR;
+re-run failed jobs to recover a partially completed announcement.
+The filing App writes PRs; Fern's built-in token reads their checks.
 
 ## Holdbacks
 
@@ -39,6 +46,8 @@ carries its dependencies inline. Data shapes live in `scripts/releasedata.py`.
 
 | Script | Does |
 |---|---|
+| `scanreleases.py` | Selects the oldest recent unannounced SDK release |
+| `releaseconfig.py` | Exports the constants from `releasedata.py` to the workflow environment |
 | `collectprs.py` | Gates the release and collects its PRs into `release-prs.json` |
 | `reportschema.py` | Prints a task's report schema for `claude --json-schema` |
 | `extractreport.py` | Reads a task's report from claude-code-action's execution file |

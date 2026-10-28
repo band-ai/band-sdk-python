@@ -1,101 +1,79 @@
-# Announces every band-sdk release on Slack and Discord, attaches its
-# release-notes bundle (release-notes.json, release-prs.json, and the
-# standalone Fern entry <release date>.md) to the GitHub Release, and files
-# the Fern changelog and docs PRs into thenvoi/fern dev.
-#
-# Claude only judges and writes: each session gets Read, Glob, and Grep (the
-# docs review adds Edit and Write) confined to its working directory, and
-# returns one structured report. The scripts in
-# .claude/skills/band-release-docs/scripts collect, validate, render, post,
-# and file; model-written text moves only through files and artifacts, never
-# step outputs, env, or expressions in run scripts.
-#
-# thenvoi/fern is private and this repository is public. Fern tokens come from
-# the release App, narrowed to thenvoi/fern; read tokens are revoked, and
-# fern/.git deleted, before Claude runs, and the write token is minted only
-# after every check passed (never in dry-run). No Fern content (pages, the
-# held-items ledger, diffs, model reasons) reaches an artifact, log, or
-# summary: the Fern jobs upload only the public bundle and refuse to run with
-# debug logging (which prints step outputs, such as Claude's report), Claude
-# steps pin show_full_output off, and scripts log counts and PR links.
-# holdbacks runs before anything is attached or posted and fails closed.
-#
-# Triggers: a successful release-event band-publish run for a band-sdk-v*
-# tag (live), or workflow_dispatch with a tag and a mode:
-#   live     attach the bundle, post to Slack and Discord (@everyone), file
-#            and squash-merge both Fern PRs
-#   test     keep the bundle as a workflow artifact; post once per channel
-#            prefixed "TEST — please ignore" with no ping (the Discord post is
-#            deleted by the job, the Slack post by a Slack admin); file both
-#            Fern PRs on -rehearsal branches, wait for Fern's checks, close them
-#   dry-run  run Claude and every gate; write the entry and the exact
-#            announcement text to the summary; attach, post, and file nothing
-# In every mode a failed job alerts Slack, naming the mode.
-# Releases published by a band-publish dispatch carry no release event, so
-# announce them by dispatching this workflow.
-#
-# Recovery: "Re-run failed jobs". Each step is its own job, so a Discord
-# failure after Slack posted re-posts only to Discord, and a fern re-run skips
-# merged Fern PRs (still closing the PRs a merged docs PR supersedes) and
-# refiles open ones from its own checked content. /band-release-docs <tag>
-# files the Fern PRs by hand.
-# Re-announcing: a live run stops before Claude when the release already
-# carries release-notes.json. Delete that asset, then dispatch again.
-#
-# Job-level timeout-minutes cannot read env, so each job carries a literal
-# backstop.
+# Called from Fern on its nightly schedule or manual dispatch. Code and tests
+# stay in the public SDK; execution, private inputs and artifacts stay in Fern.
+# Claude reviews with restricted file tools and no App token. A separate job
+# checks its edits against the pre-review tree using trusted scripts, then
+# files with the existing App; GITHUB_TOKEN reads CI checks.
+# Live collect writes a marker before any posts; recovery is Re-run failed jobs.
+# Download the private bundle from the Fern run for local --bundle recovery.
 
 name: release-announce
-
-on:
-  workflow_run:
-    workflows: [band-publish]
-    types: [completed]
-  workflow_dispatch:
+'on':
+  workflow_call:
     inputs:
       tag:
-        description: Release tag to announce (e.g. band-sdk-v6.1.0)
-        required: true
+        description: Release tag; empty scans recent releases
         type: string
+        default: ''
       mode:
-        description: live posts and attaches; test posts disclaimers; dry-run only previews
-        required: true
-        default: live
-        type: choice
-        options: [live, test, dry-run]
-      model:
-        description: Claude model for this run (defaults to the ANTHROPIC_MODEL variable, then sonnet)
-        required: false
+        description: live, test, or dry-run
         type: string
-
+        default: live
+      model:
+        description: Claude model override
+        type: string
+        default: ''
+      app_client_id:
+        description: Fern filing App client ID
+        type: string
+        required: true
+    secrets:
+      anthropic_api_key:
+        required: true
+      slack_webhook_url:
+        required: true
+      discord_webhook_url:
+        required: true
+      app_private_key:
+        required: true
 permissions:
   contents: read
-
-concurrency:
-  group: release-announce-${{ inputs.tag || github.event.workflow_run.head_branch }}-${{ inputs.mode || 'live' }}
-  cancel-in-progress: false
-
 env:
-  TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
-  MODE: ${{ inputs.mode || 'live' }}
+  MODE: ${{ inputs.mode }}
   SKILL: .claude/skills/band-release-docs
   ANTHROPIC_MODEL: ${{ inputs.model || vars.ANTHROPIC_MODEL || 'sonnet' }}
-  # Fern facts; scripts/releasedata.py holds the same values.
-  FERN_OWNER: thenvoi
-  FERN_REPO_NAME: fern
-  FERN_BASE: dev
-  HELD_ITEMS: .changelog/held-items.yml
-  DOCS_STRUCTURE: docs-structure-summary.md
-
 jobs:
+
+  scan:
+    if: inputs.tag == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      tag: ${{ steps.scan.outputs.tag }}
+    steps:
+      - name: Checkout the workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: /${{ env.SKILL }}/
+          sparse-checkout-cone-mode: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Find the oldest unannounced release
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SDK_REPO: ${{ job.workflow_repository }}
+        run: uv run --script "$SKILL/scripts/scanreleases.py" --sdk "$SDK_REPO" --caller "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID"
+          --outputs "$GITHUB_OUTPUT"
+
   collect:
-    # Release-event runs carry the tag in head_branch; band-mcp-v* releases
-    # and failed publishes never announce.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'release' &&
-       startsWith(github.event.workflow_run.head_branch, 'band-sdk-v'))
+    if: "!cancelled() && (inputs.tag != '' || needs.scan.outputs.tag != '')"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -104,35 +82,45 @@ jobs:
     steps:
       - name: Validate the tag
         run: |
+          case "$MODE" in live|test|dry-run) ;; *) echo "::error::Invalid release mode"; exit 1 ;; esac
           if [[ ! "$TAG" =~ ^band-sdk-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::'$TAG' is not a band-sdk-vX.Y.Z tag"
             exit 1
           fi
-
-      - name: Checkout with full history and tags
+      - name: Checkout the workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
-
+          sparse-checkout: /${{ env.SKILL }}/
+          sparse-checkout-cone-mode: false
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-
+      - name: Load release configuration
+        run: uv run --script "$SKILL/scripts/releaseconfig.py" "$GITHUB_ENV"
+      - name: Checkout the released SDK source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ env.TAG }}
+          path: sdk
+          fetch-depth: 0
+          persist-credentials: false
       - name: Collect the release's PRs
         id: collect
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ job.workflow_repository }}
         run: |
-          args=("$TAG" --outputs "$GITHUB_OUTPUT")
+          args=("$TAG" --repo sdk --caller "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --outputs "$GITHUB_OUTPUT")
           if [[ "$MODE" == live ]]; then args+=(--live); fi
           uv run --script "$SKILL/scripts/collectprs.py" "${args[@]}" > release-prs.json
-
       - name: Record why nothing is announced
         if: steps.collect.outputs.reason != ''
         env:
           REASON: ${{ steps.collect.outputs.reason }}
         run: echo "$REASON" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload release-prs.json
         if: steps.collect.outputs.proceed == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -140,10 +128,34 @@ jobs:
           name: release-prs
           path: release-prs.json
           overwrite: true
+      - name: Write the announcement marker
+        if: steps.collect.outputs.proceed == 'true' && env.MODE == 'live'
+        run: |
+          mkdir -p "$RUNNER_TEMP/marker"
+          printf '%s\n' "$TAG" > "$RUNNER_TEMP/marker/tag"
+      - name: Mark the release announced
+        if: steps.collect.outputs.proceed == 'true' && env.MODE == 'live'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ env.ANNOUNCED_MARKER_PREFIX }}${{ env.TAG }}
+          path: ${{ runner.temp }}/marker/tag
+          retention-days: ${{ env.MARKER_RETENTION_DAYS }}
+          overwrite: true
+          if-no-files-found: error
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    env:
+      TAG: ${{ inputs.tag || needs.scan.outputs.tag }}
+    needs:
+      - scan
 
   changelog:
-    needs: collect
-    if: needs.collect.outputs.proceed == 'true' && needs.collect.outputs.has_changes == 'true'
+    needs:
+      - collect
+      - scan
+    if: "!cancelled() && needs.collect.outputs.proceed == 'true' && needs.collect.outputs.has_changes == 'true'"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -153,59 +165,49 @@ jobs:
       CHANGELOG_MAX_TURNS: 30
       CHANGELOG_MAX_BUDGET_USD: 3
       CHANGELOG_TIMEOUT_MINUTES: 20
+      TAG: ${{ inputs.tag || needs.scan.outputs.tag }}
     outputs:
       has_entry: ${{ steps.build.outputs.has_entry }}
     steps:
-      # Exactly the skill: no AGENTS.md, CLAUDE.md, settings, or other skills
-      # (cone mode would add every root file). The action still writes its
-      # contents:read token into .git/config.
       - name: Checkout the skill only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           sparse-checkout: /${{ env.SKILL }}/
           sparse-checkout-cone-mode: false
           persist-credentials: false
-
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
       - name: Download release-prs.json
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-prs
-
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-
+      - name: Load release configuration
+        run: uv run --script "$SKILL/scripts/releaseconfig.py" "$GITHUB_ENV"
       - name: Emit the report schema
         id: schema
         run: echo "schema=$(uv run --script "$SKILL/scripts/reportschema.py")" >> "$GITHUB_OUTPUT"
-
-      # --tools removes every other built-in tool; --restricted confines the
-      # file tools to the working directory; --strict-mcp-config drops MCP
-      # servers, which --tools does not cover.
+      - name: Drop the SDK git directory
+        run: rm -rf .git
       - name: Write the changelog items
         id: claude
         timeout-minutes: ${{ fromJSON(env.CHANGELOG_TIMEOUT_MINUTES) }}
         uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         with:
-          anthropic_api_key: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.anthropic_api_key }}
           github_token: ${{ github.token }}
-          allowed_bots: band-release-please-public
-          prompt: >-
-            Follow ${{ env.SKILL }}/changelog.md for release
-            ${{ env.TAG }}. The release's PRs are in release-prs.json in the
-            working directory.
-          claude_args: >-
-            --max-turns ${{ env.CHANGELOG_MAX_TURNS }}
-            --max-budget-usd ${{ env.CHANGELOG_MAX_BUDGET_USD }}
-            --tools Read,Glob,Grep
-            --restricted
-            --strict-mcp-config
-            --json-schema '${{ steps.schema.outputs.schema }}'
-
+          allowed_bots: ${{ env.ALLOWED_BOTS }}
+          prompt: Follow ${{ env.SKILL }}/changelog.md for release ${{ env.TAG }}. The release's PRs are in release-prs.json
+            in the working directory.
+          claude_args: --max-turns ${{ env.CHANGELOG_MAX_TURNS }} --max-budget-usd ${{ env.CHANGELOG_MAX_BUDGET_USD }} --tools
+            Read,Glob,Grep --restricted --strict-mcp-config --json-schema '${{ steps.schema.outputs.schema }}'
+          show_full_output: 'false'
+          display_report: 'false'
       - name: Read the report
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: uv run --script "$SKILL/scripts/extractreport.py" "$EXECUTION_FILE" --out report.json
-
       - name: Trace the items to the release
         id: build
         run: |
@@ -214,9 +216,6 @@ jobs:
             --product-tag "$PRODUCT_TAG" \
             --out full/release-notes.json --outputs "$GITHUB_OUTPUT"
           cp release-prs.json full/
-
-      # The full notes still carry the items holdbacks may remove, so nothing
-      # here prints them; holdbacks previews the filtered entry.
       - name: Upload the full release notes
         if: steps.build.outputs.has_entry == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -224,7 +223,6 @@ jobs:
           name: release-notes-full
           path: full/
           overwrite: true
-
       - name: Summarize
         env:
           HAS_ENTRY: ${{ steps.build.outputs.has_entry }}
@@ -236,119 +234,86 @@ jobs:
               echo "Claude judged no user-facing changes; nothing is attached, posted, or filed."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+    permissions:
+      contents: read
 
-  # Removes the items Fern's held-items ledger keeps unpublished, before
-  # anything is attached, posted, or filed. Any doubt fails closed.
   holdbacks:
-    needs: changelog
-    if: needs.changelog.outputs.has_entry == 'true'
+    needs:
+      - changelog
+      - scan
+    if: "!cancelled() && needs.changelog.outputs.has_entry == 'true'"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       HOLDBACKS_MAX_TURNS: 20
       HOLDBACKS_MAX_BUDGET_USD: 1
       HOLDBACKS_TIMEOUT_MINUTES: 15
+      TAG: ${{ inputs.tag || needs.scan.outputs.tag }}
     outputs:
       has_entry: ${{ steps.holdbacks.outputs.has_entry }}
       held: ${{ steps.holdbacks.outputs.held }}
     steps:
-      # Debug logging would print step outputs (Fern content) to the public log.
-      - name: Refuse debug logging
-        if: runner.debug == '1'
-        run: |
-          echo "::error::Debug logging would print Fern content to this public log; re-run without it."
-          exit 1
-
       - name: Checkout the skill only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           sparse-checkout: /${{ env.SKILL }}/
           sparse-checkout-cone-mode: false
           persist-credentials: false
-
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
       - name: Download the full release notes
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-notes-full
           path: full
-
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-
-      - name: Mint a Fern read token
-        id: fern-read
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+      - name: Load release configuration
+        run: uv run --script "$SKILL/scripts/releaseconfig.py" "$GITHUB_ENV"
+      - name: Check out Fern dev
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          client-id: ${{ secrets.APP_CLIENT_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: ${{ env.FERN_OWNER }}
-          repositories: ${{ env.FERN_REPO_NAME }}
-          permission-contents: read
-          skip-token-revoke: true
-
-      - name: Name the missing Fern setup
-        if: failure() && steps.fern-read.outcome == 'failure'
-        run: echo "::error::The release App has no installation on $FERN_OWNER/$FERN_REPO_NAME; nothing is attached, posted, or filed until it does."
-
-      - name: Fetch the held-items ledger and docs summary
-        env:
-          GH_TOKEN: ${{ steps.fern-read.outputs.token }}
+          repository: ${{ github.repository }}
+          ref: ${{ env.FERN_BASE }}
+          path: fern
+          persist-credentials: false
+      - name: Limit the holdbacks inputs
         run: |
-          for path in "$HELD_ITEMS" "$DOCS_STRUCTURE"; do
-            mkdir -p "fern/$(dirname "$path")"
-            gh api -H "Accept: application/vnd.github.raw" \
-              "repos/$FERN_OWNER/$FERN_REPO_NAME/contents/$path?ref=$FERN_BASE" > "fern/$path"
-          done
-
-      - name: Revoke the Fern read token
-        if: always() && steps.fern-read.outputs.token != ''
-        env:
-          GH_TOKEN: ${{ steps.fern-read.outputs.token }}
-        run: gh api --method DELETE /installation/token
-
+          rm -rf fern/.git
+          find fern -mindepth 1 -maxdepth 1 ! -name .changelog ! -name "$DOCS_STRUCTURE" -exec rm -rf {} +
       - name: Emit the holdbacks schema
         id: holdbacks-schema
         run: echo "schema=$(uv run --script "$SKILL/scripts/reportschema.py" --kind holdbacks)" >> "$GITHUB_OUTPUT"
-
-      # Debug output would print tool results (the ledger) to public logs.
+      - name: Drop the SDK git directory
+        run: rm -rf .git
       - name: Review the holdbacks
         id: holdbacks-claude
         timeout-minutes: ${{ fromJSON(env.HOLDBACKS_TIMEOUT_MINUTES) }}
         uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         env:
-          ACTIONS_STEP_DEBUG: "false"
+          ACTIONS_STEP_DEBUG: 'false'
         with:
-          anthropic_api_key: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.anthropic_api_key }}
           github_token: ${{ github.token }}
-          allowed_bots: band-release-please-public
-          show_full_output: "false"
-          display_report: "false"
-          prompt: >-
-            Follow ${{ env.SKILL }}/holdbacks.md for release ${{ env.TAG }}.
-            The items are in full/release-notes.json; the ledger and the docs
-            summary are under fern/.
-          claude_args: >-
-            --max-turns ${{ env.HOLDBACKS_MAX_TURNS }}
-            --max-budget-usd ${{ env.HOLDBACKS_MAX_BUDGET_USD }}
-            --tools Read,Glob,Grep
-            --restricted
-            --strict-mcp-config
-            --json-schema '${{ steps.holdbacks-schema.outputs.schema }}'
-
+          allowed_bots: ${{ env.ALLOWED_BOTS }}
+          show_full_output: 'false'
+          display_report: 'false'
+          prompt: Follow ${{ env.SKILL }}/holdbacks.md for release ${{ env.TAG }}. The items are in full/release-notes.json;
+            the ledger and the docs summary are under fern/.
+          claude_args: --max-turns ${{ env.HOLDBACKS_MAX_TURNS }} --max-budget-usd ${{ env.HOLDBACKS_MAX_BUDGET_USD }} --tools
+            Read,Glob,Grep --restricted --strict-mcp-config --json-schema '${{ steps.holdbacks-schema.outputs.schema }}'
       - name: Read the holdbacks report
         env:
           EXECUTION_FILE: ${{ steps.holdbacks-claude.outputs.execution_file }}
         run: |
           uv run --script "$SKILL/scripts/extractreport.py" "$EXECUTION_FILE" \
             --kind holdbacks --out "$RUNNER_TEMP/holdbacks-report.json"
-
       - name: Hold back the held items
         id: holdbacks
         run: |
           uv run --script "$SKILL/scripts/holdbacks.py" full/release-notes.json full/release-prs.json \
             --ledger "fern/$HELD_ITEMS" --report "$RUNNER_TEMP/holdbacks-report.json" \
             --out bundle/ --outputs "$GITHUB_OUTPUT"
-
       - name: Render and validate the Fern entry
         if: steps.holdbacks.outputs.has_entry == 'true'
         env:
@@ -357,7 +322,6 @@ jobs:
           read -ra held <<< "$HELD"
           uv run --script "$SKILL/scripts/renderentry.py" full/release-notes.json --out bundle/ --drop "${held[@]}"
           cp full/release-prs.json bundle/
-
       - name: Upload the bundle
         if: steps.holdbacks.outputs.has_entry == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -365,7 +329,6 @@ jobs:
           name: bundle
           path: bundle/
           overwrite: true
-
       - name: Summarize
         env:
           HAS_ENTRY: ${{ steps.holdbacks.outputs.has_entry }}
@@ -383,36 +346,15 @@ jobs:
               echo "Every item is held back; nothing is attached, posted, or filed as a changelog."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-
-  # Runs in every mode so slack and discord can simply need it; only live
-  # attaches.
-  bundle:
-    needs: [changelog, holdbacks]
-    if: needs.holdbacks.outputs.has_entry == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
     permissions:
-      contents: write
-    steps:
-      - name: Download the bundle
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: bundle
-          path: bundle
-
-      - name: Attach the bundle to the release
-        if: env.MODE == 'live'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" bundle/* --clobber --repo "$GITHUB_REPOSITORY"
-
-      - name: Keep the bundle as an artifact
-        if: env.MODE == 'test'
-        run: echo "Test mode, so the bundle stays a workflow artifact." >> "$GITHUB_STEP_SUMMARY"
+      contents: read
 
   slack:
-    needs: [changelog, holdbacks, bundle]
-    if: needs.holdbacks.outputs.has_entry == 'true'
+    needs:
+      - scan
+      - changelog
+      - holdbacks
+    if: "!cancelled() && needs.holdbacks.outputs.has_entry == 'true'"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -422,32 +364,37 @@ jobs:
           sparse-checkout: /${{ env.SKILL }}/
           sparse-checkout-cone-mode: false
           persist-credentials: false
-
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
       - name: Download the bundle
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: bundle
           path: bundle
-
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-
       - name: Format the Slack post
         run: |
           args=(--notes bundle/release-notes.json --target slack-webhook)
           if [[ "$MODE" == test ]]; then args+=(--test); fi
           uv run --script "$SKILL/scripts/announcement.py" "${args[@]}" > message.txt
           { echo '```'; cat message.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Post to Slack
         if: env.MODE != 'dry-run'
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.slack_webhook_url }}
         run: uv run --script "$SKILL/scripts/postslack.py" --message-file message.txt
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || needs.scan.outputs.tag }}
 
   discord:
-    needs: [changelog, holdbacks, bundle]
-    if: needs.holdbacks.outputs.has_entry == 'true'
+    needs:
+      - scan
+      - changelog
+      - holdbacks
+    if: "!cancelled() && needs.holdbacks.outputs.has_entry == 'true'"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -457,122 +404,92 @@ jobs:
           sparse-checkout: /${{ env.SKILL }}/
           sparse-checkout-cone-mode: false
           persist-credentials: false
-
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
       - name: Download the bundle
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: bundle
           path: bundle
-
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-
       - name: Format the Discord post
         run: |
           args=(--notes bundle/release-notes.json --target discord)
           if [[ "$MODE" == test ]]; then args+=(--test); fi
           uv run --script "$SKILL/scripts/announcement.py" "${args[@]}" > message.txt
           { echo '```'; cat message.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Post to Discord
         id: post
         if: env.MODE != 'dry-run'
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.discord_webhook_url }}
         run: |
           args=(--message-file message.txt)
           if [[ "$MODE" == test ]]; then args+=(--no-mentions); fi
           message_id=$(uv run --script "$SKILL/scripts/postdiscord.py" "${args[@]}")
           echo "message_id=$message_id" >> "$GITHUB_OUTPUT"
           echo "Discord message id: \`$message_id\`" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Delete the test post
         if: env.MODE == 'test'
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.discord_webhook_url }}
           MESSAGE_ID: ${{ steps.post.outputs.message_id }}
         run: uv run --script "$SKILL/scripts/postdiscord.py" --delete "$MESSAGE_ID"
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || needs.scan.outputs.tag }}
 
-  # Files the Fern changelog and docs PRs. Claude reviews the docs with no
-  # Fern token alive and no .git anywhere in its workspace; the edits are
-  # checked against a pristine copy before the write token exists.
-  fern:
-    needs: [changelog, holdbacks, bundle]
-    if: >-
-      !cancelled() && needs.holdbacks.result == 'success' &&
-      (needs.bundle.result == 'success' || needs.bundle.result == 'skipped')
+  docs:
+    needs:
+      - scan
+      - changelog
+      - holdbacks
+    if: "!cancelled() && needs.holdbacks.result == 'success'"
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    # Same-day releases share a date file, so they file one at a time. GitHub
-    # keeps one pending job per group, so a dry-run (which files nothing) or
-    # a rehearsal never displaces a live filing.
-    concurrency:
-      group: fern-python-sdk-${{ inputs.mode == 'dry-run' && github.run_id || inputs.mode || 'live' }}
-      cancel-in-progress: false
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: read
     env:
       HAS_ENTRY: ${{ needs.holdbacks.outputs.has_entry }}
       HELD: ${{ needs.holdbacks.outputs.held }}
       DOCS_MAX_TURNS: 60
       DOCS_MAX_BUDGET_USD: 5
       DOCS_TIMEOUT_MINUTES: 30
+      TAG: ${{ inputs.tag || needs.scan.outputs.tag }}
     outputs:
-      changelog_pr: ${{ steps.file.outputs.changelog_pr }}
-      docs_pr: ${{ steps.file.outputs.docs_pr }}
+      docs: ${{ steps.state.outputs.docs }}
+      review: ${{ steps.docs-report.outcome }}
     steps:
-      # Debug logging would print step outputs (Fern content) to the public log.
-      - name: Refuse debug logging
-        if: runner.debug == '1'
+      - name: Prepare trusted SDK inputs
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: |
-          echo "::error::Debug logging would print Fern content to this public log; re-run without it."
-          exit 1
-
-      - name: Checkout with full history and tags
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          path: source
-          fetch-depth: 0
-          persist-credentials: false
-
-      # The workspace becomes Claude's working directory, which must hold no .git.
-      - name: Move the checkout out of the workspace
-        run: |
-          mv source "$RUNNER_TEMP/source"
+          git clone --quiet "https://github.com/$WORKFLOW_REPOSITORY.git" "$RUNNER_TEMP/source"
+          git -C "$RUNNER_TEMP/source" checkout --quiet "$WORKFLOW_SHA"
           {
             echo "SRC=$RUNNER_TEMP/source"
             echo "SCRIPTS=$RUNNER_TEMP/source/$SKILL/scripts"
           } >> "$GITHUB_ENV"
-
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-
+      - name: Load release configuration
+        run: uv run --script "$RUNNER_TEMP/source/$SKILL/scripts/releaseconfig.py" "$GITHUB_ENV"
       - name: Download the full release notes
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-notes-full
           path: ${{ runner.temp }}/full
-
-      - name: Mint a Fern read token
-        id: fern-read
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
-        with:
-          client-id: ${{ secrets.APP_CLIENT_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: ${{ env.FERN_OWNER }}
-          repositories: ${{ env.FERN_REPO_NAME }}
-          permission-contents: read
-          permission-pull-requests: read
-          skip-token-revoke: true
-
       - name: Check out Fern dev
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: ${{ env.FERN_OWNER }}/${{ env.FERN_REPO_NAME }}
+          repository: ${{ github.repository }}
           ref: ${{ env.FERN_BASE }}
           path: fern
-          token: ${{ steps.fern-read.outputs.token }}
           persist-credentials: false
-
-      # Both state reads take these arguments, one per line.
       - name: Pick the Fern state arguments
         run: |
           {
@@ -581,18 +498,14 @@ jobs:
             fi
             if [[ "$MODE" == test ]]; then echo --rehearsal; fi
           } > "$RUNNER_TEMP/state-args"
-
       - name: Read the Fern state
         id: state
         env:
-          GH_TOKEN: ${{ steps.fern-read.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           mapfile -t args < "$RUNNER_TEMP/state-args"
           uv run --script "$SCRIPTS/fernstate.py" "$TAG" --out "$RUNNER_TEMP/state" \
             --outputs "$GITHUB_OUTPUT" "${args[@]}"
-
-      # A docs refusal must not hold back the changelog; each docs step needs
-      # the one before it, and the job fails after filing when one failed.
       - name: Pick the docs range
         id: docs-range
         if: steps.state.outputs.docs != 'skip'
@@ -600,18 +513,16 @@ jobs:
         run: |
           uv run --script "$SCRIPTS/docsrange.py" "$TAG" "$RUNNER_TEMP/state" \
             --repo "$SRC" > "$RUNNER_TEMP/range.json"
-
       - name: Collect the review's PRs
         id: review-all
         if: steps.docs-range.outcome == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          GH_REPO: ${{ job.workflow_repository }}
         run: |
           baseline=$(jq -r .baseline "$RUNNER_TEMP/range.json")
           uv run --script "$SCRIPTS/collectprs.py" "$TAG" --since "$baseline" --repo "$SRC" > "$RUNNER_TEMP/review-all.json"
-
       - name: Withhold held PRs from the review
         id: review-input
         if: steps.review-all.outcome == 'success'
@@ -621,68 +532,40 @@ jobs:
           uv run --script "$SCRIPTS/withhold.py" "$RUNNER_TEMP/review-all.json" \
             "$RUNNER_TEMP/full/release-notes.json" --ledger "fern/$HELD_ITEMS" \
             --held "${held[@]}" > review-prs.json
-
-      - name: Revoke the Fern read token
-        if: always() && steps.fern-read.outputs.token != ''
-        env:
-          GH_TOKEN: ${{ steps.fern-read.outputs.token }}
-        run: gh api --method DELETE /installation/token
-
-      - name: Drop Fern's git directory
-        if: always()
-        run: rm -rf fern/.git
-
       - name: Prepare the review workspace
         if: steps.review-input.outcome == 'success'
+        continue-on-error: true
         run: |
-          mkdir sdk scripts
+          cp -a fern "$RUNNER_TEMP/pristine"
+          rm -rf "$RUNNER_TEMP/pristine/.git" fern/.git
+          mkdir sdk
           git -C "$SRC" archive "$TAG" | tar -x -C sdk
           cp "$SRC/$SKILL/docs.md" docs.md
-          cp "$SCRIPTS/checkpatch.py" "$SCRIPTS/releasedata.py" scripts/
-          cp -a fern "$RUNNER_TEMP/pristine"
-
+        id: review-workspace
       - name: Emit the docs schema
         id: docs-schema
-        if: steps.review-input.outcome == 'success'
+        if: steps.review-workspace.outcome == 'success'
         run: echo "schema=$(uv run --script "$SCRIPTS/reportschema.py" --kind docs)" >> "$GITHUB_OUTPUT"
-
-      # Debug output would print tool results (Fern pages) to public logs.
+        continue-on-error: true
       - name: Review the docs
         id: docs-claude
-        if: steps.review-input.outcome == 'success'
+        if: steps.docs-schema.outcome == 'success'
         continue-on-error: true
         timeout-minutes: ${{ fromJSON(env.DOCS_TIMEOUT_MINUTES) }}
         uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         env:
-          ACTIONS_STEP_DEBUG: "false"
+          ACTIONS_STEP_DEBUG: 'false'
         with:
-          anthropic_api_key: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.anthropic_api_key }}
           github_token: ${{ github.token }}
-          allowed_bots: band-release-please-public
-          show_full_output: "false"
-          display_report: "false"
-          prompt: >-
-            Follow docs.md in the working directory for release ${{ env.TAG }}.
-            The Fern checkout is fern/, the released source is sdk/, and the
-            review input is review-prs.json.
-          claude_args: >-
-            --max-turns ${{ env.DOCS_MAX_TURNS }}
-            --max-budget-usd ${{ env.DOCS_MAX_BUDGET_USD }}
-            --tools Read,Glob,Grep,Edit,Write
-            --restricted
-            --strict-mcp-config
-            --permission-mode acceptEdits
-            --permission-prompts none
-            --json-schema '${{ steps.docs-schema.outputs.schema }}'
-
-      # The review could write anywhere in the workspace, such as a planted
-      # .git the filing checkout would reuse; keep only the edited Fern tree.
-      - name: Clear the workspace
-        if: steps.state.outputs.docs != 'skip'
-        run: |
-          mv fern "$RUNNER_TEMP/edited"
-          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-
+          allowed_bots: ${{ env.ALLOWED_BOTS }}
+          show_full_output: 'false'
+          display_report: 'false'
+          prompt: Follow docs.md in the working directory for release ${{ env.TAG }}. The Fern checkout is fern/, the released
+            source is sdk/, and the review input is review-prs.json.
+          claude_args: --max-turns ${{ env.DOCS_MAX_TURNS }} --max-budget-usd ${{ env.DOCS_MAX_BUDGET_USD }} --tools Read,Glob,Grep,Edit,Write
+            --restricted --strict-mcp-config --permission-mode acceptEdits --permission-prompts none --json-schema '${{ steps.docs-schema.outputs.schema
+            }}'
       - name: Read the docs report
         id: docs-report
         if: steps.state.outputs.docs != 'skip' && steps.docs-claude.outcome == 'success'
@@ -692,66 +575,134 @@ jobs:
         run: |
           uv run --script "$SCRIPTS/extractreport.py" "$EXECUTION_FILE" \
             --kind docs --out "$RUNNER_TEMP/docs-report.json"
+      - name: Package the reviewed trees
+        if: always() && steps.state.outputs.docs != 'skip'
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/docs-review"
+          if [[ -d "$RUNNER_TEMP/pristine" ]]; then cp -a "$RUNNER_TEMP/pristine" "$RUNNER_TEMP/docs-review/pristine"; fi
+          if [[ -d fern ]]; then cp -a fern "$RUNNER_TEMP/docs-review/edited"; fi
+          if [[ -f "$RUNNER_TEMP/docs-report.json" ]]; then cp "$RUNNER_TEMP/docs-report.json" "$RUNNER_TEMP/docs-review/docs-report.json"; fi
+          rm -rf "$RUNNER_TEMP/docs-review/edited/.git"
+      - name: Upload the docs review
+        if: always() && steps.state.outputs.docs != 'skip'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: docs-review
+          path: ${{ runner.temp }}/docs-review/
+          overwrite: true
+          include-hidden-files: true
+          if-no-files-found: error
 
-      # No install scripts run, and npm ci replaces any node_modules already
-      # there; the locked packages only parse the pages. Without them the
-      # check fails, so no docs PR is filed.
+  file:
+    needs:
+      - scan
+      - changelog
+      - holdbacks
+      - docs
+    if: "!cancelled() && needs.holdbacks.result == 'success'"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    concurrency:
+      group: release-docs-filing-${{ inputs.mode == 'dry-run' && github.run_id || inputs.mode || 'live' }}
+      cancel-in-progress: false
+    env:
+      TAG: ${{ inputs.tag || needs.scan.outputs.tag }}
+      HAS_ENTRY: ${{ needs.holdbacks.outputs.has_entry }}
+      HELD: ${{ needs.holdbacks.outputs.held }}
+    outputs:
+      changelog_pr: ${{ steps.file.outputs.changelog_pr }}
+      docs_pr: ${{ steps.file.outputs.docs_pr }}
+    steps:
+      - name: Checkout the workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+          path: source
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Locate the trusted scripts
+        run: |
+          {
+           echo "SRC=$GITHUB_WORKSPACE/source"
+           echo "SCRIPTS=$GITHUB_WORKSPACE/source/$SKILL/scripts"
+          } >> "$GITHUB_ENV"
+      - name: Load release configuration
+        run: uv run --script "$SCRIPTS/releaseconfig.py" "$GITHUB_ENV"
+      - name: Download the full release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-notes-full
+          path: ${{ runner.temp }}/full
+      - name: Download docs-review
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: docs-review
+          path: ${{ runner.temp }}/docs-review
+        id: review-download
+        continue-on-error: true
+        if: needs.docs.outputs.docs != 'skip'
       - name: Install the MDX reader
         id: mdx-reader
-        if: steps.docs-report.outcome == 'success'
+        if: steps.review-download.outcome == 'success' && needs.docs.outputs.review == 'success'
         continue-on-error: true
         run: npm ci --ignore-scripts --prefix "$SCRIPTS/mdx"
-
-      # A backstop above checkpatch.py's own reader timeout, so a stalled
-      # check still leaves time to file the changelog.
       - name: Check the docs edits
         id: patch
-        if: steps.docs-report.outcome == 'success'
+        if: steps.mdx-reader.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 5
         run: |
-          uv run --script "$SCRIPTS/checkpatch.py" "$RUNNER_TEMP/pristine" "$RUNNER_TEMP/edited" \
+          uv run --script "$SCRIPTS/checkpatch.py" "$RUNNER_TEMP/docs-review/pristine" "$RUNNER_TEMP/docs-review/edited" \
             --out "$RUNNER_TEMP/patch.json" --outputs "$GITHUB_OUTPUT"
-
       - name: Mint a Fern write token
         id: fern-write
         if: env.MODE != 'dry-run'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         with:
-          client-id: ${{ secrets.APP_CLIENT_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          client-id: ${{ inputs.app_client_id }}
+          private-key: ${{ secrets.app_private_key }}
           owner: ${{ env.FERN_OWNER }}
           repositories: ${{ env.FERN_REPO_NAME }}
           permission-contents: write
           permission-pull-requests: write
-          permission-checks: read
-
+      - name: Pick the Fern state arguments
+        run: |
+          {
+            if [[ "$HAS_ENTRY" == true ]]; then
+              printf -- '--date\n%s\n' "$(jq -r .release_date "$RUNNER_TEMP/full/release-notes.json")"
+            fi
+            if [[ "$MODE" == test ]]; then echo --rehearsal; fi
+          } > "$RUNNER_TEMP/state-args"
       - name: Re-read the Fern state
         id: fresh
-        if: env.MODE != 'dry-run'
         env:
-          GH_TOKEN: ${{ steps.fern-write.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           mapfile -t args < "$RUNNER_TEMP/state-args"
-          uv run --script "$SCRIPTS/fernstate.py" "$TAG" --out "$RUNNER_TEMP/fresh" "${args[@]}"
-
+          uv run --script "$SCRIPTS/fernstate.py" "$TAG" --out "$RUNNER_TEMP/fresh" --outputs "$GITHUB_OUTPUT" "${args[@]}"
       - name: Re-pick the docs range
         id: docs-rerange
-        if: env.MODE != 'dry-run' && steps.patch.outcome == 'success'
+        if: steps.patch.outcome == 'success'
         continue-on-error: true
         run: |
           uv run --script "$SCRIPTS/docsrange.py" "$TAG" "$RUNNER_TEMP/fresh" \
             --repo "$SRC" > "$RUNNER_TEMP/range.json"
-
       - name: Check out Fern dev for filing
         if: env.MODE != 'dry-run'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: ${{ env.FERN_OWNER }}/${{ env.FERN_REPO_NAME }}
+          repository: ${{ github.repository }}
           ref: ${{ env.FERN_BASE }}
           path: fern-write
           token: ${{ steps.fern-write.outputs.token }}
-
       - name: File the Fern PRs
         id: file
         if: env.MODE != 'dry-run'
@@ -760,6 +711,7 @@ jobs:
           PATCH: ${{ steps.patch.outcome }}
           RERANGE: ${{ steps.docs-rerange.outcome }}
           CHANGED: ${{ steps.patch.outputs.changed }}
+          CHECKS_TOKEN: ${{ github.token }}
         run: |
           # Held indexes also keep the docs PR from merging when every item is held.
           read -ra held <<< "$HELD"
@@ -769,24 +721,21 @@ jobs:
             args+=(--notes "$RUNNER_TEMP/full/release-notes.json" --release-prs "$RUNNER_TEMP/full/release-prs.json")
           fi
           if [[ "$PATCH" == success && "$RERANGE" == success && "$CHANGED" != 0 ]]; then
-            args+=(--docs-check "$RUNNER_TEMP/patch.json" --docs-report "$RUNNER_TEMP/docs-report.json" \
-              --docs-range "$RUNNER_TEMP/range.json" --edited "$RUNNER_TEMP/edited" --pristine "$RUNNER_TEMP/pristine")
+            args+=(--docs-check "$RUNNER_TEMP/patch.json" --docs-report "$RUNNER_TEMP/docs-review/docs-report.json" \
+              --docs-range "$RUNNER_TEMP/range.json" --edited "$RUNNER_TEMP/docs-review/edited" --pristine "$RUNNER_TEMP/docs-review/pristine")
           fi
           uv run --script "$SCRIPTS/filefern.py" "${args[@]}"
-
       - name: Fail on a failed docs review
-        if: >-
-          steps.state.outputs.docs != 'skip' &&
-          (steps.patch.outcome != 'success' || steps.docs-rerange.outcome == 'failure')
+        if: needs.docs.outputs.docs != 'skip' && (needs.docs.result != 'success' || needs.docs.outputs.review != 'success'
+          || steps.patch.outcome != 'success' || steps.docs-rerange.outcome != 'success')
         run: |
           echo "::error::The docs review or its edit check failed; no docs PR was filed."
           exit 1
-
       - name: Summarize
         if: always()
         env:
-          CHANGELOG: ${{ steps.state.outputs.changelog }}
-          DOCS: ${{ steps.state.outputs.docs }}
+          CHANGELOG: ${{ steps.fresh.outputs.changelog }}
+          DOCS: ${{ steps.fresh.outputs.docs }}
           CHANGED: ${{ steps.patch.outputs.changed }}
           MERGEABLE: ${{ steps.patch.outputs.mergeable }}
         run: |
@@ -799,8 +748,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   alert:
-    needs: [collect, changelog, holdbacks, bundle, slack, discord, fern]
-    # A queued fern job a newer one displaces ends cancelled, not failed.
+    needs:
+      - scan
+      - collect
+      - changelog
+      - holdbacks
+      - slack
+      - discord
+      - docs
+      - file
     if: failure() || contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -811,16 +767,16 @@ jobs:
           sparse-checkout: /${{ env.SKILL }}/
           sparse-checkout-cone-mode: false
           persist-credentials: false
-
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-
       - name: Alert Slack
         env:
           NEEDS: ${{ toJSON(needs) }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.slack_webhook_url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          FERN_PRS: ${{ needs.fern.outputs.changelog_pr }} ${{ needs.fern.outputs.docs_pr }}
+          FERN_PRS: ${{ needs.file.outputs.changelog_pr }} ${{ needs.file.outputs.docs_pr }}
         run: |
           failed=$(jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key): \(.value.result)"] | join(", ")' <<< "$NEEDS")
           {
@@ -828,3 +784,7 @@ jobs:
             if [[ -n "${FERN_PRS// }" ]]; then printf 'Fern PRs: %s\n' "$FERN_PRS"; fi
             printf 'Recover by hand with /band-release-docs %s.\n' "$TAG"
           } | uv run --script "$SKILL/scripts/postslack.py"
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || needs.scan.outputs.tag }}

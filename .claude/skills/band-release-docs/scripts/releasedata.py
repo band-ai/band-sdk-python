@@ -24,6 +24,13 @@ from pydantic import (
     model_validator,
 )
 
+ANNOUNCED_MARKER_PREFIX = "announced-"
+MARKER_RETENTION_DAYS = 30
+LOOKBACK_DAYS = 14
+NOTES_FILE = "release-notes.json"
+FILING_APP_SLUG = "thenvoi-argocd"
+ALLOWED_BOTS = f"github-actions,{FILING_APP_SLUG}"
+
 SDK_TAG_PREFIX = "band-sdk-v"
 SDK_REPO_NAME = "band-sdk-python"
 SDK_REPO_URL = f"https://github.com/band-ai/{SDK_REPO_NAME}"

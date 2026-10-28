@@ -21,8 +21,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from collectprs import GhModel, earlier_sdk_tags, release_version, tag_version
+from collectprs import earlier_sdk_tags, release_version, tag_version
 from fernstate import DOCS_MERGED_FILE, DOCS_OPEN_FILE
+from githubcli import GhModel
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from releasedata import DOCS_BRANCH_PREFIX, SDK_TAG_PREFIX, shape_errors
 

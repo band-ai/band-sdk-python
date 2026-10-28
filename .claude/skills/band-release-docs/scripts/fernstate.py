@@ -20,7 +20,7 @@ from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
 
-from collectprs import GhModel, gh_output
+from githubcli import GhModel, gh_output
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from releasedata import (
     CHANGELOG_BRANCH_PREFIX,

@@ -24,9 +24,18 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
-from pydantic.alias_generators import to_camel
-from releasedata import SDK_TAG_PREFIX, LooseCommit, PullRequest, ReleasePrs
+from fernstate import PrState, branch_pr
+from githubcli import CommandError, GhModel, gh, gh_failed, gh_output
+from pydantic import BaseModel
+from releasedata import (
+    ANNOUNCED_MARKER_PREFIX,
+    CHANGELOG_BRANCH_PREFIX,
+    SDK_TAG_PREFIX,
+    LooseCommit,
+    PullRequest,
+    ReleasePrs,
+    fern_branch,
+)
 from stepoutputs import append_outputs
 
 logger = logging.getLogger(__name__)
@@ -36,8 +45,6 @@ SDK_TAG_PATTERN = re.compile(rf"^{SDK_TAG_PREFIX}(\d+)\.(\d+)\.(\d+)$")
 INTERNAL_PATHS = ("tests/", ".github/", ".claude/")
 # release-please labels its release PRs "autorelease: pending" / "autorelease: tagged".
 AUTORELEASE_LABEL_PREFIX = "autorelease:"
-# The asset whose presence marks a release as announced.
-ANNOUNCED_ASSET = "release-notes.json"
 # What ``gh release view`` prints for a release this token cannot see.
 RELEASE_NOT_FOUND = "release not found"
 RELEASE_PLEASE_CONFIG = "release-please-config.json"
@@ -66,14 +73,6 @@ def release_version(tag: str) -> tuple[int, int, int]:
     return version
 
 
-class GhModel(BaseModel):
-    """A ``gh --json`` object; field names are the camelCase ``gh`` keys."""
-
-    model_config = ConfigDict(
-        frozen=True, alias_generator=to_camel, validate_by_name=True, extra="ignore"
-    )
-
-
 class Named(GhModel):
     name: str
 
@@ -83,7 +82,6 @@ class Release(GhModel):
     published_at: datetime
     is_prerelease: bool
     is_draft: bool
-    assets: list[Named]
 
     @property
     def release_date(self) -> str:
@@ -137,13 +135,61 @@ class StopReason(StrEnum):
     DRAFT = "The release is a draft."
     PRERELEASE = "The release is a prerelease."
     ANNOUNCED = (
-        f"Already announced: the release carries {ANNOUNCED_ASSET}. "
-        "Delete that asset to announce again."
+        "Already announced: another run marked it or its changelog PR is merged."
     )
     NO_CHANGES = "No user-facing changes in this release."
 
 
-def stop_reason(release: Release | None, *, live: bool) -> StopReason | None:
+class ArtifactRun(BaseModel):
+    id: int
+
+
+class MarkerArtifact(BaseModel):
+    expired: bool
+    workflow_run: ArtifactRun
+
+
+class Artifacts(BaseModel):
+    artifacts: list[MarkerArtifact]
+
+
+def is_announced(
+    tag: str, run_id: int, *, caller: str, github: Callable[..., str] = gh_output
+) -> bool:
+    """Recognize another run's live marker or a merged changelog PR."""
+    pages = github(
+        "api",
+        f"repos/{caller}/actions/artifacts",
+        "--method",
+        "GET",
+        "-f",
+        f"name={ANNOUNCED_MARKER_PREFIX}{tag}",
+        "--paginate",
+        "--slurp",
+    )
+    artifacts = [
+        artifact
+        for page in json.loads(pages)
+        for artifact in Artifacts.model_validate(page).artifacts
+    ]
+    if any(
+        not artifact.expired and artifact.workflow_run.id != run_id
+        for artifact in artifacts
+    ):
+        return True
+    pr = branch_pr(github, fern_branch(CHANGELOG_BRANCH_PREFIX, tag, rehearsal=False))
+    return pr is not None and pr.state is PrState.MERGED
+
+
+def stop_reason(
+    release: Release | None,
+    tag: str,
+    run_id: int,
+    *,
+    live: bool,
+    caller: str,
+    github: Callable[..., str],
+) -> StopReason | None:
     """Return why ``release`` must not be announced, or ``None`` to proceed."""
     if release is None:
         return StopReason.NOT_VISIBLE
@@ -151,21 +197,9 @@ def stop_reason(release: Release | None, *, live: bool) -> StopReason | None:
         return StopReason.DRAFT
     if release.is_prerelease:
         return StopReason.PRERELEASE
-    if live and any(asset.name == ANNOUNCED_ASSET for asset in release.assets):
+    if live and is_announced(tag, run_id, caller=caller, github=github):
         return StopReason.ANNOUNCED
     return None
-
-
-class CommandError(RuntimeError):
-    """A failed ``git`` or ``gh`` call.
-
-    Its message names only the subcommand and exit code: the output of a call
-    on the private Fern repository may name its files. ``detail`` holds stderr.
-    """
-
-    def __init__(self, command: str, code: int, detail: str) -> None:
-        super().__init__(f"{command} failed (exit {code})")
-        self.detail = detail
 
 
 def git(repo: Path, *args: str) -> str:
@@ -288,26 +322,6 @@ def collect(
     )
 
 
-def gh(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["gh", *args], check=False, capture_output=True, text=True)
-
-
-def gh_failed(
-    args: Sequence[str], result: subprocess.CompletedProcess[str]
-) -> Exception:
-    return CommandError(
-        f"gh {' '.join(args[:2])}", result.returncode, result.stderr.strip()
-    )
-
-
-def gh_output(*args: str) -> str:
-    """Run ``gh`` and return its stdout; raise on a non-zero exit."""
-    result = gh(*args)
-    if result.returncode != 0:
-        raise gh_failed(args, result)
-    return result.stdout
-
-
 def gh_release(tag: str) -> Release | None:
     """The release, or ``None`` when this token cannot see it."""
     args = (
@@ -315,7 +329,7 @@ def gh_release(tag: str) -> Release | None:
         "view",
         tag,
         "--json",
-        "url,publishedAt,isPrerelease,isDraft,assets",
+        "url,publishedAt,isPrerelease,isDraft",
     )
     result = gh(*args)
     if result.returncode == 0:
@@ -339,10 +353,13 @@ def run(
     outputs: Path | None,
     release_lookup: Callable[[str], Release | None],
     pr_meta: Callable[[int], PrMeta],
+    caller: str,
+    run_id: int,
+    github: Callable[..., str] = gh_output,
 ) -> ReleasePrs | None:
     """Gate and collect one release, recording the gate in ``outputs``."""
     release = release_lookup(tag)
-    stop = stop_reason(release, live=live)
+    stop = stop_reason(release, tag, run_id, live=live, caller=caller, github=github)
     if release is None or stop is not None:
         logger.info("Not announcing %s: %s", tag, stop)
         append_outputs(outputs, proceed=False, has_changes=False, reason=str(stop))
@@ -366,6 +383,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--outputs", type=Path, help="append gate values here")
     parser.add_argument("--repo", type=Path, default=Path.cwd())
+    parser.add_argument(
+        "--caller", default="", help="repository holding announcement markers"
+    )
+    parser.add_argument("--run-id", type=int, default=0)
     args = parser.parse_args(argv)
 
     try:
@@ -382,10 +403,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             outputs=args.outputs,
             release_lookup=gh_release,
             pr_meta=gh_pr_meta,
+            caller=args.caller,
+            run_id=args.run_id,
         )
     except CommandError as exc:
-        # This repository is public, so the command's output may be shown.
-        logger.error("error: %s: %s", exc, exc.detail)
+        logger.error("error: %s", exc)
         return 1
     except (RuntimeError, ValueError) as exc:
         logger.error("error: %s", exc)

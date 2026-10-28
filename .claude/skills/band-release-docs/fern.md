@@ -1,10 +1,12 @@
 # Fern task (local): `/band-release-docs <tag> [--bundle <dir>] [--rehearse]`
 
-`release-announce.yml` files and merges both Fern PRs after every release.
+Fern calls the reusable `release-announce.yml` nightly or on manual dispatch
+to file and merge both Fern PRs for the oldest unannounced release.
 This is the manual recovery path its alerts point to: a maintainer runs it in
-Claude Code from this repository's checkout after the workflow has attached
-the release's bundle. It files the Fern changelog PR from the bundle, then
-opens one Fern docs PR updating the Python SDK pages the release made stale.
+Claude Code from this repository's checkout after downloading the private
+bundle artifact from the Fern run. It files the Fern changelog PR from the
+bundle, then opens one Fern docs PR updating the Python SDK pages the release
+made stale.
 Every push, PR, and close waits for the maintainer to review the diff and
 approve.
 
@@ -19,7 +21,8 @@ checkout.
 - Ask for a local `thenvoi/fern` clone, or `gh repo clone thenvoi/fern` into a
   temporary directory.
 - `--bundle <dir>` reads the bundle from a directory (for example
-  `gh run download <run-id> --name bundle --dir <dir>`) instead of the release.
+  `gh run download <run-id> --repo thenvoi/fern --name bundle --dir <dir>`).
+  The bundle is a private Fern artifact, not an SDK release attachment.
 - `--rehearse` uses the rehearsal branches below and never pushes, opens,
   closes, or comments on anything. It still runs the existing-PR check on the
   real branch names and reports what it finds, without stopping.
@@ -48,11 +51,11 @@ closed PR may keep its branch or have it deleted.
 
 ## Changelog
 
-1. Fetch the bundle: `gh release download <tag> --repo band-ai/band-sdk-python --dir <bundle>`
-   (with `--bundle <dir>`, `<bundle>` is that directory).
+1. Use the supplied `--bundle <dir>`, or download the bundle from the matching
+   Fern run: `gh run download <run-id> --repo thenvoi/fern --name bundle --dir <bundle>`.
    No bundle means the release had no user-facing changes or its run failed:
    stop, say so, and link
-   `https://github.com/band-ai/band-sdk-python/actions/workflows/release-announce.yml`.
+   `https://github.com/thenvoi/fern/actions/workflows/python-sdk-release.yml`.
 2. `git -C <fern> fetch --prune origin`, then the branch check and worktree
    above. Then run
    `uv run --script "$S/fernstate.py" <tag> --out <tmp>/state --date <release_date>`
@@ -61,7 +64,7 @@ closed PR may keep its branch or have it deleted.
    `fern/changelog/sdks/<release_date>.md`, stop and link that PR: both PRs
    would write that date file, so it merges first and this command runs again.
 3. Holdbacks: apply [holdbacks.md](holdbacks.md) to `<bundle>/release-notes.json`
-   with `<fern>`'s ledger and docs summary. The bundle the workflow attached
+   with `<fern>`'s ledger and docs summary. The bundle the workflow uploaded
    already leaves out what it held; show every further match and ask the
    maintainer whether to hold it back. A hold made here binds only this PR:
    also add it to the ledger, or a later workflow run may publish the item.

@@ -222,3 +222,16 @@ def inputs(
         ]
     )
     return Inputs(tmp_path, notes.model_dump_json())  # type: ignore[attr-defined]
+
+
+@pytest.fixture
+def scanreleases(scripts: Callable[[str], ModuleType]) -> ModuleType:
+    return scripts("scanreleases")
+
+
+@pytest.fixture
+def tagged(repo: ThrowawayRepo) -> ThrowawayRepo:
+    repo.tag(PREVIOUS_TAG)
+    repo.commit("feat: retry sends (#20)", {"src/band/send.py": ""})
+    repo.tag(RELEASE_TAG)
+    return repo

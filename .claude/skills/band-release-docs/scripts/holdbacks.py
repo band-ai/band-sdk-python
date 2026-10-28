@@ -24,11 +24,11 @@ from pathlib import Path
 from typing import Self, TypeVar
 
 import yaml
-from collectprs import ANNOUNCED_ASSET
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from releasedata import (
     FORMER_SDK_REPO_NAME,
     HELD_ITEMS,
+    NOTES_FILE,
     SDK_REPO_NAME,
     HoldbacksReport,
     ReleaseNotes,
@@ -188,9 +188,7 @@ def write_holdbacks(
     kept = kept_items(notes, held)
     if kept.items:
         out.mkdir(parents=True, exist_ok=True)
-        (out / ANNOUNCED_ASSET).write_text(
-            kept.model_dump_json(indent=2), encoding="utf-8"
-        )
+        (out / NOTES_FILE).write_text(kept.model_dump_json(indent=2), encoding="utf-8")
     append_outputs(outputs, has_entry=bool(kept.items), held=" ".join(map(str, held)))
 
 

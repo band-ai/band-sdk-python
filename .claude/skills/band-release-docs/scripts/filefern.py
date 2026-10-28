@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pydantic>=2.12,<3", "pyyaml>=6,<7"]
+# dependencies = ["pydantic>=2.12,<3", "pyyaml>=6,<7", "pydantic-settings>=2,<3"]
 # ///
 """File the Fern changelog and docs PRs from checked inputs, then merge or close them.
 
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import shutil
 import tempfile
 import time
@@ -32,7 +33,7 @@ from functools import partial
 from pathlib import Path
 
 from checkpatch import PatchCheck
-from collectprs import gh_output, git
+from collectprs import git
 from docsrange import DOCS_PRS, DocsRange
 from docsreport import DocsReport, pr_body, superseded
 from fernstate import (
@@ -44,6 +45,7 @@ from fernstate import (
     Gh,
     action,
 )
+from githubcli import gh_output
 from holdbacks import (
     add_held_argument,
     held_reasons,
@@ -51,7 +53,8 @@ from holdbacks import (
     refuse_held_breaking,
     with_ledger_holds,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from releasedata import (
     CHANGELOG_DIR,
     FERN_BASE,
@@ -74,6 +77,13 @@ CHECK_POLL_SECONDS = 30
 CHECK_POLL_ATTEMPTS = 40
 # The review reads the released source, where a held feature still lives.
 HOLDBACKS_ACTIVE = "features are held back: check that none is documented"
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+    CHECKS_TOKEN: SecretStr | None = None
 
 
 class Mode(StrEnum):
@@ -174,6 +184,7 @@ class Filer:
     tag: str
     poll: Poll
     open_docs: Collection[int]
+    checks: Gh | None = None
 
     def title(self, subject: str) -> str:
         prefix = "Rehearsal: " if self.mode is Mode.TEST else ""
@@ -254,7 +265,8 @@ class Filer:
         for attempt in range(self.poll.attempts):
             if attempt:
                 self.poll.wait()
-            output = self.gh(
+            reader = self.checks if self.checks is not None else self.gh
+            output = reader(
                 "api", f"repos/{FERN_REPO}/commits/{sha}/check-runs?per_page=100"
             )
             state = checks_state(CheckRuns.model_validate_json(output).check_runs)
@@ -512,7 +524,10 @@ def read_docs(args: argparse.Namespace) -> DocsInput | None:
 
 
 def main(
-    argv: Sequence[str] | None = None, gh: Gh = gh_output, poll: Poll = DEFAULT_POLL
+    argv: Sequence[str] | None = None,
+    gh: Gh = gh_output,
+    poll: Poll = DEFAULT_POLL,
+    checks: Gh | None = None,
 ) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
@@ -549,7 +564,13 @@ def main(
     state = FernState.model_validate_json((args.state / STATE_FILE).read_bytes())
     listing = (args.state / DOCS_OPEN_FILE).read_bytes()
     open_docs = {pr.number for pr in DOCS_PRS.validate_json(listing)}
-    filer = Filer(gh, args.fern, args.mode, args.tag, poll, open_docs)
+    settings = Settings()
+    if checks is None and settings.CHECKS_TOKEN is not None:
+        checks = partial(
+            gh_output,
+            env=dict(os.environ, GH_TOKEN=settings.CHECKS_TOKEN.get_secret_value()),
+        )
+    filer = Filer(gh, args.fern, args.mode, args.tag, poll, open_docs, checks)
     results = file_all(filer, state, read_changelog(args), read_docs(args))
     record_results(results, args.outputs, args.summary)
     return 0 if all(result.outcome in SETTLED for result in results.values()) else 1

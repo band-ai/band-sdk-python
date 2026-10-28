@@ -83,6 +83,51 @@ class TestFernMerge:
             f"- Fern docs: {filefern.Outcome.MERGED} {docs.url}\n"
         )
 
+    @pytest.mark.parametrize(
+        ("checks", "expected_state", "exit_code"),
+        [
+            (PASSING, MERGED, 0),
+            (FAILING, OPEN, 1),
+            (PENDING, OPEN, 1),
+        ],
+    )
+    def test_read_token_decides_merge_while_write_token_cannot_read_checks(
+        self,
+        filefern: ModuleType,
+        fernstate: ModuleType,
+        gh: FakeGh,
+        fern_names: FernNames,
+        fern_remote: FernRemote,
+        make_item: Callable[..., object],
+        make_notes: Callable[..., object],
+        tmp_path: Path,
+        checks: list[dict[str, str | None]],
+        expected_state: str,
+        exit_code: int,
+    ) -> None:
+        gh.allow_checks = False
+        gh.checks[fern_names.changelog] = checks
+        state = read_state(fernstate, gh, tmp_path, "--date", RELEASE_DATE)
+        extra = notes_args(make_notes, [make_item(*SEND_RETRIES)], tmp_path)
+        assert (
+            file_fern(
+                filefern,
+                gh,
+                fern_remote,
+                tmp_path,
+                state,
+                filefern.Mode.LIVE,
+                *extra,
+                checks=gh.read_checks,
+            )
+            == exit_code
+        )
+        (pr,) = gh.on(fern_names.changelog)
+        assert (pr.state, read_outputs(tmp_path / "outputs")) == (
+            expected_state,
+            {"changelog_pr": pr.url, "docs_pr": ""},
+        )
+
     def test_commits_carry_the_release_bot_and_no_ai_attribution(
         self,
         filefern: ModuleType,

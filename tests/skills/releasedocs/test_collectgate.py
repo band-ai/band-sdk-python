@@ -7,6 +7,7 @@ from types import ModuleType
 
 import pytest
 
+from tests.skills.releasedocs.ghpeer import MERGED, FakeGh
 from tests.skills.releasedocs.gitrepo import ThrowawayRepo
 from tests.skills.releasedocs.samples import (
     PREVIOUS_TAG,
@@ -16,7 +17,8 @@ from tests.skills.releasedocs.samples import (
 
 # The only PR the gate may look up; any other lookup raises.
 PR_TABLE = {20: {"title": "Retry sends", "body": "", "labels": []}}
-ANNOUNCED = PUBLISHED_RELEASE | {"assets": [{"name": "release-notes.json"}]}
+RUN_ID = 123
+OTHER_RUN_ID = RUN_ID + 1
 
 
 def release_of(collectprs: ModuleType, fields: dict[str, object] | None) -> object:
@@ -28,6 +30,7 @@ def gate(
     repo: ThrowawayRepo,
     outputs: Path,
     fields: dict[str, object] | None,
+    gh: FakeGh,
     *,
     live: bool,
 ) -> object:
@@ -38,16 +41,11 @@ def gate(
         since=None,
         outputs=outputs,
         release_lookup=lambda _tag: release_of(collectprs, fields),
+        caller=gh.repo,
+        run_id=RUN_ID,
+        github=gh,
         pr_meta=lambda number: collectprs.PrMeta.model_validate(PR_TABLE[number]),
     )
-
-
-@pytest.fixture
-def tagged(repo: ThrowawayRepo) -> ThrowawayRepo:
-    repo.tag(PREVIOUS_TAG)
-    repo.commit("feat: retry sends (#20)", {"src/band/send.py": ""})
-    repo.tag(RELEASE_TAG)
-    return repo
 
 
 class TestReleaseGate:
@@ -57,7 +55,6 @@ class TestReleaseGate:
             (None, "NOT_VISIBLE"),
             (PUBLISHED_RELEASE | {"isDraft": True}, "DRAFT"),
             (PUBLISHED_RELEASE | {"isPrerelease": True}, "PRERELEASE"),
-            (ANNOUNCED, "ANNOUNCED"),
         ],
     )
     def test_unannounceable_release_stops_with_its_reason(
@@ -66,33 +63,94 @@ class TestReleaseGate:
         tagged: ThrowawayRepo,
         tmp_path: Path,
         fields: dict[str, object] | None,
+        gh: FakeGh,
         reason: str,
     ) -> None:
         outputs = tmp_path / "outputs"
-        assert gate(collectprs, tagged, outputs, fields, live=True) is None
+        assert gate(collectprs, tagged, outputs, fields, gh, live=True) is None
         assert outputs.read_text(encoding="utf-8") == (
             f"proceed=false\nhas_changes=false\nreason={collectprs.StopReason[reason]}\n"
         )
 
-    def test_announced_release_proceeds_outside_live_mode(
-        self, collectprs: ModuleType, tagged: ThrowawayRepo, tmp_path: Path
+    def test_live_release_stops_on_another_runs_marker(
+        self,
+        collectprs: ModuleType,
+        releasedata: ModuleType,
+        tagged: ThrowawayRepo,
+        tmp_path: Path,
+        gh: FakeGh,
     ) -> None:
+        gh.add_marker(releasedata.ANNOUNCED_MARKER_PREFIX + RELEASE_TAG, OTHER_RUN_ID)
         outputs = tmp_path / "outputs"
-        collected = gate(collectprs, tagged, outputs, ANNOUNCED, live=False)
-        assert [pr.number for pr in collected.pull_requests] == [20]
-        assert outputs.read_text(encoding="utf-8") == (
-            "proceed=true\nhas_changes=true\nreason=\n"
+        assert (
+            gate(collectprs, tagged, outputs, PUBLISHED_RELEASE, gh, live=True) is None
+        )
+        assert (
+            outputs.read_text()
+            == f"proceed=false\nhas_changes=false\nreason={collectprs.StopReason.ANNOUNCED}\n"
         )
 
+    def test_live_release_stops_on_a_merged_changelog_without_marker(
+        self,
+        collectprs: ModuleType,
+        releasedata: ModuleType,
+        tagged: ThrowawayRepo,
+        tmp_path: Path,
+        gh: FakeGh,
+    ) -> None:
+        gh.add_pr(
+            releasedata.fern_branch(
+                releasedata.CHANGELOG_BRANCH_PREFIX, RELEASE_TAG, rehearsal=False
+            ),
+            MERGED,
+        )
+        outputs = tmp_path / "outputs"
+        assert (
+            gate(collectprs, tagged, outputs, PUBLISHED_RELEASE, gh, live=True) is None
+        )
+        assert (
+            outputs.read_text()
+            == f"proceed=false\nhas_changes=false\nreason={collectprs.StopReason.ANNOUNCED}\n"
+        )
+
+    @pytest.mark.parametrize(
+        ("expired", "marker_run", "live"),
+        [
+            (False, RUN_ID, True),
+            (True, OTHER_RUN_ID, True),
+            (False, OTHER_RUN_ID, False),
+        ],
+    )
+    def test_retry_expired_marker_and_rehearsals_proceed(
+        self,
+        collectprs: ModuleType,
+        releasedata: ModuleType,
+        tagged: ThrowawayRepo,
+        tmp_path: Path,
+        gh: FakeGh,
+        expired: bool,
+        marker_run: int,
+        live: bool,
+    ) -> None:
+        gh.add_marker(
+            releasedata.ANNOUNCED_MARKER_PREFIX + RELEASE_TAG,
+            marker_run,
+            expired=expired,
+        )
+        outputs = tmp_path / "outputs"
+        collected = gate(collectprs, tagged, outputs, PUBLISHED_RELEASE, gh, live=live)
+        assert [pr.number for pr in collected.pull_requests] == [20]
+        assert outputs.read_text() == "proceed=true\nhas_changes=true\nreason=\n"
+
     def test_internal_only_release_has_no_changes(
-        self, collectprs: ModuleType, repo: ThrowawayRepo, tmp_path: Path
+        self, collectprs: ModuleType, repo: ThrowawayRepo, tmp_path: Path, gh: FakeGh
     ) -> None:
         repo.tag(PREVIOUS_TAG)
         repo.commit("test: more coverage (#21)", {"tests/test_send.py": ""})
         repo.commit("ci: faster lanes", {".github/workflows/ci.yml": ""})
         repo.tag(RELEASE_TAG)
         outputs = tmp_path / "outputs"
-        collected = gate(collectprs, repo, outputs, PUBLISHED_RELEASE, live=True)
+        collected = gate(collectprs, repo, outputs, PUBLISHED_RELEASE, gh, live=True)
         assert collected.excluded_internal == [21]
         assert outputs.read_text(encoding="utf-8") == (
             "proceed=true\nhas_changes=false\n"

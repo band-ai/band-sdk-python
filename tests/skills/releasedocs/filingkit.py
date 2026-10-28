@@ -86,10 +86,11 @@ def file_fern(
     mode: str,
     *extra: str,
     wait: Callable[[], None] = lambda: None,
+    checks: Callable[..., str] | None = None,
 ) -> int:
     """File from a fresh clone, as each workflow run does; ``wait`` runs between polls."""
     # A new directory per run: Windows can't delete a clone's read-only objects.
     fern = remote.clone(Path(tempfile.mkdtemp(prefix="fern-write-", dir=tmp_path)))
     argv = [RELEASE_TAG, "--fern", str(fern), "--state", str(state), "--mode", mode]
     argv += ["--outputs", str(tmp_path / "outputs"), *extra]
-    return filefern.main(argv, gh=gh, poll=filefern.Poll(2, wait))
+    return filefern.main(argv, gh=gh, poll=filefern.Poll(2, wait), checks=checks)
