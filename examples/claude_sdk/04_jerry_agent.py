@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[claude_sdk]>=4.0.0"]
+# dependencies = ["band-sdk[claude_sdk]>=6.0.1"]
 # ///
 """
 Jerry the mouse agent using Claude SDK.

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk>=4.0.0"]
+# dependencies = ["band-sdk>=6.0.1"]
 # ///
 """Host-side conductor + circuit breaker for the three-agent Docker demo.
 

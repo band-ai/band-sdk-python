@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[omp]>=4.0.0"]
+# dependencies = ["band-sdk[omp]>=6.0.1"]
 # ///
 """
 OMP native RPC client — bridge Band rooms to ``omp --mode rpc``.

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[pydantic-ai,anthropic]>=4.0.0"]
+# dependencies = ["band-sdk[pydantic-ai,anthropic]>=6.0.1"]
 # ///
 """
 Agent with custom system prompt instructions.
