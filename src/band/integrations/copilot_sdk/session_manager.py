@@ -107,6 +107,17 @@ class CopilotSessionManager:
                     await asyncio.wait_for(close_op(), timeout=_EVICT_OP_TIMEOUT_S)
             logger.info("Room %s: Copilot session evicted after failed turn", room_id)
 
+    async def delete_session(self, session_id: str) -> None:
+        """Delete an abandoned session's disk state; best-effort and bounded."""
+        try:
+            await asyncio.wait_for(
+                self._client.delete_session(session_id), timeout=_EVICT_OP_TIMEOUT_S
+            )
+        except Exception as exc:  # noqa: BLE001 -- cleanup of an unused session must not fail the turn
+            logger.warning(
+                "Copilot session %s could not be deleted: %s", session_id, exc
+            )
+
     async def cleanup_all(self) -> None:
         """Disconnect and drop every session, each under its room's lock."""
         for room_id in list(self._sessions):

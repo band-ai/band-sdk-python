@@ -9,8 +9,10 @@ from tests.adapters.copilot_sdk.fakes import (
     HISTORY_HEADING,
     FakeCopilotClient,
     ToolSchemaFakeTools,
+    make_platform_message,
     make_started_adapter,
     requires_copilot_sdk,
+    room_message,
     run_message,
 )
 
@@ -19,18 +21,7 @@ pytestmark = requires_copilot_sdk
 
 def room_with_earlier_message() -> ToolSchemaFakeTools:
     tools = ToolSchemaFakeTools()
-    tools.set_room_context(
-        [
-            {
-                "id": "earlier",
-                "message_type": "text",
-                "sender_id": "user-1",
-                "sender_type": "User",
-                "sender_name": "Alice",
-                "content": "my name is Alice",
-            }
-        ]
-    )
+    tools.set_room_context([room_message("earlier", "my name is Alice")])
     return tools
 
 
@@ -39,18 +30,61 @@ class TestFailedSeed:
         client = FakeCopilotClient(prompt_errors=[RuntimeError("model unavailable")])
         adapter = await make_started_adapter(client)
         tools = room_with_earlier_message()
+        turn = make_platform_message(content="what is my name?")
+        tools.append_room_context(room_message(turn.id, turn.content))
 
         with pytest.raises(RuntimeError, match="model unavailable"):
             await run_message(adapter, tools)
-        await run_message(adapter, tools, is_session_bootstrap=False)
+        await run_message(adapter, tools, is_session_bootstrap=False, msg=turn)
 
         failed, fresh = client.sessions
         assert client.resume_calls == []
         assert fresh.session_id != failed.session_id
         assert f"{HISTORY_HEADING}\n[Alice]: my name is Alice" in fresh.prompts[0]
+        assert "[Alice]: what is my name?" not in fresh.prompts[0]
         assert COPILOT_RESUME_RECORD.candidates(tools.events_sent) == {
             "room-1": fresh.session_id
         }
+
+    async def test_a_failed_first_prompt_deletes_the_unseeded_session(self):
+        client = FakeCopilotClient(prompt_errors=[RuntimeError("model unavailable")])
+        adapter = await make_started_adapter(client)
+
+        with pytest.raises(RuntimeError, match="model unavailable"):
+            await run_message(adapter, room_with_earlier_message())
+
+        assert client.deleted == [client.sessions[0].session_id]
+
+    async def test_a_failed_delete_leaves_the_turns_own_failure_and_the_next_turn(
+        self,
+    ):
+        client = FakeCopilotClient(prompt_errors=[RuntimeError("model unavailable")])
+        client.delete_error = RuntimeError("runtime gone")
+        adapter = await make_started_adapter(client)
+        tools = room_with_earlier_message()
+
+        with pytest.raises(RuntimeError, match="model unavailable"):
+            await run_message(adapter, tools)
+        await run_message(adapter, tools, is_session_bootstrap=False)
+
+        assert COPILOT_RESUME_RECORD.candidates(tools.events_sent) == {
+            "room-1": client.sessions[-1].session_id
+        }
+
+    async def test_an_unfetchable_transcript_prompts_the_fresh_session_unreplayed(
+        self,
+    ):
+        client = FakeCopilotClient(prompt_errors=[RuntimeError("model unavailable")])
+        adapter = await make_started_adapter(client)
+        tools = room_with_earlier_message()
+        with pytest.raises(RuntimeError, match="model unavailable"):
+            await run_message(adapter, tools)
+        tools.fetch_context_error = ConnectionError("Band REST unavailable")
+
+        await run_message(adapter, tools, is_session_bootstrap=False)
+
+        fresh = client.sessions[-1]
+        assert HISTORY_HEADING not in fresh.prompts[0]
 
     async def test_a_failed_later_prompt_resumes_the_seeded_session_unreplayed(self):
         client = FakeCopilotClient()
@@ -66,4 +100,5 @@ class TestFailedSeed:
 
         resumed = client.sessions[-1]
         assert client.resume_calls == [seeded.session_id]
+        assert client.deleted == []
         assert HISTORY_HEADING not in resumed.prompts[0]

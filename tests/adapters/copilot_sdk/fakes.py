@@ -9,6 +9,7 @@ test double.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -23,7 +24,7 @@ from band.adapters.copilot_sdk import (
     CopilotSDKAdapterConfig,
 )
 from band.converters.copilot_sdk import CopilotSDKSessionState
-from band.core.types import PlatformMessage
+from band.core.types import MessageType, PlatformMessage
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.framework_conformance.turnprobes import turn_input
@@ -37,7 +38,11 @@ requires_copilot_sdk = pytest.mark.skipif(
 HISTORY_HEADING = "[Previous conversation context:]"
 
 if _COPILOT_SDK_AVAILABLE:
-    from copilot.generated.session_events import SessionErrorData, SessionIdleData
+    from copilot.generated.session_events import (
+        SessionErrorData,
+        SessionIdleData,
+        UserMessageData,
+    )
 
 
 class ObservedCopilotAdapter(CopilotSDKAdapter):
@@ -71,6 +76,18 @@ def make_platform_message(
     )
 
 
+def room_message(message_id: str, content: str) -> dict[str, Any]:
+    """Alice's text message as the room context stores it."""
+    return {
+        "id": message_id,
+        "message_type": MessageType.TEXT,
+        "sender_id": "user-1",
+        "sender_type": "User",
+        "sender_name": "Alice",
+        "content": content,
+    }
+
+
 class ToolSchemaFakeTools(FakeAgentTools):
     def __init__(self) -> None:
         super().__init__(participants=ROOM_MEMBERS)
@@ -101,6 +118,29 @@ class ToolSchemaFakeTools(FakeAgentTools):
                 },
             },
         ]
+
+
+class HeldContextTools(ToolSchemaFakeTools):
+    """Room-context fetches park at the REST boundary while ``hold`` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hold = False
+        self.fetching = asyncio.Event()
+
+    async def fetch_room_context(self, **kwargs: Any) -> dict[str, Any]:
+        if self.hold:
+            self.fetching.set()
+            await asyncio.Event().wait()  # until the turn is interrupted
+        return await super().fetch_room_context(**kwargs)
+
+
+async def interrupt_when(turn: asyncio.Task[Any], reached: asyncio.Event) -> None:
+    """Interrupt ``turn`` once it reaches ``reached``, as the runtime's stop does."""
+    await reached.wait()
+    turn.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await turn
 
 
 class FakeCopilotSession:
@@ -146,6 +186,7 @@ class FakeCopilotSession:
     ) -> Any:
         self.prompts.append(prompt)
         self.journal.append("prompt")
+        self._publish(UserMessageData(content=prompt))  # the runtime admits it
         if self.send_error:
             raise self.send_error
         for data in self.turn_events:
@@ -177,7 +218,10 @@ class FakeCopilotSession:
     def deliver_aborted_idle(self) -> None:
         """The CLI ends an aborted turn with an idle, as the real one does."""
         self.journal.append("idle")
-        event = SimpleNamespace(data=SessionIdleData(aborted=True))
+        self._publish(SessionIdleData(aborted=True))
+
+    def _publish(self, data: Any) -> None:
+        event = SimpleNamespace(data=data)
         for handler in list(self.handlers):
             handler(event)
 
@@ -208,6 +252,8 @@ class FakeCopilotClient:
         self.stopped = False
         self.sessions: list[FakeCopilotSession] = []
         self.resume_calls: list[str] = []
+        self.deleted: list[str] = []
+        self.delete_error: Exception | None = None
 
     async def start(self) -> None:
         self.started = True
@@ -232,6 +278,11 @@ class FakeCopilotClient:
             session.send_error = self.prompt_errors.pop(0)
         self.sessions.append(session)
         return session
+
+    async def delete_session(self, session_id: str) -> None:
+        if self.delete_error:
+            raise self.delete_error
+        self.deleted.append(session_id)
 
     async def resume_session(self, session_id: str, **kwargs: Any) -> Any:
         self.resume_calls.append(session_id)
@@ -265,8 +316,9 @@ async def run_message(
     content: str = "hello",
     history: CopilotSDKSessionState | None = None,
     is_session_bootstrap: bool = True,
+    msg: PlatformMessage | None = None,
 ) -> PlatformMessage:
-    msg = make_platform_message(room_id=room_id, content=content)
+    msg = msg or make_platform_message(room_id=room_id, content=content)
     await adapter.on_message(
         msg=msg,
         tools=tools,

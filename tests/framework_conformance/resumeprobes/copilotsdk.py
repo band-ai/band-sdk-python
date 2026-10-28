@@ -6,6 +6,9 @@ real SDK's ``send_and_wait`` does on a session error.
 
 from __future__ import annotations
 
+import pytest
+
+from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
 from band.testing.fake_tools import FakeAgentTools
 from tests.adapters.copilot_sdk.fakes import FakeCopilotClient, make_started_adapter
 from tests.framework_conformance.resumeprobes.probe import SeedOutcome
@@ -22,6 +25,8 @@ def seed_failure() -> type[BaseException]:
 
 
 async def seed_copilot_sdk(outcome: SeedOutcome, tools: FakeAgentTools) -> str:
+    if not _COPILOT_SDK_AVAILABLE:
+        pytest.skip("github-copilot-sdk not installed; its own lane covers it")
     errors = [SeedPromptFailed()] if outcome == SeedOutcome.FAILED else []
     client = FakeCopilotClient(prompt_errors=errors)
     adapter = await make_started_adapter(client, emit=())

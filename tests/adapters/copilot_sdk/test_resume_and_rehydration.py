@@ -7,6 +7,7 @@ import pytest
 from band.adapters.copilot_sdk import CopilotSDKAdapterConfig
 from band.converters.copilot_sdk import COPILOT_RESUME_RECORD, CopilotSDKSessionState
 from tests.adapters.copilot_sdk.fakes import (
+    HISTORY_HEADING,
     FakeCopilotClient,
     ToolSchemaFakeTools,
     make_started_adapter,
@@ -16,7 +17,12 @@ from tests.adapters.copilot_sdk.fakes import (
 
 pytestmark = requires_copilot_sdk
 
-RECORDED = {"room-1": "band-room-1"}
+RECORDED_ID = "band-room-1"
+
+
+def recorded() -> dict[str, str]:
+    """A fresh room-to-session map naming room-1's recorded session."""
+    return {"room-1": RECORDED_ID}
 
 
 class TestResumeAndRehydration:
@@ -30,11 +36,11 @@ class TestResumeAndRehydration:
             adapter,
             tools,
             history=CopilotSDKSessionState(
-                text="[Alice]: earlier", room_to_session=RECORDED
+                text="[Alice]: earlier", room_to_session=recorded()
             ),
         )
 
-        assert client.resume_calls == ["band-room-1"]
+        assert client.resume_calls == [RECORDED_ID]
         session = client.sessions[0]
         assert session.resumed
         # Resumed sessions restore history from disk — no re-injection.
@@ -50,7 +56,7 @@ class TestResumeAndRehydration:
             adapter,
             tools,
             history=CopilotSDKSessionState(
-                text="[Alice]: earlier", room_to_session=RECORDED
+                text="[Alice]: earlier", room_to_session=recorded()
             ),
         )
 
@@ -72,7 +78,7 @@ class TestResumeAndRehydration:
             adapter,
             tools,
             history=CopilotSDKSessionState(
-                text="[Alice]: earlier", room_to_session=RECORDED
+                text="[Alice]: earlier", room_to_session=recorded()
             ),
         )
 
@@ -140,7 +146,68 @@ class TestResumeAndRehydration:
         tools = ToolSchemaFakeTools()
 
         await run_message(
-            adapter, tools, history=CopilotSDKSessionState(room_to_session=RECORDED)
+            adapter, tools, history=CopilotSDKSessionState(room_to_session=recorded())
         )
 
         assert not [e for e in tools.events_sent if e["message_type"] == "task"]
+
+    async def test_another_rooms_record_starts_a_fresh_replayed_session(self):
+        client = FakeCopilotClient()
+        adapter = await make_started_adapter(client)
+        tools = ToolSchemaFakeTools()
+
+        await run_message(
+            adapter,
+            tools,
+            history=CopilotSDKSessionState(
+                text="[Alice]: earlier", room_to_session={"room-2": RECORDED_ID}
+            ),
+        )
+
+        assert client.resume_calls == []
+        assert f"{HISTORY_HEADING}\n[Alice]: earlier" in client.sessions[0].prompts[0]
+
+    async def test_a_failed_seed_after_a_failed_resume_retries_the_record_unreplayed(
+        self,
+    ):
+        client = FakeCopilotClient(
+            resume_error=RuntimeError("no session state"),
+            prompt_errors=[RuntimeError("model unavailable")],
+        )
+        adapter = await make_started_adapter(
+            client, CopilotSDKAdapterConfig(inject_history_on_resume_failure=False)
+        )
+        tools = ToolSchemaFakeTools()
+        history = CopilotSDKSessionState(
+            text="[Alice]: earlier", room_to_session=recorded()
+        )
+        with pytest.raises(RuntimeError, match="model unavailable"):
+            await run_message(adapter, tools, history=history)
+
+        await run_message(adapter, tools, is_session_bootstrap=False)
+
+        assert client.resume_calls == [RECORDED_ID, RECORDED_ID]
+        assert HISTORY_HEADING not in client.sessions[-1].prompts[0]
+
+    async def test_a_bootstrap_resumes_the_seeded_session_over_an_older_record(self):
+        client = FakeCopilotClient(resume_error=RuntimeError("transient"))
+        adapter = await make_started_adapter(client)
+        tools = ToolSchemaFakeTools()
+        older = CopilotSDKSessionState(
+            text="[Alice]: earlier", room_to_session=recorded()
+        )
+        tools.send_event_error = ConnectionError("Band REST unavailable")
+        await run_message(adapter, tools, history=older)  # seeds unrecorded Y
+        seeded = client.sessions[0]
+        tools.send_event_error = None
+        client.resume_error = None
+        seeded.send_error = RuntimeError("broken pipe")
+        with pytest.raises(RuntimeError, match="broken pipe"):
+            await run_message(adapter, tools, history=older)
+
+        await run_message(adapter, tools, history=older)
+
+        assert client.resume_calls[-1] == seeded.session_id
+        assert COPILOT_RESUME_RECORD.candidates(tools.events_sent) == {
+            "room-1": seeded.session_id
+        }

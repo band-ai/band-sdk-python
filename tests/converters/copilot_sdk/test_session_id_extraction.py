@@ -19,11 +19,12 @@ def resume_record(metadata: dict[str, str]) -> dict[str, Any]:
     }
 
 
-ALICE = {
-    "content": "Hello",
-    "sender_name": "Alice",
-    "message_type": MessageType.TEXT,
-}
+def alice_says_hello() -> dict[str, Any]:
+    return {
+        "content": "Hello",
+        "sender_name": "Alice",
+        "message_type": MessageType.TEXT,
+    }
 
 
 class TestSessionIdExtraction:
@@ -32,7 +33,7 @@ class TestSessionIdExtraction:
             resume_record(
                 {CopilotMetadataKey.ROOM: "room-1", CopilotMetadataKey.SESSION: "old"}
             ),
-            ALICE,
+            alice_says_hello(),
             resume_record(
                 {CopilotMetadataKey.ROOM: "room-1", CopilotMetadataKey.SESSION: "new"}
             ),
@@ -52,7 +53,7 @@ class TestSessionIdExtraction:
 
     def test_records_stay_out_of_the_text(self):
         raw = [
-            ALICE,
+            alice_says_hello(),
             resume_record(
                 {CopilotMetadataKey.ROOM: "room-1", CopilotMetadataKey.SESSION: "s"}
             ),
