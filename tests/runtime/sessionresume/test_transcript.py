@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from band.core.types import MessageType
 from band.runtime.sessionresume import fetch_transcript
 from band.testing import FakeAgentTools
 from tests.roomhistory import stored
@@ -58,17 +59,36 @@ class TestFetchTranscript:
         tools = FakeAgentTools(
             participants=[BOB],
             room_context=[
-                stored("@[[u1]] the milk is in the fridge"),
-                stored("noted", message_id="own", sender_type="Agent"),
+                stored(f"@[[{BOB['id']}]] the milk is in the fridge"),
+                stored(
+                    "noted",
+                    message_id="own",
+                    sender_name="Helper",
+                    sender_type="Agent",
+                ),
             ],
         )
 
-        mention, reply = await fetch_transcript(
-            tools, room_id="room-1", turn_ids={"new"}
-        )
+        transcript = await fetch_transcript(tools, room_id="room-1", turn_ids={"new"})
 
-        assert mention["content"] == "@bob the milk is in the fridge"
-        assert (mention["role"], reply["role"]) == ("user", "assistant")
+        assert transcript == [
+            {
+                "role": "user",
+                "content": "@bob the milk is in the fridge",
+                "sender_name": "Alice",
+                "sender_type": "User",
+                "message_type": MessageType.TEXT,
+                "metadata": {},
+            },
+            {
+                "role": "assistant",
+                "content": "noted",
+                "sender_name": "Helper",
+                "sender_type": "Agent",
+                "message_type": MessageType.TEXT,
+                "metadata": {},
+            },
+        ]
 
     async def test_an_empty_room_has_an_empty_transcript(self) -> None:
         tools = FakeAgentTools()

@@ -957,6 +957,12 @@ class ClaudeSDKAdapter(
         release_future: asyncio.Future[None] = loop.create_future()
         # The turn's own TurnTask exists only once its task does.
         owner_ready: asyncio.Future[TurnTask] = loop.create_future()
+        # Only a bootstrap carries the room's history and recorded session.
+        resume_from, transcript = (
+            (history.room_to_session.get(room_id), history.text)
+            if is_session_bootstrap
+            else (None, None)
+        )
         turn_task = start_releasable_turn(
             session.retained,
             partial(
@@ -968,10 +974,8 @@ class ClaudeSDKAdapter(
                 message_ids,
                 distinct_sender_ids(messages),
                 release_future,
-                resume_from=history.room_to_session.get(room_id)
-                if is_session_bootstrap
-                else None,
-                transcript=history.text if is_session_bootstrap else None,
+                resume_from=resume_from,
+                transcript=transcript,
             ),
             tools=tools,
             room_id=room_id,

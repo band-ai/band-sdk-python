@@ -42,7 +42,7 @@ from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
 from tests.adapters.dispatch import deliver_event
 from tests.baseline.decisions import ModelDecision
-from tests.converters.claude_sdk.records import recorded_session
+from tests.claudesdkrecords import recorded_session
 from tests.mcpclient import crash_backend
 from tests.roomhistory import stored
 

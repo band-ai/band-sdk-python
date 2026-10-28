@@ -19,16 +19,19 @@ from tests.adapters.claude_sdk.helpers import (
     OpenRoom,
     said,
 )
-from tests.converters.claude_sdk.records import legacy_record, recorded_session
+from tests.claudesdkrecords import legacy_record, recorded_session
 from tests.roomhistory import stored
 
 FACT = "the milk is in the fridge"
 REMEMBERED = f"[Alice]: {FACT}"
 LATER = "a message posted after the turn"
+BROKEN = "sess-broken"
+MENTION_TOKEN = f"@[[{APPROVER['id']}]]"
+OWN_REPLY = "noted"
 # A mention as the platform stores it, and an earlier reply of the agent's own.
 STORED_HISTORY = [
-    stored(f"@[[{APPROVER['id']}]] {FACT}"),
-    stored("noted", message_id="own", sender_name=AGENT_NAME, sender_type="Agent"),
+    stored(f"{MENTION_TOKEN} {FACT}"),
+    stored(OWN_REPLY, message_id="own", sender_name=AGENT_NAME, sender_type="Agent"),
 ]
 
 
@@ -64,18 +67,19 @@ class TestSessionSeeding:
         assert FACT not in prompt
 
     @pytest.mark.parametrize(
-        ("recorded", "attempts"),
-        [(None, [None]), ("sess-broken", ["sess-broken", None])],
+        ("recorded", "unresumable", "attempts"),
+        [(None, set(), [None]), (BROKEN, {BROKEN}, [BROKEN, None])],
         ids=["nothing-recorded", "resume-refused"],
     )
     async def test_a_fresh_session_is_handed_the_history(
         self,
         claude_room: OpenRoom,
         recorded: str | None,
+        unresumable: set[str],
         attempts: list[str | None],
     ) -> None:
         room = await claude_room()
-        room.claude.unresumable.add("sess-broken")
+        room.claude.unresumable.update(unresumable)
         room.claude.script([room.model_reply("hi")])
 
         await room.send("hello", history=(said("Alice", FACT),), session_id=recorded)
@@ -251,6 +255,6 @@ class TestSessionSeeding:
 
         bootstrap, _, reseed = room.claude.prompts
         assert memory(reseed) == memory(bootstrap)
-        assert f"{FACT}" in memory(reseed)
-        assert "@[[" not in memory(reseed)
-        assert "noted" not in memory(reseed)
+        assert FACT in memory(reseed)
+        assert MENTION_TOKEN not in memory(reseed)
+        assert OWN_REPLY not in memory(reseed)
