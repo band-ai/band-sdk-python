@@ -27,11 +27,6 @@ class CancelDuringFailureTools(FakeAgentTools):
         return await super().send_failure(failure)
 
 
-class FetchBoomTools(FakeAgentTools):
-    async def fetch_room_context(self, **_kwargs):
-        raise RuntimeError("context unavailable")
-
-
 class FailedDeliveryTools(FakeAgentTools):
     async def execute_tool_call_structured(self, tool_name, arguments):
         return ToolCallOutcome(

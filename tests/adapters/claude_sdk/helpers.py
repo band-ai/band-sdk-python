@@ -21,7 +21,7 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
 )
-from band.converters.claude_sdk import SESSION_ID_METADATA_KEY
+from band.converters.claude_sdk import CLAUDE_SDK_RESUME_RECORD
 from band.core.retention import RoomRetentionConfig
 from band.core.turn import Turn
 from band.core.types import (
@@ -36,12 +36,15 @@ from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManager,
 )
 from band.integrations.mcp.backends import BandMCPBackend
+from band.runtime.formatters import format_message_for_llm
 from band.runtime.tools import BAND_MCP_SERVER_NAME, MCP_TOOL_PREFIX
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
 from tests.adapters.dispatch import deliver_event
 from tests.baseline.decisions import ModelDecision
+from tests.claudesdkrecords import recorded_session
 from tests.mcpclient import crash_backend
+from tests.roomhistory import stored
 
 # The agent metadata every test adapter is started with.
 AGENT_NAME = "Test Agent"
@@ -59,6 +62,9 @@ WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
 # Short enough that a held transition reports quickly, long enough for a real
 # CLI child to start and the Band MCP server to shut down on a slow runner.
 REPORTING_BUDGET = RoomRetentionConfig(transition_timeout_s=1.0)
+# Short enough to abandon a held turn quickly, long enough for the next
+# turn's real loopback round trips to the Band MCP server on a slow runner.
+TURN_TIMEOUT_S = 2.0
 # A turn still running when its room closes is cancelled at once.
 NO_SETTLE_GRACE = ClaudeSDKAdapterConfig(turn_settle_timeout_s=0)
 
@@ -113,21 +119,8 @@ def room_message(
 
 
 def said(sender_name: str, content: str) -> dict[str, Any]:
-    """One earlier room message, as raw platform history."""
-    return {
-        "message_type": MessageType.TEXT,
-        "role": "user",
-        "sender_name": sender_name,
-        "content": content,
-    }
-
-
-def recorded_session(session_id: str) -> dict[str, Any]:
-    """The task event a room persisted for a Claude session, as raw history."""
-    return {
-        "message_type": MessageType.TASK,
-        "metadata": {SESSION_ID_METADATA_KEY: session_id},
-    }
+    """One earlier room message, as the runtime hands it over on bootstrap."""
+    return format_message_for_llm(stored(content, sender_name=sender_name))
 
 
 class ClaudeRoom:
@@ -234,10 +227,10 @@ class ClaudeRoom:
     def persisted_sessions(self) -> list[str]:
         """Session ids the room recorded for a later resume, in order."""
         return [
-            event["metadata"][SESSION_ID_METADATA_KEY]
+            event["metadata"][CLAUDE_SDK_RESUME_RECORD.session_key]
             for event in self.tools.events_sent
             if event["message_type"] == MessageType.TASK
-            and SESSION_ID_METADATA_KEY in (event["metadata"] or {})
+            and CLAUDE_SDK_RESUME_RECORD.session_key in (event["metadata"] or {})
         ]
 
     @property
@@ -313,7 +306,7 @@ class ClaudeRoom:
         bootstrap, self._bootstrapped = not self._bootstrapped, True
         raw_history = [*history]
         if session_id is not None:
-            raw_history.append(recorded_session(session_id))
+            raw_history.append(recorded_session(self.room_id, session_id))
         return AgentInput(
             msg=messages[0],
             messages=messages,
@@ -336,6 +329,26 @@ class ClaudeRoom:
         participants_msg: str | None = None,
         contacts_msg: str | None = None,
     ) -> None:
+        """``deliver`` the next message ``sender`` posts to the room."""
+        await self.deliver(
+            self.message(content, sender=sender),
+            history=history,
+            session_id=session_id,
+            tools=tools,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
+        )
+
+    async def deliver(
+        self,
+        message: PlatformMessage,
+        *,
+        history: tuple[dict[str, Any], ...] = (),
+        session_id: str | None = None,
+        tools: FakeAgentTools | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
+    ) -> None:
         """Deliver one room message through the runtime's entry point, so the
         turn is judged as in production; returns once the adapter hands the
         turn back (it finished, or parked on a human).
@@ -346,7 +359,7 @@ class ClaudeRoom:
         and ``contacts_msg`` are the runtime's pending room updates.
         """
         inp = self._turn_input(
-            (self.message(content, sender=sender),),
+            (message,),
             history=history,
             session_id=session_id,
             tools=tools,

@@ -282,6 +282,11 @@ class FakeAgentTools:
         # room-delivery failure propagates without being reported as a
         # provider AgentFailure).
         self.send_message_error: Exception | None = None
+        # Set to simulate a room history fetch that cannot reach the platform.
+        self.fetch_room_context_error: Exception | None = None
+        # Clear to serve history pages whose metadata leaves total_pages
+        # unset, as the platform's optional field allows.
+        self.reports_context_page_count = True
         # Seeds are validated and canonicalized at seed time (not list time),
         # so every stored record carries the real serialized Fern model shape.
         self._participants: list[dict[str, Any]] = [
@@ -607,6 +612,8 @@ class FakeAgentTools:
         self.context_calls.append(
             {"room_id": room_id, "page": page, "page_size": page_size}
         )
+        if self.fetch_room_context_error is not None:
+            raise self.fetch_room_context_error
         page_data = page_slice(self._room_context, page, page_size)
         total = len(self._room_context)
         return {
@@ -615,7 +622,9 @@ class FakeAgentTools:
                 "page": page,
                 "page_size": page_size,
                 "total_count": total,
-                "total_pages": total_pages(total, page_size),
+                "total_pages": total_pages(total, page_size)
+                if self.reports_context_page_count
+                else None,
             },
         }
 

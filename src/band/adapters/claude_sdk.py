@@ -78,7 +78,7 @@ from pydantic import (
 from typing_extensions import Unpack
 
 from band.converters.claude_sdk import (
-    SESSION_ID_METADATA_KEY,
+    CLAUDE_SDK_RESUME_RECORD,
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
 )
@@ -157,6 +157,7 @@ from band.runtime.formatters import (
     strip_leading_mentions,
 )
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX
+from band.runtime.sessionresume import fetch_transcript
 from band.runtime.toolactivity import end_tool_activity, report_tool_activity
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -198,6 +199,13 @@ CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 _PROVIDER = "claude_sdk"
 #: What a Claude turn that failed in the provider reports to the room.
 _TURN_FAILURE = AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+#: Opens the room's history in the prompt that seeds a new conversation.
+ROOM_MEMORY_HEADER = (
+    "Your memory of this room so far — real earlier messages from you and "
+    "from other participants and agents, including ones sent while you were "
+    "offline. Treat these as facts you know and answer questions about the "
+    "conversation directly from them:"
+)
 
 # Flags the SDK emits from the options the adapter builds (pinned against the
 # SDK's real command by test_cli_options.py).
@@ -935,13 +943,8 @@ class ClaudeSDKAdapter(
         await self._admit_turn(room_id, "Claude")
         session = self._session_manager.room(room_id)
 
-        full_message = self._compose_prompt(
-            messages,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
+        prompt = self._compose_prompt(
+            messages, participants_msg, contacts_msg, room_id=room_id
         )
 
         # Run the turn as a detached task and only await its *release* --
@@ -954,6 +957,12 @@ class ClaudeSDKAdapter(
         release_future: asyncio.Future[None] = loop.create_future()
         # The turn's own TurnTask exists only once its task does.
         owner_ready: asyncio.Future[TurnTask] = loop.create_future()
+        # Only a bootstrap carries the room's history and recorded session.
+        resume_from, transcript = (
+            (history.room_to_session.get(room_id), history.text)
+            if is_session_bootstrap
+            else (None, None)
+        )
         turn_task = start_releasable_turn(
             session.retained,
             partial(
@@ -961,11 +970,12 @@ class ClaudeSDKAdapter(
                 owner_ready,
                 session,
                 tools,
-                full_message,
+                prompt,
                 message_ids,
                 distinct_sender_ids(messages),
                 release_future,
-                resume_from=history.session_id if is_session_bootstrap else None,
+                resume_from=resume_from,
+                transcript=transcript,
             ),
             tools=tools,
             room_id=room_id,
@@ -991,34 +1001,13 @@ class ClaudeSDKAdapter(
     def _compose_prompt(
         self,
         messages: Sequence[PlatformMessage],
-        history: ClaudeSDKSessionState,
         participants_msg: str | None,
         contacts_msg: str | None,
         *,
-        is_session_bootstrap: bool,
         room_id: str,
     ) -> str:
-        """The text sent to Claude: bootstrap memory, system updates, the turn's inputs."""
+        """The turn's text for Claude: system updates, then the turn's inputs."""
         messages_to_send = []
-
-        # Include historical context on first message. Frame it as authoritative
-        # memory, not a passive quote: under the claude_code preset the model treats a
-        # "previous context" aside weakly, so a fact another participant stated (or that
-        # you stated) while you were offline gets missed on recall. Tell it plainly this
-        # is its own memory of the room and to answer from it.
-        if is_session_bootstrap and history.text:  # Already text via SimpleAdapter
-            logger.info(
-                "Room %s: Loaded historical context (%s chars)",
-                room_id,
-                len(history.text),
-            )
-            messages_to_send.append(
-                "Your memory of this room so far — real earlier messages from you and "
-                "from other participants and agents, including ones sent while you were "
-                "offline. Treat these as facts you know and answer questions about the "
-                f"conversation directly from them:\n"
-                f"{history.text}"
-            )
 
         if participants_msg:
             messages_to_send.append(f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
@@ -1031,26 +1020,84 @@ class ClaudeSDKAdapter(
         messages_to_send.append(format_current_inputs(messages))
 
         logger.info(
-            "Room %s: Sending query to Claude SDK (first_msg=%s, parts=%s)",
+            "Room %s: Composed Claude SDK prompt (parts=%s)",
             room_id,
-            is_session_bootstrap,
             len(messages_to_send),
         )
         return "\n\n".join(messages_to_send)
+
+    async def _seeded_prompt(
+        self,
+        session: ClaudeRoomSession,
+        tools: AgentToolsProtocol,
+        prompt: str,
+        message_ids: tuple[str, ...],
+        transcript: str | None,
+    ) -> str:
+        """``prompt``, preceded by the room's memory while the conversation
+        lacks it.
+
+        ``transcript`` is the bootstrap history; a conversation started later
+        (a crash, or a seed that failed) fetches it instead, and one that
+        cannot be fetched leaves the seed owed. The memory is framed as the
+        model's own, not a passive quote: under the claude_code preset a
+        "previous context" aside is recalled weakly.
+        """
+        if not session.seed.replay_due:
+            return prompt
+        if transcript is None:
+            transcript = await self._fetch_room_memory(
+                tools, session.room_id, message_ids
+            )
+        session.seed.carried = transcript is not None
+        if not transcript:
+            return prompt
+        logger.info(
+            "Room %s: Seeding the session with the room's history (%s chars)",
+            session.room_id,
+            len(transcript),
+        )
+        return f"{ROOM_MEMORY_HEADER}\n{transcript}\n\n{prompt}"
+
+    async def _fetch_room_memory(
+        self, tools: AgentToolsProtocol, room_id: str, message_ids: tuple[str, ...]
+    ) -> str | None:
+        """The room's history before this turn, as the converter renders it;
+        None when it cannot be fetched."""
+        try:
+            raw = await fetch_transcript(
+                tools, room_id=room_id, turn_ids=set(message_ids)
+            )
+        except Exception:
+            logger.warning(
+                "Room %s: could not fetch history to seed the new Claude session",
+                room_id,
+                exc_info=True,
+            )
+            return None
+        converter = cast(ClaudeSDKHistoryConverter, self.history_converter)
+        return converter.convert(raw).text
 
     async def _run_turn(
         self,
         owner_ready: asyncio.Future[TurnTask],
         session: ClaudeRoomSession,
         tools: AgentToolsProtocol,
-        full_message: str,
+        prompt: str,
         message_ids: tuple[str, ...],
         audience: tuple[str, ...],
         release_future: asyncio.Future[None],
         *,
         resume_from: str | None,
+        transcript: str | None,
     ) -> None:
-        """Run one turn under the room's lease; always releases ``release_future``."""
+        """Run one turn under the room's lease; always releases ``release_future``.
+
+        The prompt is completed only once the lease has started or resumed
+        the CLI, since that decides whether the room's memory is owed. A turn
+        that leaves its conversation unseeded retires it, so the next turn
+        starts a fresh one.
+        """
         owner = await owner_ready
         self._turn_audience[session.room_id] = audience
         try:
@@ -1058,7 +1105,18 @@ class ClaudeSDKAdapter(
                 self.backend_turns.running(session.room_id, session.room_id),
                 self._turn_lease(session, tools, resume_from) as client,
             ):
-                await self._converse(owner, session, client, tools, full_message)
+                full_message = await self._seeded_prompt(
+                    session, tools, prompt, message_ids, transcript
+                )
+                try:
+                    await self._converse(owner, session, client, tools, full_message)
+                finally:
+                    if session.seed.replay_due:
+                        logger.info(
+                            "Room %s: turn left the session unseeded; retiring it",
+                            session.room_id,
+                        )
+                        session.recover("Turn left its session unseeded")
             logger.debug("Messages %s processed successfully", message_ids)
         finally:
             self._turn_audience.pop(session.room_id, None)
@@ -1407,8 +1465,8 @@ class ClaudeSDKAdapter(
         """Best-effort room event, gated on the adapter's declared Emit features.
 
         Shared by every observability event (thought/tool_call/tool_result) —
-        the session-id task event is not opt-in bookkeeping, so it posts
-        unconditionally via its own path (_persist_session_id).
+        the resume record is not opt-in bookkeeping, so it posts
+        unconditionally via its own path (_record_session).
 
         ``content`` may be a callable so payload serialization only happens
         past the gate and inside this try — a large or unserializable tool
@@ -1497,7 +1555,7 @@ class ClaudeSDKAdapter(
         session: ClaudeRoomSession,
         tools: AgentToolsProtocol,
     ) -> None:
-        """Close out the turn: persist session id, emit usage, surface failure.
+        """Close out the turn: emit usage, surface failure, record the session.
 
         A turn released early for an approval is judged here, at its real end;
         any other turn is judged by ``judged_turn`` once ``on_turn`` returns.
@@ -1509,8 +1567,6 @@ class ClaudeSDKAdapter(
             sdk_message.duration_ms,
             sdk_message.total_cost_usd or 0,
         )
-        if sdk_message.session_id:
-            await self._persist_session_id(sdk_message.session_id, session, tools)
         # The ResultMessage carries the turn's total usage (the SDK runs
         # its own tool loop internally, so this is already aggregated).
         await self.emit_usage(tools, self._usage_from_result(sdk_message))
@@ -1530,6 +1586,7 @@ class ClaudeSDKAdapter(
                 AgentFailure(_PROVIDER, detail, code, sdk_message.errors)
             )
             raise TurnResultAlreadyReported(detail)
+        await self._record_session(sdk_message.session_id, session, tools)
         if self._declined_the_reply(sdk_message.permission_denials, notified):
             tools.turn.settle()
         if not tools.turn.complete:
@@ -1588,25 +1645,28 @@ class ClaudeSDKAdapter(
         """
         self._notified_declines.setdefault(room_id, set()).add(tool_use_id)
 
-    async def _persist_session_id(
+    async def _record_session(
         self, session_id: str, session: ClaudeRoomSession, tools: AgentToolsProtocol
     ) -> None:
-        """Keep the session id for resume and, when it changed, persist it as
-        a task event (best-effort)."""
+        """Confirm the completed prompt seeded the conversation and, once it
+        has, keep its id for resume and, when it changed, record it in the
+        room (best-effort). An unseeded conversation is neither kept nor
+        recorded, so no resume skips its replay.
+
+        Record each id once, retrying a failed post after the next completed turn.
+        """
         room_id = session.room_id
+        session.seed.confirm()
+        if not session.seed.seeded:
+            return
         session.session_id = session_id
         logger.debug("Room %s: Captured session_id %s", room_id, session_id)
         if self._recorded_session_ids.get(room_id) == session_id:
             return
-        self._recorded_session_ids[room_id] = session_id
-        try:
-            await tools.send_event(
-                content="Claude SDK session",
-                message_type="task",
-                metadata={SESSION_ID_METADATA_KEY: session_id},
-            )
-        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-            logger.warning("Room %s: Failed to persist session_id: %s", room_id, e)
+        if await CLAUDE_SDK_RESUME_RECORD.post(
+            tools, room_id=room_id, seed=session.seed, session=session_id
+        ):
+            self._recorded_session_ids[room_id] = session_id
 
     async def _on_tool_result(
         self,
