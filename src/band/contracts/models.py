@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 from functools import cached_property
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -14,6 +14,7 @@ from pydantic import (
     Field,
     SecretStr,
     field_validator,
+    model_validator,
 )
 
 from band.contracts.wire import JsonObject, decode_json, encode_json
@@ -124,6 +125,12 @@ class JournalQuery(WireRequest):
         if len(value.encode("utf-8")) > 256:
             raise ValueError("A journal query is limited to 256 UTF-8 bytes")
         return value
+
+    @model_validator(mode="after")
+    def ordered_range(self) -> Self:
+        if self.through is not None and self.after > self.through:
+            raise ValueError("A journal range cannot end before its cursor")
+        return self
 
 
 class ProcessOptions(FrozenModel):

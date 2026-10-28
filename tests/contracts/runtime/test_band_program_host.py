@@ -18,10 +18,34 @@ from tests.contracts.runtime.bandprogramhost import (
     ProgramHostFixture,
     RetryingTaskInstance,
 )
+from tests.contracts.runtime.historyhost import StoredParticipant
 
 
 @pytest.mark.contract_linux
 class TestProgramHost(ProgramHostFixture):
+    def test_journal_cursor_outside_the_retained_range_is_an_invalid_request(
+        self,
+    ) -> None:
+        h = self.host()
+        store = Store(self.root / "participant.sqlite3")
+        self.addCleanup(store.close)
+        store.commit("turn", {"turn": 1})
+        h.instances[self.room + "/" + self.session] = StoredParticipant(store)
+        grant = {"actor": "BandPlatform", "permissions": ["controls"]}
+        for page in ({"after": 1, "through": 0}, {"after": 0, "through": 2}):
+            with self.subTest(page=page), self.assertRaises(HTTPError) as refusal:
+                h.dispatch(
+                    "POST", "/v1/operations", grant, self.request("journal", **page)
+                )
+            self.assertEqual(refusal.exception.status, 422)
+        status, result = h.dispatch(
+            "POST", "/v1/operations", grant, self.request("journal", after=0, through=1)
+        )
+        self.assertEqual(
+            (status, [r["kind"] for r in result["journal_page"]["records"]]),
+            (200, ["turn"]),
+        )
+
     def test_an_unknown_ack_retries_the_same_assessment_and_restart_does_not_resample(
         self,
     ) -> None:

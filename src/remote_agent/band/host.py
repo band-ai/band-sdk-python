@@ -13,7 +13,13 @@ from typing import TYPE_CHECKING
 
 from remote_agent.capabilities import exclusive_lock
 from remote_agent.network import HTTPError
-from remote_agent.storage import canonical, digest, private_directory, private_file
+from remote_agent.storage import (
+    StoreError,
+    canonical,
+    digest,
+    private_directory,
+    private_file,
+)
 from remote_agent.types import JsonObject, SourcePath
 
 if TYPE_CHECKING:
@@ -170,7 +176,13 @@ class ProgramHost:
                     raise ValueError("runtime_not_running")
                 if not instance.durable:
                     raise ValueError("journal_disabled")
-                return dict(self.status(value), journal_page=instance.journal(**body))
+                try:
+                    page = instance.journal(**body)
+                except StoreError as error:
+                    # The store refuses a page outside its retained range; that is
+                    # the caller's request, not a storage outage.
+                    raise ValueError("invalid_journal_page") from error
+                return dict(self.status(value), journal_page=page)
             if kind not in (
                 "assess",
                 "start",

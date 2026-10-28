@@ -64,6 +64,11 @@ class TestLimits:
         assert request.body()["query"] == query
         assert json.loads(request.encoded)["query"] == query
 
+    def test_journal_query_rejects_a_range_that_ends_before_it_starts(self) -> None:
+        with pytest.raises(ValidationError):
+            JournalQuery(after=5, through=1)
+        assert JournalQuery(after=5, through=5).body()["through"] == 5
+
     @pytest.mark.parametrize(
         "query",
         ["x" * 257, "é" * 128 + "x", "🦊" * 64 + "x"],
