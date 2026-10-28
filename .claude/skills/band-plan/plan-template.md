@@ -30,7 +30,11 @@ Sections, in order, each short; "n/a" is fine where one doesn't apply:
    paid-LLM cost, concurrency and ordering, and Windows/Ubuntu behavior.
 8. **Test plan:** at least one test per scenario, at the lowest level that
    really exercises it.
-9. **Definition of done:** automated checks as exact commands (the targeted
+9. **Design validation:** the final scenario matrix from
+   [scenario-validation.md](scenario-validation.md): expected outcomes, sourced
+   design traces, verdicts and remaining implementation checks. Distinguish
+   walkthroughs from executed evidence and state non-blocking limitations.
+10. **Definition of done:** automated checks as exact commands (the targeted
    `uv run --all-packages pytest ...` and applicable checks from `AGENTS.md`'s
    Pre-Commit Checklist) and relevant manual checks (live E2E, editor flows),
    each with its expected result.
