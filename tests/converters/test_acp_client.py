@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 
-from band.converters.acp_client import ACPClientHistoryConverter
+from band.converters.acp_client import (
+    ACP_CLIENT_RESUME_RECORD,
+    ACPClientHistoryConverter,
+    ACPClientMetadataKey,
+)
 from band.integrations.acp.client_types import ACPClientSessionState
 
 
@@ -30,12 +34,12 @@ def session_task(
     """The adapter's session-bookkeeping task event; omit args for bare metadata."""
     metadata: dict[str, Any] = {}
     if session_id is not None:
-        metadata["acp_client_session_id"] = session_id
+        metadata[ACPClientMetadataKey.SESSION] = session_id
     if room_id is not None:
-        metadata["acp_client_room_id"] = room_id
+        metadata[ACPClientMetadataKey.ROOM] = room_id
     return {
         "message_type": "task",
-        "content": "ACP session established",
+        "content": ACP_CLIENT_RESUME_RECORD.label,
         "metadata": metadata,
     }
 

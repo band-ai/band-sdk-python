@@ -93,16 +93,11 @@ class OmpEventMixin(OmpAdapterContract):
                         MessageType.TOOL_RESULT,
                     )
 
-    def _session_task_metadata(
-        self, room_id: str, room: OmpRoom
-    ) -> dict[str, JsonValue]:
-        metadata: dict[str, JsonValue] = {
-            OmpMetadataKey.ROOM: room_id,
-            OmpMetadataKey.SESSION_ID: room.session_id,
-        }
+    def _resume_details(self, room: OmpRoom) -> dict[str, JsonValue]:
+        details: dict[str, JsonValue] = {OmpMetadataKey.SESSION_ID: room.session_id}
         if isinstance(room.session_file, str) and room.session_file:
-            metadata[OmpMetadataKey.SESSION] = room.session_file
-        return metadata
+            details[OmpMetadataKey.SESSION] = room.session_file
+        return details
 
 
 def _visible_text(value: str | None) -> str | None:

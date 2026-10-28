@@ -144,9 +144,7 @@ class OmpAdapterContract(ABC):
     ) -> str: ...
 
     @abstractmethod
-    def _session_task_metadata(
-        self, room_id: str, room: OmpRoom
-    ) -> dict[str, JsonValue]: ...
+    def _resume_details(self, room: OmpRoom) -> dict[str, JsonValue]: ...
 
     @abstractmethod
     async def apply_model_selection(

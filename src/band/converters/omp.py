@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import HistoryConverter
-from band.core.types import MessageType
+from band.runtime.sessionresume import ResumeRecord
 
 
 class OmpMetadataKey(StrEnum):
@@ -19,6 +19,13 @@ class OmpMetadataKey(StrEnum):
     SESSION = "omp_session_file"
     SESSION_ID = "omp_session_id"
     REQUEST_ID = "omp_request_id"
+
+
+OMP_RESUME_RECORD = ResumeRecord(
+    label="OMP session",
+    room_key=OmpMetadataKey.ROOM,
+    session_key=OmpMetadataKey.SESSION,
+)
 
 
 class OmpSessionState(BaseModel):
@@ -32,21 +39,7 @@ class OmpHistoryConverter(HistoryConverter[OmpSessionState]):
     """Extract per-room native session files from task-event metadata."""
 
     def convert(self, raw: list[dict[str, Any]]) -> OmpSessionState:
-        sessions: dict[str, str] = {}
-        for message in raw:
-            match message.get("message_type"), message.get("metadata"):
-                case MessageType.TASK, dict() as metadata:
-                    room = metadata.get(OmpMetadataKey.ROOM)
-                    if (
-                        not isinstance(room, str)
-                        or OmpMetadataKey.SESSION not in metadata
-                    ):
-                        continue
-                    session = metadata.get(OmpMetadataKey.SESSION)
-                    if isinstance(session, str) and session:
-                        sessions[room] = session
-                    else:
-                        sessions.pop(room, None)
         return OmpSessionState(
-            room_to_session=sessions, replay_messages=build_replay_messages(raw)
+            room_to_session=OMP_RESUME_RECORD.candidates(raw),
+            replay_messages=build_replay_messages(raw),
         )

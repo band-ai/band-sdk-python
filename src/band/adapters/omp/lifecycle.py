@@ -35,6 +35,7 @@ from band.integrations.ompprocess import (
 )
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
 from band.integrations.ompwire import OmpCommandName, OmpState
+from band.runtime.sessionresume import SessionSeed
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 
 logger = logging.getLogger(__name__)
@@ -121,7 +122,7 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
         room_id, workspace = room.room_id, room.workspace
         room.session_id = ""
         room.session_file = None
-        room.bootstrapped = False
+        room.seed = SessionSeed()
         room.applied_selection = None
         try:
             plugin = room.resources.enter_context(
@@ -157,7 +158,7 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
                             OmpCommandName.SWITCH_SESSION, sessionPath=candidate
                         )
                     )
-                    room.bootstrapped = not change.cancelled
+                    room.seed = SessionSeed(restored=not change.cancelled)
                     if change.cancelled:
                         logger.warning(
                             "OMP session restore was cancelled; replaying room history"

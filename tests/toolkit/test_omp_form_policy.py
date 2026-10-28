@@ -47,7 +47,7 @@ def tools() -> FakeAgentTools:
 
 @pytest.fixture
 def emitter(tools: FakeAgentTools) -> RoomTurnEmitter:
-    return RoomTurnEmitter(tools, session_id="session", room_id="room")
+    return RoomTurnEmitter(tools)
 
 
 @pytest.fixture

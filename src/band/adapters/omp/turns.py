@@ -19,7 +19,7 @@ from band.converters.helpers import (
     build_replay_messages,
     new_message_marker,
 )
-from band.converters.omp import OmpSessionState
+from band.converters.omp import OMP_RESUME_RECORD, OmpSessionState
 from band.core.content import has_visible_content
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
 from band.core.protocols import (
@@ -95,7 +95,7 @@ class OmpTurnMixin(OmpAdapterContract):
             f"Band platform context:\n{json.dumps(context, ensure_ascii=False)}"
         ]
         live = msg.format_for_llm()
-        if not room.bootstrapped:
+        if room.seed.replay_due:
             replay = history.replay_messages
             if not bootstrap:
                 try:
@@ -327,7 +327,7 @@ class OmpTurnMixin(OmpAdapterContract):
 
     async def _finish_turn(self, room: OmpRoom, turn: OmpTurn) -> None:
         room_id, tools = room.room_id, turn.tools
-        room.bootstrapped = True
+        room.seed.confirm()
         # A lost post-prompt state response must not outlive completion.
         try:
             async with asyncio.timeout(room.client.completion_timeout_s):
@@ -343,9 +343,6 @@ class OmpTurnMixin(OmpAdapterContract):
             and has_visible_content(closing)
         ):
             await send_event_safe(tools, closing, MessageType.THOUGHT)
-        await send_event_safe(
-            tools,
-            "OMP session",
-            MessageType.TASK,
-            metadata=self._session_task_metadata(room_id, room),
+        await OMP_RESUME_RECORD.post(
+            tools, room_id=room_id, seed=room.seed, details=self._resume_details(room)
         )

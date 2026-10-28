@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import HistoryConverter
+from band.runtime.sessionresume import ResumeRecord
 
 if TYPE_CHECKING:
     from band.integrations.acp.client_types import ACPClientSessionState
@@ -14,15 +16,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ACPClientMetadataKey(StrEnum):
+    """Metadata keys of the ACP client adapter's resume record."""
+
+    ROOM = "acp_client_room_id"
+    SESSION = "acp_client_session_id"
+
+
+ACP_CLIENT_RESUME_RECORD = ResumeRecord(
+    label="ACP client session",
+    room_key=ACPClientMetadataKey.ROOM,
+    session_key=ACPClientMetadataKey.SESSION,
+)
+
+
 class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
     """Extracts room-to-session resume candidates plus a replayable transcript.
 
-    Scans platform history for ACP client-specific metadata. The adapter validates
-    each candidate with the connected ACP agent before reusing it.
-
-    The converter looks for messages with metadata containing:
-    - acp_client_session_id: The remote ACP agent's session identifier
-    - acp_client_room_id: The corresponding Band room identifier
+    The candidates are the newest ``ACP_CLIENT_RESUME_RECORD`` per room; the
+    adapter validates each with the connected ACP agent before reusing it.
 
     It also renders the room's text messages as replay lines (the adapter's
     fallback context when no persisted session can be restored); the adapter's
@@ -46,21 +58,7 @@ class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
             ACPClientSessionState,
         )
 
-        room_to_session: dict[str, str] = {}
-
-        for msg in raw:
-            metadata = msg.get("metadata") or {}
-
-            session_id = metadata.get("acp_client_session_id")
-            room_id = metadata.get("acp_client_room_id")
-            if session_id and room_id:
-                room_to_session[room_id] = session_id
-                logger.debug(
-                    "Found persisted ACP session candidate: %s -> %s",
-                    room_id,
-                    session_id,
-                )
-
+        room_to_session = ACP_CLIENT_RESUME_RECORD.candidates(raw)
         state = ACPClientSessionState(
             room_to_session=room_to_session,
             replay_messages=build_replay_messages(raw),

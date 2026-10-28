@@ -492,8 +492,6 @@ class TestOmpDeterministicMcpReply:
 
         emitter = RoomTurnEmitter(
             tools,
-            session_id="sess",
-            room_id="room-1",
             records_tool_effects=True,
         )
         async with emitter:

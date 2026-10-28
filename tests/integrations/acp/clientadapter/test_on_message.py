@@ -15,6 +15,7 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
 )
 
+from band.converters.acp_client import ACPClientMetadataKey
 from band.core.protocols import FAILURE_CODE_TIMEOUT, GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -172,7 +173,10 @@ class TestACPClientAdapterOnMessage:
         # Should have sent task event
         task_events = events_of_type(tools, "task")
         assert len(task_events) == 1
-        assert task_events[0]["metadata"]["acp_client_session_id"] == "acp-session-123"
+        assert (
+            task_events[0]["metadata"][ACPClientMetadataKey.SESSION]
+            == "acp-session-123"
+        )
 
     @pytest.mark.asyncio
     async def test_on_message_bootstrap_rehydrates(
