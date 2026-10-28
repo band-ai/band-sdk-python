@@ -71,9 +71,9 @@ class TestPrompts:
         fake_client = FakeOpencodeClient(
             prompt_event_sequences=[
                 [
-                    event_message_updated("sess-1", "msg-5"),
-                    event_text_part("sess-1", "msg-5", "Recovered after failure"),
-                    event_session_idle("sess-1"),
+                    event_message_updated("sess-2", "msg-5"),
+                    event_text_part("sess-2", "msg-5", "Recovered after failure"),
+                    event_session_idle("sess-2"),
                 ]
             ],
             prompt_exceptions=[AnyHTTPStatusError(500, "sess-1")],
@@ -97,14 +97,17 @@ class TestPrompts:
             adapter,
             make_platform_message(content="second try"),
             tools_protocol(tools),
-            OpencodeSessionState(room_to_session={"room-1": "sess-1"}),
+            OpencodeSessionState(),
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,
             room_id="room-1",
         )
 
-        assert len(fake_client.prompt_calls) == 2
+        assert [call["session_id"] for call in fake_client.prompt_calls] == [
+            "sess-1",
+            "sess-2",
+        ]
         assert not any(
             "still processing the previous request" in event["content"].lower()
             for event in tools.events_sent

@@ -8,11 +8,12 @@ from pydantic import BaseModel
 
 from band import BandConnectionError
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.converters.opencode import OpencodeHistoryConverter
 from band.core.types import Capability
 from band.integrations.mcp import BandMCPTransport
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
-from band.testing import FakeAgentTools, events_of_type
+from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
@@ -284,12 +285,11 @@ class TestSetup:
         assert fake_client.created_sessions[0]["id"] == "sess-1"
         assert tools.messages_sent[0]["content"] == "OpenCode says hi"
         assert tools.messages_sent[0]["mentions"] == [{"id": "user-1"}]
-        task_events = events_of_type(tools, "task")
-        assert task_events
-        assert task_events[0]["metadata"]["opencode_session_id"] == "sess-1"
-        assert (
-            task_events[0]["metadata"]["opencode_mcp_server_name"]
-            == adapter._mcp_server_name
+        assert OpencodeHistoryConverter().convert(tools.events_sent) == (
+            OpencodeSessionState(
+                room_to_session={"room-1": "sess-1"},
+                session_registrations={"sess-1": adapter._mcp_server_name},
+            )
         )
 
     async def test_reuses_persisted_session(self, make_adapter, tools) -> None:

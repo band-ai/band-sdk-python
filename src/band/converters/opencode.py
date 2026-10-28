@@ -8,15 +8,21 @@ from typing import Any
 
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import HistoryConverter
+from band.core.types import MessageType
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.sessionresume import ResumeRecord
 
 
 class OpencodeMetadataKey(StrEnum):
-    """Metadata keys of the OpenCode adapter's resume record."""
+    """Metadata keys of the OpenCode adapter's resume record.
+
+    ``SESSION`` differs from the ``opencode_session_id`` that earlier releases
+    posted when a session was created, before its seeding prompt ran, so
+    those records are never resumed.
+    """
 
     ROOM = "opencode_room_id"
-    SESSION = "opencode_session_id"
+    SESSION = "opencode_seeded_session_id"
     MCP_SERVER_NAME = "opencode_mcp_server_name"
 
 
@@ -42,12 +48,21 @@ class OpencodeHistoryConverter(HistoryConverter[OpencodeSessionState]):
 
 
 def _session_registrations(raw: Iterable[Mapping[str, Any]]) -> dict[str, str]:
-    """The MCP registration that recorded each OpenCode session in ``raw``."""
-    metadata = (message.get("metadata") for message in raw)
+    """The MCP registration that recorded each OpenCode session in ``raw``.
+
+    Only resume records count, read by the same rule as
+    ``OPENCODE_RESUME_RECORD.candidates``.
+    """
+    records = (
+        message.get("metadata")
+        for message in raw
+        if message.get("message_type") == MessageType.TASK
+    )
     return {
         entry[OpencodeMetadataKey.SESSION]: entry[OpencodeMetadataKey.MCP_SERVER_NAME]
-        for entry in metadata
+        for entry in records
         if isinstance(entry, Mapping)
+        and isinstance(entry.get(OpencodeMetadataKey.ROOM), str)
         and isinstance(entry.get(OpencodeMetadataKey.SESSION), str)
         and isinstance(entry.get(OpencodeMetadataKey.MCP_SERVER_NAME), str)
     }

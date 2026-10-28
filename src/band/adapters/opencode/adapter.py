@@ -74,6 +74,7 @@ from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import (
     SENDER_METADATA_INSTRUCTION,
     format_current_inputs,
+    format_history_for_llm,
     messages_before,
 )
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
@@ -149,6 +150,8 @@ class RoomState:
     # _begin_turn on every subsequent turn.
     approvals: RoomApprovals = field(init=False)
     seed: SessionSeed = field(default_factory=SessionSeed)
+    # The session the room's latest resume record names, so it is posted once.
+    recorded: str | None = None
     # Request ids ever asked in this room, kept at room (not turn) scope so a
     # reply naming one still gets "no longer pending" feedback even after
     # _begin_turn has replaced the RoomApprovals that originally asked it.
@@ -273,12 +276,14 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         with answers or ``reject`` before ``question_wait_timeout_s``.
       * ``auto_reject`` -- questions are rejected immediately.
 
-    Session resume follows ``band.runtime.sessionresume``: after each prompt
-    that completes, the room's OpenCode session is recorded in a task event
-    whatever the ``emit`` setting. A fresh session whose seeding prompt fails
-    is forgotten, not deleted, so the room's next turn seeds a new one.
+    Session resume follows ``band.runtime.sessionresume``: once its seeding
+    prompt completes, the room's OpenCode session is recorded in a task event,
+    once per session, whatever the ``emit`` setting. A fresh session whose
+    seeding prompt fails, times out or is stopped is forgotten, not deleted,
+    so the room's next turn seeds a new one.
     """
 
+    # Emit.TASK_EVENTS is accepted for compatibility and has no effect.
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
         {Emit.TOOL_CALLS, Emit.TASK_EVENTS, Emit.USAGE}
     )
@@ -948,8 +953,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
     async def _ensure_session(
         self, room_state: RoomState, history: OpencodeSessionState
     ) -> str:
-        """The room's OpenCode session: its live one, else its resumable one,
-        else a fresh one owed the room's transcript."""
+        """Return the room's live, resumable, or fresh OpenCode session."""
         client = self._client
         if client is None:
             raise RuntimeError("OpenCode client is not initialized")
@@ -962,11 +966,18 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         candidate = self._resumable_session(room_state.room_id, history)
         if candidate and await self._session_exists(client, candidate):
             session_id, seed = candidate, SessionSeed(restored=True)
+            room_state.recorded = candidate
         else:
             session = await client.create_session(
                 title=self._build_session_title(room_state.room_id),
             )
             session_id, seed = str(session["id"]), SessionSeed()
+        logger.info(
+            "Room %s: %s OpenCode session %s",
+            room_state.room_id,
+            "restored" if seed.restored else "created",
+            session_id,
+        )
 
         async with self._state_lock:
             self._forget_session(room_state)
@@ -990,17 +1001,12 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
     def _resumable_session(
         self, room_id: str, history: OpencodeSessionState
     ) -> str | None:
-        """The room's recorded session, unless another registration recorded it.
-
-        A session recorded before registrations were tracked carries none;
-        treating it as ours keeps an upgrade from discarding every room's
-        server-side conversation.
-        """
+        """The room's recorded session, unless another registration recorded it."""
         session = history.room_to_session.get(room_id)
         if session is None:
             return None
         registration = history.session_registrations.get(session)
-        if registration in (None, self._mcp_server_name):
+        if registration == self._mcp_server_name:
             return session
         logger.info(
             "OpenCode session %s belongs to MCP registration %s; "
@@ -1029,7 +1035,8 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
 
         The runtime hands history to the adapter only on session bootstrap, so
         a session seeded later (an earlier seed failed, or the live session
-        vanished) re-fetches it.
+        vanished) re-fetches it, formatted as bootstrap history is. A prompt
+        sent without it seeds nothing.
         """
         if not room_state.seed.replay_due:
             return None
@@ -1043,9 +1050,25 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 room_state.room_id,
                 exc_info=True,
             )
+            room_state.seed.carried = False
             return None
         raw = messages_before(context.get("data") or [], set(ids_of(messages)))
-        return build_replay_messages(raw)
+        return build_replay_messages(
+            format_history_for_llm(raw, participants=tools.participants)
+        )
+
+    async def _record_session(self, room_state: RoomState, turn: TurnState) -> None:
+        """Post the room's resume record once per seeded session."""
+        if turn.session_id == room_state.recorded:
+            return
+        if await OPENCODE_RESUME_RECORD.post(
+            turn.tools,
+            room_id=room_state.room_id,
+            seed=room_state.seed,
+            session=turn.session_id,
+            details={OpencodeMetadataKey.MCP_SERVER_NAME: self._mcp_server_name},
+        ):
+            room_state.recorded = turn.session_id
 
     def _begin_turn(
         self,
@@ -1115,15 +1138,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 )
                 await self._report_delivery_failure(turn)
             if completed:
-                await OPENCODE_RESUME_RECORD.post(
-                    turn.tools,
-                    room_id=room_id,
-                    seed=room_state.seed,
-                    session=turn.session_id,
-                    details={
-                        OpencodeMetadataKey.MCP_SERVER_NAME: self._mcp_server_name
-                    },
-                )
+                await self._record_session(room_state, turn)
         finally:
             # Release the input handler waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to

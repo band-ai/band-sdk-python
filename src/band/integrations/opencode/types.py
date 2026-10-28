@@ -10,7 +10,7 @@ class OpencodeSessionState:
     """Each room's resumable OpenCode session, read from its resume records.
 
     ``session_registrations`` names the MCP registration that recorded each
-    session; a session recorded before registrations were tracked has none.
+    session.
     """
 
     room_to_session: dict[str, str] = field(default_factory=dict)
