@@ -50,11 +50,10 @@ def select_release(platform_id: str, machine: str) -> Release:
     """Reject runner platforms without a pinned release."""
     if machine.casefold() not in {"x86_64", "amd64"}:
         raise ValueError(f"unsupported Antigravity architecture: {machine}")
-    match platform_id:
-        case "linux" | "win32":
-            return RELEASES[platform_id]
-        case _:
-            raise ValueError(f"unsupported Antigravity platform: {platform_id}")
+    try:
+        return RELEASES[platform_id]
+    except KeyError:
+        raise ValueError(f"unsupported Antigravity platform: {platform_id}") from None
 
 
 def native_command(platform_id: str, install_dir: Path) -> tuple[str, ...]:
