@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from band.converters.copilot_sdk import (
+    COPILOT_RESUME_RECORD,
     CopilotMetadataKey,
     CopilotSDKHistoryConverter,
 )
@@ -13,7 +14,7 @@ from band.core.types import MessageType
 
 def resume_record(metadata: dict[str, str]) -> dict[str, Any]:
     return {
-        "content": "Copilot SDK session",
+        "content": COPILOT_RESUME_RECORD.label,
         "message_type": MessageType.TASK,
         "metadata": metadata,
     }
