@@ -4,6 +4,7 @@ import pytest
 from acp import RequestError
 
 from band.converters.helpers import NEW_MESSAGE_MARKER_PREFIX
+from band.integrations.acp.client_adapter import SYSTEM_CONTEXT_HEADER
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
@@ -99,7 +100,8 @@ class TestHistoryReplay:
         self,
     ) -> None:
         """A restored session already holds the conversation remotely; replaying the
-        transcript on top would double the history the agent sees."""
+        transcript on top would double the history the agent sees. It still gets
+        Band's system context once, on its first prompt."""
         agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
         agent.knows_session("session-1")
         history = rehydration_history(
@@ -110,15 +112,22 @@ class TestHistoryReplay:
             await session.send(
                 "What is my favorite color?", bootstrap=True, history=history
             )
+            await session.send("And my favorite food?")
 
         assert agent.session_load_requests == ["session-1"]
         assert agent.sessions == [], (
             "a successful load must reuse the session, not recreate it"
         )
 
-        prompt = agent.prompt_texts()[0]
-        assert REPLAY_HEADER_LINE not in prompt and "[Marco]:" not in prompt, (
+        first, second = agent.prompt_texts()
+        assert REPLAY_HEADER_LINE not in first and "[Marco]:" not in first, (
             "a restored session already holds the history remotely; replaying doubles it"
+        )
+        assert SYSTEM_CONTEXT_HEADER in first, (
+            "a restored session's first prompt must still carry Band's system context"
+        )
+        assert SYSTEM_CONTEXT_HEADER not in second, (
+            "the system context is sent once per session, not on every prompt"
         )
 
     @pytest.mark.asyncio

@@ -20,6 +20,7 @@ from acp.agent.connection import AgentSideConnection
 from acp.schema import NewSessionResponse
 
 from band.adapters.cursor_acp import CursorACPAdapter
+from band.converters.acp_client import ACPClientMetadataKey
 from band.core.protocols import AgentToolsProtocol, TurnResultAlreadyReported
 from band.core.retention import Residency
 from band.core.types import (
@@ -50,7 +51,7 @@ from tests.testing.support import seeded_participant
 # The room ``AcpSession.send`` talks to unless told otherwise.
 DEFAULT_ROOM = "room-1"
 
-_SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
+_SESSION_EVENT_MARKER = ACPClientMetadataKey.SESSION  # the adapter's resume record
 
 RELEASED = frozenset({Residency.SUSPENDED, Residency.CLOSED})
 

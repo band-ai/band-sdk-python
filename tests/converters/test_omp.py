@@ -64,7 +64,7 @@ class TestOmpHistoryConverter:
         )
         assert state.room_to_session["room-1"] == "/sessions/saved.jsonl"
 
-    def test_empty_session_clears_the_resume_candidate(self) -> None:
+    def test_an_unusable_session_keeps_the_resume_candidate(self) -> None:
         state = OmpHistoryConverter().convert(
             [
                 {
@@ -83,7 +83,7 @@ class TestOmpHistoryConverter:
                 },
             ]
         )
-        assert "room-1" not in state.room_to_session
+        assert state.room_to_session == {"room-1": "/sessions/saved.jsonl"}
 
     def test_unusable_metadata_is_ignored(self) -> None:
         state = OmpHistoryConverter().convert(

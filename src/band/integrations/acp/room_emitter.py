@@ -19,8 +19,6 @@ from band.runtime.tools import TurnEffect, turn_effect
 
 logger = logging.getLogger(__name__)
 
-ACP_SESSION_CLOSED_EVENT = "ACP client session"
-
 
 class RoomTurnEmitter:
     """Posts one ACP turn's output to a Band room in causal order.
@@ -40,23 +38,18 @@ class RoomTurnEmitter:
     in the room.
 
     On clean close, held text is optional thought telemetry unless a tool
-    replied or declined. The resume-state task follows; runtime judging may
-    subsequently report a missing reply.
+    replied or declined; runtime judging may subsequently report a missing
+    reply. The session's resume record is state, not narration, so the adapter
+    posts it after the close, outside this emitter.
 
     Which narration kinds reach the room is controlled by the emit set passed
-    at construction (``None``: all kinds — the historical default). The closing
-    bookkeeping ``task`` event is state, not narration, and is posted regardless
-    of the emit set: ``ACPClientHistoryConverter`` reads its metadata to rebuild
-    the room→session map, so gating it would silently disable ``session/load``
-    resume after a restart.
+    at construction (``None``: all kinds — the historical default).
     """
 
     def __init__(
         self,
         tools: AgentToolsProtocol,
         *,
-        session_id: str,
-        room_id: str,
         emit: frozenset[Emit] | None = None,
         records_tool_effects: bool = False,
     ) -> None:
@@ -68,8 +61,6 @@ class RoomTurnEmitter:
         the work streamed during it, which may belong to another turn.
         """
         self._tools = tools
-        self._session_id = session_id
-        self._room_id = room_id
         self._records_tool_effects = records_tool_effects
         # ``None``: post every kind (the historical behavior). Adapters pass
         # their resolved ``features.emit`` so a caller's ``emit=`` narrowing
@@ -174,8 +165,8 @@ class RoomTurnEmitter:
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        # A failed turn is handled by on_message (error event + respawn); post
-        # neither the held text nor the bookkeeping event.
+        # A failed turn is handled by on_message (error event + respawn); the
+        # held text is not posted.
         if exc_type is not None:
             return False
         for effect in self._staged_effects:
@@ -192,17 +183,4 @@ class RoomTurnEmitter:
                 message_type=MessageType.THOUGHT,
                 log_label="ACP closing thought",
             )
-        # Posted regardless of the emit set: this is resume state read back by
-        # ACPClientHistoryConverter, not narration (only PLAN chunks follow
-        # Emit.TASK_EVENTS).
-        await send_event_safe(
-            self._tools,
-            content=ACP_SESSION_CLOSED_EVENT,
-            message_type="task",
-            metadata={
-                "acp_client_session_id": self._session_id,
-                "acp_client_room_id": self._room_id,
-            },
-            log_label=ACP_SESSION_CLOSED_EVENT,
-        )
         return False

@@ -26,6 +26,9 @@ COMPLETE = "complete"
 YIELDED = "yielded"
 BACKGROUND_COMPLETE = "background complete"
 FOLLOW_UP_PROMPT = "second"
+# The native session every peer reports in its state.
+PEER_SESSION_ID = "session-local"
+PEER_SESSION_FILE = "/local/session.jsonl"
 
 
 class RpcPeer:
@@ -65,8 +68,8 @@ class RpcPeer:
 
     def state_snapshot(self) -> dict[str, JsonValue]:
         return {
-            "sessionId": "session-local",
-            "sessionFile": "/local/session.jsonl",
+            "sessionId": PEER_SESSION_ID,
+            "sessionFile": PEER_SESSION_FILE,
             "model": {
                 "id": "test-model",
                 "provider": "test-provider",

@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from pydantic import JsonValue
-
 from band.adapters.omp.contract import OmpAdapterContract
-from band.adapters.omp.roomstate import OmpRoom
 from band.adapters.omp.turnstate import OmpTurn
-from band.converters.omp import OmpMetadataKey
 from band.core.content import has_visible_content
 from band.core.protocols import send_event_safe
 from band.core.types import Emit, MessageType
@@ -92,17 +88,6 @@ class OmpEventMixin(OmpAdapterContract):
                         ),
                         MessageType.TOOL_RESULT,
                     )
-
-    def _session_task_metadata(
-        self, room_id: str, room: OmpRoom
-    ) -> dict[str, JsonValue]:
-        metadata: dict[str, JsonValue] = {
-            OmpMetadataKey.ROOM: room_id,
-            OmpMetadataKey.SESSION_ID: room.session_id,
-        }
-        if isinstance(room.session_file, str) and room.session_file:
-            metadata[OmpMetadataKey.SESSION] = room.session_file
-        return metadata
 
 
 def _visible_text(value: str | None) -> str | None:

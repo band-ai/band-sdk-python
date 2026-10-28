@@ -12,6 +12,7 @@ from band.core.retention import RetainedRoom
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.collecting import ACPCollectingClient
 from band.integrations.acp.sessioninit import SessionSetupObserver
+from band.runtime.sessionresume import SessionSeed
 
 # An agent's refusal of a prompt while its session runs another one.
 SESSION_BUSY_CODE = -32003
@@ -57,8 +58,7 @@ class RoomSession:
 
     session_id: str
     band_url: str | None
-    bootstrap_pending: bool = True
-    replay_pending: bool = True
+    seed: SessionSeed = field(default_factory=SessionSeed)
     live: bool = True
 
 

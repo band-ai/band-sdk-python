@@ -490,12 +490,7 @@ class TestOmpDeterministicMcpReply:
         await client.session_update("sess", update)
         tools = FakeAgentTools()
 
-        emitter = RoomTurnEmitter(
-            tools,
-            session_id="sess",
-            room_id="room-1",
-            records_tool_effects=True,
-        )
+        emitter = RoomTurnEmitter(tools, records_tool_effects=True)
         async with emitter:
             for chunk in client.get_collected_chunks("sess"):
                 await emitter.emit(chunk)

@@ -40,7 +40,10 @@ from pydantic import (
 )
 from typing_extensions import TypeVar, Unpack
 
-from band.converters.acp_client import ACPClientHistoryConverter
+from band.converters.acp_client import (
+    ACP_CLIENT_RESUME_RECORD,
+    ACPClientHistoryConverter,
+)
 from band.converters.helpers import (
     HISTORY_REPLAY_HEADER,
     build_replay_messages,
@@ -142,6 +145,7 @@ from band.runtime.prompts import (
     render_system_prompt,
     system_updates,
 )
+from band.runtime.sessionresume import SessionSeed
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     CHAT_ID_FIELD_NAME,
@@ -217,6 +221,8 @@ ACP_TRANSITION_TIMEOUT_S = 30.0
 # How a turn reports a room process that did not start or stop within
 # ``retention.transition_timeout_s``.
 PROCESS_NOT_READY_ERROR = "ACP agent process did not become ready in time"
+# Opens the Band context sent with the first prompt of an ACP session.
+SYSTEM_CONTEXT_HEADER = "[System Context]"
 
 
 class SessionCloseReason(StrEnum):
@@ -866,7 +872,7 @@ class ACPClientAdapter(
         # mid-run) re-fetches it.
         session = self._live_room_session(room)
         replay: list[str] | None = None
-        if session.bootstrap_pending and session.replay_pending:
+        if session.seed.replay_due:
             replay = (
                 history.replay_messages
                 if is_session_bootstrap
@@ -885,14 +891,12 @@ class ACPClientAdapter(
         # The emitter posts the turn's events live, in the order the ACP stream
         # delivers them (see RoomTurnEmitter), so narration stays interleaved with
         # the permission pair and any in-room tool post. On a clean turn its
-        # __aexit__ emits the held thought (unless the turn replied) and the session
-        # bookkeeping event; on failure it posts nothing and the error is handled
-        # below.
+        # __aexit__ emits the held thought (unless the turn replied) and the
+        # resume record follows; on failure neither is posted and the error is
+        # handled below.
         try:
             async with RoomTurnEmitter(
                 tools,
-                session_id=session_id,
-                room_id=room_id,
                 emit=self.features.emit,
                 # Injected Band tools record their own effects in process.
                 records_tool_effects=not self.config.inject_band_tools,
@@ -914,8 +918,7 @@ class ACPClientAdapter(
                                 prompt_text=prompt_text,
                                 on_chunk=emitter.emit,
                             )
-                            session.bootstrap_pending = False
-                            session.replay_pending = False
+                            session.seed.confirm()
                     except RequestError as error:
                         if is_session_busy(error):
                             raise InputNotAccepted("ACP session is busy") from error
@@ -936,6 +939,12 @@ class ACPClientAdapter(
                         raise ACPTurnTimeoutError(
                             f"ACP turn timed out after {self.config.turn_timeout_s}s"
                         ) from None
+            await ACP_CLIENT_RESUME_RECORD.post(
+                tools,
+                room_id=room_id,
+                seed=session.seed,
+                session=session_id,
+            )
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
@@ -1193,7 +1202,7 @@ class ACPClientAdapter(
             f"Use each MCP tool's schema for its argument names.{room_hint}\n"
         )
 
-        return f"[System Context]\n{system_prompt}\n{room_context}"
+        return f"{SYSTEM_CONTEXT_HEADER}\n{system_prompt}\n{room_context}"
 
     def _build_local_mcp_server_config(
         self, backend: BandMCPBackend, transport: BandMCPTransport, room_id: str
@@ -1413,7 +1422,9 @@ class ACPClientAdapter(
             raise
         logger.debug("Loaded ACP session mapping: %s -> %s", room.room_id, session_id)
         return RoomSession(
-            session_id=session_id, band_url=mcp.band_url, replay_pending=False
+            session_id=session_id,
+            band_url=mcp.band_url,
+            seed=SessionSeed(restored=True),
         )
 
     async def _restore_retained_session(
@@ -1776,7 +1787,7 @@ class ACPClientAdapter(
         live_message = format_current_inputs(messages)
         system_updates = self._system_update_sections(participants_msg, contacts_msg)
 
-        if not session.bootstrap_pending:
+        if session.seed.seeded:
             return "\n\n".join([*system_updates, live_message])
 
         sections = [self._build_system_context(room_id), *system_updates]

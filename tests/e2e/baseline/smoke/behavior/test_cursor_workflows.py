@@ -16,6 +16,7 @@ import pytest
 from band_rest import ChatMessage
 
 from band.client.streaming import DeliveryStatus
+from band.converters.acp_client import ACP_CLIENT_RESUME_RECORD
 from band.core.memory_types import (
     MemorySegment,
     MemoryStoreScope,
@@ -24,7 +25,6 @@ from band.core.memory_types import (
 )
 from band.core.types import Capability
 from band.integrations.acp.cursor import is_cursor_band_tool
-from band.integrations.acp.room_emitter import ACP_SESSION_CLOSED_EVENT
 from band.runtime.tools.types import BandTool
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
@@ -120,10 +120,10 @@ async def _within_turn(
 
 async def _turn_closed(room: ApprovalRoom, checkpoint: TurnCheckpoint) -> bool:
     # A decision releases the triggering message before the detached turn ends,
-    # so only the session-closed event marks the turn's end.
+    # so only the resume record a clean turn posts marks the turn's end.
     tasks = await room.capture.tasks(sender_id=room.agent.id, since=checkpoint.started)
     return any(
-        task.content == ACP_SESSION_CLOSED_EVENT
+        task.content == ACP_CLIENT_RESUME_RECORD.label
         and _posted_after(task, checkpoint.started)
         for task in tasks
     )

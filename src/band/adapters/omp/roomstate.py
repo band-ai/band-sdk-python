@@ -12,6 +12,7 @@ from band.core.model_catalog import ModelSelection
 from band.core.retention import RetainedRoom
 from band.integrations.ompprocess import OmpMcpServer
 from band.integrations.omprpc import OmpRpcClient
+from band.runtime.sessionresume import SessionSeed
 
 OMP_SESSION_DIRECTORY = ".band-omp-sessions"
 
@@ -46,7 +47,7 @@ class OmpRoom:
     clear_selection: bool = False
     session_id: str = ""
     session_file: str | None = None
-    bootstrapped: bool = False
+    seed: SessionSeed = field(default_factory=SessionSeed)
     retiring: bool = False
     applied_selection: ModelSelection | None = None
 
