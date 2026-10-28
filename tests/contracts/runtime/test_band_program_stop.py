@@ -46,6 +46,29 @@ class TestProgramStop(ProgramStopFixture):
         self.assertEqual(participant.closes, 1)
         self.assertEqual(host.instances, {})
 
+    def test_owner_stop_is_accepted_after_the_operation_budget_is_spent(
+        self,
+    ) -> None:
+        host = self.host()
+        self.start(host)
+        participant = self.factories[0]
+        with host.db:
+            host.db.executemany(
+                "INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,?,?)",
+                [
+                    (f"finished-{index}", "other", "other", "User:other", "task")
+                    + ("fingerprint", "{}", "complete", "{}", index)
+                    for index in range(host.maximum * 16)
+                ],
+            )
+        view = host.operation(self.stop())
+        self.assertEqual(view["runtime"]["status"], "stopping")
+        self.assertTrue(host.step())
+        self.assertEqual(participant.closes, 1)
+        self.assertEqual(host.instances, {})
+        with self.assertRaisesRegex(ValueError, "operation_capacity"):
+            host.operation(self.request("control", id="second", action="stop"))
+
     def test_failed_close_keeps_barrier_and_exact_retry_uses_the_original_instance(
         self,
     ) -> None:

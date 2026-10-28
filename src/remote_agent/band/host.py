@@ -244,8 +244,19 @@ class ProgramHost:
                                 (identifier,),
                             )
                 return self.status(value)
+            # The owner's first stop of a running scope adds at most one row per
+            # runtime, so a spent operation budget never keeps a runtime running.
+            first_stop = (
+                kind == "control"
+                and body.get("action") == "stop"
+                and scope in self.instances
+                and not self.stop_barrier(scope)
+            )
             if (
-                self.db.execute("SELECT COUNT(*) FROM " + ALL_OPERATIONS).fetchone()[0]
+                not first_stop
+                and self.db.execute(
+                    "SELECT COUNT(*) FROM " + ALL_OPERATIONS
+                ).fetchone()[0]
                 >= self.maximum * 16
             ):
                 raise ValueError("operation_capacity")
