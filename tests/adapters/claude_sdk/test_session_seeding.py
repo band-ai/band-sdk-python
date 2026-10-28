@@ -3,6 +3,9 @@ completes, and only then is it recorded for resume."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import pytest
 
 from band.adapters.claude_sdk import ROOM_MEMORY_HEADER
@@ -17,15 +20,14 @@ REMEMBERED = f"[Alice]: {FACT}"
 LATER = "a message posted after the turn"
 
 
-async def answer_without_the_history(room: ClaudeRoom) -> None:
-    """Fail the room's seed (its first scripted turn errors), then answer its
-    second turn while the room's history cannot be fetched."""
-    room.tools.set_room_context([stored(FACT)])
-    with pytest.raises(TurnResultAlreadyReported):
-        await room.send("hello", history=(said("Alice", FACT),))
+@contextmanager
+def history_unreachable(room: ClaudeRoom) -> Iterator[None]:
+    """The room's history cannot be fetched while the block runs."""
     room.tools.fetch_room_context_error = ConnectionError("platform unreachable")
-    await room.send("again")
-    room.tools.fetch_room_context_error = None
+    try:
+        yield
+    finally:
+        room.tools.fetch_room_context_error = None
 
 
 class TestSessionSeeding:
@@ -124,11 +126,12 @@ class TestSessionSeeding:
         from the room, up to that turn's own input; once it completes, the
         session is recorded and no later turn replays the history."""
         room = await claude_room()
+        again, later = room.message("again"), room.message(LATER)
         room.tools.set_room_context(
             [
                 stored(FACT),
-                stored("again", message_id="msg-2", sender_name="Bob"),
-                stored(LATER, message_id="msg-3"),
+                stored(again.content, message_id=again.id, sender_name="Bob"),
+                stored(later.content, message_id=later.id),
             ]
         )
         room.claude.script(
@@ -141,7 +144,7 @@ class TestSessionSeeding:
             await room.send("hello", history=(said("Alice", FACT),))
         assert room.persisted_sessions == []
 
-        await room.send("again")
+        await room.deliver(again)
         await room.send("and again")
 
         [session] = room.claude.sessions
@@ -165,7 +168,12 @@ class TestSessionSeeding:
             [room.model_reply("seeded now")],
         )
 
-        await answer_without_the_history(room)
+        room.tools.set_room_context([stored(FACT)])
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await room.send("hello", history=(said("Alice", FACT),))
+        with history_unreachable(room):
+            await room.send("again")
         assert room.persisted_sessions == []
         await room.send("and again")
 
@@ -188,7 +196,12 @@ class TestSessionSeeding:
             [room.model_reply("seeded now")],
         )
 
-        await answer_without_the_history(room)
+        room.tools.set_room_context([stored(FACT)])
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await room.send("hello", history=(said("Alice", FACT),))
+        with history_unreachable(room):
+            await room.send("again")
         await room.crash_band_server()
         await room.send("still there?")
 

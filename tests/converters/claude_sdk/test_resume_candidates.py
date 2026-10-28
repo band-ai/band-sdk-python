@@ -12,14 +12,10 @@ from band.converters.claude_sdk import (
 from band.core.types import MessageType
 from band.runtime.context_serialization import context_item_to_dict
 from tests.converters.claude_sdk.records import legacy_record, recorded_session
+from tests.roomhistory import stored
 
 ROOM = "room-1"
-ALICE_SAID = {
-    "role": "user",
-    "content": "Hello",
-    "sender_name": "Alice",
-    "message_type": MessageType.TEXT,
-}
+ALICE_SAID = stored("Hello")
 
 
 class TestResumeCandidates:

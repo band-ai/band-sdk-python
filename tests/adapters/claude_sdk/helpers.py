@@ -326,6 +326,26 @@ class ClaudeRoom:
         participants_msg: str | None = None,
         contacts_msg: str | None = None,
     ) -> None:
+        """``deliver`` the next message ``sender`` posts to the room."""
+        await self.deliver(
+            self.message(content, sender=sender),
+            history=history,
+            session_id=session_id,
+            tools=tools,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
+        )
+
+    async def deliver(
+        self,
+        message: PlatformMessage,
+        *,
+        history: tuple[dict[str, Any], ...] = (),
+        session_id: str | None = None,
+        tools: FakeAgentTools | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
+    ) -> None:
         """Deliver one room message through the runtime's entry point, so the
         turn is judged as in production; returns once the adapter hands the
         turn back (it finished, or parked on a human).
@@ -336,7 +356,7 @@ class ClaudeRoom:
         and ``contacts_msg`` are the runtime's pending room updates.
         """
         inp = self._turn_input(
-            (self.message(content, sender=sender),),
+            (message,),
             history=history,
             session_id=session_id,
             tools=tools,

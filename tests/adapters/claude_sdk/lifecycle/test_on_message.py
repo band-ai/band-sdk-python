@@ -1,3 +1,5 @@
+"""A room's messages run as turns on one Claude session, one turn at a time."""
+
 from __future__ import annotations
 
 import asyncio

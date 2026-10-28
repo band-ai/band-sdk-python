@@ -8,8 +8,8 @@ import pytest
 
 from band.adapters.omp import OmpAdapterConfig
 from band.converters.omp import OmpHistoryConverter
+from band.testing import FakeAgentTools
 from tests.adapters.omp.custody import owned_room
-from tests.adapters.omp.failures import FetchBoomTools
 from tests.adapters.omp.runtime import AdapterFactory
 from tests.integrations.acp.conftest import make_platform_message
 from tests.integrations.omprpc.wirelog import sent_prompt_messages
@@ -22,7 +22,8 @@ class TestReplayFetchFailure:
     ):
         adapter = real_adapter(config=OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         msg = make_platform_message("Finish the background work")
-        tools = FetchBoomTools()
+        tools = FakeAgentTools()
+        tools.fetch_room_context_error = RuntimeError("context unavailable")
         await adapter.run_judged_turn(
             msg=msg,
             tools=tools,
