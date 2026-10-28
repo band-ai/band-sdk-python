@@ -199,7 +199,7 @@ CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 _PROVIDER = "claude_sdk"
 #: What a Claude turn that failed in the provider reports to the room.
 _TURN_FAILURE = AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-# Opens the room's history in the prompt that seeds a new conversation.
+#: Opens the room's history in the prompt that seeds a new conversation.
 ROOM_MEMORY_HEADER = (
     "Your memory of this room so far — real earlier messages from you and "
     "from other participants and agents, including ones sent while you were "
@@ -679,8 +679,10 @@ class ClaudeSDKAdapter(
                 "Install with: pip install band-sdk[claude_sdk]\n"
                 "Or: uv add band-sdk[claude_sdk]"
             )
-        self._history_converter = history_converter or ClaudeSDKHistoryConverter()
-        super().__init__(history_converter=self._history_converter, **features)
+        super().__init__(
+            history_converter=history_converter or ClaudeSDKHistoryConverter(),
+            **features,
+        )
         self.config = config or ClaudeSDKAdapterConfig()
         if self.config.cwd is not None and workspace_for_room is not None:
             raise ValueError("set either cwd or workspace_for_room, not both")
@@ -1032,9 +1034,10 @@ class ClaudeSDKAdapter(
         lacks it.
 
         ``transcript`` is the bootstrap history; a conversation started later
-        (a crash, or a seed that failed) fetches it instead. The memory is
-        framed as the model's own, not a passive quote: under the claude_code
-        preset a "previous context" aside is recalled weakly.
+        (a crash, or a seed that failed) fetches it instead, and one that
+        cannot be fetched leaves the seed owed. The memory is framed as the
+        model's own, not a passive quote: under the claude_code preset a
+        "previous context" aside is recalled weakly.
         """
         if not session.seed.replay_due:
             return prompt
@@ -1042,6 +1045,7 @@ class ClaudeSDKAdapter(
             transcript = await self._fetch_room_memory(
                 tools, session.room_id, message_ids
             )
+        session.seed.carried = transcript is not None
         if not transcript:
             return prompt
         logger.info(
@@ -1053,8 +1057,9 @@ class ClaudeSDKAdapter(
 
     async def _fetch_room_memory(
         self, tools: AgentToolsProtocol, room_id: str, message_ids: tuple[str, ...]
-    ) -> str:
-        """The room's history before this turn, as the converter renders it."""
+    ) -> str | None:
+        """The room's history before this turn, as the converter renders it;
+        None when it cannot be fetched."""
         try:
             raw = await fetch_transcript(
                 tools, room_id=room_id, turn_ids=set(message_ids)
@@ -1065,8 +1070,9 @@ class ClaudeSDKAdapter(
                 room_id,
                 exc_info=True,
             )
-            return ""
-        return self._history_converter.convert(raw).text
+            return None
+        converter = cast(ClaudeSDKHistoryConverter, self.history_converter)
+        return converter.convert(raw).text
 
     async def _run_turn(
         self,
@@ -1628,14 +1634,18 @@ class ClaudeSDKAdapter(
     async def _record_session(
         self, session_id: str, session: ClaudeRoomSession, tools: AgentToolsProtocol
     ) -> None:
-        """Confirm the completed prompt seeded the conversation, keep its id
-        for resume and, when it changed, record it in the room (best-effort).
+        """Confirm the completed prompt seeded the conversation and, once it
+        has, keep its id for resume and, when it changed, record it in the
+        room (best-effort). An unseeded conversation is neither kept nor
+        recorded, so no resume skips its replay.
 
         The record is posted once per id rather than after every turn, so a
         failed post is not retried until the id changes.
         """
         room_id = session.room_id
         session.seed.confirm()
+        if not session.seed.seeded:
+            return
         session.session_id = session_id
         logger.debug("Room %s: Captured session_id %s", room_id, session_id)
         if self._recorded_session_ids.get(room_id) == session_id:

@@ -122,14 +122,38 @@ def said(sender_name: str, content: str) -> dict[str, Any]:
     }
 
 
+def stored(
+    sender_name: str, content: str, *, message_id: str = "earlier"
+) -> dict[str, Any]:
+    """One earlier room message from a person, as the platform stores it."""
+    return {
+        "id": message_id,
+        "message_type": MessageType.TEXT,
+        "sender_id": f"id-{sender_name}",
+        "sender_type": "User",
+        "sender_name": sender_name,
+        "content": content,
+    }
+
+
 def recorded_session(room_id: str, session_id: str) -> dict[str, Any]:
     """The resume record a room persisted for a Claude session, as raw history."""
     return {
+        "content": CLAUDE_SDK_RESUME_RECORD.label,
         "message_type": MessageType.TASK,
         "metadata": {
             CLAUDE_SDK_RESUME_RECORD.room_key: room_id,
             CLAUDE_SDK_RESUME_RECORD.session_key: session_id,
         },
+    }
+
+
+def legacy_record(session_id: str) -> dict[str, Any]:
+    """A session id recorded before records named their room, as raw history."""
+    return {
+        "content": CLAUDE_SDK_RESUME_RECORD.label,
+        "message_type": MessageType.TASK,
+        "metadata": {CLAUDE_SDK_RESUME_RECORD.session_key: session_id},
     }
 
 

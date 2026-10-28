@@ -8,10 +8,21 @@ import pytest
 from band.adapters.claude_sdk import ROOM_MEMORY_HEADER
 from band.core.protocols import TurnResultAlreadyReported
 from tests.adapters.claude_sdk.fakecli import EndTurn
-from tests.adapters.claude_sdk.helpers import OpenRoom, said
+from tests.adapters.claude_sdk.helpers import (
+    OpenRoom,
+    legacy_record,
+    recorded_session,
+    said,
+    stored,
+)
 
 FACT = "the milk is in the fridge"
 REMEMBERED = f"[Alice]: {FACT}"
+
+
+async def unreachable(**_: object) -> dict[str, object]:
+    """A room history fetch while the platform cannot be reached."""
+    raise ConnectionError("platform unreachable")
 
 
 class TestSessionSeeding:
@@ -51,6 +62,58 @@ class TestSessionSeeding:
         assert room.claude.resumed == attempts
         assert prompt.startswith(f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n")
 
+    @pytest.mark.parametrize(
+        "record",
+        [recorded_session("room-2", "sess-other"), legacy_record("sess-legacy")],
+        ids=["another-rooms-record", "legacy-roomless-record"],
+    )
+    async def test_a_record_naming_no_session_of_this_room_starts_fresh(
+        self, claude_room: OpenRoom, record: dict[str, object]
+    ) -> None:
+        room = await claude_room()
+        room.claude.script([room.model_reply("hi")])
+
+        await room.send("hello", history=(said("Alice", FACT), record))
+
+        [prompt] = room.claude.prompts
+        assert room.claude.resumed == [None]
+        assert prompt.startswith(f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n")
+
+    async def test_a_session_lost_to_a_crash_is_handed_the_fetched_history(
+        self, claude_room: OpenRoom
+    ) -> None:
+        """The crash policy forgets the seeded session, so the next process
+        starts a new one that is owed the room's history again."""
+        room = await claude_room()
+        room.tools.set_room_context([stored("Alice", FACT)])
+        room.claude.script([room.model_reply("hi")], [room.model_reply("back")])
+
+        await room.send("hello", history=(said("Alice", FACT),))
+        room.claude.sessions[-1].die()
+        with pytest.raises(TurnResultAlreadyReported):
+            await room.send("are you there?")
+        await room.send("hello again")
+
+        assert room.claude.resumed == [None, None]
+        assert room.claude.prompts[-1].startswith(
+            f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n"
+        )
+
+    async def test_a_session_resumed_mid_room_is_not_handed_the_history_again(
+        self, claude_room: OpenRoom
+    ) -> None:
+        room = await claude_room()
+        room.tools.set_room_context([stored("Alice", FACT)])
+        room.claude.script([room.model_reply("hi")], [room.model_reply("back")])
+
+        await room.send("hello", history=(said("Alice", FACT),))
+        await room.crash_band_server()
+        await room.send("still there?")
+
+        _, resumed_prompt = room.claude.prompts
+        assert room.claude.resumed == [None, "sess-1"]
+        assert ROOM_MEMORY_HEADER not in resumed_prompt
+
     async def test_an_errored_seed_is_not_recorded_and_the_next_turn_seeds_again(
         self, claude_room: OpenRoom
     ) -> None:
@@ -58,18 +121,7 @@ class TestSessionSeeding:
         from the room; once it completes, the session is recorded and no
         later turn replays the history."""
         room = await claude_room()
-        room.tools.set_room_context(
-            [
-                {
-                    "id": "earlier",
-                    "message_type": "text",
-                    "sender_id": "u1",
-                    "sender_type": "User",
-                    "sender_name": "Alice",
-                    "content": FACT,
-                }
-            ]
-        )
+        room.tools.set_room_context([stored("Alice", FACT)])
         room.claude.script(
             [EndTurn(is_error=True, result="overloaded")],
             [room.model_reply("seeded now")],
@@ -90,3 +142,60 @@ class TestSessionSeeding:
         assert ROOM_MEMORY_HEADER not in seeded
         assert room.persisted_sessions == [session.session_id]
         assert room.chat == ["seeded now", "still here"]
+
+    async def test_a_reseed_without_the_history_is_not_recorded(
+        self, claude_room: OpenRoom
+    ) -> None:
+        """A turn whose history could not be fetched still answers, but the
+        session stays owed the history until a later turn carries it."""
+        room = await claude_room()
+        room.tools.set_room_context([stored("Alice", FACT)])
+        room.claude.script(
+            [EndTurn(is_error=True, result="overloaded")],
+            [room.model_reply("answered without memory")],
+            [room.model_reply("seeded now")],
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await room.send("hello", history=(said("Alice", FACT),))
+        fetch_room_context = room.tools.fetch_room_context
+        room.tools.fetch_room_context = unreachable
+        await room.send("again")
+        assert room.persisted_sessions == []
+
+        room.tools.fetch_room_context = fetch_room_context
+        await room.send("and again")
+
+        [session] = room.claude.sessions
+        _, unseeded, seeded = room.claude.prompts
+        assert ROOM_MEMORY_HEADER not in unseeded
+        assert seeded.startswith(f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n")
+        assert room.persisted_sessions == [session.session_id]
+        assert room.chat == ["answered without memory", "seeded now"]
+
+    async def test_a_session_left_unseeded_is_not_resumed_mid_room(
+        self, claude_room: OpenRoom
+    ) -> None:
+        """A turn that answered without the history keeps no mapping, so a
+        later restart starts fresh and hands the new session the history."""
+        room = await claude_room()
+        room.tools.set_room_context([stored("Alice", FACT)])
+        room.claude.script(
+            [EndTurn(is_error=True, result="overloaded")],
+            [room.model_reply("answered without memory")],
+            [room.model_reply("seeded now")],
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await room.send("hello", history=(said("Alice", FACT),))
+        fetch_room_context = room.tools.fetch_room_context
+        room.tools.fetch_room_context = unreachable
+        await room.send("again")
+        room.tools.fetch_room_context = fetch_room_context
+        await room.crash_band_server()
+        await room.send("still there?")
+
+        assert room.claude.resumed == [None, None]
+        assert room.claude.prompts[-1].startswith(
+            f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n"
+        )

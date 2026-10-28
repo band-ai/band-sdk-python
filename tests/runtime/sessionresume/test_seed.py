@@ -23,3 +23,9 @@ class TestSessionSeed:
         self, seed: SessionSeed, replay_due: bool
     ) -> None:
         assert seed.replay_due is replay_due
+
+    def test_a_prompt_without_the_transcript_does_not_seed(self) -> None:
+        """Its history could not be fetched, so the session stays owed it."""
+        seed = confirmed(SessionSeed(carried=False))
+
+        assert seed.replay_due is True

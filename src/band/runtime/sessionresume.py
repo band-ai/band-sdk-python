@@ -30,11 +30,14 @@ class SessionSeed:
 
     A restored session kept its own. A fresh one is owed the transcript in its
     seeding prompt and becomes resumable only once that prompt completes; a
-    failed or refused seeding prompt leaves it unseeded.
+    failed or refused seeding prompt leaves it unseeded. ``carried`` is false
+    while the pending prompt goes without the transcript (it could not be
+    fetched), so its completion seeds nothing.
     """
 
     restored: bool = False
     seeded: bool = False
+    carried: bool = True
 
     @property
     def replay_due(self) -> bool:
@@ -43,7 +46,7 @@ class SessionSeed:
 
     def confirm(self) -> None:
         """Record that the session's seeding prompt completed."""
-        self.seeded = True
+        self.seeded = self.seeded or self.carried
 
 
 @dataclass(frozen=True)
@@ -98,7 +101,7 @@ class ResumeRecord:
                 **({self.session_key: session} if session else {}),
                 **(details or {}),
             },
-            log_label=self.label,
+            log_label=f"{self.label} for room {room_id}",
         )
 
 
