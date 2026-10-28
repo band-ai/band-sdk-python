@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.copilot_sdk import CopilotSDKAdapterConfig
-from band.converters.copilot_sdk import CopilotSDKSessionState
+from band.converters.copilot_sdk import COPILOT_RESUME_RECORD, CopilotSDKSessionState
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
@@ -15,6 +15,8 @@ from tests.adapters.copilot_sdk.fakes import (
 )
 
 pytestmark = requires_copilot_sdk
+
+RECORDED = {"room-1": "band-room-1"}
 
 
 class TestResumeAndRehydration:
@@ -28,7 +30,7 @@ class TestResumeAndRehydration:
             adapter,
             tools,
             history=CopilotSDKSessionState(
-                text="[Alice]: earlier", session_id="band-room-1"
+                text="[Alice]: earlier", room_to_session=RECORDED
             ),
         )
 
@@ -48,7 +50,7 @@ class TestResumeAndRehydration:
             adapter,
             tools,
             history=CopilotSDKSessionState(
-                text="[Alice]: earlier", session_id="band-room-1"
+                text="[Alice]: earlier", room_to_session=RECORDED
             ),
         )
 
@@ -70,7 +72,7 @@ class TestResumeAndRehydration:
             adapter,
             tools,
             history=CopilotSDKSessionState(
-                text="[Alice]: earlier", session_id="band-room-1"
+                text="[Alice]: earlier", room_to_session=RECORDED
             ),
         )
 
@@ -103,8 +105,8 @@ class TestResumeAndRehydration:
 
         task_events = [e for e in tools.events_sent if e["message_type"] == "task"]
         assert len(task_events) == 1  # persisted once, not per turn
-        assert task_events[0]["metadata"] == {
-            "copilot_session_id": "band-copilot-agent-room-1"
+        assert COPILOT_RESUME_RECORD.candidates(task_events) == {
+            "room-1": client.sessions[0].session_id
         }
 
     @pytest.mark.asyncio
@@ -138,7 +140,7 @@ class TestResumeAndRehydration:
         tools = ToolSchemaFakeTools()
 
         await run_message(
-            adapter, tools, history=CopilotSDKSessionState(session_id="band-room-1")
+            adapter, tools, history=CopilotSDKSessionState(room_to_session=RECORDED)
         )
 
         assert not [e for e in tools.events_sent if e["message_type"] == "task"]

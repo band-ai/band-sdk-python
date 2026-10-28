@@ -87,12 +87,12 @@ class ResumeRecord:
         """Post the room's record of ``session`` once its seed is confirmed.
 
         An empty ``session`` is left out of the record; ``details`` carries
-        any adapter-specific extras.
+        any adapter-specific extras. Returns whether the record reached the
+        room.
 
         The record is resume state rather than narration, so no emit setting
-        gates it. When to post is each adapter's choice: posting after every
-        completed prompt also retries a post that failed before. Return
-        whether the record reached the room.
+        gates it. Adapters post it after every completed prompt, or until
+        it lands, so a failed post is retried.
         """
         if not seed.seeded:
             return False

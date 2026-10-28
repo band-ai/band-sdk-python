@@ -27,8 +27,8 @@ class TestPerRoomIsolation:
 
         assert len(client.sessions) == 2
         session_a, session_b = client.sessions
-        assert session_a.session_id == "band-copilot-agent-room-a"
-        assert session_b.session_id == "band-copilot-agent-room-b"
+        assert session_a.session_id.startswith("band-copilot-agent-room-a-")
+        assert session_b.session_id.startswith("band-copilot-agent-room-b-")
         # No prompt leakage across rooms.
         assert "for B" not in session_a.prompts[0]
         assert "for A" not in session_b.prompts[0]

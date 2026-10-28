@@ -45,7 +45,9 @@ class TestSharedClient:
             jerry, ToolSchemaFakeTools(), room_id="room-1", content="for Jerry"
         )
 
-        assert [s.session_id for s in shared.sessions] == ["tom-room-1", "jerry-room-1"]
+        tom_session, jerry_session = shared.sessions
+        assert tom_session.session_id.startswith("tom-room-1-")
+        assert jerry_session.session_id.startswith("jerry-room-1-")
         assert "for Jerry" not in shared.sessions[0].prompts[0]
         assert "for Tom" not in shared.sessions[1].prompts[0]
 
@@ -68,8 +70,9 @@ class TestSharedClient:
         await run_message(tom, ToolSchemaFakeTools(), room_id="room-1")
         await run_message(jerry, ToolSchemaFakeTools(), room_id="room-1")
 
-        ids = [session.session_id for session in shared.sessions]
-        assert ids == ["band-agent-tom-id-room-1", "band-agent-jerry-id-room-1"]
+        tom_session, jerry_session = shared.sessions
+        assert tom_session.session_id.startswith("band-agent-tom-id-room-1-")
+        assert jerry_session.session_id.startswith("band-agent-jerry-id-room-1-")
 
     @pytest.mark.asyncio
     async def test_borrowed_client_never_stopped(self):

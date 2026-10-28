@@ -160,7 +160,7 @@ class TestSessionConfiguration:
         assert kwargs["model"] == "gpt-4o-mini"
 
     @pytest.mark.asyncio
-    async def test_deterministic_session_id_from_room(self):
+    async def test_session_id_carries_the_prefix_and_room(self):
         client = FakeCopilotClient()
         adapter = await make_started_adapter(
             client, CopilotSDKAdapterConfig(session_id_prefix="myagent-")
@@ -169,4 +169,4 @@ class TestSessionConfiguration:
 
         await run_message(adapter, tools, room_id="room-42")
 
-        assert client.sessions[0].session_id == "myagent-room-42"
+        assert client.sessions[0].session_id.startswith("myagent-room-42-")

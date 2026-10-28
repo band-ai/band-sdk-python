@@ -41,7 +41,7 @@ class TestTurnFailure:
 
         # ...so the next message starts clean, resuming by the stored id.
         await run_message(adapter, tools, is_session_bootstrap=False)
-        assert client.resume_calls == ["band-copilot-agent-room-1"]
+        assert client.resume_calls == [dead.session_id]
         assert client.sessions[-1].prompts
 
     @pytest.mark.asyncio

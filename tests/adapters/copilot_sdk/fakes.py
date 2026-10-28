@@ -105,7 +105,7 @@ class FakeCopilotSession:
 
     def __init__(
         self,
-        session_id: str | None,
+        session_id: str,
         kwargs: dict[str, Any],
         *,
         resumed: bool = False,
@@ -193,11 +193,14 @@ class FakeCopilotClient:
         create_error: Exception | None = None,
         reply_content: str | None = "Hello from Copilot",
         turn_events: list[Any] | None = None,
+        prompt_errors: Sequence[Exception] = (),
     ):
         self.resume_error = resume_error
         self.create_error = create_error
         self.reply_content = reply_content
         self.turn_events = turn_events or []
+        # Each new session's prompts raise the next of these, in order.
+        self.prompt_errors = list(prompt_errors)
         self.started = False
         self.stopped = False
         self.sessions: list[FakeCopilotSession] = []
@@ -210,9 +213,7 @@ class FakeCopilotClient:
     async def stop(self) -> None:
         self.stopped = True
 
-    async def create_session(
-        self, *, session_id: str | None = None, **kwargs: Any
-    ) -> Any:
+    async def create_session(self, *, session_id: str, **kwargs: Any) -> Any:
         if self.create_error:
             raise self.create_error
         session = FakeCopilotSession(
@@ -221,6 +222,11 @@ class FakeCopilotClient:
             reply_content=self.reply_content,
             turn_events=self.turn_events,
         )
+        return self._mint(session)
+
+    def _mint(self, session: FakeCopilotSession) -> FakeCopilotSession:
+        if self.prompt_errors:
+            session.send_error = self.prompt_errors.pop(0)
         self.sessions.append(session)
         return session
 
@@ -235,8 +241,7 @@ class FakeCopilotClient:
             reply_content=self.reply_content,
             turn_events=self.turn_events,
         )
-        self.sessions.append(session)
-        return session
+        return self._mint(session)
 
 
 async def make_started_adapter(
