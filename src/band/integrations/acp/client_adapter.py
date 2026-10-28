@@ -490,19 +490,21 @@ class ACPClientAdapter(
     async def apply_model_selection(
         self, selection: ModelSelection, *, room_id: str
     ) -> None:
-        """Switch ``room_id``'s live ACP session, checked against its catalog.
+        """Switch ``room_id``'s ACP session, checked against its catalog when applied.
 
         The switch queues behind the room's running and queued prompts, as one
-        more turn would; other rooms never wait on it. Raises
-        ``BandConfigError`` (an ``ACPConfigError`` naming what the session
-        offers, when it rejects ``selection``). Only a switch that
-        returns counts: the room then keeps what its session runs for the
-        adapter's lifetime, and every later session for it starts there
-        until one refuses it. A switch that raises may leave the live session
-        partly switched, but later sessions start where they would have
-        before it. Other rooms keep the configured selection. Refused when
-        ``resolve_session_config`` configures sessions instead. An empty
-        ``selection`` changes nothing.
+        more turn would; other rooms never wait on it. A live session switches
+        now and raises ``BandConfigError`` (an ``ACPConfigError`` naming what
+        the session offers, when it rejects ``selection``). A room whose
+        process is up without a session (its seeding prompt was refused)
+        keeps ``selection`` for its next session, whose turn fails if that
+        session's catalog refuses it. Only a switch that returns counts: the
+        room then keeps that selection for the adapter's lifetime, and every
+        later session for it starts there until one refuses it. A switch that
+        raises may leave the live session partly switched, but later sessions
+        start where they would have before it. Other rooms keep the configured
+        selection. Refused when ``resolve_session_config`` configures sessions
+        instead. An empty ``selection`` changes nothing.
         """
         if self._resolve_session_config is not None:
             raise BandConfigError(
@@ -528,16 +530,22 @@ class ACPClientAdapter(
             raise _session_ended_mid_switch(room_id) from error
 
     async def _switch_room(self, room: ACPRoom, selection: ModelSelection) -> None:
-        async def require_live_session() -> None:
+        def awaits_session() -> bool:
+            return room.runtime is not None and room.session is None
+
+        async def require_switchable() -> None:
             # Runs before acquisition: a switch never starts a process.
-            if room.live_session is None:
+            if room.live_session is None and not awaits_session():
                 raise _no_live_session(room.room_id)
 
         # Settings take the room in turn with its prompts.
-        async with room.reservation, room.retained.use(prepare=require_live_session):
+        async with room.reservation, room.retained.use(prepare=require_switchable):
             session = room.live_session
             if session is None:
-                raise _no_live_session(room.room_id)
+                if not awaits_session():
+                    raise _no_live_session(room.room_id)
+                self._queue_room_selection(room.room_id, selection)
+                return
             session_id, runtime = session
             async with runtime.config_lock:
                 try:
@@ -576,6 +584,15 @@ class ACPClientAdapter(
         logger.info(
             "ACP session %s for room %s now runs %s", session_id, room_id, running
         )
+
+    def _queue_room_selection(self, room_id: str, selection: ModelSelection) -> None:
+        """Start the room's next session at ``selection``, checked when applied."""
+        current = self._room_selection(room_id)
+        # Efforts belong to a model, so a new model drops the current effort.
+        base = current if selection.model in (None, current.model) else ModelSelection()
+        queued = base.model_copy(update=selection.model_dump(exclude_none=True))
+        self._room_selections[room_id] = queued
+        logger.info("Room %s's next ACP session will run %s", room_id, queued)
 
     def _room_selection(self, room_id: str) -> ModelSelection:
         return self._room_selections.get(room_id, self.model_selection)
@@ -920,6 +937,13 @@ class ACPClientAdapter(
                     session_id=session_id,
                 )
                 turn_deadline = asyncio.timeout(self.config.turn_timeout_s)
+
+                def confirm_stopped_seed() -> None:
+                    # A stopped seeding prompt reached the agent; one cut off
+                    # by the turn deadline did not complete.
+                    if not turn_deadline.expired():
+                        session.seed.confirm()
+
                 async with self.backend_turns.running(
                     room_id, ACPTurn(runtime, session_id)
                 ):
@@ -929,8 +953,7 @@ class ACPClientAdapter(
                                 session_id=session_id,
                                 prompt_text=prompt_text,
                                 on_chunk=emitter.emit,
-                                # A stopped seeding prompt still reached the agent.
-                                on_cancelled=session.seed.confirm,
+                                on_cancelled=confirm_stopped_seed,
                             )
                             if stop_reason == REFUSAL_STOP:
                                 logger.warning(
@@ -995,7 +1018,8 @@ class ACPClientAdapter(
         Only a completed seeding prompt makes a session the room's, so the
         room's next turn starts a fresh session with the transcript instead.
         A ``recovering`` process is stopped with its sessions, so it is not
-        asked to close this one.
+        asked to close this one. A transcript too large for the turn timeout
+        therefore keeps timing out; bounding the replay is a separate concern.
         """
         if not (session.seed.replay_due and room.session is session):
             return

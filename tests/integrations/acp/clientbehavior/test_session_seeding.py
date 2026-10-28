@@ -15,7 +15,10 @@ import pytest
 from acp import RequestError
 
 from band.converters.acp_client import ACPClientHistoryConverter
-from band.integrations.acp.client_adapter import SYSTEM_CONTEXT_HEADER
+from band.integrations.acp.client_adapter import (
+    SYSTEM_CONTEXT_HEADER,
+    ACPTurnTimeoutError,
+)
 from band.integrations.acp.types import REFUSAL_STOP
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
@@ -24,6 +27,7 @@ from tests.integrations.acp.acp_toolkit import (
     acp_adapter,
 )
 from tests.integrations.acp.acp_toolkit.agent import END_TURN_STOP
+from tests.integrations.acp.acp_toolkit.harness import fake_agent_config
 from tests.integrations.acp.clientbehavior.kit import (
     MARCO_REPLAY_LINE,
     QUOTA_TEXT,
@@ -93,6 +97,32 @@ class TestSessionSeeding:
         assert agent.session_load_requests == []
         # The recovered process went down with the session; none was closed.
         assert agent.closed_sessions == []
+        assert agent.prompts[1]["session_id"] == fresh
+        assert seeded(agent.prompt_texts()[1])
+
+    @pytest.mark.looptime
+    async def test_a_timed_out_seed_leaves_the_next_turn_a_new_seeded_session(
+        self,
+    ) -> None:
+        agent = FakeACPAgent(supports_session_load=True)
+        prompting = holds_prompt(agent, 1)
+        timing_out = TranscriptTools()
+        async with acp_adapter(agent, fake_agent_config(turn_timeout_s=10)) as session:
+            with pytest.raises(ACPTurnTimeoutError):
+                await session.send(
+                    "first?",
+                    bootstrap=True,
+                    history=rehydration_history(MARCO_REPLAY_LINE),
+                    tools=timing_out,
+                )
+            prompting.release.set()
+            (timed_out,) = agent.session_ids()
+            agent.knows_session(timed_out)
+            await session.send(QUESTION, room_context=[marco_message()])
+
+        _, fresh = agent.session_ids()
+        assert resume_records(timing_out) == {}
+        assert agent.session_load_requests == []
         assert agent.prompts[1]["session_id"] == fresh
         assert seeded(agent.prompt_texts()[1])
 
