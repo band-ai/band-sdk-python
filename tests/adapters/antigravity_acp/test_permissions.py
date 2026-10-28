@@ -137,6 +137,25 @@ class TestAntigravityPermissions:
 
         assert peer.permission_choices() == [ALLOW_ID]
 
+    @pytest.mark.parametrize(
+        ("approval_mode", "expected"),
+        [("auto_accept", ALLOW_ID), ("auto_decline", REJECT_ID)],
+    )
+    async def test_external_mcp_tools_with_a_band_name_follow_approval_mode(
+        self,
+        open_peer: Callable[..., Awaitable[AntigravityRoom]],
+        approval_mode: ApprovalMode,
+        expected: str,
+    ) -> None:
+        peer = await open_peer(
+            PeerSettings(permission=mcp_permission("external", BandTool.SEND_MESSAGE)),
+            config={"approval_mode": approval_mode},
+        )
+
+        await peer.send()
+
+        assert peer.permission_choices() == [expected]
+
     async def test_permission_after_the_native_turn_is_declined(
         self,
         open_peer: Callable[..., Awaitable[AntigravityRoom]],

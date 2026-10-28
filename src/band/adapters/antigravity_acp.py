@@ -47,7 +47,7 @@ from band.integrations.acp.permissions import (
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.integrations.acp.types import ACPToolCall
 from band.runtime.custom_tools import CustomToolDef
-from band.runtime.tools import BAND_MCP_SERVER_NAME
+from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 from band.workspaces import WorkspaceResolver, create_room_workspace_resolver
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ GEMINI_HOME_ENV = "GEMINI_HOME"
 INVOKE_SUBAGENT_TITLE = "Run invoke_subagent?"
 BACKGROUND_BUILTIN_TITLES = frozenset({INVOKE_SUBAGENT_TITLE})
 ROOM_DELIVERY_GUIDANCE = (
-    "Only band_send_message delivers a reply to this Band room. "
+    f"Only {BandTool.SEND_MESSAGE} delivers a reply to this Band room. "
     "Antigravity's native send_message and inbox do not reach the room."
 )
 
@@ -230,9 +230,8 @@ class AntigravityACPAdapter(ACPClientAdapter[AntigravityACPAdapterConfig]):
                 else REJECT_ONCE_KIND
             )
             logger.info(
-                "Antigravity tool permission: room=%s tool=%s kind=%s",
+                "Antigravity tool permission: room=%s kind=%s",
                 request.room_id,
-                call.name,
                 kind,
             )
         return option_id_of_kind(request.options, kind)

@@ -1137,11 +1137,10 @@ class ACPClientAdapter(
             )
 
             logger.info(
-                "Permission request: tool=%s, session=%s, room=%s, option=%s",
-                call.name,
+                "Permission request: session=%s, room=%s, decision=%s",
                 session_id,
                 room_id,
-                option_id,
+                "selected" if option_id is not None else "cancelled",
             )
 
             if option_id is not None:

@@ -10,13 +10,56 @@ from acp.helpers import start_tool_call
 from acp.schema import ToolCallUpdate
 
 from band.adapters.antigravity_acp import TESTED_ANTIGRAVITY_VERSION
+from band.core.types import ApprovalMode
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 from tests.adapters.antigravity_acp.kit import AntigravityRoom, mcp_permission
 from tests.adapters.antigravity_acp.peer import PEER_AGENT_NAME
 from tests.adapters.antigravity_acp.peerconfig import PeerSettings
+from tests.integrations.acp.acp_toolkit.agent import allow_or_reject
+
+ALLOW_ID, REJECT_ID = (option.option_id for option in allow_or_reject())
 
 
 class TestAntigravityDiagnostics:
+    @pytest.mark.parametrize(
+        ("approval_mode", "expected"),
+        [("auto_accept", ALLOW_ID), ("auto_decline", REJECT_ID)],
+    )
+    async def test_native_permission_logs_keep_sensitive_commands_private(
+        self,
+        open_peer: Callable[..., Awaitable[AntigravityRoom]],
+        caplog: pytest.LogCaptureFixture,
+        approval_mode: ApprovalMode,
+        expected: str,
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        secret = "sensitive-command-argument"
+        command = f"printf {secret}"
+        peer = await open_peer(
+            PeerSettings(
+                permission=ToolCallUpdate(
+                    tool_call_id="shell",
+                    title=command,
+                    raw_input={"CommandLine": command},
+                )
+            ),
+            config={"approval_mode": approval_mode},
+        )
+
+        await peer.send()
+
+        assert peer.permission_choices() == [expected]
+        assert {
+            record.name
+            for record in caplog.records
+            if "permission:" in record.getMessage().lower()
+            or record.getMessage().startswith("Permission request:")
+        } == {
+            "band.adapters.antigravity_acp",
+            "band.integrations.acp.client_adapter",
+        }
+        assert secret not in caplog.text
+
     async def test_valid_mcp_metadata_does_not_report_shape_drift(
         self,
         open_peer: Callable[..., Awaitable[AntigravityRoom]],
