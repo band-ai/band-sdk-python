@@ -11,6 +11,7 @@ from band.contracts.errors import (
     ContractCapacityError,
     ContractHTTPError,
     ContractProtocolError,
+    ContractTransportError,
 )
 from band.contracts.models import ContractConnection
 from tests.contracts.client.kit import RoomPeer
@@ -43,6 +44,43 @@ class TestTransport:
         ):
             with pytest.raises(ContractCapacityError, match="response"):
                 await client.claim(id="stable")
+
+    @pytest.mark.parametrize(
+        ("status", "body"),
+        [
+            (504, b"<html><body>504 Gateway Time-out</body></html>"),
+            (502, b'{"error":"bad_gateway"}'),
+            (503, b'{"error":"authority_unavailable"}'),
+            (403, b"<html><body>Forbidden</body></html>"),
+        ],
+        ids=["gateway-html", "gateway-json", "authority-unavailable", "proxy-html"],
+    )
+    async def test_server_or_foreign_failure_leaves_delivery_unknown(
+        self, status: int, body: bytes
+    ) -> None:
+        async with (
+            httpx.AsyncClient(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(status, content=body)
+                )
+            ) as http,
+            ContractAuthorClient(RoomPeer().connection(), http=http) as client,
+        ):
+            with pytest.raises(ContractTransportError):
+                await client.claim(id="stable")
+
+    async def test_authority_refusal_reports_its_reason(self) -> None:
+        async with (
+            httpx.AsyncClient(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(403, json={"error": "agent_stopped"})
+                )
+            ) as http,
+            ContractAuthorClient(RoomPeer().connection(), http=http) as client,
+        ):
+            with pytest.raises(ContractHTTPError) as error:
+                await client.claim(id="stable")
+        assert (error.value.status, error.value.code) == (403, "agent_stopped")
 
     async def test_redirect_is_not_followed_with_the_agent_credential(self) -> None:
         requested: list[str] = []

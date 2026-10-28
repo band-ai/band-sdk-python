@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from types import TracebackType
 from typing import Self
 
@@ -13,12 +14,20 @@ from band.contracts.errors import (
     ContractCapacityError,
     ContractHTTPError,
     ContractInboxConflict,
+    ContractProtocolError,
     ContractTransportError,
 )
 from band.contracts.models import ContractConnection
 from band.contracts.wire import MAX_WIRE_BYTES, JsonObject, decode_json
 
 logger = logging.getLogger(__name__)
+
+# Authority refusals name a reason atom: the platform sends {"error": reason}
+# and a gateway sends {"error": text, "code": reason}.
+_REASON = re.compile(r"[a-z][a-z0-9_]{0,99}")
+UNKNOWN_DELIVERY = (
+    "Contract delivery is unknown; retry only the same request identity and body"
+)
 
 
 class ContractTransport:
@@ -62,23 +71,33 @@ class ContractTransport:
                     if len(content) + len(chunk) > limit:
                         raise ContractCapacityError("response")
                     content.extend(chunk)
-                result = self._decode_response(bytes(content))
-                if response.status_code != 200:
-                    code = result.get("code")
-                    code = code if isinstance(code, str) and len(code) <= 100 else None
-                    if (
-                        response.status_code == 409
-                        and path.endswith("/v1/inbox")
-                        and code == "cursor_ahead"
-                    ):
-                        raise ContractInboxConflict(409, code)
-                    raise ContractHTTPError(response.status_code, code)
-                return result
+                if response.status_code == 200:
+                    return self._decode_response(bytes(content))
+                code = self._refusal_code(response.status_code, bytes(content))
+                if (
+                    response.status_code == 409
+                    and path.endswith("/v1/inbox")
+                    and code == "cursor_ahead"
+                ):
+                    raise ContractInboxConflict(409, code)
+                raise ContractHTTPError(response.status_code, code)
         except (httpx.HTTPError, TimeoutError):
             logger.debug("Contract request ended without an authoritative response")
-            raise ContractTransportError(
-                "Contract delivery is unknown; retry only the same request identity and body"
-            ) from None
+            raise ContractTransportError(UNKNOWN_DELIVERY) from None
+
+    def _refusal_code(self, status: int, content: bytes) -> str | None:
+        """A server failure or a body the authority did not write leaves delivery unknown."""
+        if status >= 500:
+            raise ContractTransportError(UNKNOWN_DELIVERY)
+        try:
+            body = self._decode_response(content)
+        except ContractProtocolError:
+            raise ContractTransportError(UNKNOWN_DELIVERY) from None
+        for key in ("code", "error"):
+            value = body.get(key)
+            if isinstance(value, str) and _REASON.fullmatch(value):
+                return value
+        return None
 
     def _decode_response(self, content: bytes) -> JsonObject:
         return decode_json(content)
