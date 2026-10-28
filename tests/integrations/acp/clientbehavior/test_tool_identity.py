@@ -6,6 +6,7 @@ from tests.integrations.acp.acp_toolkit import (
     acp_adapter,
 )
 from tests.integrations.acp.clientbehavior.kit import (
+    antigravity_mcp_call,
     codex_mcp_call,
 )
 
@@ -105,3 +106,43 @@ class TestToolIdentity:
 
         assert reply.texts == []
         assert reply.tool_call_names == ["band_send_message"]
+
+    @pytest.mark.asyncio
+    async def test_antigravity_band_post_is_the_one_reply_and_narrates_its_own_arguments(
+        self,
+        fake_agent,
+    ) -> None:
+        """Antigravity names an MCP call only in ``_meta`` and titles it
+        ``band_band_send_message``, so identity comes from ``_meta`` and the
+        arguments from ``rawInput.arguments``."""
+        fake_agent.will_call_tool_with_meta(
+            "tc-1",
+            **antigravity_mcp_call("band", "band_send_message", content="The answer."),
+            result="Call band_send_message",
+        ).will_say("The answer.")
+        async with acp_adapter(fake_agent) as session:
+            reply = await session.send("question?")
+
+        assert reply.texts == []
+        assert reply.thoughts == []
+        assert reply.tool_call_names == ["band_send_message"]
+        assert reply.tool_call_args == [{"content": "The answer."}]
+        assert reply.tool_result_names == ["band_send_message"]
+
+    @pytest.mark.asyncio
+    async def test_antigravity_call_to_another_servers_same_named_tool_is_not_a_reply(
+        self,
+        fake_agent,
+    ) -> None:
+        fake_agent.will_call_tool_with_meta(
+            "tc-1",
+            **antigravity_mcp_call("other", "band_send_message", content="elsewhere"),
+            result="Call band_send_message",
+        ).will_say("The answer.")
+        async with acp_adapter(fake_agent) as session:
+            reply = await session.send("question?")
+
+        assert reply.texts == []
+        assert reply.thoughts == ["The answer."]
+        assert reply.tool_call_names == ["other-band_send_message"]
+        assert reply.tool_call_args == [{"content": "elsewhere"}]

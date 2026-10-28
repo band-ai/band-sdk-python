@@ -85,9 +85,49 @@ def rehydration_history(
     )
 
 
+def room_text_message(
+    message_id: str, *, sender_id: str, sender_type: str, sender_name: str, content: str
+) -> dict[str, Any]:
+    """A text message as the platform returns it in the room's context."""
+    return {
+        "id": message_id,
+        "message_type": "text",
+        "sender_id": sender_id,
+        "sender_type": sender_type,
+        "sender_name": sender_name,
+        "content": content,
+    }
+
+
+MARCO_SAYS = "My favorite color is blue."
+# How the transcript replay renders ``marco_message``.
+MARCO_REPLAY_LINE = f"[Marco]: {MARCO_SAYS}"
+
+
+def marco_message() -> dict[str, Any]:
+    """Marco's earlier room message, which a replay must carry."""
+    return room_text_message(
+        "m1",
+        sender_id="user-marco",
+        sender_type="User",
+        sender_name="Marco",
+        content=MARCO_SAYS,
+    )
+
+
 def codex_mcp_call(server: str, tool: str, **arguments: str) -> dict[str, Any]:
     """codex-acp's MCP tool call: a display title, the identity in ``rawInput``."""
     return {
         "title": f"mcp.{server}.{tool}",
         "raw_input": {"server": server, "tool": tool, "arguments": arguments},
+    }
+
+
+def antigravity_mcp_call(server: str, tool: str, **arguments: str) -> dict[str, Any]:
+    """Antigravity's MCP tool call: a ``<server>_<tool>`` title, the identity in
+    ``_meta.mcp``, and ``rawInput`` holding the arguments both nested and flat."""
+    return {
+        "title": f"{server}_{tool}",
+        "raw_input": {"arguments": arguments, **arguments},
+        "meta": {"mcp": {"server": server, "tool": tool}},
     }

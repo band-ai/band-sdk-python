@@ -6,12 +6,16 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from band.runtime.tools import mcp_tool_spelling
+
+if TYPE_CHECKING:
+    # Annotation only: this module is imported where the ACP extra is absent.
+    from acp.schema import StopReason
 
 
 class ACPStopReason(StrEnum):
@@ -28,6 +32,17 @@ class ACPServerUpdate(StrEnum):
 
 
 PromptOutcome = ACPStopReason | AgentFailure
+
+# The stop reason with which an ACP agent declines a prompt (e.g. an exhausted
+# model quota); its message chunks say why.
+REFUSAL_STOP: Final[StopReason] = "refusal"
+# A refusal's failure message when the agent gave no text of its own.
+REFUSAL_FAILURE_MESSAGE = "The ACP agent refused the prompt."
+# ``AgentFailure.code`` of a refused prompt (a Band code, not a stop reason).
+REFUSAL_FAILURE_CODE = "acp_refusal"
+
+# ``AgentFailure.provider`` for every failure an ACP client turn reports.
+ACP_FAILURE_PROVIDER = "acp"
 
 
 class ConcurrentPromptError(ValueError):
@@ -109,7 +124,7 @@ class ACPToolCall:
         canonical name is the only one the object ever carries.
         """
         raw_input = getattr(tool_call, "raw_input", None)
-        invocation = _mcp_invocation(raw_input)
+        invocation = _mcp_invocation(raw_input, getattr(tool_call, "field_meta", None))
         title = getattr(tool_call, "title", None)
         if invocation is None:
             name = str(title or getattr(tool_call, "name", "unknown"))
@@ -146,13 +161,39 @@ _MCP_INVOCATION_KEYS: tuple[tuple[str, str, str], ...] = (
     ("server", "tool", "arguments"),
     ("providerIdentifier", "toolName", "args"),
 )
+# Antigravity names an MCP call's server and tool under ``_meta.mcp`` and its
+# arguments under ``rawInput.arguments`` (beside a flattened copy of them).
+_META_MCP_KEY = "mcp"
+_META_MCP_IDENTITY_KEYS = ("server", "tool")
+_META_MCP_ARGUMENTS_KEY = "arguments"
+
+McpInvocation = tuple[str, str, dict[str, JsonValue]]
 
 
-def _mcp_invocation(
-    raw_input: object,
-) -> tuple[str, str, dict[str, JsonValue]] | None:
-    """Server, tool and arguments of an MCP call reported in ``rawInput`` (see
-    ``_MCP_INVOCATION_KEYS``), whose title is only a display string."""
+def _mcp_invocation(raw_input: object, meta: object) -> McpInvocation | None:
+    """Return the server, tool and arguments of an MCP call.
+
+    Its title is only a display string.
+    """
+    return _meta_mcp_invocation(raw_input, meta) or _raw_input_mcp_invocation(raw_input)
+
+
+def _meta_mcp_invocation(raw_input: object, meta: object) -> McpInvocation | None:
+    """An MCP call identified in ``_meta`` (see ``_META_MCP_KEY``)."""
+    mcp = meta.get(_META_MCP_KEY) if isinstance(meta, dict) else None
+    arguments = (
+        raw_input.get(_META_MCP_ARGUMENTS_KEY) if isinstance(raw_input, dict) else None
+    )
+    if not isinstance(mcp, dict) or not isinstance(arguments, dict):
+        return None
+    server, tool = (mcp.get(key) for key in _META_MCP_IDENTITY_KEYS)
+    if not isinstance(server, str) or not isinstance(tool, str):
+        return None
+    return server, tool, cast(dict[str, JsonValue], arguments)
+
+
+def _raw_input_mcp_invocation(raw_input: object) -> McpInvocation | None:
+    """An MCP call identified in ``rawInput`` alone (see ``_MCP_INVOCATION_KEYS``)."""
     if not isinstance(raw_input, dict):
         return None
     keys = next(

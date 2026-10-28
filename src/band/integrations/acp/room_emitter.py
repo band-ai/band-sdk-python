@@ -5,10 +5,15 @@ from __future__ import annotations
 import logging
 from typing import Self
 
+from band_sdk_core import AgentFailure
+
 from band.core.content import has_visible_content
 from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import Emit, MessageType, PermissionEventKey
 from band.integrations.acp.types import (
+    ACP_FAILURE_PROVIDER,
+    REFUSAL_FAILURE_CODE,
+    REFUSAL_FAILURE_MESSAGE,
     ACPToolCall,
     ACPToolResult,
     ChunkType,
@@ -38,9 +43,11 @@ class RoomTurnEmitter:
     in the room.
 
     On clean close, held text is optional thought telemetry unless a tool
-    replied or declined; runtime judging may subsequently report a missing
-    reply. The session's resume record is state, not narration, so the adapter
-    posts it after the close, outside this emitter.
+    replied or declined. A prompt the agent refused instead fails the turn
+    with that text, unless the turn already replied or declined; runtime
+    judging may subsequently report a missing reply. The session's resume
+    record is state, not narration, so the adapter posts it after the close,
+    outside this emitter.
 
     Which narration kinds reach the room is controlled by the emit set passed
     at construction (``None``: all kinds — the historical default).
@@ -68,6 +75,11 @@ class RoomTurnEmitter:
         self._emit = frozenset(emit) if emit is not None else frozenset(Emit)
         self._pending_text: list[str] = []
         self._staged_effects: list[TurnEffect] = []
+        self._refused = False
+
+    def refused(self) -> None:
+        """Record that the agent refused the prompt, for the close to report."""
+        self._refused = True
 
     async def emit(self, chunk: CollectedChunk) -> None:
         self._stage_tool_outcome(chunk)
@@ -172,7 +184,9 @@ class RoomTurnEmitter:
         for effect in self._staged_effects:
             self._tools.turn.record(effect)
         text = "\n\n".join(self._pending_text)
-        if (
+        if self._refused:
+            await self._report_refusal(text)
+        elif (
             not self._tools.turn.replied
             and Emit.THOUGHTS in self._emit
             and has_visible_content(text)
@@ -184,3 +198,16 @@ class RoomTurnEmitter:
                 log_label="ACP closing thought",
             )
         return False
+
+    async def _report_refusal(self, text: str) -> None:
+        """Fail a refused turn with the agent's text, unless it already
+        replied or declined and so is complete."""
+        if self._tools.turn.replied:
+            return
+        await self._tools.send_failure(
+            AgentFailure(
+                ACP_FAILURE_PROVIDER,
+                text if has_visible_content(text) else REFUSAL_FAILURE_MESSAGE,
+                REFUSAL_FAILURE_CODE,
+            )
+        )

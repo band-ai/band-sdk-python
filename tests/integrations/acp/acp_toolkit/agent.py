@@ -36,6 +36,7 @@ from acp.schema import (
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
+    StopReason,
     ToolCallUpdate,
 )
 from mcp.types import Tool
@@ -71,6 +72,9 @@ EFFORT_OPTION_ID = "reasoning_effort"
 
 # What ``fails_next_exit`` raises from the connection's shutdown.
 AGENT_EXIT_FAILURE = "agent exit failed"
+
+# The stop reason of a prompt the agent finished normally.
+END_TURN_STOP: StopReason = "end_turn"
 
 
 @dataclass
@@ -117,6 +121,7 @@ class FakeACPAgent:
         self._conns_by_session: dict[str, AgentSideConnection | None] = {}
         self._script: list[PromptHandler] = []
         self._custom: PromptHandler | None = None
+        self._stop_reason: StopReason = END_TURN_STOP
         self._config_options = list(config_options)
         self._config_option_handler: ConfigOptionHandler | None = None
         self._reply_gate: Gate | None = None
@@ -267,6 +272,11 @@ class FakeACPAgent:
         self._config_options = catalog()
         return self
 
+    def stops_with(self, stop_reason: StopReason) -> FakeACPAgent:
+        """End every prompt from now on with ``stop_reason``."""
+        self._stop_reason = stop_reason
+        return self
+
     def will_say(self, text: str) -> FakeACPAgent:
         self._script.append(lambda a, sid: a.say(sid, text))
         return self
@@ -311,6 +321,43 @@ class FakeACPAgent:
                     sid,
                     update_tool_call(tool_call_id, raw_output=result, status=status),
                 )
+
+        self._script.append(_action)
+        return self
+
+    def will_call_tool_with_meta(
+        self,
+        tool_call_id: str,
+        title: str,
+        *,
+        raw_input: Any,
+        meta: dict[str, Any],
+        result: Any,
+    ) -> FakeACPAgent:
+        """Antigravity's tool call: a ``pending`` start and an ``in_progress``
+        update that both carry the title, ``rawInput`` and ``_meta``, then a
+        ``completed`` update carrying only the output."""
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            await a.emit(
+                sid,
+                start_tool_call(
+                    tool_call_id, title, status="pending", raw_input=raw_input
+                ).model_copy(update={"field_meta": meta}),
+            )
+            await a.emit(
+                sid,
+                update_tool_call(
+                    tool_call_id,
+                    title=title,
+                    status="in_progress",
+                    raw_input=raw_input,
+                ).model_copy(update={"field_meta": meta}),
+            )
+            await a.emit(
+                sid,
+                update_tool_call(tool_call_id, raw_output=result, status="completed"),
+            )
 
         self._script.append(_action)
         return self
@@ -815,7 +862,7 @@ class FakeACPAgent:
         else:
             for action in self._script:
                 await action(self, session_id)
-        return PromptResponse(stop_reason="end_turn")
+        return PromptResponse(stop_reason=self._stop_reason)
 
 
 def allow_or_reject(allow_option_id: str = "allow-1") -> list[PermissionOption]:

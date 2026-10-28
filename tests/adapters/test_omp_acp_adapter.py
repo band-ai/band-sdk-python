@@ -38,6 +38,7 @@ from band.integrations.omp import (
 )
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit import (
+    DEFAULT_ROOM,
     inject_acp_spawn,
     launch_for,
     room_holder,
@@ -76,7 +77,7 @@ class TestOmpACPAdapterModel:
         )
 
         assert "--model=anthropic/claude-haiku-4-5" in adapter._spawn_command(None)
-        assert adapter._spawn_env() == {
+        assert adapter._spawn_env(DEFAULT_ROOM) == {
             "PI_CODING_AGENT_DIR": "/agent-home",
             "ANTHROPIC_API_KEY": "secret",
         }

@@ -13,6 +13,7 @@ from acp.interfaces import Client
 from acp.schema import (
     LoadSessionResponse,
     NewSessionResponse,
+    PromptResponse,
     SetSessionConfigOptionResponse,
 )
 
@@ -76,7 +77,9 @@ class ACPConnectionProtocol(Protocol):
         mcp_servers: list[object],
     ) -> LoadSessionResponse | None: ...
 
-    async def prompt(self, *, session_id: str, prompt: list[object]) -> object: ...
+    async def prompt(
+        self, *, session_id: str, prompt: list[object]
+    ) -> PromptResponse: ...
 
     async def set_config_option(
         self,
