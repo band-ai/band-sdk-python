@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from band.converters.opencode import OpencodeHistoryConverter, OpencodeMetadataKey
+from band.converters.opencode import (
+    OPENCODE_RESUME_RECORD,
+    OpencodeHistoryConverter,
+    OpencodeMetadataKey,
+)
 from band.core.types import MessageType
 from band.integrations.opencode.types import OpencodeSessionState
 
@@ -18,7 +22,11 @@ def _record(
     metadata = {OpencodeMetadataKey.ROOM: room, OpencodeMetadataKey.SESSION: session}
     if registration is not None:
         metadata[OpencodeMetadataKey.MCP_SERVER_NAME] = registration
-    return {"message_type": message_type, "metadata": metadata}
+    return {
+        "message_type": message_type,
+        "content": OPENCODE_RESUME_RECORD.label,
+        "metadata": metadata,
+    }
 
 
 class TestOpencodeHistoryConverter:
