@@ -39,6 +39,16 @@ class TestResumeCandidates:
 
         assert RECORD.candidates(history) == {}
 
+    def test_other_task_events_naming_a_session_are_not_records(self) -> None:
+        narration = {
+            **record("room-1", **session("narrated")),
+            "content": "Session started",
+        }
+
+        assert RECORD.candidates([record("room-1", **session("saved")), narration]) == {
+            "room-1": "saved"
+        }
+
     def test_unusable_metadata_is_ignored(self) -> None:
         history = [
             {"message_type": MessageType.TASK, "metadata": "not a mapping"},

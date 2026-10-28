@@ -16,6 +16,7 @@ each adapter.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -26,6 +27,9 @@ from pydantic import JsonValue
 from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import MessageType
 from band.runtime.formatters import format_history_for_llm, messages_before
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -68,15 +72,19 @@ class ResumeRecord:
         sessions: dict[str, str] = {}
         for message in raw:
             metadata = message.get("metadata")
-            if message.get("message_type") != MessageType.TASK or not isinstance(
-                metadata, Mapping
-            ):
+            if not self._is_record(message) or not isinstance(metadata, Mapping):
                 continue
             room = metadata.get(self.room_key)
             session = metadata.get(self.session_key)
             if isinstance(room, str) and isinstance(session, str) and session:
                 sessions[room] = session
         return sessions
+
+    def _is_record(self, message: Mapping[str, Any]) -> bool:
+        return (
+            message.get("message_type") == MessageType.TASK
+            and message.get("content") == self.label
+        )
 
     async def post(
         self,
@@ -140,3 +148,46 @@ async def fetch_transcript(
     return format_history_for_llm(
         messages_before(collected, turn_ids), participants=tools.participants
     )
+
+
+async def transcript_before(
+    tools: AgentToolsProtocol, *, room_id: str, message_ids: AbstractSet[str]
+) -> list[dict[str, Any]]:
+    """The room's stored messages before the turn's ``message_ids``.
+
+    A fresh session minted off bootstrap has no history from the runtime, so
+    its replay is fetched. A failed fetch replays nothing rather than failing
+    the turn.
+    """
+    try:
+        stored = await _room_messages(tools, room_id)
+    except Exception:
+        logger.warning(
+            "Room %s: could not fetch history to replay into a fresh session",
+            room_id,
+            exc_info=True,
+        )
+        return []
+    return messages_before(stored, message_ids)
+
+
+async def _room_messages(
+    tools: AgentToolsProtocol, room_id: str
+) -> list[dict[str, Any]]:
+    """Every page of the room's stored context, oldest first."""
+    collected: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        context = await tools.fetch_room_context(room_id=room_id, page=page)
+        data = context.get("data") or []
+        if not data:
+            return collected
+        collected.extend(data)
+        meta = context.get("meta") or {}
+        total_pages = meta.get("total_pages")
+        if isinstance(total_pages, int):
+            if page >= total_pages:
+                return collected
+        elif len(data) < int(meta.get("page_size") or len(data)):
+            return collected
+        page += 1

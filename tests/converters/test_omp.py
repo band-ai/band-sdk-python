@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from band.converters.omp import OmpHistoryConverter, OmpMetadataKey
+from band.converters.omp import (
+    OMP_RESUME_RECORD,
+    OmpHistoryConverter,
+    OmpMetadataKey,
+)
 from band.core.types import MessageType
 
 
@@ -17,6 +21,7 @@ class TestOmpHistoryConverter:
             [
                 {
                     "message_type": MessageType.TASK,
+                    "content": OMP_RESUME_RECORD.label,
                     "metadata": {
                         OmpMetadataKey.ROOM: "room-1",
                         OmpMetadataKey.SESSION: "/sessions/old.jsonl",
@@ -24,6 +29,7 @@ class TestOmpHistoryConverter:
                 },
                 {
                     "message_type": MessageType.TASK,
+                    "content": OMP_RESUME_RECORD.label,
                     "metadata": {
                         OmpMetadataKey.ROOM: "room-2",
                         OmpMetadataKey.SESSION: "/sessions/other.jsonl",
@@ -31,6 +37,7 @@ class TestOmpHistoryConverter:
                 },
                 {
                     "message_type": MessageType.TASK,
+                    "content": OMP_RESUME_RECORD.label,
                     "metadata": {
                         OmpMetadataKey.ROOM: "room-1",
                         OmpMetadataKey.SESSION: "/sessions/new.jsonl",
@@ -48,6 +55,7 @@ class TestOmpHistoryConverter:
             [
                 {
                     "message_type": MessageType.TASK,
+                    "content": OMP_RESUME_RECORD.label,
                     "metadata": {
                         OmpMetadataKey.ROOM: "room-1",
                         OmpMetadataKey.SESSION: "/sessions/saved.jsonl",
@@ -55,6 +63,7 @@ class TestOmpHistoryConverter:
                 },
                 {
                     "message_type": MessageType.TASK,
+                    "content": OMP_RESUME_RECORD.label,
                     "metadata": {
                         OmpMetadataKey.ROOM: "room-1",
                         OmpMetadataKey.SESSION_ID: "native-session",
@@ -69,6 +78,7 @@ class TestOmpHistoryConverter:
             [
                 {
                     "message_type": MessageType.TASK,
+                    "content": OMP_RESUME_RECORD.label,
                     "metadata": {
                         OmpMetadataKey.ROOM: "room-1",
                         OmpMetadataKey.SESSION: "/sessions/saved.jsonl",
@@ -76,6 +86,7 @@ class TestOmpHistoryConverter:
                 },
                 {
                     "message_type": MessageType.TASK,
+                    "content": OMP_RESUME_RECORD.label,
                     "metadata": {
                         OmpMetadataKey.ROOM: "room-1",
                         OmpMetadataKey.SESSION: None,
@@ -91,10 +102,12 @@ class TestOmpHistoryConverter:
                 {"message_type": MessageType.TASK, "metadata": "not a mapping"},
                 {
                     "message_type": MessageType.TASK,
+                    "content": OMP_RESUME_RECORD.label,
                     "metadata": {OmpMetadataKey.ROOM: "room-1"},
                 },
                 {
                     "message_type": MessageType.TASK,
+                    "content": OMP_RESUME_RECORD.label,
                     "metadata": {
                         OmpMetadataKey.ROOM: "room-1",
                         OmpMetadataKey.SESSION: "",
@@ -102,6 +115,7 @@ class TestOmpHistoryConverter:
                 },
                 {
                     "message_type": MessageType.TASK,
+                    "content": OMP_RESUME_RECORD.label,
                     "metadata": {
                         OmpMetadataKey.ROOM: 7,
                         OmpMetadataKey.SESSION: "/sessions/x.jsonl",
