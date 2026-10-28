@@ -49,7 +49,11 @@ from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
 )
-from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
+from band.integrations.acp.permissions import (
+    ALLOW_ALWAYS_KIND,
+    ALLOW_ONCE_KIND,
+    REJECT_ONCE_KIND,
+)
 from band.integrations.acp.session_config import SessionConfigOption, find_select
 from tests.mcpclient import (
     advertised_server,
@@ -869,7 +873,7 @@ def allow_or_reject(allow_option_id: str = "allow-1") -> list[PermissionOption]:
     """The usual permission menu: one-shot allow, one-shot reject."""
     return [
         PermissionOption(kind=ALLOW_ONCE_KIND, name="Allow", optionId=allow_option_id),
-        PermissionOption(kind="reject_once", name="Reject", optionId="reject-1"),
+        PermissionOption(kind=REJECT_ONCE_KIND, name="Reject", optionId="reject-1"),
     ]
 
 

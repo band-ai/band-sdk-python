@@ -12,6 +12,7 @@ ElicitationNarrator = Callable[[Awaitable[None]], Awaitable[None]]
 # ACP requires selecting an offered option id, never a synthesized grant.
 ALLOW_ONCE_KIND = "allow_once"
 ALLOW_ALWAYS_KIND = "allow_always"
+REJECT_ONCE_KIND = "reject_once"
 _ALLOW_OPTION_KINDS = (ALLOW_ONCE_KIND, ALLOW_ALWAYS_KIND)
 
 

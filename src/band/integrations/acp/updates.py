@@ -17,9 +17,18 @@ class ACPUpdateParser:
     """Parse updates while preserving backend-specific tool-call overrides."""
 
     def __init__(
-        self, canonicalize_tool_name: Callable[[str], str] | None = None
+        self,
+        canonicalize_tool_name: Callable[[str], str] | None = None,
+        observe_tool_call: Callable[[ACPToolCall], None] | None = None,
     ) -> None:
         self._canonicalize_tool_name = canonicalize_tool_name or (lambda name: name)
+        self._observe_tool_call = observe_tool_call
+
+    def _parse_tool_call(self, update: object) -> ACPToolCall:
+        call = ACPToolCall.from_acp(update, canonicalize=self._canonicalize_tool_name)
+        if self._observe_tool_call is not None:
+            self._observe_tool_call(call)
+        return call
 
     def _chunk_from_update(self, update: object) -> CollectedChunk | None:
         """Parse one ACP session update without mutating the chunk buffer."""
@@ -54,7 +63,7 @@ class ACPUpdateParser:
 
     def _tool_call_chunk(self, update: object) -> CollectedChunk:
         raw_input = getattr(update, "raw_input", None)
-        call = ACPToolCall.from_acp(update, canonicalize=self._canonicalize_tool_name)
+        call = self._parse_tool_call(update)
         metadata = {
             "tool_call_id": call.tool_call_id,
             "raw_input": raw_input,
@@ -101,7 +110,7 @@ class ACPUpdateParser:
         """The call identity a ``tool_call_update`` revises, when it reports one."""
         if not (getattr(update, "title", None) or getattr(update, "raw_input", None)):
             return None
-        return ACPToolCall.from_acp(update, canonicalize=self._canonicalize_tool_name)
+        return self._parse_tool_call(update)
 
     @staticmethod
     def _block_text(block: object) -> str:

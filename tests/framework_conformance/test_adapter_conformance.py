@@ -274,6 +274,7 @@ IMAGE_PASSTHROUGH_EXCLUSIONS = (
         "execute_tool_call, so it inherits opencode's fix and has no "
         "adapter-local path to probe",
     ),
+    ExcludedAdapter(Adapter.ANTIGRAVITY_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
     ExcludedAdapter(Adapter.COPILOT_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
     ExcludedAdapter(Adapter.CURSOR_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
     ExcludedAdapter(Adapter.OMP_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),

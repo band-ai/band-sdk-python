@@ -4,30 +4,25 @@ from __future__ import annotations
 
 import importlib.util
 
+from tests.baseline.adapter import Adapter
 from tests.e2e.baseline.toolkit.adapters import declares_batch_input
 from tests.framework_configs.adapters import ADAPTER_CONFIGS
-from tests.framework_conformance.batchprobes.acp import ADAPTERS as ACP_ADAPTERS
 from tests.framework_conformance.batchprobes.registry import BATCH_PROBES
 
 
 def batch_declarations() -> dict[str, bool]:
     """Class declarations available in this lane, without starting runtimes."""
+    adapter_ids = {cfg.framework_id for cfg in ADAPTER_CONFIGS} | {
+        adapter.value for adapter in Adapter
+    }
     declarations = {
-        cfg.framework_id: declares_batch_input(cfg.framework_id)
-        for cfg in ADAPTER_CONFIGS
+        adapter_id: declares_batch_input(adapter_id) for adapter_id in adapter_ids
     }
     if importlib.util.find_spec("acp") is not None:
         from band.integrations.acp.client_adapter import (  # noqa: PLC0415 -- optional acp extra
             ACPClientAdapter,
         )
 
-        declarations.update(
-            {
-                framework_id: declares_batch_input(framework_id)
-                for framework_id in ACP_ADAPTERS
-                if framework_id != "acp"
-            }
-        )
         declarations["acp"] = ACPClientAdapter.supports_batch_input
     return declarations
 

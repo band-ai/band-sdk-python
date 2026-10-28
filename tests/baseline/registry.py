@@ -27,6 +27,10 @@ class AdapterSupport:
 
 
 SUPPORT: tuple[AdapterSupport, ...] = (
+    AdapterSupport(
+        Adapter.ANTIGRAVITY_ACP,
+        reason="external Antigravity ACP process is outside isolated adapter execution",
+    ),
     AdapterSupport(Adapter.ANTHROPIC, injection="AnthropicAdapter._call_anthropic"),
     AdapterSupport(
         Adapter.CLAUDE_SDK, reason="requires a Claude SDK session injection seam"

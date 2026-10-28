@@ -17,7 +17,7 @@ from band.integrations.acp.permissions import (
 )
 from band.integrations.acp.session_config import SessionConfigOption
 from band.integrations.acp.stream import ACPChunkStream, ChunkSink
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.types import ACPToolCall, CollectedChunk
 from band.integrations.acp.updates import ACPUpdateParser
 
 logger = logging.getLogger(__name__)
@@ -37,9 +37,10 @@ class ACPCollectingClient(ACPUpdateParser):
         self,
         profile: ACPClientProfile | None = None,
         canonicalize_tool_name: Callable[[str], str] | None = None,
+        observe_tool_call: Callable[[ACPToolCall], None] | None = None,
     ) -> None:
         self._profile = profile or NoopACPClientProfile()
-        super().__init__(canonicalize_tool_name)
+        super().__init__(canonicalize_tool_name, observe_tool_call)
         self._stream = ACPChunkStream()
         self._permission_handlers: dict[str, PermissionHandler] = {}
         self._elicitation_handlers: dict[str, ElicitationHandler] = {}
@@ -84,6 +85,8 @@ class ACPCollectingClient(ACPUpdateParser):
         tool_call: object,
         **kwargs: object,
     ) -> dict[str, object]:
+        if self._observe_tool_call is not None:
+            self._parse_tool_call(tool_call)
         handler = self._permission_handlers.get(session_id)
         if handler:
             # A manual handler can wait for room input. Holding the ingestion lock

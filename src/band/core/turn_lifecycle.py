@@ -314,6 +314,11 @@ class BackendTurns(Generic[H]):
         """Whether the room's backend stop is still in flight."""
         return room_id in self._stopping
 
+    def active_handle(self, room_id: str) -> H | None:
+        """Return the running turn's handle until stopping is requested."""
+        turn = self._turns.get(room_id)
+        return None if turn is None or turn.stop_requested else turn.handle
+
     async def settled(self, room_id: str, *, timeout: float | None = None) -> None:
         """Wait until the room's backend stop has been sent or timed out, or
         until ``timeout`` passes."""

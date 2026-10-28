@@ -43,21 +43,27 @@ class TestMetaMcpInvocation:
         )
 
     @pytest.mark.parametrize(
-        ("meta", "raw_input"),
+        ("meta", "raw_input", "metadata_rejected"),
         [
-            (None, {"arguments": ARGUMENTS}),
-            ({"mcp": "band"}, {"arguments": ARGUMENTS}),
-            ({"mcp": {"tool": BandTool.SEND_MESSAGE}}, {"arguments": ARGUMENTS}),
+            (None, {"arguments": ARGUMENTS}, False),
+            ({"mcp": "band"}, {"arguments": ARGUMENTS}, True),
+            ({"mcp": {"tool": BandTool.SEND_MESSAGE}}, {"arguments": ARGUMENTS}, True),
             (
                 {"mcp": {"server": 1, "tool": BandTool.SEND_MESSAGE}},
                 {"arguments": ARGUMENTS},
+                True,
             ),
-            ({"mcp": {"server": "band"}}, {"arguments": ARGUMENTS}),
-            ({"mcp": {"server": "band", "tool": 1}}, {"arguments": ARGUMENTS}),
-            ({"mcp": {"server": "band", "tool": BandTool.SEND_MESSAGE}}, ARGUMENTS),
+            ({"mcp": {"server": "band"}}, {"arguments": ARGUMENTS}, True),
+            ({"mcp": {"server": "band", "tool": 1}}, {"arguments": ARGUMENTS}, True),
+            (
+                {"mcp": {"server": "band", "tool": BandTool.SEND_MESSAGE}},
+                ARGUMENTS,
+                True,
+            ),
             (
                 {"mcp": {"server": "band", "tool": BandTool.SEND_MESSAGE}},
                 {"arguments": "The answer."},
+                True,
             ),
         ],
         ids=[
@@ -72,7 +78,7 @@ class TestMetaMcpInvocation:
         ],
     )
     def test_an_incomplete_shape_keeps_the_reported_title_and_input(
-        self, meta: Any, raw_input: dict[str, Any]
+        self, meta: Any, raw_input: dict[str, Any], metadata_rejected: bool
     ) -> None:
         call = tool_call(meta, raw_input)
 
@@ -82,4 +88,5 @@ class TestMetaMcpInvocation:
             arguments=raw_input,
             mcp_server=None,
             title=TITLE,
+            mcp_metadata_rejected=metadata_rejected,
         )

@@ -25,7 +25,13 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import MessageType
 from band.runtime.sessionresume import ResumeRecord
 from band.testing.fake_tools import FakeAgentTools
-from tests.framework_conformance.resumeprobes import acp, claudesdk, codex, omp
+from tests.framework_conformance.resumeprobes import (
+    acp,
+    antigravity,
+    claudesdk,
+    codex,
+    omp,
+)
 from tests.framework_conformance.resumeprobes.opencode import (
     seed_failure as opencode_seed_failure,
 )
@@ -33,6 +39,11 @@ from tests.framework_conformance.resumeprobes.opencode import seed_opencode
 from tests.framework_conformance.resumeprobes.probe import ResumeProbe
 
 RESUME_PROBES: dict[str, ResumeProbe] = {
+    "AntigravityACPAdapter": ResumeProbe(
+        ACP_CLIENT_RESUME_RECORD,
+        antigravity.seed_antigravity,
+        antigravity.seed_failure,
+    ),
     "ACPClientAdapter": ResumeProbe(
         ACP_CLIENT_RESUME_RECORD, acp.seed_acp, acp.seed_failure
     ),
