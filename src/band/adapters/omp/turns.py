@@ -99,11 +99,10 @@ class OmpTurnMixin(OmpAdapterContract):
             replay = history.replay_messages
             if not bootstrap:
                 try:
-                    raw = await fetch_transcript(
-                        tools, room_id=room_id, turn_ids={msg.id}
-                    )
                     replay = build_replay_messages(
-                        [item for item in raw if item.get("id") != msg.id]
+                        await fetch_transcript(
+                            tools, room_id=room_id, turn_ids={msg.id}
+                        )
                     )
                 except Exception:
                     logger.warning(
