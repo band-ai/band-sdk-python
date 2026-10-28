@@ -17,6 +17,7 @@ import sys
 import tests.framework_conformance.resumeprobes.copilotsdk as copilot_resume_probe
 from band.converters.acp_client import ACP_CLIENT_RESUME_RECORD
 from band.converters.claude_sdk import CLAUDE_SDK_RESUME_RECORD
+from band.converters.codex import CODEX_RESUME_RECORD
 from band.converters.copilot_sdk import COPILOT_RESUME_RECORD
 from band.converters.omp import OMP_RESUME_RECORD
 from band.converters.opencode import OPENCODE_RESUME_RECORD
@@ -24,7 +25,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import MessageType
 from band.runtime.sessionresume import ResumeRecord
 from band.testing.fake_tools import FakeAgentTools
-from tests.framework_conformance.resumeprobes import acp, claudesdk, omp
+from tests.framework_conformance.resumeprobes import acp, claudesdk, codex, omp
 from tests.framework_conformance.resumeprobes.opencode import (
     seed_failure as opencode_seed_failure,
 )
@@ -45,6 +46,9 @@ RESUME_PROBES: dict[str, ResumeProbe] = {
         COPILOT_RESUME_RECORD,
         copilot_resume_probe.seed_copilot_sdk,
         copilot_resume_probe.seed_failure,
+    ),
+    "CodexAdapter": ResumeProbe(
+        CODEX_RESUME_RECORD, codex.seed_codex, codex.seed_failure
     ),
     "OmpAdapter": ResumeProbe(OMP_RESUME_RECORD, omp.seed_omp, omp.seed_failure),
     "OpencodeAdapter": ResumeProbe(

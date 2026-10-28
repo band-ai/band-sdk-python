@@ -12,6 +12,7 @@ import pytest_asyncio
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.retention import RoomRetentionConfig
+from band.core.types import FeatureKwargs
 from tests.adapters.codex.kit import (  # noqa: F401
     HELD_ROOM,
     NEW_ROOM,
@@ -113,14 +114,18 @@ async def two_rooms() -> AsyncIterator[TwoRooms]:
 
 @pytest_asyncio.fixture(loop_scope="function")
 async def started_codex() -> AsyncIterator[Callable[..., Awaitable[CodexAdapter]]]:
-    """Start Codex adapters configured by ``config`` whose processes are the
-    fake app-servers ``clients`` in start order; each is shut down at the end."""
+    """Start Codex adapters configured by ``config`` and ``features`` whose
+    processes are the fake app-servers ``clients`` in start order; each is shut
+    down at the end."""
     adapters: list[CodexAdapter] = []
 
     async def start(
-        client: FakeCodexClient, *replacements: FakeCodexClient, **config: Any
+        client: FakeCodexClient,
+        *replacements: FakeCodexClient,
+        features: FeatureKwargs | None = None,
+        **config: Any,
     ) -> CodexAdapter:
-        adapter = CodexAdapter(CodexAdapterConfig(**config))
+        adapter = CodexAdapter(CodexAdapterConfig(**config), **(features or {}))
         patch_codex_client(adapter, client, *replacements)
         await adapter.on_started("Codex Agent", "A coding agent")
         adapters.append(adapter)

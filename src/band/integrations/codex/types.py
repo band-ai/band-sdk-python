@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -84,15 +83,9 @@ CODEX_PROVIDER = "codex"
 
 @dataclass
 class CodexSessionState:
-    """Session state extracted from platform history for Codex rehydration."""
+    """Each room's resumable Codex thread, as Band history records it."""
 
-    thread_id: str | None = None
-    room_id: str | None = None
-    created_at: datetime | None = None
-
-    def has_thread(self) -> bool:
-        """Return True when a persisted codex thread_id is available."""
-        return bool(self.thread_id)
+    room_to_thread: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

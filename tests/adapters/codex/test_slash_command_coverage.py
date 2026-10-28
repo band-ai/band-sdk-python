@@ -159,7 +159,7 @@ class TestSlashCommandCoverage:
 
     @pytest.mark.asyncio
     async def test_thread_archive_clears_raw_history(self) -> None:
-        """/thread archive also clears raw history and injection state."""
+        """/thread archive also clears raw history."""
         events = [
             turn_completed(),
         ]
@@ -170,9 +170,8 @@ class TestSlashCommandCoverage:
         await adapter.on_started("Agent", "A coding agent")
         await send_bootstrap(adapter, tools=tools)
 
-        # Seed raw history and injection flag
+        # Seed raw history
         adapter._raw_history_by_room[ROOM_ID] = [{"role": "user", "content": "hi"}]
-        adapter._needs_history_injection.add(ROOM_ID)
 
         await deliver_message(
             adapter,
@@ -186,4 +185,3 @@ class TestSlashCommandCoverage:
         )
 
         assert ROOM_ID not in adapter._raw_history_by_room
-        assert ROOM_ID not in adapter._needs_history_injection
