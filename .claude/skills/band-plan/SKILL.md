@@ -275,9 +275,10 @@ renewed finalization. Continue to Phase 8 only when this gate passes.
    tests to touch, and this repo's non-negotiables (root cause not a patch,
    DRY, no magic values, the test plan as written). It ends with the
    Definition of done, and requires the implementer to show each check's
-   output as evidence rather than claim success. When Approach marks a
-   capability unconfirmed, the prompt's first step is installing that
-   version and exercising the confirming call.
+   output as evidence rather than claim success. When Design validation retains
+   a non-blocking unconfirmed capability, the prompt's first step is installing
+   that version and exercising the confirming call. Correctness-critical
+   capabilities must be confirmed before publication.
 3. File any followup ticket the user chose in Phase 7, and link it from the
    plan's non-goals.
 4. Attach the plan file to the ticket and update the ticket, following
