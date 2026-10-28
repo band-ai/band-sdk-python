@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any
@@ -318,6 +319,37 @@ class TestThreadResumption:
         assert replayed(reseeding) == expected_replay
         assert carries_roster(reseeding, tools_next)
         assert CODEX_RESUME_RECORD.candidates(tools_next.events_sent) == {
+            ROOM_ID: reseeding["threadId"]
+        }
+
+    async def test_a_cancelled_seed_is_abandoned_and_the_next_turn_replays(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        client = FakeCodexClient()
+        adapter = await started_codex(client)
+        stopped_tools, next_tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
+        stopped = agent_input("first turn", stopped_tools, raw_history=TRANSCRIPT)
+        following = agent_input("next turn", next_tools, is_session_bootstrap=False)
+        next_tools.set_room_context(
+            [*TRANSCRIPT, stored(stopped.msg), stored(following.msg)]
+        )
+
+        seeding = asyncio.create_task(adapter.on_event(stopped))
+        await client.turn_started.wait()
+        seeding.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await seeding
+        await adapter.backend_turns.settled(ROOM_ID)
+        client.script(*answered_turn("turn-2"))
+        await adapter.on_event(following)
+
+        first, reseeding = turn_inputs(client)
+        assert reseeding["threadId"] != first["threadId"]
+        assert CodexRequestMethod.THREAD_RESUME not in client.request_methods
+        assert CODEX_RESUME_RECORD.candidates(stopped_tools.events_sent) == {}
+        assert replayed(reseeding) == [REPLAYED, "[Alice]: first turn"]
+        assert carries_roster(reseeding, next_tools)
+        assert CODEX_RESUME_RECORD.candidates(next_tools.events_sent) == {
             ROOM_ID: reseeding["threadId"]
         }
 
