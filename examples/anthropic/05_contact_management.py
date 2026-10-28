@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[anthropic]>=4.0.0"]
+# dependencies = ["band-sdk[anthropic]>=6.0.1"]
 # ///
 """
 Contact management example using the Anthropic adapter.

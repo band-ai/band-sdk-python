@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[parlant,logging]>=4.0.0"]
+# dependencies = ["band-sdk[parlant,logging]>=6.0.1"]
 # ///
 """
 Parlant agent with behavioral guidelines using the official Parlant SDK.

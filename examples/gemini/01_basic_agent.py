@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[gemini]>=4.0.0"]
+# dependencies = ["band-sdk[gemini]>=6.0.1"]
 # ///
 """
 Basic Gemini agent example.

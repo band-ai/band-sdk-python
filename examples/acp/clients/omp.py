@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=4.0.0"]
+# dependencies = ["band-sdk[acp]>=6.0.1"]
 # ///
 """
 OMP ACP client — bridge Band rooms to ``omp acp``.

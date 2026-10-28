@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[opencode]>=4.0.0"]
+# dependencies = ["band-sdk[opencode]>=6.0.1"]
 # ///
 """OpenCode coding agent scoped to one local workspace.
 
