@@ -1,4 +1,9 @@
-"""Native author claims and immutable completions without a second job journal."""
+"""Native author claims and immutable completions.
+
+The platform redelivers a running job only to the claim ID that claimed it, and
+no job projection returns that ID. Callers durably retain each claim ID before
+claiming and each completion's exact bytes until the platform acknowledges them.
+"""
 
 from __future__ import annotations
 
@@ -49,7 +54,12 @@ class AuthorCompletion(FrozenModel):
 
 
 class ContractAuthorClient(ContractTransport):
-    """Call the native author API; the retained service owns durable retry state."""
+    """Call the native author API; the caller owns durable claim and retry state.
+
+    Persist the stable claim ID before ``claim`` and reuse it after a crash: a
+    new ID does not reattach a job that is already running. Keep a completion's
+    exact ``AuthorCompletion`` until ``complete`` is acknowledged.
+    """
 
     def __init__(
         self, connection: ContractConnection, *, http: httpx.AsyncClient | None = None
