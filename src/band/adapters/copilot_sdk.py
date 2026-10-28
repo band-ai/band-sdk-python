@@ -14,12 +14,13 @@ import logging
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from uuid import uuid4
 
 from band_sdk_core import AgentFailure
 from pydantic import Field, PositiveFloat, ValidationError
 
 from band.converters.copilot_sdk import (
-    SESSION_ID_METADATA_KEY,
+    COPILOT_RESUME_RECORD,
     CopilotSDKHistoryConverter,
     CopilotSDKSessionState,
 )
@@ -63,8 +64,9 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
-from band.runtime.formatters import format_current_inputs
+from band.runtime.formatters import format_current_inputs, messages_before
 from band.runtime.prompts import render_system_prompt
+from band.runtime.sessionresume import SessionSeed
 from band.runtime.tools import (
     get_band_tool_category,
     image_block_placeholder,
@@ -117,6 +119,9 @@ logger = logging.getLogger(__name__)
 
 _PROVIDER = "copilot_sdk"
 
+# Frames the room transcript replayed into a fresh session's seeding prompt.
+HISTORY_HEADING = "[Previous conversation context:]"
+
 
 class CopilotSDKAdapterConfig(BaseAdapterConfig):
     """Runtime configuration for Copilot SDK adapter sessions.
@@ -128,11 +133,11 @@ class CopilotSDKAdapterConfig(BaseAdapterConfig):
         reasoning_effort: Reasoning effort for reasoning-capable models.
         inject_history_on_resume_failure: Inject text history into a
             fresh session when resuming a persisted session fails.
-        session_id_prefix: Prefix for per-room Copilot session ids. None
-            (default) derives ``band-{agent-id}-`` from the immutable Band
-            agent id, so agents sharing a host or client never resume each
-            other's sessions; when set explicitly it must be unique per
-            agent.
+        session_id_prefix: Prefix for per-room Copilot session ids, which
+            names an agent's sessions on disk. None (default) derives
+            ``band-{agent-id}-`` from the immutable Band agent id. Each
+            fresh session id also carries a random suffix, so ids never
+            collide.
         base_directory: Copilot state directory (COPILOT_HOME). Set a
             per-agent directory to fully isolate on-disk state between
             agents sharing a host.
@@ -161,11 +166,27 @@ class CopilotSDKAdapterConfig(BaseAdapterConfig):
 
 
 @dataclass
-class RoomSessionIds:
-    """The room's Copilot session id: current vs last persisted to platform."""
+class RoomSession:
+    """The room's live Copilot session and the session ids it resumes from.
 
-    current: str | None = None
-    persisted: str | None = None
+    ``resumable`` moves to the live session only once its seed completes, so a
+    session that never received its seed is never resumed.
+    """
+
+    live: str | None = None
+    seed: SessionSeed = field(default_factory=SessionSeed)
+    resumable: str | None = None
+    recorded: str | None = None
+
+    @property
+    def unseeded(self) -> str | None:
+        """The live session's id while its seeding prompt has not completed."""
+        return self.live if self.seed.replay_due else None
+
+    def confirm_seed(self) -> None:
+        """Record that the live session's seeding prompt completed."""
+        self.seed.confirm()
+        self.resumable = self.live
 
 
 @dataclass
@@ -187,9 +208,11 @@ class TurnState:
 
 @dataclass
 class SessionTurn:
-    """The session a stop aborts, and whether its prompt is still running."""
+    """The session a stop aborts, the room it seeds, and how far its prompt got."""
 
+    room_id: str
     session: CopilotSession
+    room: RoomSession
     # Set when the prompt is sent, cleared once it returns; a prompt that is
     # cancelled or fails leaves it set.
     prompting: bool = False
@@ -222,8 +245,8 @@ def _turn_incident(data: object) -> str | None:
 class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
     """Adapter for the GitHub Copilot SDK.
 
-    Maps each Band room to a dedicated Copilot session (stable
-    ``session_id`` per room enables resume across restarts). Band platform
+    Maps each Band room to a dedicated Copilot session (the room's
+    ``COPILOT_RESUME_RECORD`` enables resume across restarts). Band platform
     tools and developer custom tools are bridged as native Copilot tools
     whose handlers execute in-process; Copilot built-in tools (shell/file)
     stay disabled so the agent only sees Band's tool surface.
@@ -266,8 +289,6 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             client: Externally-owned ``CopilotClient`` shared with other
                 adapters (one client, many sessions). The adapter borrows it —
                 it never calls ``stop()`` on it; the caller owns its lifecycle.
-                Give each sharing agent a distinct ``session_id_prefix`` so
-                per-room session ids can't collide.
             client_factory: Factory returning a Copilot client the adapter
                 owns (created and stopped by the adapter; test seam).
             provider: BYOK ``ProviderConfig`` (e.g. ``ProviderConfig(
@@ -342,7 +363,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         # Rebound when each turn starts; tool handlers resolve through this so
         # they never stay bound to a stale tools object from an earlier turn.
         self._room_tools: dict[str, AgentToolsProtocol] = {}
-        self._session_ids: dict[str, RoomSessionIds] = {}
+        self._sessions: dict[str, RoomSession] = {}
         self._turn_state: dict[str, TurnState] = {}
         self._backend_turns: BackendTurns[SessionTurn] = BackendTurns(
             self._abort_turn, provider=_PROVIDER
@@ -427,7 +448,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         if self._session_manager:
             await self._session_manager.cleanup_session(room_id)
         self._room_tools.pop(room_id, None)
-        self._session_ids.pop(room_id, None)
+        self._sessions.pop(room_id, None)
         self._turn_state.pop(room_id, None)
 
     async def cleanup_all(self) -> None:
@@ -436,7 +457,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         if self._session_manager:
             await self._session_manager.stop()
         self._room_tools.clear()
-        self._session_ids.clear()
+        self._sessions.clear()
         self._turn_state.clear()
 
     # --- Message handling --------------------------------------------------
@@ -461,14 +482,11 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 "CopilotSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        if is_session_bootstrap and history.session_id:
-            ids = self._session_ids.setdefault(room_id, RoomSessionIds())
-            ids.persisted = ids.persisted or history.session_id
-
         # Same-session calls must not interleave; other rooms run concurrently.
         async with self._session_manager.turn_lock(room_id):
-            # Abort is what stops the runtime's work for a cancelled turn; the
-            # session stays valid for the next message.
+            # A cancelled turn's stop aborts the runtime's work; a seeded
+            # session stays valid for the next message, an unseeded one is
+            # discarded so the next message starts over and replays.
             async with self.backend_turns.running(room_id):
                 # Bound once the previous turn's abort has settled and this
                 # message holds the room, so neither a queued message nor a
@@ -479,6 +497,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                         room_id,
                         history,
                         tools,
+                        messages,
                         is_session_bootstrap=is_session_bootstrap,
                     )
                 except Exception:
@@ -487,7 +506,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                         AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                     )
                     raise
-                live = SessionTurn(session)
+                live = SessionTurn(room_id, session, self._room(room_id))
                 self.backend_turns.bind(room_id, live)
                 prompt = self._compose_prompt(
                     messages,
@@ -504,13 +523,13 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                     final_text = await self._run_turn(live, prompt, turn)
                 except Exception:
                     logger.exception("Room %s: Copilot turn failed", room_id)
-                    # Abort any work the runtime is still doing for this turn and
-                    # drop the session; the next message resumes it fresh by id.
-                    await self._session_manager.evict_session(room_id)
+                    await self._drop_session(room_id, live.room)
                     await tools.send_failure(
                         AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                     )
                     raise
+                else:
+                    live.room.confirm_seed()
                 finally:
                     self._turn_state.pop(room_id, None)
                     # No-op unless Emit.USAGE is on / usage is non-empty; best-effort,
@@ -539,23 +558,34 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                     "; ".join(turn.incidents) or "none reported",
                 )
 
-            await self._persist_session_id(room_id, tools)
+            await self._record_session(room_id, tools)
 
         logger.debug("Room %s: messages %s processed", room_id, ids_of(messages))
 
     # --- Session handling --------------------------------------------------
 
-    def _ids(self, room_id: str) -> RoomSessionIds:
-        """Return (creating if needed) the room's session-id record."""
-        return self._session_ids.setdefault(room_id, RoomSessionIds())
+    def _room(self, room_id: str) -> RoomSession:
+        """Return (creating if needed) the room's session record."""
+        return self._sessions.setdefault(room_id, RoomSession())
+
+    async def _drop_session(self, room_id: str, room: RoomSession) -> None:
+        """Abort and drop a failed turn's session, discarding it if never seeded.
+
+        An unseeded session was created by this process and is never resumed,
+        so its disk state is only clutter; a seeded one is resumed next turn.
+        """
+        assert self._session_manager is not None
+        if (unseeded := room.unseeded) is not None:
+            await self._session_manager.discard_session(room_id, unseeded)
+        else:
+            await self._session_manager.evict_session(room_id)
 
     def _session_prefix(self) -> str:
         """Return the per-room session-id prefix.
 
         The default folds in the Band agent id (set by the runtime before
-        ``on_started``; immutable, unlike the display name) so two agents
-        in the same room never compute the same session id — and a rename
-        doesn't orphan persisted sessions.
+        ``on_started``; immutable, unlike the display name), so an agent's
+        sessions are recognizable on disk.
         """
         if self.config.session_id_prefix is not None:
             return self.config.session_id_prefix
@@ -570,47 +600,74 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         room_id: str,
         history: CopilotSDKSessionState,
         tools: AgentToolsProtocol,
+        messages: Sequence[PlatformMessage],
         *,
         is_session_bootstrap: bool,
     ) -> tuple[CopilotSession, str | None]:
         """Return the room's session plus history text to inject, if any.
 
-        Resume is attempted when a persisted session id is known; on miss
-        the session is created fresh and the converter's text history is
-        injected (subject to ``inject_history_on_resume_failure``) so
-        context survives a fresh process/host.
+        Without a live session, the room's resumable session is resumed, or
+        a fresh one created. Until its seed completes, a fresh session is owed
+        the room's transcript (subject to ``inject_history_on_resume_failure``)
+        so context survives a fresh process/host.
         """
         manager = self._session_manager
         assert manager is not None  # guarded by on_message
 
+        room = self._room(room_id)
         session = manager.get_session(room_id)
-        if session is not None:
-            return session, None
-
-        stored_id = self._ids(room_id).current
-        if is_session_bootstrap:
-            stored_id = history.session_id or stored_id
-
-        await manager.ensure_started()
-        kwargs = self._session_kwargs(
-            room_id, self._build_bridged_tools(room_id, tools)
-        )
-        session = (
-            await self._resume_session(room_id, stored_id, kwargs)
-            if stored_id
-            else None
-        )
-        resumed = session is not None
         if session is None:
-            session = await self._create_session(room_id, kwargs)
-        manager.store_session(room_id, session)
+            # A seeded session this process knows is never older than the record.
+            if is_session_bootstrap and room.resumable is None:
+                room.resumable = room.recorded = history.room_to_session.get(room_id)
+            await manager.ensure_started()
+            kwargs = self._session_kwargs(
+                room_id, self._build_bridged_tools(room_id, tools)
+            )
+            session = (
+                await self._resume_session(room_id, room.resumable, kwargs)
+                if room.resumable
+                else None
+            )
+            if session is None:
+                session = await self._create_session(room_id, kwargs)
+            manager.store_session(room_id, session)
 
-        inject = (
-            not resumed
-            and bool(history.text)
-            and (stored_id is None or self.config.inject_history_on_resume_failure)
+        inject = room.seed.replay_due and (
+            room.resumable is None or self.config.inject_history_on_resume_failure
         )
-        return session, history.text if inject else None
+        if not inject:
+            return session, None
+        text = (
+            history.text
+            if is_session_bootstrap
+            else await self._fetch_transcript(tools, room_id, messages)
+        )
+        return session, text or None
+
+    async def _fetch_transcript(
+        self,
+        tools: AgentToolsProtocol,
+        room_id: str,
+        messages: Sequence[PlatformMessage],
+    ) -> str:
+        """Fetch the room transcript for a session seeded off-bootstrap.
+
+        The runtime hands history over only on bootstrap. The transcript
+        stops before the turn's earliest input, which this turn delivers.
+        """
+        assert self.history_converter is not None  # set in __init__
+        try:
+            context = await tools.fetch_room_context(room_id=room_id)
+        except Exception:
+            logger.warning(
+                "Room %s: could not fetch history to seed the new Copilot session",
+                room_id,
+                exc_info=True,
+            )
+            return ""
+        raw = messages_before(context.get("data") or [], set(ids_of(messages)))
+        return self.history_converter.convert(raw).text
 
     async def _resume_session(
         self, room_id: str, stored_id: str, kwargs: dict[str, Any]
@@ -629,20 +686,31 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 exc,
             )
             return None
-        self._ids(room_id).current = stored_id
+        room = self._room(room_id)
+        room.live, room.seed = stored_id, SessionSeed(restored=True)
         logger.info("Room %s: resumed Copilot session %s", room_id, stored_id)
         return session
 
     async def _create_session(
         self, room_id: str, kwargs: dict[str, Any]
     ) -> CopilotSession:
-        """Create a fresh session under the room's deterministic id."""
+        """Create a fresh, unseeded session under a new id.
+
+        Every fresh session gets its own id, so creating one never overwrites
+        the native state of a session the room may still resume.
+        """
         assert self._session_manager is not None
-        new_id = f"{self._session_prefix()}{room_id}"
-        session = await self._session_manager.client.create_session(
-            session_id=new_id, **kwargs
-        )
-        self._ids(room_id).current = new_id
+        new_id = f"{self._session_prefix()}{room_id}-{uuid4().hex}"
+        try:
+            session = await self._session_manager.client.create_session(
+                session_id=new_id, **kwargs
+            )
+        except BaseException:
+            # The runtime may have created it before failing or being stopped.
+            await self._session_manager.delete_session(new_id)
+            raise
+        room = self._room(room_id)
+        room.live, room.seed = new_id, SessionSeed()
         logger.info("Room %s: created Copilot session %s", room_id, new_id)
         return session
 
@@ -930,7 +998,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
     ) -> str:
         parts: list[str] = []
         if inject_text:
-            parts.append(f"[Previous conversation context:]\n{inject_text}")
+            parts.append(f"{HISTORY_HEADING}\n{inject_text}")
         if participants_msg:
             parts.append(f"[System]: {participants_msg}")
         if contacts_msg:
@@ -938,8 +1006,22 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         parts.append(format_current_inputs(messages))
         return "\n\n".join(parts)
 
+    async def _abort_turn(self, live: SessionTurn) -> None:
+        """Stop an interrupted turn, discarding its session if still unseeded.
+
+        The next turn waits for this stop, so nothing else uses the session
+        meanwhile; one a failed turn already dropped needs no stop.
+        """
+        assert self._session_manager is not None
+        if self._session_manager.get_session(live.room_id) is not live.session:
+            return
+        if (unseeded := live.room.unseeded) is not None:
+            await self._session_manager.discard_session(live.room_id, unseeded)
+        else:
+            await self._abort_prompt(live)
+
     @staticmethod
-    async def _abort_turn(live: SessionTurn) -> None:
+    async def _abort_prompt(live: SessionTurn) -> None:
         """Abort the prompt and, while one is running, wait for the idle that ends it.
 
         The CLI emits that idle just after acknowledging the abort, and
@@ -1022,23 +1104,15 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             for reasoning in turn.reasonings.values():
                 await send_event_safe(tools, reasoning, MessageType.THOUGHT)
 
-    async def _persist_session_id(
-        self, room_id: str, tools: AgentToolsProtocol
-    ) -> None:
-        """Persist the room's session id as a task event (enables rehydration).
+    async def _record_session(self, room_id: str, tools: AgentToolsProtocol) -> None:
+        """Post the room's resume record once per resumable session id.
 
-        Always emitted (once per id) — resume across restarts depends on it,
-        so it is bookkeeping, not opt-in observability.
+        A failed post leaves the id unrecorded, so the next turn retries it.
         """
-        ids = self._ids(room_id)
-        if ids.current and ids.persisted != ids.current:
-            sent = await send_event_safe(
-                tools,
-                "Copilot SDK session",
-                MessageType.TASK,
-                metadata={SESSION_ID_METADATA_KEY: ids.current},
-            )
-            if sent:
-                # Only mark persisted on success so a transient send failure
-                # is retried next turn instead of silently losing resume.
-                ids.persisted = ids.current
+        room = self._room(room_id)
+        if room.resumable == room.recorded:
+            return
+        if await COPILOT_RESUME_RECORD.post(
+            tools, room_id=room_id, seed=room.seed, session=room.resumable
+        ):
+            room.recorded = room.resumable

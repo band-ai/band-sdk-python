@@ -151,16 +151,17 @@ on-disk Copilot sessions). Opt out with `AgentConfig(single_instance=False)`.
 
 ## Notes
 
-- Each Band room maps to its own Copilot session (`band-{agent-id}-{room_id}`),
-  so conversations stay isolated — per room *and* per agent — and can resume
-  across restarts on the same host.
+- Each Band room maps to its own Copilot session
+  (`band-{agent-id}-{room_id}-{random suffix}`), so conversations stay
+  isolated — per room *and* per agent. The room's history records the session
+  id once its first prompt completes, so it resumes across restarts on the
+  same host.
 - Copilot's built-in shell/file tools are disabled by the adapter; the model
   only sees Band platform tools (and any custom tools you add via
   `additional_tools`).
-- Agents sharing a host or one `CopilotClient` (`client=`) are kept apart by
-  their names in the default session ids; set `session_id_prefix` only to
-  override that scheme, and use per-agent `base_directory` for full on-disk
-  state isolation.
+- Session ids never collide between agents sharing a host or one
+  `CopilotClient` (`client=`); `session_id_prefix` only renames them on disk.
+  Use a per-agent `base_directory` for full on-disk state isolation.
 
 ## Troubleshooting
 

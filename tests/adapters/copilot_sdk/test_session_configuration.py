@@ -18,6 +18,7 @@ from band.integrations.copilot_sdk import (
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
+    is_fresh_session_id,
     make_started_adapter,
     requires_copilot_sdk,
     run_message,
@@ -160,7 +161,7 @@ class TestSessionConfiguration:
         assert kwargs["model"] == "gpt-4o-mini"
 
     @pytest.mark.asyncio
-    async def test_deterministic_session_id_from_room(self):
+    async def test_session_id_carries_the_prefix_and_room(self):
         client = FakeCopilotClient()
         adapter = await make_started_adapter(
             client, CopilotSDKAdapterConfig(session_id_prefix="myagent-")
@@ -169,4 +170,6 @@ class TestSessionConfiguration:
 
         await run_message(adapter, tools, room_id="room-42")
 
-        assert client.sessions[0].session_id == "myagent-room-42"
+        assert is_fresh_session_id(
+            client.sessions[0].session_id, prefix="myagent-", room_id="room-42"
+        )

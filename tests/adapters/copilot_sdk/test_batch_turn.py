@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from band.adapters.copilot_sdk import HISTORY_HEADING
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     make_started_adapter,
@@ -17,8 +18,6 @@ from tests.framework_conformance.batchprobes import (
 )
 
 pytestmark = requires_copilot_sdk
-
-HISTORY_HEADING = "[Previous conversation context:]"
 
 
 class TestBatchTurn:
