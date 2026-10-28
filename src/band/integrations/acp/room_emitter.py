@@ -200,8 +200,10 @@ class RoomTurnEmitter:
         return False
 
     async def _report_refusal(self, text: str) -> None:
-        """Fail a refused turn with the agent's text, unless it already
-        replied or declined and so is complete."""
+        """Fail a refused turn with the agent's text unless it is complete.
+
+        A turn that already replied or declined is complete.
+        """
         if self._tools.turn.replied:
             return
         await self._tools.send_failure(

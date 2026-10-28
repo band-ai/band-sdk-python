@@ -108,6 +108,17 @@ MARCO_SAYS = "My favorite color is blue."
 MARCO_REPLAY_LINE = f"[Marco]: {MARCO_SAYS}"
 
 
+def marco_message() -> dict[str, Any]:
+    """Marco's earlier room message, which a replay must carry."""
+    return room_text_message(
+        "m1",
+        sender_id="user-marco",
+        sender_type="User",
+        sender_name="Marco",
+        content=MARCO_SAYS,
+    )
+
+
 def seeded(prompt: str) -> bool:
     """Whether ``prompt`` carries the Band context and Marco's transcript."""
     return SYSTEM_CONTEXT_HEADER in prompt and MARCO_REPLAY_LINE in prompt
@@ -120,17 +131,6 @@ def resume_records(tools: TranscriptTools) -> dict[str, str]:
 
 # What an agent says when it refuses a prompt over its quota.
 QUOTA_TEXT = "You have exhausted your daily quota for this model."
-
-
-def marco_message() -> dict[str, Any]:
-    """Marco's earlier room message, which a replay must carry."""
-    return room_text_message(
-        "m1",
-        sender_id="user-marco",
-        sender_type="User",
-        sender_name="Marco",
-        content=MARCO_SAYS,
-    )
 
 
 def codex_mcp_call(server: str, tool: str, **arguments: str) -> dict[str, Any]:
