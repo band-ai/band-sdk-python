@@ -159,6 +159,10 @@ async def transcript_before(
     its replay is fetched and formatted like bootstrap history, mentions
     resolved against the room's participants. A failed fetch replays nothing
     rather than failing the turn.
+
+    Every page is read, oldest first, because the turn's own messages that
+    end the transcript sit on the newest one. This runs only when a session
+    is reseeded off bootstrap, and blocks only that room.
     """
     try:
         stored = await _room_messages(tools, room_id)

@@ -10,15 +10,18 @@ from band.adapters.codex import (
     CodexAdapterConfig,
 )
 from band.converters.codex import CODEX_RESUME_RECORD
+from band.converters.helpers import HISTORY_REPLAY_HEADER, NEW_MESSAGE_MARKER_PREFIX
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import CodexJsonRpcError
-from band.integrations.codex.types import (
-    CodexRequestMethod,
-)
+from band.integrations.codex.types import CodexRequestMethod, CodexTurnStatus
+from band.runtime.formatters import CURRENT_INPUTS_HEADING
 from band.runtime.tools import BandTool
 from tests.adapters.codex.kit import (
+    REPLAYED,
+    TRANSCRIPT,
     ToolSchemaFakeTools,
     agent_input,
+    answered_turn,
     make_platform_message,
     recorded_thread,
     replayed_history,
@@ -114,7 +117,7 @@ class TestHistoryInjection:
         nor a later reseed replays history, and no reseed fetches it."""
         fake_client = FakeCodexClient(
             events=[
-                turn_completed("turn-1", status="failed"),
+                turn_completed("turn-1", status=CodexTurnStatus.FAILED),
                 tool_call_request(1, BandTool.NO_REPLY),
                 turn_completed("turn-2"),
             ]
@@ -277,3 +280,24 @@ class TestHistoryInjection:
         seeding, later = fake_client.params_of(CodexRequestMethod.TURN_START)
         assert "[Alice]: Hello" in str(seeding["input"])
         assert replayed_history(later) == []
+
+    @pytest.mark.asyncio
+    async def test_the_replay_is_framed_and_the_marker_opens_the_current_inputs(
+        self,
+    ) -> None:
+        """The replay uses the shared read-only header, and the current inputs
+        come last, under the marker that header names."""
+        fake_client = FakeCodexClient(events=answered_turn())
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        await adapter.on_started("Codex Agent", "A coding agent")
+
+        await deliver_event(
+            adapter, agent_input("Go", ToolSchemaFakeTools(), raw_history=TRANSCRIPT)
+        )
+
+        (turn,) = fake_client.params_of(CodexRequestMethod.TURN_START)
+        *_, replay, current = [item["text"] for item in turn["input"]]
+        marker, current_inputs = current.split("\n", 1)
+        assert marker.startswith(NEW_MESSAGE_MARKER_PREFIX)
+        assert replay == HISTORY_REPLAY_HEADER.format(marker=marker) + "\n" + REPLAYED
+        assert current_inputs.startswith(CURRENT_INPUTS_HEADING)

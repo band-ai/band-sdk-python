@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
 import pytest
@@ -11,8 +12,8 @@ from band.adapters.codex import CodexAdapter
 from band.converters.codex import CODEX_RESUME_RECORD
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import CodexJsonRpcError, CodexRequestMethod
+from band.integrations.codex.types import CodexTurnStatus
 from band.runtime.formatters import build_participants_message
-from band.runtime.tools import BandTool
 from tests.adapters.codex.kit import (
     PROCESS_EXITED,
     REPLAYED,
@@ -23,12 +24,12 @@ from tests.adapters.codex.kit import (
     answered_turn,
     recorded_thread,
     replayed_history,
+    resume_records,
     stored,
 )
 from tests.adapters.codexturns import (
     FIRST_THREAD_ID,
     FakeCodexClient,
-    tool_call_request,
     turn_completed,
 )
 
@@ -41,6 +42,12 @@ def replayed(turn: dict[str, Any]) -> list[str]:
         for line in text.splitlines()
         if line.startswith("[Alice]")
     ]
+
+
+def carries_roster(turn: dict[str, Any], tools: ToolSchemaFakeTools) -> bool:
+    """Whether a ``turn/start`` input carries the room's participant roster."""
+    roster = build_participants_message(tools.participants)
+    return any(roster in item["text"] for item in turn["input"])
 
 
 def turn_inputs(*processes: FakeCodexClient) -> list[dict[str, Any]]:
@@ -222,20 +229,33 @@ class TestThreadResumption:
         ],
     )
     @pytest.mark.parametrize(
-        ("processes", "failure"),
+        ("processes", "ending"),
         [
             pytest.param(
                 lambda: [
                     FakeCodexClient(
                         events=[
-                            turn_completed("turn-1", status="failed"),
-                            tool_call_request(1, BandTool.NO_REPLY),
-                            turn_completed("turn-2"),
+                            turn_completed("turn-1", status=CodexTurnStatus.FAILED),
+                            *answered_turn("turn-2"),
                         ]
                     )
                 ],
-                TurnResultAlreadyReported,
+                lambda: pytest.raises(TurnResultAlreadyReported),
                 id="turn-failed",
+            ),
+            pytest.param(
+                lambda: [
+                    FakeCodexClient(
+                        events=[
+                            turn_completed(
+                                "turn-1", status=CodexTurnStatus.INTERRUPTED
+                            ),
+                            *answered_turn("turn-2"),
+                        ]
+                    )
+                ],
+                nullcontext,
+                id="turn-interrupted",
             ),
             pytest.param(
                 lambda: [
@@ -246,7 +266,7 @@ class TestThreadResumption:
                         ),
                     )
                 ],
-                CodexJsonRpcError,
+                lambda: pytest.raises(CodexJsonRpcError),
                 id="turn-refused",
             ),
             pytest.param(
@@ -254,23 +274,24 @@ class TestThreadResumption:
                     FakeCodexClient(events=[PROCESS_EXITED]),
                     FakeCodexClient(events=answered_turn()),
                 ],
-                TurnResultAlreadyReported,
+                lambda: pytest.raises(TurnResultAlreadyReported),
                 id="process-lost",
             ),
         ],
     )
-    async def test_a_failed_seed_is_never_recorded_and_the_next_turn_reseeds(
+    async def test_an_uncompleted_seed_is_never_recorded_and_the_next_turn_reseeds(
         self,
         started_codex: Callable[..., Awaitable[CodexAdapter]],
         processes: Callable[[], list[FakeCodexClient]],
-        failure: type[Exception],
+        ending: Callable[[], AbstractContextManager[object]],
         bootstrap_history: list[dict[str, Any]],
         expected_replay: list[str],
     ) -> None:
-        """Narration naming the unseeded thread is no resume record, and the
-        next turn starts a fresh thread and replays the room's stored
-        transcript into it, the failed turn's request included, with the
-        room's roster the abandoned thread took with it."""
+        """A thread is seeded only when its first turn completed: after a
+        failed, refused, lost or interrupted seed, narration naming the thread
+        is no resume record, and the next turn starts a fresh thread and
+        replays the room's stored transcript into it, the abandoned turn's
+        request included, with the room's roster the old thread took with it."""
         room = processes()
         adapter = await started_codex(*room, emit_turn_task_markers=True)
         tools_failed, tools_next = ToolSchemaFakeTools(), ToolSchemaFakeTools()
@@ -280,7 +301,7 @@ class TestThreadResumption:
             [*bootstrap_history, stored(failed.msg), stored(following.msg)]
         )
 
-        with pytest.raises(failure):
+        with ending():
             await adapter.on_event(failed)
         await adapter.on_event(following)
 
@@ -295,8 +316,7 @@ class TestThreadResumption:
         assert starts == 2
         reseeding = turn_inputs(*room)[-1]
         assert replayed(reseeding) == expected_replay
-        roster = build_participants_message(tools_next.participants)
-        assert any(roster in item["text"] for item in reseeding["input"])
+        assert carries_roster(reseeding, tools_next)
         assert CODEX_RESUME_RECORD.candidates(tools_next.events_sent) == {
             ROOM_ID: reseeding["threadId"]
         }
@@ -330,33 +350,38 @@ class TestThreadResumption:
             ROOM_ID: reseeding["threadId"]
         }
 
-    async def test_an_interrupted_seed_is_recorded_and_its_thread_continues(
+    async def test_a_seeded_thread_gets_no_rebuilt_roster(
         self, started_codex: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
-        """Codex took the interrupted turn's input, transcript included, so
-        the thread is seeded: the room keeps it and Band history names it."""
+        """A thread already seeded relies on the runtime sending roster changes."""
         client = FakeCodexClient(
-            events=[
-                turn_completed("turn-1", status="interrupted"),
-                *answered_turn("turn-2"),
-            ]
+            events=[*answered_turn("turn-1"), *answered_turn("turn-2")]
         )
         adapter = await started_codex(client)
-        tools_first = ToolSchemaFakeTools()
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_event(agent_input("hello", tools))
+        await adapter.on_event(agent_input("next", tools, is_session_bootstrap=False))
+
+        later = turn_inputs(client)[-1]
+        assert later["threadId"] == FIRST_THREAD_ID
+        assert not carries_roster(later, tools)
+
+    async def test_a_resumed_thread_gets_no_rebuilt_roster(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """A resumed thread kept the room's context, roster included."""
+        client = FakeCodexClient(events=answered_turn())
+        adapter = await started_codex(client)
+        tools = ToolSchemaFakeTools()
 
         await adapter.on_event(
-            agent_input("start a long job", tools_first, raw_history=TRANSCRIPT)
-        )
-        await adapter.on_event(
-            agent_input("continue", ToolSchemaFakeTools(), is_session_bootstrap=False)
+            agent_input("next", tools, raw_history=[recorded_thread("thr-history")])
         )
 
-        seeding, following = turn_inputs(client)
-        assert following["threadId"] == seeding["threadId"] == FIRST_THREAD_ID
-        assert replayed(following) == []
-        assert CODEX_RESUME_RECORD.candidates(tools_first.events_sent) == {
-            ROOM_ID: FIRST_THREAD_ID
-        }
+        (resumed,) = turn_inputs(client)
+        assert resumed["threadId"] == "thr-history"
+        assert not carries_roster(resumed, tools)
 
     async def test_a_thread_is_recorded_once_and_a_failed_post_is_retried(
         self, started_codex: Callable[..., Awaitable[CodexAdapter]]
@@ -380,10 +405,6 @@ class TestThreadResumption:
                 agent_input(content, tools, is_session_bootstrap=False)
             )
 
-        records = [
-            event
-            for event in tools.events_sent
-            if event["content"] == CODEX_RESUME_RECORD.label
-        ]
+        records = resume_records(tools)
         assert len(records) == 1
         assert CODEX_RESUME_RECORD.candidates(records) == {ROOM_ID: FIRST_THREAD_ID}

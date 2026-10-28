@@ -141,6 +141,15 @@ def replayed_history(turn: dict[str, Any]) -> list[str]:
     ]
 
 
+def resume_records(tools: FakeAgentTools) -> list[dict[str, Any]]:
+    """The Codex resume records ``tools`` posted, oldest first."""
+    return [
+        event
+        for event in tools.events_sent
+        if event["content"] == CODEX_RESUME_RECORD.label
+    ]
+
+
 def recorded_thread(thread_id: str, room_id: str = ROOM_ID) -> dict[str, Any]:
     """The history entry of a room's Codex resume record."""
     return {

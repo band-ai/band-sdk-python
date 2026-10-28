@@ -41,3 +41,11 @@ class TestCodexHistoryConverter:
         )
 
         assert state.room_to_thread == {"room-1": "thr-1"}
+
+    def test_the_room_transcript_is_rendered_for_replay(self) -> None:
+        raw = [
+            recorded_thread("thr-1", "room-1"),
+            {"message_type": MessageType.TEXT, "content": "hi", "sender_name": "Alice"},
+        ]
+
+        assert CodexHistoryConverter().convert(raw).replay_messages == ["[Alice]: hi"]

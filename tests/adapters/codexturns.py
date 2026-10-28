@@ -15,6 +15,7 @@ from typing import Any
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.integrations.codex import TRANSPORT_CLOSED, CodexRequestMethod, RpcEvent
+from band.integrations.codex.types import CodexTurnStatus
 from tests.adapters.waiting import until
 
 
@@ -307,7 +308,9 @@ def event_request(request_id: int, method: str, params: dict[str, Any]) -> RpcEv
     )
 
 
-def turn_completed(turn_id: str = "turn-1", *, status: str = "completed") -> RpcEvent:
+def turn_completed(
+    turn_id: str = "turn-1", *, status: str = CodexTurnStatus.COMPLETED
+) -> RpcEvent:
     """The notification that ends a scripted turn."""
     return event_notification(
         "turn/completed",

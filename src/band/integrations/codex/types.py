@@ -67,10 +67,11 @@ DYNAMIC_TOOL_CALL_METHOD = "item/tool/call"
 
 
 class CodexMetadataKey(StrEnum):
-    """Metadata keys naming a Codex room, thread and transport on Band events."""
+    """Metadata keys naming a Codex room, thread, turn and transport on Band events."""
 
     ROOM = "codex_room_id"
     THREAD = "codex_thread_id"
+    TURN = "codex_turn_id"
     TRANSPORT = "codex_transport"
 
 
@@ -99,9 +100,11 @@ CODEX_PROVIDER = "codex"
 
 @dataclass
 class CodexSessionState:
-    """Each room's resumable Codex thread, as Band history records it."""
+    """Each room's resumable Codex thread, as Band history records it, and
+    the room's transcript for a fresh thread to replay."""
 
     room_to_thread: dict[str, str] = field(default_factory=dict)
+    replay_messages: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +159,7 @@ def build_agent_failure(
     if thread_id:
         detail[CodexMetadataKey.THREAD] = thread_id
     if turn_id:
-        detail["codex_turn_id"] = turn_id
+        detail[CodexMetadataKey.TURN] = turn_id
     if room_id:
         detail[CodexMetadataKey.ROOM] = room_id
     if additional is not None:
