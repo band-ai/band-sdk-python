@@ -173,13 +173,14 @@ McpInvocation = tuple[str, str, dict[str, JsonValue]]
 def _mcp_invocation(raw_input: object, meta: object) -> McpInvocation | None:
     """Return the server, tool and arguments of an MCP call.
 
-    Its title is only a display string.
+    Identity comes from ``_meta`` or ``rawInput``; the call's title is only a
+    display string.
     """
     return _meta_mcp_invocation(raw_input, meta) or _raw_input_mcp_invocation(raw_input)
 
 
 def _meta_mcp_invocation(raw_input: object, meta: object) -> McpInvocation | None:
-    """An MCP call identified in ``_meta`` (see ``_META_MCP_KEY``)."""
+    """Return the MCP call named in ``_meta`` (see ``_META_MCP_KEY``)."""
     mcp = meta.get(_META_MCP_KEY) if isinstance(meta, dict) else None
     arguments = (
         raw_input.get(_META_MCP_ARGUMENTS_KEY) if isinstance(raw_input, dict) else None
@@ -193,7 +194,7 @@ def _meta_mcp_invocation(raw_input: object, meta: object) -> McpInvocation | Non
 
 
 def _raw_input_mcp_invocation(raw_input: object) -> McpInvocation | None:
-    """An MCP call identified in ``rawInput`` alone (see ``_MCP_INVOCATION_KEYS``)."""
+    """Return the MCP call named by ``rawInput`` alone (see ``_MCP_INVOCATION_KEYS``)."""
     if not isinstance(raw_input, dict):
         return None
     keys = next(

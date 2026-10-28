@@ -393,14 +393,10 @@ class ACPClientAdapter(
     and emitting replies back to the platform. ACP subprocess lifecycle,
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
 
-    Sessions follow the resume rule in ``band.runtime.sessionresume``: a
-    room's session is the newest one whose seeding prompt completed. A fresh
-    session whose seeding prompt is refused or raises is closed and leaves no
-    resume record, so the next turn, recovery or restart starts another fresh
-    session with the full context and transcript. A restart therefore resumes
-    the newest seeded session even when a later replacement for it was
-    refused; if the agent cannot load that one, it starts fresh and replays.
-    A refused prompt on a seeded or restored session keeps that session.
+    Sessions follow the resume rule in ``band.runtime.sessionresume``. A
+    fresh session whose seeding prompt is refused or raises is dropped and
+    leaves no resume record; one whose seeding prompt is stopped counts as
+    seeded. A refused prompt on a seeded or restored session keeps it.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
@@ -933,6 +929,8 @@ class ACPClientAdapter(
                                 session_id=session_id,
                                 prompt_text=prompt_text,
                                 on_chunk=emitter.emit,
+                                # A stopped seeding prompt still reached the agent.
+                                on_cancelled=session.seed.confirm,
                             )
                             if stop_reason == REFUSAL_STOP:
                                 logger.warning(
@@ -975,24 +973,35 @@ class ACPClientAdapter(
             self._drop_unseeded_session(room, runtime, session)
             reraise_delivery_cause(e)
         except ACPTurnTimeoutError:
-            self._drop_unseeded_session(room, runtime, session)
+            self._drop_unseeded_session(room, runtime, session, recovering=True)
             raise
         except InputNotAccepted:
             raise
         except Exception as error:
-            self._drop_unseeded_session(room, runtime, session)
+            self._drop_unseeded_session(room, runtime, session, recovering=True)
             await self._fail_turn(room, generation, tools, error)
             raise
 
     def _drop_unseeded_session(
-        self, room: ACPRoom, runtime: ACPRuntime, session: RoomSession
+        self,
+        room: ACPRoom,
+        runtime: ACPRuntime,
+        session: RoomSession,
+        *,
+        recovering: bool = False,
     ) -> None:
         """Retire a fresh session whose seeding prompt was refused or failed.
 
         Only a completed seeding prompt makes a session the room's, so the
         room's next turn starts a fresh session with the transcript instead.
+        A ``recovering`` process is stopped with its sessions, so it is not
+        asked to close this one.
         """
-        if session.seed.replay_due and room.session is session:
+        if not (session.seed.replay_due and room.session is session):
+            return
+        if recovering:
+            room.session = None
+        else:
             self._retire_session(
                 room, runtime, session, reason=SessionCloseReason.UNSEEDED
             )

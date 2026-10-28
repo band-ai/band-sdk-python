@@ -2,11 +2,14 @@
 
 A seeding prompt the agent refuses or that raises leaves no resume record and
 no mapping, so the next turn, recovery or restart starts a fresh session with
-the full context and transcript. A restored session already holds the room's
-context and is kept through a refusal.
+the full context and transcript. A stopped seeding prompt reached the agent, so
+it counts as seeded. A restored session already holds the room's context and is
+kept through a refusal.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 from acp import RequestError
@@ -29,7 +32,12 @@ from tests.integrations.acp.clientbehavior.kit import (
     resume_records,
     seeded,
 )
-from tests.integrations.acp.roomownership.kit import fails_prompt, recover
+from tests.integrations.acp.roomownership.kit import (
+    fails_prompt,
+    holds_prompt,
+    recover,
+    stop,
+)
 
 QUESTION = "What is my favorite color?"
 
@@ -83,8 +91,37 @@ class TestSessionSeeding:
         _, fresh = agent.session_ids()
         assert resume_records(failing) == {}
         assert agent.session_load_requests == []
+        # The recovered process went down with the session; none was closed.
+        assert agent.closed_sessions == []
         assert agent.prompts[1]["session_id"] == fresh
         assert seeded(agent.prompt_texts()[1])
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_seed_counts_as_seeded(self) -> None:
+        """The agent received the stopped seed, so the next prompt neither
+        replays the transcript nor loses the session to a refusal."""
+        agent = FakeACPAgent()
+        prompting = holds_prompt(agent, 1)
+        async with acp_adapter(agent) as session:
+            handler = asyncio.create_task(
+                session.send(
+                    "first?",
+                    bootstrap=True,
+                    history=rehydration_history(MARCO_REPLAY_LINE),
+                )
+            )
+            await prompting.received.wait()
+            await stop(session, handler)
+            prompting.release.set()
+            agent.stops_with(REFUSAL_STOP)
+            await session.send(QUESTION, room_context=[marco_message()])
+            await session.retired_sessions_closed()
+            kept = session.session_id(DEFAULT_ROOM)
+
+        assert agent.session_ids() == [kept]
+        assert [prompt["session_id"] for prompt in agent.prompts] == [kept] * 2
+        assert agent.closed_sessions == []
+        assert MARCO_REPLAY_LINE not in agent.prompt_texts()[1]
 
     @pytest.mark.asyncio
     async def test_a_refused_seed_leaves_nothing_to_resume_after_a_restart(
