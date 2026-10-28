@@ -24,7 +24,7 @@ from band.adapters.copilot_sdk import (
     CopilotSDKAdapterConfig,
 )
 from band.converters.copilot_sdk import CopilotSDKSessionState
-from band.core.types import MessageType, PlatformMessage
+from band.core.types import USAGE_METADATA_KEY, MessageType, PlatformMessage
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.framework_conformance.turnprobes import turn_input
@@ -33,9 +33,6 @@ requires_copilot_sdk = pytest.mark.skipif(
     not _COPILOT_SDK_AVAILABLE,
     reason="github-copilot-sdk not installed (pip install band-sdk[copilot_sdk])",
 )
-
-# The heading that frames a transcript replayed into a fresh session.
-HISTORY_HEADING = "[Previous conversation context:]"
 
 if _COPILOT_SDK_AVAILABLE:
     from copilot.generated.session_events import (
@@ -120,19 +117,45 @@ class ToolSchemaFakeTools(FakeAgentTools):
         ]
 
 
-class HeldContextTools(ToolSchemaFakeTools):
-    """Room-context fetches park at the REST boundary while ``hold`` is set."""
+class HeldRestTools(ToolSchemaFakeTools):
+    """Room-context fetches or usage posts park at the REST boundary while held."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.hold = False
-        self.fetching = asyncio.Event()
+        self.hold_context = False
+        self.hold_usage = False
+        self.parked = asyncio.Event()
 
     async def fetch_room_context(self, **kwargs: Any) -> dict[str, Any]:
-        if self.hold:
-            self.fetching.set()
-            await asyncio.Event().wait()  # until the turn is interrupted
+        if self.hold_context:
+            await self._park()
         return await super().fetch_room_context(**kwargs)
+
+    async def send_event(
+        self,
+        content: str,
+        message_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> Any:
+        if self.hold_usage and metadata and USAGE_METADATA_KEY in metadata:
+            await self._park()
+        return await super().send_event(content, message_type, metadata)
+
+    async def _park(self) -> None:
+        self.parked.set()
+        await asyncio.Event().wait()  # until the turn is interrupted
+
+
+class HeldAdmission:
+    """Holds a session's next prompt at the runtime before it admits it.
+
+    Only an interrupt ends the hold. The runtime then either never admits the
+    prompt or, with ``admits_late``, reports admitting it after the interrupt.
+    """
+
+    def __init__(self, *, admits_late: bool) -> None:
+        self.admits_late = admits_late
+        self.received = asyncio.Event()
 
 
 async def interrupt_when(turn: asyncio.Task[Any], reached: asyncio.Event) -> None:
@@ -161,6 +184,7 @@ class FakeCopilotSession:
         self.reply_content = reply_content
         self.turn_events = turn_events or []
         self.send_error: Exception | None = None
+        self.held_admission: HeldAdmission | None = None
         self.prompts: list[str] = []
         self.handlers: list[Any] = []
         self.aborted = False
@@ -186,6 +210,17 @@ class FakeCopilotSession:
     ) -> Any:
         self.prompts.append(prompt)
         self.journal.append("prompt")
+        if (held := self.held_admission) is not None:
+            self.held_admission = None
+            held.received.set()
+            try:
+                await asyncio.Event().wait()  # until the turn is interrupted
+            except asyncio.CancelledError:
+                if held.admits_late:
+                    asyncio.get_running_loop().call_soon(
+                        self._publish, UserMessageData(content=prompt)
+                    )
+                raise
         self._publish(UserMessageData(content=prompt))  # the runtime admits it
         if self.send_error:
             raise self.send_error
@@ -254,6 +289,13 @@ class FakeCopilotClient:
         self.resume_calls: list[str] = []
         self.deleted: list[str] = []
         self.delete_error: Exception | None = None
+        # The next minted session holds its first prompt before admitting it.
+        self.held_admission: HeldAdmission | None = None
+        # Every id create_session was asked for; while ``hold_create`` is set,
+        # the runtime creates the next one but its reply never arrives.
+        self.create_calls: list[str] = []
+        self.hold_create = False
+        self.creating = asyncio.Event()
 
     async def start(self) -> None:
         self.started = True
@@ -263,6 +305,11 @@ class FakeCopilotClient:
         self.stopped = True
 
     async def create_session(self, *, session_id: str, **kwargs: Any) -> Any:
+        self.create_calls.append(session_id)
+        if self.hold_create:
+            self.hold_create = False
+            self.creating.set()
+            await asyncio.Event().wait()  # until the turn is interrupted
         if self.create_error:
             raise self.create_error
         session = FakeCopilotSession(
@@ -276,6 +323,7 @@ class FakeCopilotClient:
     def _mint(self, session: FakeCopilotSession) -> FakeCopilotSession:
         if self.prompt_errors:
             session.send_error = self.prompt_errors.pop(0)
+        session.held_admission, self.held_admission = self.held_admission, None
         self.sessions.append(session)
         return session
 

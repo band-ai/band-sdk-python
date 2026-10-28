@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.copilot_sdk import CopilotSDKAdapterConfig
+from band.adapters.copilot_sdk import HISTORY_HEADING, CopilotSDKAdapterConfig
 from band.converters.copilot_sdk import COPILOT_RESUME_RECORD, CopilotSDKSessionState
 from tests.adapters.copilot_sdk.fakes import (
-    HISTORY_HEADING,
     FakeCopilotClient,
     ToolSchemaFakeTools,
     make_started_adapter,
@@ -44,7 +43,7 @@ class TestResumeAndRehydration:
         session = client.sessions[0]
         assert session.resumed
         # Resumed sessions restore history from disk — no re-injection.
-        assert "[Previous conversation context:]" not in session.prompts[0]
+        assert HISTORY_HEADING not in session.prompts[0]
 
     @pytest.mark.asyncio
     async def test_resume_failure_creates_fresh_and_injects_history(self):
@@ -62,9 +61,7 @@ class TestResumeAndRehydration:
 
         session = client.sessions[0]
         assert not session.resumed
-        assert (
-            "[Previous conversation context:]\n[Alice]: earlier" in session.prompts[0]
-        )
+        assert f"{HISTORY_HEADING}\n[Alice]: earlier" in session.prompts[0]
 
     @pytest.mark.asyncio
     async def test_resume_failure_injection_disabled(self):
@@ -82,7 +79,7 @@ class TestResumeAndRehydration:
             ),
         )
 
-        assert "[Previous conversation context:]" not in client.sessions[0].prompts[0]
+        assert HISTORY_HEADING not in client.sessions[0].prompts[0]
 
     @pytest.mark.asyncio
     async def test_fresh_room_with_history_text_injects_it(self):
@@ -94,10 +91,7 @@ class TestResumeAndRehydration:
             adapter, tools, history=CopilotSDKSessionState(text="[Alice]: earlier")
         )
 
-        assert (
-            "[Previous conversation context:]\n[Alice]: earlier"
-            in (client.sessions[0].prompts[0])
-        )
+        assert f"{HISTORY_HEADING}\n[Alice]: earlier" in (client.sessions[0].prompts[0])
 
     @pytest.mark.asyncio
     async def test_session_id_persisted_as_task_event(self):
@@ -197,7 +191,8 @@ class TestResumeAndRehydration:
             text="[Alice]: earlier", room_to_session=recorded()
         )
         tools.send_event_error = ConnectionError("Band REST unavailable")
-        await run_message(adapter, tools, history=older)  # seeds unrecorded Y
+        # The fresh session seeds, but its record post fails.
+        await run_message(adapter, tools, history=older)
         seeded = client.sessions[0]
         tools.send_event_error = None
         client.resume_error = None

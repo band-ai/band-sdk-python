@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from band.converters.copilot_sdk import COPILOT_RESUME_RECORD
+from band.adapters.copilot_sdk import HISTORY_HEADING
+from band.converters.copilot_sdk import COPILOT_RESUME_RECORD, CopilotSDKSessionState
 from tests.adapters.copilot_sdk.fakes import (
-    HISTORY_HEADING,
     FakeCopilotClient,
     ToolSchemaFakeTools,
     make_platform_message,
@@ -102,3 +102,16 @@ class TestFailedSeed:
         assert client.resume_calls == [seeded.session_id]
         assert client.deleted == []
         assert HISTORY_HEADING not in resumed.prompts[0]
+
+    async def test_a_failed_prompt_on_a_restored_session_keeps_it_on_disk(self):
+        client = FakeCopilotClient(prompt_errors=[RuntimeError("broken pipe")])
+        adapter = await make_started_adapter(client)
+        tools = room_with_earlier_message()
+        history = CopilotSDKSessionState(room_to_session={"room-1": "recorded"})
+
+        with pytest.raises(RuntimeError, match="broken pipe"):
+            await run_message(adapter, tools, history=history)
+        await run_message(adapter, tools, is_session_bootstrap=False)
+
+        assert client.deleted == []
+        assert client.resume_calls == ["recorded", "recorded"]

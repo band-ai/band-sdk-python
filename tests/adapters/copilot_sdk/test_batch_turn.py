@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from band.adapters.copilot_sdk import HISTORY_HEADING
 from tests.adapters.copilot_sdk.fakes import (
-    HISTORY_HEADING,
     FakeCopilotClient,
     make_started_adapter,
     requires_copilot_sdk,
