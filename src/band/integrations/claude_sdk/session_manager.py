@@ -29,6 +29,7 @@ from band.core.retention import (
     RoomRetentionConfig,
 )
 from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
+from band.runtime.sessionresume import SessionSeed
 from band.workspaces import RoomWorkspaces
 
 try:
@@ -130,7 +131,8 @@ class ClaudeRoomSession:
     cleared only once closing them succeeds. ``session_id`` is the native
     conversation the next process resumes; final disposal erases it, and the
     crash policy (``recover(forget_session=True)``) drops it once the crashed
-    process is closed.
+    process is closed. ``seed`` says whether the running conversation already
+    holds the room's context.
     """
 
     def __init__(
@@ -138,6 +140,7 @@ class ClaudeRoomSession:
     ) -> None:
         self.room_id = room_id
         self.session_id: str | None = None
+        self.seed = SessionSeed()
         self.client: ClaudeSDKClient | None = None
         self.transport: Transport | None = None
         self._manager = manager
@@ -237,6 +240,7 @@ class ClaudeRoomSession:
             # The conversation is dropped only once a new one is running.
             await self._connect(generation, resume=None)
             self.session_id = None
+        self.seed = SessionSeed(restored=self.session_id is not None)
 
     def _may_start_fresh(self, resume: bool) -> bool:
         """Whether a failed resume may give way to a new session: never on a

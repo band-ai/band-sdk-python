@@ -13,6 +13,7 @@ each adapter.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +21,7 @@ from pydantic import JsonValue
 
 from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import MessageType
+from band.runtime.formatters import messages_before
 
 
 @dataclass
@@ -98,3 +100,30 @@ class ResumeRecord:
             },
             log_label=self.label,
         )
+
+
+async def fetch_transcript(
+    tools: AgentToolsProtocol, *, room_id: str, turn_ids: AbstractSet[str]
+) -> list[dict[str, Any]]:
+    """The room's raw history before the turn's earliest input, every page.
+
+    The runtime hands an adapter the room's history only on session
+    bootstrap, so a session that must be seeded later fetches it here.
+    """
+    page = 1
+    collected: list[dict[str, Any]] = []
+    while True:
+        context = await tools.fetch_room_context(room_id=room_id, page=page)
+        data = context.get("data") or []
+        if not data:
+            break
+        collected.extend(data)
+        meta = context.get("meta") or {}
+        total_pages = meta.get("total_pages")
+        if isinstance(total_pages, int):
+            if page >= total_pages:
+                break
+        elif len(data) < int(meta.get("page_size") or len(data)):
+            break
+        page += 1
+    return messages_before(collected, turn_ids)

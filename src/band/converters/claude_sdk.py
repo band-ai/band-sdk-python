@@ -3,30 +3,41 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from band.core.protocols import HistoryConverter
+from band.runtime.sessionresume import ResumeRecord
 
 logger = logging.getLogger(__name__)
 
-# Metadata key the adapter writes the resumable session id under on its
-# "Claude SDK session" task event, and the only thing this converter reads
-# back out of it — single source of truth for both sides.
-SESSION_ID_METADATA_KEY = "claude_sdk_session_id"
+
+class ClaudeSDKMetadataKey(StrEnum):
+    """Metadata keys of the Claude SDK adapter's resume record."""
+
+    ROOM = "claude_sdk_room_id"
+    SESSION = "claude_sdk_session_id"
+
+
+CLAUDE_SDK_RESUME_RECORD = ResumeRecord(
+    label="Claude SDK session",
+    room_key=ClaudeSDKMetadataKey.ROOM,
+    session_key=ClaudeSDKMetadataKey.SESSION,
+)
 
 
 @dataclass
 class ClaudeSDKSessionState:
     """Composite state returned by the Claude SDK converter.
 
-    Combines the text history (for context injection) with an optional
-    ``session_id`` extracted from persisted task events, enabling session
-    resume after process restart.
+    Combines the text history (for context injection) with each room's
+    resumable session (the newest ``CLAUDE_SDK_RESUME_RECORD``), enabling
+    session resume after process restart.
     """
 
     text: str = ""
-    session_id: str | None = None
+    room_to_session: dict[str, str] = field(default_factory=dict)
 
 
 def _build_text(raw: list[dict[str, Any]], agent_name: str) -> str:
@@ -70,8 +81,8 @@ class ClaudeSDKHistoryConverter(HistoryConverter[ClaudeSDKSessionState]):
     Converts platform history to Claude SDK text format with session state.
 
     Returns a :class:`ClaudeSDKSessionState` containing the text history
-    and an optional ``session_id`` extracted from persisted task events,
-    enabling session resume after process restart.
+    and each room's resumable session, enabling session resume after process
+    restart.
 
     Output example::
 
@@ -88,18 +99,7 @@ class ClaudeSDKHistoryConverter(HistoryConverter[ClaudeSDKSessionState]):
         self._agent_name = name
 
     def convert(self, raw: list[dict[str, Any]]) -> ClaudeSDKSessionState:
-        if not raw:
-            return ClaudeSDKSessionState(text="")
-
-        # Scan history in reverse for the latest task event with a session_id.
-        session_id: str | None = None
-        for hist in reversed(raw):
-            if hist.get("message_type") == "task":
-                metadata = hist.get("metadata") or {}
-                sid = metadata.get(SESSION_ID_METADATA_KEY)
-                if sid:
-                    session_id = sid
-                    break
-
-        text = _build_text(raw, self._agent_name)
-        return ClaudeSDKSessionState(text=text, session_id=session_id)
+        return ClaudeSDKSessionState(
+            text=_build_text(raw, self._agent_name),
+            room_to_session=CLAUDE_SDK_RESUME_RECORD.candidates(raw),
+        )

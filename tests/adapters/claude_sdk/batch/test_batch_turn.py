@@ -70,14 +70,12 @@ class TestBatchTurn:
         room.claude.script([room.model_reply("First.")], [room.model_reply("Second.")])
 
         await room.send_batch(
-            *alice_helper_alice(room),
-            history=(said("Alice", "remember-the-milk"),),
-            session_id="sess-9",
+            *alice_helper_alice(room), history=(said("Alice", "remember-the-milk"),)
         )
         await room.send_batch(*alice_helper_alice(room))
 
         first, second = room.claude.prompts
-        assert room.claude.resumed == ["sess-9"]
+        assert room.claude.resumed == [None]
         assert "remember-the-milk" in first
         assert "remember-the-milk" not in second
         assert CURRENT_INPUTS_HEADING in second

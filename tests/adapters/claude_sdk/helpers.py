@@ -21,7 +21,7 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
 )
-from band.converters.claude_sdk import SESSION_ID_METADATA_KEY
+from band.converters.claude_sdk import CLAUDE_SDK_RESUME_RECORD
 from band.core.retention import RoomRetentionConfig
 from band.core.turn import Turn
 from band.core.types import (
@@ -122,11 +122,14 @@ def said(sender_name: str, content: str) -> dict[str, Any]:
     }
 
 
-def recorded_session(session_id: str) -> dict[str, Any]:
-    """The task event a room persisted for a Claude session, as raw history."""
+def recorded_session(room_id: str, session_id: str) -> dict[str, Any]:
+    """The resume record a room persisted for a Claude session, as raw history."""
     return {
         "message_type": MessageType.TASK,
-        "metadata": {SESSION_ID_METADATA_KEY: session_id},
+        "metadata": {
+            CLAUDE_SDK_RESUME_RECORD.room_key: room_id,
+            CLAUDE_SDK_RESUME_RECORD.session_key: session_id,
+        },
     }
 
 
@@ -234,10 +237,10 @@ class ClaudeRoom:
     def persisted_sessions(self) -> list[str]:
         """Session ids the room recorded for a later resume, in order."""
         return [
-            event["metadata"][SESSION_ID_METADATA_KEY]
+            event["metadata"][CLAUDE_SDK_RESUME_RECORD.session_key]
             for event in self.tools.events_sent
             if event["message_type"] == MessageType.TASK
-            and SESSION_ID_METADATA_KEY in (event["metadata"] or {})
+            and CLAUDE_SDK_RESUME_RECORD.session_key in (event["metadata"] or {})
         ]
 
     @property
@@ -313,7 +316,7 @@ class ClaudeRoom:
         bootstrap, self._bootstrapped = not self._bootstrapped, True
         raw_history = [*history]
         if session_id is not None:
-            raw_history.append(recorded_session(session_id))
+            raw_history.append(recorded_session(self.room_id, session_id))
         return AgentInput(
             msg=messages[0],
             messages=messages,

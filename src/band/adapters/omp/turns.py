@@ -39,12 +39,12 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 from band.runtime.custom_tools import find_custom_tool
-from band.runtime.formatters import messages_before
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
     TURN_COMPLETION_GUIDANCE,
     render_system_prompt,
 )
+from band.runtime.sessionresume import fetch_transcript
 from band.runtime.toolactivity import suppress_tool_activity
 from band.runtime.tools import BandTool
 
@@ -99,8 +99,8 @@ class OmpTurnMixin(OmpAdapterContract):
             replay = history.replay_messages
             if not bootstrap:
                 try:
-                    raw = messages_before(
-                        await self._fetch_room_messages(tools, room_id), {msg.id}
+                    raw = await fetch_transcript(
+                        tools, room_id=room_id, turn_ids={msg.id}
                     )
                     replay = build_replay_messages(
                         [item for item in raw if item.get("id") != msg.id]
@@ -120,27 +120,6 @@ class OmpTurnMixin(OmpAdapterContract):
                 )
                 live = f"{marker}\n{live}"
         return "\n\n".join([*sections, live])
-
-    async def _fetch_room_messages(
-        self, tools: AgentToolsProtocol, room_id: str
-    ) -> list[dict[str, object]]:
-        page = 1
-        collected: list[dict[str, object]] = []
-        while True:
-            context = await tools.fetch_room_context(room_id=room_id, page=page)
-            data = context.get("data") or []
-            if not data:
-                break
-            collected.extend(data)
-            meta = context.get("meta") or {}
-            total_pages = meta.get("total_pages")
-            if isinstance(total_pages, int):
-                if page >= total_pages:
-                    break
-            elif len(data) < int(meta.get("page_size") or len(data)):
-                break
-            page += 1
-        return collected
 
     async def on_message(
         self,
