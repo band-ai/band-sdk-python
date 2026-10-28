@@ -131,9 +131,8 @@ async def test_recall_memory_across_memory_adapters(
     mem.calls.assert_get_called()
 
 
-# Adapters whose runtime reports every tool result as a bare success: Cursor's
-# ACP updates carry ``rawOutput: {"success": true}`` and never the tool's output.
-OPAQUE_TOOL_OUTPUT_ADAPTERS = frozenset({Adapter.CURSOR_ACP})
+# Cursor reports bare success and Antigravity reports labels instead of tool output.
+OPAQUE_TOOL_OUTPUT_ADAPTERS = frozenset({Adapter.CURSOR_ACP, Adapter.ANTIGRAVITY_ACP})
 
 
 @per_adapter(
