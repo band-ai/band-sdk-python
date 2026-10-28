@@ -11,7 +11,13 @@ from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from remote_agent.band.authorack import acknowledges_completion
-from remote_agent.band.authoring import bounded_text, canonical, validate_result
+from remote_agent.band.authoring import (
+    DeliveredContextError,
+    bounded_text,
+    canonical,
+    protocol_limit,
+    validate_result,
+)
 from remote_agent.band.authortransport import AuthorCapacityError
 from remote_agent.types import JsonObject
 
@@ -197,7 +203,11 @@ class StudioAgent:
             if row is None:
                 return "invalid_result"
             try:
-                validate_result(json.loads(row[0]), envelope["result"])
+                validate_result(
+                    json.loads(row[0]),
+                    envelope["result"],
+                    max_protocols=protocol_limit(self.journal.delivered(local_id)),
+                )
             except ValueError:
                 return "invalid_result"
         else:
@@ -269,19 +279,27 @@ class StudioAgent:
             ):
                 raise ValueError("Invalid author job")
             local_id = "studio:" + job["id"] + ":" + str(job["attempt"])
+            # The platform's skill, grammar and protocol limit arrive beside the job.
+            delivered = {
+                key: response[key]
+                for key in ("skill", "grammar", "max_protocols")
+                if key in response
+            }
             # Local input is durable before the claim is cleared. Retrying a lost
             # claim response obtains the same authority job and same model identity.
             try:
-                self.journal.submit(local_id, job["request"])
-            except ValueError:
+                self.journal.submit(local_id, job["request"], delivered)
+            except ValueError as error:
                 # Rejected input cannot run locally. Stage its exact terminal
                 # report and retain the claim through an unknown authority ack.
+                failure = (
+                    "Delivered authoring context rejected by local journal: "
+                    + str(error)
+                    if isinstance(error, DeliveredContextError)
+                    else "Claimed author input rejected by local journal"
+                )
                 body = canonical(
-                    {
-                        "attempt": job["attempt"],
-                        "failure": "Claimed author input rejected by local journal",
-                        "held": True,
-                    }
+                    {"attempt": job["attempt"], "failure": failure, "held": True}
                 )
                 with self.db:
                     self.db.execute(

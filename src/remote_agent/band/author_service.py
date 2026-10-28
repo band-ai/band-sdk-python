@@ -17,6 +17,7 @@ from remote_agent.band.authoring import (
     author_prompt,
     output_schema,
     process_one,
+    protocol_limit,
 )
 from remote_agent.band.authortransport import AuthorCapacityError, encode_request
 from remote_agent.band.configuration import (
@@ -59,13 +60,23 @@ def load_config(path: SourcePath) -> JsonObject:
 
 
 def generate(
-    root: SourcePath, guide: str, job: JsonObject, config: JsonObject
+    root: SourcePath,
+    guide: str,
+    job: JsonObject,
+    config: JsonObject,
+    delivered: JsonObject | None = None,
 ) -> JsonObject:
+    """``guide`` is the bundled grammar. A verified delivery replaces both bundled
+    assets when it carries a skill and grammar, and sets the protocol limit."""
     timeout = config.get("model_timeout_seconds", 180)
+    skill = None
+    if delivered is not None and "skill" in delivered:
+        guide, skill = delivered["grammar"]["content"], delivered["skill"]["content"]
+    limit = protocol_limit(delivered)
     result = invoke(
         root,
-        author_prompt(guide, job),
-        output_schema(job),
+        author_prompt(guide, job, skill=skill, max_protocols=limit),
+        output_schema(job, max_protocols=limit),
         configuration=config["model_config"],
         timeout=timeout,
         timeout_limit=timeout,
