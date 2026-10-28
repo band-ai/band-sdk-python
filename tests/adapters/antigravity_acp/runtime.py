@@ -41,7 +41,6 @@ async def open_room(
             "tests.adapters.antigravity_acp.peer",
             str(script),
         ),
-        "env": {"__PYVENV_LAUNCHER__": sys.executable, "PYTHONPATH": str(REPO_ROOT)},
         "gemini_home": str(root / "native"),
         "cwd": str(root / "workspaces"),
         **(config or {}),
