@@ -132,17 +132,9 @@ class ACPRuntime(ACPSessionOperations):
         self._ctx = self._spawn_context()
         try:
             self._conn, self._transport = await self._ctx.__aenter__()
-            logger.info(
-                "ACP diagnostic transport ready pid=%s",
-                getattr(self._transport, "pid", None),
-            )
             if isinstance(self._transport, asyncio.subprocess.Process):
                 self._stderr.start(self._transport)
             await self._initialize_connection(self._conn)
-            logger.info(
-                "ACP diagnostic initialization completed pid=%s",
-                getattr(self._transport, "pid", None),
-            )
         except BaseException as error:
             if isinstance(error, (asyncio.CancelledError, KeyboardInterrupt)):
                 self._stderr.expect_exit(connection_failed=self._connection_failed)

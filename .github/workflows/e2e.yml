@@ -357,7 +357,6 @@ jobs:
         BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS: ${{ inputs.first_attempt_diagnostics && 'true' || 'false' }}
         BAND_E2E_TEST_SELECTOR: ${{ inputs.test_selector || '' }}
         BAND_E2E_LOG_LEVEL: ${{ inputs.log_level || '' }}
-        E2E_TIMEOUT: '300'
       run: bash .github/scripts/run-baseline-e2e.sh
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp).

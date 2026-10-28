@@ -223,16 +223,11 @@ class ACPSessionOperations(ABC):
         if on_chunk is not None and self._client is not None:
             self._client.set_sink(session_id, on_chunk)
         try:
-            logger.info("ACP diagnostic prompt request started")
             response = await self._request(
                 conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
             )
-            logger.info(
-                "ACP diagnostic prompt response received stop=%s", response.stop_reason
-            )
             if self._client is not None:
                 await self._client.flush(session_id)
-            logger.info("ACP diagnostic prompt emissions flushed")
         finally:
             if self._client is not None:
                 self._client.set_sink(session_id, None)
