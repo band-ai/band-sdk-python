@@ -6,9 +6,7 @@ from typing import Any
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 from band.runtime.tools import BandTool, ToolCallOutcome
 from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,

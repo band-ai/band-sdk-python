@@ -4,18 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 from band.core.defaultmodels import OPENAI_MODEL
 from band.integrations.codex import CodexJsonRpcError
 from band.integrations.codex.types import (
     CodexRequestMethod,
     CodexSessionState,
 )
-from band.testing import (
-    reported_failures,
-)
+from band.testing import reported_failures
 from tests.adapters.codex.kit import (
     ROOM_ID,
     ToolSchemaFakeTools,

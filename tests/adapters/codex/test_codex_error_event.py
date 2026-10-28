@@ -4,16 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
-from band.integrations.codex.types import (
-    CodexSessionState,
-)
-from band.testing import (
-    events_of_type,
-)
+from band.integrations.codex.types import CodexSessionState
+from band.testing import events_of_type
 from tests.adapters.codex.kit import (
     ROOM_ID,
     ToolSchemaFakeTools,

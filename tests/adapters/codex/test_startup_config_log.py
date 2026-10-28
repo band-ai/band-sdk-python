@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 from tests.adapters.codexturns import (
     FakeCodexClient,
     make_codex_adapter,
