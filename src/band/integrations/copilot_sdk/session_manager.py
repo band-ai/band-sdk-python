@@ -92,11 +92,11 @@ class CopilotSessionManager:
                 logger.info("Room %s: Copilot session cleaned up", room_id)
 
     async def evict_session(self, room_id: str) -> None:
-        """Abort and drop the room's session after a failed turn.
+        """Abort and drop the room's session after a failed or interrupted turn.
 
-        The caller already holds the room's turn lock. Abort stops any
-        work the runtime is still executing for the timed-out/failed turn
-        (so stale tool calls can't fire later); each RPC is timeout-bounded
+        The caller holds the room's turn lock or its turn's stop. Abort stops any
+        work the runtime is still executing for that turn (so stale tool
+        calls can't fire later); each RPC is timeout-bounded
         because the runtime may already be dead. Disk state is preserved,
         so the next message can resume the session fresh.
         """
@@ -105,7 +105,21 @@ class CopilotSessionManager:
             for close_op in (session.abort, session.disconnect):
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(close_op(), timeout=_SESSION_OP_TIMEOUT_S)
-            logger.info("Room %s: Copilot session evicted after failed turn", room_id)
+            logger.info("Room %s: Copilot session evicted", room_id)
+
+    async def discard_session(self, room_id: str, session_id: str) -> None:
+        """Evict the room's never-seeded session and delete its disk state.
+
+        The delete still runs when the eviction is interrupted, so an
+        abandoned session never lingers on disk.
+        """
+        logger.info(
+            "Room %s: discarding unseeded Copilot session %s", room_id, session_id
+        )
+        try:
+            await self.evict_session(room_id)
+        finally:
+            await self.delete_session(session_id)
 
     async def delete_session(self, session_id: str) -> None:
         """Delete an abandoned session's disk state; best-effort and bounded."""

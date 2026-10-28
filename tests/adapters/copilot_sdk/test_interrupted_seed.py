@@ -1,39 +1,29 @@
-"""A turn interrupted while seeding: the seed counts once the runtime admits it."""
+"""A turn interrupted while seeding: only a completed seed counts."""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import pytest
 
-from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE, HISTORY_HEADING
+from band.adapters.copilot_sdk import HISTORY_HEADING
 from band.converters.copilot_sdk import COPILOT_RESUME_RECORD, CopilotSDKSessionState
 from band.core.types import Emit
 from tests.adapters.copilot_sdk.fakes import (
+    EARLIER_LINE,
     FakeCopilotClient,
-    HeldAdmission,
-    HeldRestTools,
-    ToolSchemaFakeTools,
+    PromptHold,
     interrupt_when,
     make_started_adapter,
     requires_copilot_sdk,
-    room_message,
+    room_with_earlier_message,
     run_message,
+    usage_data,
 )
 
 pytestmark = requires_copilot_sdk
 
-if _COPILOT_SDK_AVAILABLE:
-    from copilot.generated.session_events import AssistantUsageData
-
-ALICES_NAME = "[Alice]: my name is Alice"
-
-
-def room_with_earlier_message() -> HeldRestTools:
-    tools = HeldRestTools()
-    tools.set_room_context([room_message("earlier", "my name is Alice")])
-    return tools
+REPLAYED = f"{HISTORY_HEADING}\n{EARLIER_LINE}"
 
 
 class TestInterruptedSeed:
@@ -53,85 +43,87 @@ class TestInterruptedSeed:
         await run_message(adapter, tools, is_session_bootstrap=False)
 
         _, fresh = client.sessions
-        assert f"{HISTORY_HEADING}\n{ALICES_NAME}" in fresh.prompts[0]
+        assert REPLAYED in fresh.prompts[0]
         assert COPILOT_RESUME_RECORD.candidates(tools.events_sent) == {
             "room-1": fresh.session_id
         }
 
-    async def test_an_interrupt_before_the_runtime_admits_the_seed_replays_it_again(
+    async def test_an_interrupted_first_prompt_discards_its_session_and_replays(
         self,
     ):
-        client = FakeCopilotClient()
-        held = client.held_admission = HeldAdmission(admits_late=False)
+        hold = PromptHold()
+        client = FakeCopilotClient(turn_events=[hold])
         adapter = await make_started_adapter(client)
         tools = room_with_earlier_message()
-        history = CopilotSDKSessionState(text=ALICES_NAME)
+        history = CopilotSDKSessionState(text=EARLIER_LINE)
         await interrupt_when(
             asyncio.create_task(run_message(adapter, tools, history=history)),
-            held.received,
+            hold.reached,
         )
+        await adapter.backend_turns.settled("room-1")
         unrecorded = COPILOT_RESUME_RECORD.candidates(tools.events_sent)
 
         await run_message(adapter, tools, is_session_bootstrap=False)
 
-        (session,) = client.sessions
+        interrupted, fresh = client.sessions
         assert unrecorded == {}
-        assert f"{HISTORY_HEADING}\n{ALICES_NAME}" in session.prompts[1]
-
-    async def test_an_admission_reported_after_the_interrupt_still_seeds(self):
-        client = FakeCopilotClient()
-        held = client.held_admission = HeldAdmission(admits_late=True)
-        adapter = await make_started_adapter(client)
-        tools = room_with_earlier_message()
-        history = CopilotSDKSessionState(text=ALICES_NAME)
-        await interrupt_when(
-            asyncio.create_task(run_message(adapter, tools, history=history)),
-            held.received,
-        )
-
-        await run_message(adapter, tools, is_session_bootstrap=False)
-
-        (session,) = client.sessions
-        assert HISTORY_HEADING not in session.prompts[1]
+        assert client.deleted == [interrupted.session_id]
+        assert interrupted.disconnected
+        assert interrupted.handlers == []
+        assert client.resume_calls == []
+        assert REPLAYED in fresh.prompts[0]
         assert COPILOT_RESUME_RECORD.candidates(tools.events_sent) == {
-            "room-1": session.session_id
+            "room-1": fresh.session_id
         }
 
-    async def test_an_interrupt_after_the_seed_is_admitted_keeps_it_resumable(self):
-        admitted = asyncio.Event()
-
-        async def park_the_first_prompt(_session: Any) -> None:
-            if not admitted.is_set():
-                admitted.set()
-                await asyncio.Event().wait()  # until the turn is interrupted
-
-        client = FakeCopilotClient(turn_events=[park_the_first_prompt])
+    async def test_an_interrupted_later_prompt_keeps_the_seeded_session(self):
+        client = FakeCopilotClient()
         adapter = await make_started_adapter(client)
-        tools = ToolSchemaFakeTools()
-        history = CopilotSDKSessionState(text=ALICES_NAME)
-        await interrupt_when(
-            asyncio.create_task(run_message(adapter, tools, history=history)),
-            admitted,
-        )
-        seeded = client.sessions[0]
-        seeded.send_error = RuntimeError("broken pipe")
+        tools = room_with_earlier_message()
+        await run_message(adapter, tools)
+        (seeded,) = client.sessions
+        hold = PromptHold()
+        seeded.turn_events = [hold]
 
-        with pytest.raises(RuntimeError, match="broken pipe"):
-            await run_message(adapter, tools, is_session_bootstrap=False)
+        await interrupt_when(
+            asyncio.create_task(
+                run_message(adapter, tools, is_session_bootstrap=False)
+            ),
+            hold.reached,
+        )
         await run_message(adapter, tools, is_session_bootstrap=False)
 
-        assert client.resume_calls == [seeded.session_id]
+        assert client.sessions == [seeded]
         assert client.deleted == []
-        assert HISTORY_HEADING not in client.sessions[-1].prompts[0]
+        assert seeded.aborted
+        assert seeded.handlers == []
+        assert REPLAYED not in seeded.prompts[-1]
+
+    async def test_an_interrupt_while_dropping_a_failed_seed_still_deletes_it(self):
+        client = FakeCopilotClient(prompt_errors=[RuntimeError("model unavailable")])
+        adapter = await make_started_adapter(client)
+        client.hold_aborts = True
+        tools = room_with_earlier_message()
+
+        await interrupt_when(
+            asyncio.create_task(run_message(adapter, tools)), client.aborting
+        )
+        client.hold_aborts = False
+        (failed,) = client.sessions
+        failed.abort_released.set()
+        await run_message(adapter, tools, is_session_bootstrap=False)
+
+        assert client.deleted == [failed.session_id]
+        assert REPLAYED in client.sessions[-1].prompts[0]
 
     async def test_an_interrupt_after_the_seed_completed_does_not_replay_it(self):
         client = FakeCopilotClient(
-            turn_events=[AssistantUsageData(model="m", input_tokens=1, output_tokens=1)]
+            turn_events=[usage_data(input_tokens=1, output_tokens=1)]
         )
         adapter = await make_started_adapter(client, emit=Emit.USAGE)
         tools = room_with_earlier_message()
         tools.hold_usage = True
-        history = CopilotSDKSessionState(text=ALICES_NAME)
+        history = CopilotSDKSessionState(text=EARLIER_LINE)
         await interrupt_when(
             asyncio.create_task(run_message(adapter, tools, history=history)),
             tools.parked,
@@ -141,4 +133,5 @@ class TestInterruptedSeed:
         await run_message(adapter, tools, is_session_bootstrap=False)
 
         (session,) = client.sessions
+        assert client.deleted == []
         assert HISTORY_HEADING not in session.prompts[1]

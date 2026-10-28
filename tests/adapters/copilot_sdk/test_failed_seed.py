@@ -6,23 +6,19 @@ import pytest
 
 from band.adapters.copilot_sdk import HISTORY_HEADING
 from band.converters.copilot_sdk import COPILOT_RESUME_RECORD, CopilotSDKSessionState
+from band.testing import reported_failures
 from tests.adapters.copilot_sdk.fakes import (
+    EARLIER_LINE,
     FakeCopilotClient,
-    ToolSchemaFakeTools,
     make_platform_message,
     make_started_adapter,
     requires_copilot_sdk,
     room_message,
+    room_with_earlier_message,
     run_message,
 )
 
 pytestmark = requires_copilot_sdk
-
-
-def room_with_earlier_message() -> ToolSchemaFakeTools:
-    tools = ToolSchemaFakeTools()
-    tools.set_room_context([room_message("earlier", "my name is Alice")])
-    return tools
 
 
 class TestFailedSeed:
@@ -40,7 +36,7 @@ class TestFailedSeed:
         failed, fresh = client.sessions
         assert client.resume_calls == []
         assert fresh.session_id != failed.session_id
-        assert f"{HISTORY_HEADING}\n[Alice]: my name is Alice" in fresh.prompts[0]
+        assert f"{HISTORY_HEADING}\n{EARLIER_LINE}" in fresh.prompts[0]
         assert "[Alice]: what is my name?" not in fresh.prompts[0]
         assert COPILOT_RESUME_RECORD.candidates(tools.events_sent) == {
             "room-1": fresh.session_id
@@ -70,6 +66,19 @@ class TestFailedSeed:
         assert COPILOT_RESUME_RECORD.candidates(tools.events_sent) == {
             "room-1": client.sessions[-1].session_id
         }
+
+    @pytest.mark.looptime
+    async def test_an_unanswered_delete_still_reports_the_turns_failure(self):
+        client = FakeCopilotClient(prompt_errors=[RuntimeError("model unavailable")])
+        client.hold_delete = True
+        adapter = await make_started_adapter(client)
+        tools = room_with_earlier_message()
+
+        with pytest.raises(RuntimeError, match="model unavailable"):
+            await run_message(adapter, tools)
+
+        assert len(reported_failures(tools)) == 1
+        assert client.deleted == []
 
     async def test_an_unfetchable_transcript_prompts_the_fresh_session_unreplayed(
         self,

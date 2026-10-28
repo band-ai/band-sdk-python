@@ -18,6 +18,7 @@ from band.integrations.copilot_sdk import (
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
+    is_fresh_session_id,
     make_started_adapter,
     requires_copilot_sdk,
     run_message,
@@ -169,4 +170,6 @@ class TestSessionConfiguration:
 
         await run_message(adapter, tools, room_id="room-42")
 
-        assert client.sessions[0].session_id.startswith("myagent-room-42-")
+        assert is_fresh_session_id(
+            client.sessions[0].session_id, prefix="myagent-", room_id="room-42"
+        )

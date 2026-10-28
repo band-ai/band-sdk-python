@@ -1,7 +1,8 @@
 """Backend-stop probes for the copilot_sdk adapter; see ``stopprobes``.
 
-The adapter stops a room's backend turn with ``session.abort()``, which keeps
-the session usable, so each probe reports what the room's sessions saw.
+The adapter stops a seeded session's backend turn with ``session.abort()``,
+which keeps the session usable; an unseeded session is discarded instead. Each
+probe reports what the room's sessions saw.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from band.testing.fake_tools import FakeAgentTools
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     FakeCopilotSession,
+    PromptHold,
     ToolSchemaFakeTools,
     make_started_adapter,
 )
@@ -32,19 +34,6 @@ from tests.framework_conformance.stopprobes import (
 from tests.framework_conformance.turnprobes import ALICE, ROOM_ID, turn_input
 
 
-class FirstTurnHangs:
-    """A scripted mid-turn step: the first turn never finishes, later ones do."""
-
-    def __init__(self) -> None:
-        self.entered = asyncio.Event()
-
-    async def __call__(self, session: FakeCopilotSession) -> None:
-        if self.entered.is_set():
-            return
-        self.entered.set()
-        await asyncio.Future[None]()
-
-
 def journal(client: FakeCopilotClient) -> list[str]:
     """Every session's prompts, aborts and disconnects, by session number."""
     return [
@@ -54,19 +43,26 @@ def journal(client: FakeCopilotClient) -> list[str]:
     ]
 
 
-async def started() -> tuple[CopilotSDKAdapter, FakeCopilotClient, FirstTurnHangs]:
-    hang = FirstTurnHangs()
+async def started(
+    *, seeded: bool = True
+) -> tuple[CopilotSDKAdapter, FakeCopilotClient, PromptHold]:
+    """A started adapter whose next turn hangs, on a session seeded unless not."""
+    hang = PromptHold(after=1 if seeded else 0)
     client = FakeCopilotClient(turn_events=[hang])
-    return await make_started_adapter(client), client, hang
+    adapter = await make_started_adapter(client)
+    if seeded:
+        # The seeding turn opens the session, so it fixes the bridged tools.
+        await adapter.on_event(turn_input(ToolSchemaFakeTools()))
+    return adapter, client, hang
 
 
 async def stop_running_turn(
-    adapter: CopilotSDKAdapter, hang: FirstTurnHangs, mode: ControlMode
+    adapter: CopilotSDKAdapter, hang: PromptHold, mode: ControlMode
 ) -> None:
     turn = asyncio.create_task(
         adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
     )
-    await wait_until(hang.entered.is_set)
+    await wait_until(hang.reached.is_set)
     await end_turn(adapter, turn, ROOM_ID, mode)
 
 
@@ -81,13 +77,13 @@ def hold_aborted_idle(session: FakeCopilotSession) -> None:
 async def stop_holding(
     adapter: CopilotSDKAdapter,
     client: FakeCopilotClient,
-    hang: FirstTurnHangs,
+    hang: PromptHold,
     tools: FakeAgentTools,
     hold: Callable[[FakeCopilotSession], None],
 ) -> FakeCopilotSession:
     """Stop the running turn and leave part of its abort in flight, as ``hold`` says."""
     turn = asyncio.create_task(adapter.on_event(turn_input(tools)))
-    await wait_until(hang.entered.is_set)
+    await wait_until(hang.reached.is_set)
     session = client.sessions[0]
     hold(session)
     await cancel_turn(turn)
@@ -99,6 +95,19 @@ async def end_running_turn(mode: ControlMode) -> list[str]:
     adapter, client, hang = await started()
     await stop_running_turn(adapter, hang, mode)
     return journal(client)
+
+
+async def end_seeding_turn() -> list[str]:
+    """Stopping the turn that seeds a session discards that session."""
+    adapter, client, hang = await started(seeded=False)
+    await stop_running_turn(adapter, hang, ControlMode.STOP)
+    await adapter.backend_turns.settled(ROOM_ID)
+    deleted = [
+        f"session {number} deleted"
+        for number, session in enumerate(client.sessions, start=1)
+        if session.session_id in client.deleted
+    ]
+    return [*journal(client), *deleted]
 
 
 async def next_message_waits_for_the_abort() -> list[str]:
@@ -199,7 +208,7 @@ async def shutdown_right_after_stop() -> list[str]:
 
 
 async def idle() -> list[str]:
-    adapter, client, _ = await started()
+    adapter, client, _ = await started(seeded=False)
     await stop_room(adapter, ROOM_ID)
     return journal(client)
 
@@ -208,13 +217,19 @@ CASES: dict[str, StopCase] = {
     **{
         f"{mode}-mid-turn": StopCase(
             run=lambda mode=mode: end_running_turn(mode),
-            expected=["session 1 prompt", "session 1 abort", "session 1 idle"],
+            expected=[
+                "session 1 prompt",
+                "session 1 prompt",
+                "session 1 abort",
+                "session 1 idle",
+            ],
         )
         for mode in ENDING_CONTROLS
     },
     "next-message-waits-for-the-abort": StopCase(
         run=next_message_waits_for_the_abort,
         expected=[
+            "session 1 prompt",
             "session 1 prompt",
             "session 1 abort",
             "session 1 idle",
@@ -224,6 +239,7 @@ CASES: dict[str, StopCase] = {
     "next-message-waits-for-the-aborted-idle": StopCase(
         run=next_message_waits_for_the_aborted_idle,
         expected=[
+            "session 1 prompt",
             "session 1 prompt",
             "session 1 abort",
             "session 1 idle",
@@ -238,6 +254,7 @@ CASES: dict[str, StopCase] = {
         run=cleanup_waits_for_the_abort,
         expected=[
             "session 1 prompt",
+            "session 1 prompt",
             "session 1 abort",
             "session 1 idle",
             "session 1 disconnect",
@@ -247,9 +264,20 @@ CASES: dict[str, StopCase] = {
         run=shutdown_right_after_stop,
         expected=[
             "session 1 prompt",
+            "session 1 prompt",
             "session 1 abort",
             "session 1 idle",
             "session 1 disconnect",
+        ],
+    ),
+    "stop-while-seeding": StopCase(
+        run=end_seeding_turn,
+        expected=[
+            "session 1 prompt",
+            "session 1 abort",
+            "session 1 idle",
+            "session 1 disconnect",
+            "session 1 deleted",
         ],
     ),
     "idle-room": StopCase(run=idle, expected=[]),

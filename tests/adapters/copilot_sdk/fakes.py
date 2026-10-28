@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -36,10 +37,14 @@ requires_copilot_sdk = pytest.mark.skipif(
 
 if _COPILOT_SDK_AVAILABLE:
     from copilot.generated.session_events import (
+        AssistantUsageData,
         SessionErrorData,
         SessionIdleData,
-        UserMessageData,
     )
+
+# An earlier room message, and the line it becomes in a replayed transcript.
+EARLIER_MESSAGE = "my name is Alice"
+EARLIER_LINE = f"[Alice]: {EARLIER_MESSAGE}"
 
 
 class ObservedCopilotAdapter(CopilotSDKAdapter):
@@ -146,21 +151,54 @@ class HeldRestTools(ToolSchemaFakeTools):
         await asyncio.Event().wait()  # until the turn is interrupted
 
 
-class HeldAdmission:
-    """Holds a session's next prompt at the runtime before it admits it.
+def room_with_earlier_message() -> HeldRestTools:
+    """A room whose transcript holds Alice's ``EARLIER_MESSAGE``."""
+    tools = HeldRestTools()
+    tools.set_room_context([room_message("earlier", EARLIER_MESSAGE)])
+    return tools
 
-    Only an interrupt ends the hold. The runtime then either never admits the
-    prompt or, with ``admits_late``, reports admitting it after the interrupt.
-    """
 
-    def __init__(self, *, admits_late: bool) -> None:
-        self.admits_late = admits_late
-        self.received = asyncio.Event()
+def usage_data(*, input_tokens: int, output_tokens: int) -> Any:
+    """One model call's ``assistant.usage`` event data."""
+    return AssistantUsageData(
+        model="m", input_tokens=input_tokens, output_tokens=output_tokens
+    )
+
+
+def is_fresh_session_id(session_id: str, *, prefix: str, room_id: str) -> bool:
+    """Whether ``session_id`` is a fresh session id minted for ``room_id``."""
+    pattern = f"{re.escape(prefix)}{re.escape(room_id)}-[0-9a-f]{{32}}"
+    return re.fullmatch(pattern, session_id) is not None
+
+
+class PromptHold:
+    """A turn event that parks the prompt after ``after`` finished ones until
+    the turn is interrupted; every other prompt finishes."""
+
+    def __init__(self, *, after: int = 0) -> None:
+        self.reached = asyncio.Event()
+        self.finishing = after
+
+    async def __call__(self, _session: FakeCopilotSession) -> None:
+        if self.reached.is_set():
+            return
+        if self.finishing:
+            self.finishing -= 1
+            return
+        self.reached.set()
+        await asyncio.Event().wait()  # until the turn is interrupted
 
 
 async def interrupt_when(turn: asyncio.Task[Any], reached: asyncio.Event) -> None:
-    """Interrupt ``turn`` once it reaches ``reached``, as the runtime's stop does."""
-    await reached.wait()
+    """Interrupt ``turn`` once it reaches ``reached``, as the runtime's stop does.
+
+    Fails when the turn ends before reaching it.
+    """
+    reaching = asyncio.create_task(reached.wait())
+    await asyncio.wait({turn, reaching}, return_when=asyncio.FIRST_COMPLETED)
+    if turn.done():
+        reaching.cancel()
+        pytest.fail(f"the turn ended before it was interrupted: {turn!r}")
     turn.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await turn
@@ -184,14 +222,15 @@ class FakeCopilotSession:
         self.reply_content = reply_content
         self.turn_events = turn_events or []
         self.send_error: Exception | None = None
-        self.held_admission: HeldAdmission | None = None
         self.prompts: list[str] = []
         self.handlers: list[Any] = []
         self.aborted = False
         self.disconnected = False
         # Every prompt, abort and disconnect, in the order the session saw them.
         self.journal: list[str] = []
-        # While cleared, an abort stays in flight.
+        # Set once an abort reaches the session; while ``abort_released`` is
+        # cleared, that abort stays in flight.
+        self.aborting = asyncio.Event()
         self.abort_released = asyncio.Event()
         self.abort_released.set()
         # While set, an abort is acknowledged but the idle that ends the aborted
@@ -210,18 +249,6 @@ class FakeCopilotSession:
     ) -> Any:
         self.prompts.append(prompt)
         self.journal.append("prompt")
-        if (held := self.held_admission) is not None:
-            self.held_admission = None
-            held.received.set()
-            try:
-                await asyncio.Event().wait()  # until the turn is interrupted
-            except asyncio.CancelledError:
-                if held.admits_late:
-                    asyncio.get_running_loop().call_soon(
-                        self._publish, UserMessageData(content=prompt)
-                    )
-                raise
-        self._publish(UserMessageData(content=prompt))  # the runtime admits it
         if self.send_error:
             raise self.send_error
         for data in self.turn_events:
@@ -244,6 +271,7 @@ class FakeCopilotSession:
         return SimpleNamespace(data=SimpleNamespace(content=self.reply_content))
 
     async def abort(self) -> None:
+        self.aborting.set()
         await self.abort_released.wait()
         self.aborted = True
         self.journal.append("abort")
@@ -289,8 +317,12 @@ class FakeCopilotClient:
         self.resume_calls: list[str] = []
         self.deleted: list[str] = []
         self.delete_error: Exception | None = None
-        # The next minted session holds its first prompt before admitting it.
-        self.held_admission: HeldAdmission | None = None
+        # While set, a delete never gets an answer from the runtime.
+        self.hold_delete = False
+        # While set, each new session holds its aborts in flight; ``aborting``
+        # is set once an abort reaches any of them.
+        self.hold_aborts = False
+        self.aborting = asyncio.Event()
         # Every id create_session was asked for; while ``hold_create`` is set,
         # the runtime creates the next one but its reply never arrives.
         self.create_calls: list[str] = []
@@ -323,11 +355,15 @@ class FakeCopilotClient:
     def _mint(self, session: FakeCopilotSession) -> FakeCopilotSession:
         if self.prompt_errors:
             session.send_error = self.prompt_errors.pop(0)
-        session.held_admission, self.held_admission = self.held_admission, None
+        if self.hold_aborts:
+            session.abort_released.clear()
+            session.aborting = self.aborting
         self.sessions.append(session)
         return session
 
     async def delete_session(self, session_id: str) -> None:
+        if self.hold_delete:
+            await asyncio.Event().wait()  # until the caller gives up
         if self.delete_error:
             raise self.delete_error
         self.deleted.append(session_id)

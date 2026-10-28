@@ -91,7 +91,6 @@ try:
         SessionIdleData,
         SessionWarningData,
         ToolExecutionCompleteData,
-        UserMessageData,
     )
 
     _COPILOT_SDK_AVAILABLE = True
@@ -179,6 +178,11 @@ class RoomSession:
     resumable: str | None = None
     recorded: str | None = None
 
+    @property
+    def unseeded(self) -> str | None:
+        """The live session's id while its seeding prompt has not completed."""
+        return self.live if self.seed.replay_due else None
+
     def confirm_seed(self) -> None:
         """Record that the live session's seeding prompt completed."""
         self.seed.confirm()
@@ -206,16 +210,12 @@ class TurnState:
 class SessionTurn:
     """The session a stop aborts, the room it seeds, and how far its prompt got."""
 
+    room_id: str
     session: CopilotSession
     room: RoomSession
     # Set when the prompt is sent, cleared once it returns; a prompt that is
     # cancelled or fails leaves it set.
     prompting: bool = False
-    # Set once the runtime admits the prompt (its ``user.message`` event).
-    admitted: bool = False
-    # An interrupted prompt's event subscription. The runtime may report the
-    # admission only after the interrupt, so the abort ends it once settled.
-    interrupted_watch: Callable[[], None] | None = None
 
 
 def _turn_incident(data: object) -> str | None:
@@ -484,8 +484,9 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
 
         # Same-session calls must not interleave; other rooms run concurrently.
         async with self._session_manager.turn_lock(room_id):
-            # Abort is what stops the runtime's work for a cancelled turn; the
-            # session stays valid for the next message.
+            # A cancelled turn's stop aborts the runtime's work; a seeded
+            # session stays valid for the next message, an unseeded one is
+            # discarded so the next message starts over and replays.
             async with self.backend_turns.running(room_id):
                 # Bound once the previous turn's abort has settled and this
                 # message holds the room, so neither a queued message nor a
@@ -505,7 +506,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                         AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                     )
                     raise
-                live = SessionTurn(session, self._room(room_id))
+                live = SessionTurn(room_id, session, self._room(room_id))
                 self.backend_turns.bind(room_id, live)
                 prompt = self._compose_prompt(
                     messages,
@@ -522,7 +523,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                     final_text = await self._run_turn(live, prompt, turn)
                 except Exception:
                     logger.exception("Room %s: Copilot turn failed", room_id)
-                    await self._drop_session(room_id)
+                    await self._drop_session(room_id, live.room)
                     await tools.send_failure(
                         AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                     )
@@ -567,17 +568,17 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         """Return (creating if needed) the room's session record."""
         return self._sessions.setdefault(room_id, RoomSession())
 
-    async def _drop_session(self, room_id: str) -> None:
-        """Abort and drop a failed turn's session, deleting it if never seeded.
+    async def _drop_session(self, room_id: str, room: RoomSession) -> None:
+        """Abort and drop a failed turn's session, discarding it if never seeded.
 
         An unseeded session was created by this process and is never resumed,
         so its disk state is only clutter; a seeded one is resumed next turn.
         """
         assert self._session_manager is not None
-        await self._session_manager.evict_session(room_id)
-        room = self._room(room_id)
-        if room.seed.replay_due and room.live:
-            await self._session_manager.delete_session(room.live)
+        if (unseeded := room.unseeded) is not None:
+            await self._session_manager.discard_session(room_id, unseeded)
+        else:
+            await self._session_manager.evict_session(room_id)
 
     def _session_prefix(self) -> str:
         """Return the per-room session-id prefix.
@@ -1005,16 +1006,28 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         parts.append(format_current_inputs(messages))
         return "\n\n".join(parts)
 
+    async def _abort_turn(self, live: SessionTurn) -> None:
+        """Stop an interrupted turn, discarding its session if still unseeded.
+
+        The next turn waits for this stop, so nothing else uses the session
+        meanwhile; one a failed turn already dropped needs no stop.
+        """
+        assert self._session_manager is not None
+        if self._session_manager.get_session(live.room_id) is not live.session:
+            return
+        if (unseeded := live.room.unseeded) is not None:
+            await self._session_manager.discard_session(live.room_id, unseeded)
+        else:
+            await self._abort_prompt(live)
+
     @staticmethod
-    async def _abort_turn(live: SessionTurn) -> None:
+    async def _abort_prompt(live: SessionTurn) -> None:
         """Abort the prompt and, while one is running, wait for the idle that ends it.
 
         The CLI emits that idle just after acknowledging the abort, and
         ``send_and_wait`` ends on any idle: a next prompt sent before it
         arrives returns on it with no reply. Subscribing first also catches
-        an idle that arrives ahead of the acknowledgement. Once it settles,
-        an interrupted prompt the runtime admitted counts as delivering its
-        seed.
+        an idle that arrives ahead of the acknowledgement.
         """
         idled = asyncio.Event()
 
@@ -1029,10 +1042,6 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 await idled.wait()
         finally:
             unsubscribe()
-            if live.interrupted_watch is not None:
-                live.interrupted_watch()
-        if live.interrupted_watch is not None and live.admitted:
-            live.room.confirm_seed()
 
     async def _run_turn(
         self, live: SessionTurn, prompt: str, turn: TurnState
@@ -1050,8 +1059,6 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 turn.reasonings[data.reasoning_id] = data.content
             elif isinstance(data, AssistantUsageData):
                 turn.usage += self._usage_from_event(data)  # sum per-call usage
-            elif isinstance(data, UserMessageData):
-                live.admitted = True
             elif incident := _turn_incident(data):
                 turn.incidents.append(incident)
 
@@ -1061,12 +1068,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             final_event = await live.session.send_and_wait(
                 prompt, timeout=self.config.turn_timeout_s
             )
-        except asyncio.CancelledError:
-            live.interrupted_watch = unsubscribe
-            raise
         finally:
-            if live.interrupted_watch is None:
-                unsubscribe()
+            unsubscribe()
         live.prompting = False
 
         content = getattr(final_event.data, "content", None) if final_event else None

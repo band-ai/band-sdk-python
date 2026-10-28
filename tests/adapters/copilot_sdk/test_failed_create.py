@@ -41,4 +41,5 @@ class TestFailedCreate:
         with pytest.raises(RuntimeError, match="runtime refused"):
             await run_message(adapter, ToolSchemaFakeTools())
 
-        assert client.deleted == client.create_calls
+        (asked,) = client.create_calls
+        assert client.deleted == [asked]
