@@ -12,6 +12,8 @@ def write_bundle(path: Path, members: dict[str, tuple[bytes, int]]) -> Path:
     with zipfile.ZipFile(path, "w") as bundle:
         for name, (content, mode) in members.items():
             member = zipfile.ZipInfo(name)
+            # ZipInfo normalizes separators on Windows; preserve the wire input.
+            member.filename = name
             member.create_system = 3
             member.external_attr = mode << 16
             bundle.writestr(member, content)

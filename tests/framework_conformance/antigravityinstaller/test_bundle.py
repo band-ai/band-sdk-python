@@ -69,9 +69,10 @@ class TestBundleExtraction:
             ("/absolute", stat.S_IFREG | 0o644),
             ("C:/drive", stat.S_IFREG | 0o644),
             ("nested\\escaped", stat.S_IFREG | 0o644),
+            ("truncated\x00suffix", stat.S_IFREG | 0o644),
             ("link", stat.S_IFLNK | 0o777),
         ],
-        ids=["traversal", "absolute", "drive", "backslash", "symlink"],
+        ids=["traversal", "absolute", "drive", "backslash", "null", "symlink"],
     )
     def test_rejects_unsafe_members(
         self, installer: ModuleType, tmp_path: Path, name: str, mode: int

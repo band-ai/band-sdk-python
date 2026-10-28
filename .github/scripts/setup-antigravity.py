@@ -108,12 +108,13 @@ def extract_bundle(archive: Path, staging: Path) -> None:
     seen: set[str] = set()
     with zipfile.ZipFile(archive) as bundle:
         for member in bundle.infolist():
-            name = member.filename
+            name = member.orig_filename
             path = PurePosixPath(name)
             mode = member.external_attr >> 16
             key = name.rstrip("/").casefold()
             if (
-                path.is_absolute()
+                name != member.filename
+                or path.is_absolute()
                 or ".." in path.parts
                 or "\\" in name
                 or PureWindowsPath(name).drive
