@@ -29,6 +29,12 @@ paths:
   import those entry points back.
   Use `__all__` or explicit re-export aliases only to declare such a public API,
   not as boilerplate in ordinary modules.
+- Keep code out of `__init__.py`. It holds only the package docstring and, at
+  an intentional public entry point, that entry point's re-exports, `__all__`,
+  and the lazy `__getattr__` that defers an optional extra's imports. Every
+  other class, function, constant or piece of logic lives in a named module
+  the package imports from. Test packages follow the stricter rule in
+  `band-python-test-conventions`.
 - No underscores in file names or class names: modules get a clean single word
   (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
   PascalCase with no leading underscore. Exception: patterns a tool requires,
