@@ -2,8 +2,8 @@
 
 Each probe pairs the real adapter in process with a scripted ACP peer over real
 ACP JSON-RPC and returns every prompt the peer received, so the suites assert on
-what actually reaches the agent. These adapters sit outside the framework
-conformance matrix, so ``ADAPTERS`` also lets the drift test find them.
+what actually reaches the agent. Antigravity's probe uses its public stdio
+boundary; ``ADAPTERS`` holds the inherited in-process factories.
 """
 
 from __future__ import annotations
@@ -14,7 +14,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from band.core.types import AgentInput
+from tests.baseline.adapter import Adapter
 from tests.framework_conformance.batchprobes import BatchProbe, deliver
+from tests.framework_conformance.batchprobes.antigravity import (
+    PROBE as ANTIGRAVITY_PROBE,
+)
 
 if TYPE_CHECKING:
     from band.integrations.acp.client_adapter import ACPClientAdapter
@@ -87,5 +91,6 @@ def probe_of(build: AdapterFactory) -> BatchProbe:
 
 
 PROBES: dict[str, BatchProbe] = {
-    framework_id: probe_of(build) for framework_id, build in ADAPTERS.items()
+    **{framework_id: probe_of(build) for framework_id, build in ADAPTERS.items()},
+    Adapter.ANTIGRAVITY_ACP.value: ANTIGRAVITY_PROBE,
 }

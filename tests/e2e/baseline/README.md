@@ -941,8 +941,10 @@ So `letta` is listed in `LINUX_ONLY_LANES` (`toolkit/deps.py`) and the e2e
 workflow emits no `letta × windows` cell — every other lane runs on both OSes.
 
 `e2e_pending` (which once excluded Letta) is now a reason *string*
-(`str | None`), pinned to an allowlist — empty today — in
-`tests/framework_conformance/test_agent_wiring_rules.py`.
+(`str | None`), pinned to an explicit allowlist in
+`tests/framework_conformance/test_agent_wiring_rules.py`. Antigravity ACP is
+staged there until its [CI installation and Google-lane qualification](https://linear.app/thenvoi/issue/INT-1948/feat-install-and-qualify-antigravity-acp-in-the-google-e2e-lane)
+are complete; that work removes both its pending reason and allowlist entry.
 
 
 ### Legacy OpenAI environments

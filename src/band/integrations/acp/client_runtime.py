@@ -170,6 +170,13 @@ class ACPRuntime(ACPSessionOperations):
         if self._client_capabilities is not None:
             init_kwargs["client_capabilities"] = self._client_capabilities
         init_response = await cast(Any, conn).initialize(**init_kwargs)
+        agent_info = getattr(init_response, "agent_info", None)
+        if agent_info is not None:
+            logger.info(
+                "ACP agent reports name=%s version=%s",
+                agent_info.name,
+                agent_info.version,
+            )
         self._agent_mcp_transport = self._select_mcp_transport(init_response)
         self._agent_mcp_http = self._advertised_mcp(init_response, "http")
         self._agent_mcp_sse = self._advertised_mcp(init_response, "sse")

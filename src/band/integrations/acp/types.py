@@ -112,6 +112,7 @@ class ACPToolCall:
     arguments: dict[str, JsonValue]
     mcp_server: str | None = None
     title: str | None = None
+    mcp_metadata_rejected: bool = False
 
     @classmethod
     def from_acp(
@@ -126,7 +127,9 @@ class ACPToolCall:
         canonical name is the only one the object ever carries.
         """
         raw_input = getattr(tool_call, "raw_input", None)
-        invocation = _mcp_invocation(raw_input, getattr(tool_call, "field_meta", None))
+        meta = getattr(tool_call, "field_meta", None)
+        meta_invocation = _meta_mcp_invocation(raw_input, meta)
+        invocation = meta_invocation or _raw_input_mcp_invocation(raw_input)
         title = getattr(tool_call, "title", None)
         if invocation is None:
             name = str(title or getattr(tool_call, "name", "unknown"))
@@ -146,6 +149,11 @@ class ACPToolCall:
             arguments=arguments,
             mcp_server=invocation[0] if invocation is not None else None,
             title=title if isinstance(title, str) else None,
+            mcp_metadata_rejected=(
+                isinstance(meta, dict)
+                and _META_MCP_KEY in meta
+                and meta_invocation is None
+            ),
         )
 
     def room_event(self) -> ToolCallRoomEvent:
@@ -170,15 +178,6 @@ _META_MCP_IDENTITY_KEYS = ("server", "tool")
 _META_MCP_ARGUMENTS_KEY = "arguments"
 
 McpInvocation = tuple[str, str, dict[str, JsonValue]]
-
-
-def _mcp_invocation(raw_input: object, meta: object) -> McpInvocation | None:
-    """Return the server, tool and arguments of an MCP call.
-
-    Identity comes from ``_meta`` or ``rawInput``; the call's title is only a
-    display string.
-    """
-    return _meta_mcp_invocation(raw_input, meta) or _raw_input_mcp_invocation(raw_input)
 
 
 def _meta_mcp_invocation(raw_input: object, meta: object) -> McpInvocation | None:

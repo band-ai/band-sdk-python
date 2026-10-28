@@ -242,11 +242,11 @@ def test_peer_must_be_a_live_adapter() -> None:
 # cells, which must never become a quiet way to dodge E2E. Adding an adapter here
 # requires editing this allowlist (naming it, deliberately, in review) and a
 # follow-up that takes its lane live.
-EXPECTED_PENDING_ADAPTERS: frozenset[str] = frozenset()
+EXPECTED_PENDING_ADAPTERS: frozenset[str] = frozenset({Adapter.ANTIGRAVITY_ACP})
 
 
 def test_pending_adapters_match_the_allowlist() -> None:
-    """The e2e_pending set equals the explicit allowlist (empty today)."""
+    """The e2e_pending set equals the explicit staging allowlist."""
 
     pending = {
         str(spec.id): spec.e2e_pending

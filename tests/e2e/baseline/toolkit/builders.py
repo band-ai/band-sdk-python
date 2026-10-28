@@ -609,6 +609,51 @@ def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
 
 
 @adapter(
+    Adapter.ANTIGRAVITY_ACP,
+    requires=[Dep.GOOGLE],
+    supports=_EVERY_CAPABILITY,
+    runs_tool_loop=False,
+    e2e_pending="CI server installation and live Google qualification are pending",
+)
+def _build_antigravity_acp(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
+) -> SimpleAdapter[Any]:
+    from band.adapters.antigravity_acp import (  # noqa: PLC0415 -- isolates the acp extra from other framework builders
+        AntigravityACPAdapter,
+        AntigravityACPAdapterConfig,
+    )
+
+    api_key = s.llm_credentials.gemini_api_key or s.llm_credentials.google_api_key
+    if not api_key:
+        raise ValueError("Antigravity requires GEMINI_API_KEY or GOOGLE_API_KEY")
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-antigravity-acp-")
+    # Decline requested native permissions; the provider's scheduler and some
+    # file reads bypass ACP permissions and are not sandboxed by this policy.
+    config_kwargs: dict[str, Any] = {
+        "custom_section": prompt or "",
+        "model": s.llm_models.gemini_model,
+        "gemini_api_key": api_key,
+        "gemini_home": os.path.join(sandbox.name, "antigravity-home"),
+        "approval_mode": "auto_decline",
+    }
+    if workspace_for_room is None:
+        config_kwargs["cwd"] = sandbox.name
+    adapter = AntigravityACPAdapter(
+        config=AntigravityACPAdapterConfig(**config_kwargs),
+        workspace_for_room=workspace_for_room,
+        additional_tools=_custom_tool_defs(tools),
+        **feature_kwargs(features),
+    )
+    _own_sandbox(adapter, sandbox)
+    return adapter
+
+
+@adapter(
     Adapter.COPILOT_ACP,
     requires=[Dep.COPILOT_CLI, Dep.ANTHROPIC],
     supports=_EVERY_CAPABILITY,

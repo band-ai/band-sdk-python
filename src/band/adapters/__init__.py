@@ -62,6 +62,15 @@ if TYPE_CHECKING:
     from band.adapters.anthropic import (
         AnthropicAdapterConfig as AnthropicAdapterConfig,
     )
+    from band.adapters.antigravity_acp import (
+        AntigravityACPAdapter as AntigravityACPAdapter,
+    )
+    from band.adapters.antigravity_acp import (
+        AntigravityACPAdapterConfig as AntigravityACPAdapterConfig,
+    )
+    from band.adapters.antigravity_acp import (
+        default_antigravity_command as default_antigravity_command,
+    )
     from band.adapters.claude_sdk import (
         ClaudeApprovalOptions as ClaudeApprovalOptions,
     )
@@ -173,6 +182,11 @@ __all__, __getattr__ = lazy_exports(
         "ClaudeSDKAdapterConfig",
     ],
     copilot_sdk=["CopilotSDKAdapter", "CopilotSDKAdapterConfig"],
+    antigravity_acp=[
+        "AntigravityACPAdapter",
+        "AntigravityACPAdapterConfig",
+        "default_antigravity_command",
+    ],
     copilot_acp=["CopilotACPAdapter", "CopilotACPAdapterConfig"],
     cursor_acp=["CursorACPAdapter", "CursorACPAdapterConfig"],
     omp_acp=["OmpACPAdapter", "OmpACPAdapterConfig"],

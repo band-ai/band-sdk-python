@@ -37,6 +37,7 @@ STOP_PROBES: dict[str, dict[str, StopCase]] = {
 #: Subclasses that keep a probed parent's ``backend_turns`` and ``on_message``,
 #: so the parent's probe covers them.
 INHERITED_PROBES: dict[str, str] = {
+    "AntigravityACPAdapter": "ACPClientAdapter",
     "CopilotACPAdapter": "ACPClientAdapter",
     "OmpACPAdapter": "ACPClientAdapter",
 }
