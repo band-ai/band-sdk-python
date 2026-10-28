@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
 import looptime
 import pytest
 import pytest_asyncio
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.client.rest import AsyncRestClient
 from band.core.retention import RoomRetentionConfig
 from band.core.types import FeatureKwargs
 from band.runtime.execution import ExecutionContext
@@ -33,6 +36,7 @@ from tests.adapters.codex.kit import (  # noqa: F401
     patch_codex_clients_by_room,
     send_bootstrap,
 )
+from tests.adapters.codex.seedtransport import SeedTransport
 from tests.adapters.codexturns import (
     FakeCodexClient,
     make_codex_adapter,
@@ -156,3 +160,18 @@ async def started_codex() -> AsyncIterator[Callable[..., Awaitable[CodexAdapter]
     yield start
     for adapter in adapters:
         await adapter.cleanup_all()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def seed_transport(tmp_path: Path) -> AsyncIterator[SeedTransport]:
+    """Own the native processes and real REST client at external transport seams."""
+    peer = SeedTransport(tmp_path)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(peer.answer)) as http:
+        peer.rest = AsyncRestClient(
+            api_key="test", base_url="https://example.test", httpx_client=http
+        )
+        try:
+            yield peer
+        finally:
+            for adapter in peer.adapters:
+                await adapter.cleanup_all()

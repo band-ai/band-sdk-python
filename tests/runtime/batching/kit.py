@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -25,6 +25,7 @@ from band.runtime.messages import PlatformMessage
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event, make_participant_mock
 from tests.core.agentlifecycle.kit import make_runtime
+from tests.roomhistory import stored
 from tests.runtime.conftest import Waiting
 from tests.runtime.helpers import (
     AGENT_ID,
@@ -34,6 +35,9 @@ from tests.runtime.helpers import (
 )
 
 CONTACTS_NOTICE = "alice is now a contact"
+FIRST_INPUT_AT = EPOCH + timedelta(seconds=1)
+SECOND_INPUT_AT = EPOCH + timedelta(seconds=2)
+LATER_INPUT_AT = EPOCH + timedelta(seconds=3)
 
 
 def room_context(*, stored: list[dict[str, Any]] | None = None) -> MagicMock:
@@ -458,19 +462,17 @@ class RewritingPreprocessor(DefaultPreprocessor):
         return replace(message, content="approve") if message is not None else None
 
 
-def stored_message(message_id: str) -> dict[str, Any]:
-    return {
-        "id": message_id,
-        "sender_type": "User",
-        "sender_name": "Alice",
-        "content": message_id,
-    }
+def stored_message(message_id: str, *, inserted_at: datetime = EPOCH) -> dict[str, Any]:
+    return stored(message_id, message_id=message_id, inserted_at=inserted_at)
 
 
-async def history_contents(*, stored_ids: list[str]) -> list[str]:
+async def history_contents(*, stored_messages: list[dict[str, Any]]) -> list[str]:
     """The history a preprocessed batch of ``m1`` and ``m2`` carries."""
-    ctx = room_context(stored=[stored_message(i) for i in stored_ids])
-    events = [make_message_event(msg_id=i) for i in ("m1", "m2")]
+    ctx = room_context(stored=stored_messages)
+    events = [
+        make_message_event(msg_id="m1", inserted_at=FIRST_INPUT_AT.isoformat()),
+        make_message_event(msg_id="m2", inserted_at=SECOND_INPUT_AT.isoformat()),
+    ]
     inp = await DefaultPreprocessor().process_batch(ctx, events, AGENT_ID)
     assert inp is not None
     return [message["content"] for message in inp.history.raw]

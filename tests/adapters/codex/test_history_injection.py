@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Any
@@ -88,7 +89,8 @@ class TestHistoryInjection:
             agent_input("again", tools, is_session_bootstrap=False), contacts_msg=notice
         )
         caplog.clear()
-        await deliver_event(adapter, second)
+        with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
+            await deliver_event(adapter, second)
 
         first_turn, second_turn = fake_client.params_of(CodexRequestMethod.TURN_START)
         assert first_turn["threadId"] != second_turn["threadId"]

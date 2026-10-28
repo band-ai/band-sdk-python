@@ -726,11 +726,10 @@ class RoomCodexClient:
             registration=None, settings=ThreadSettings(), seed=SessionSeed()
         )
 
-    def retain_system_context(self, latest: str | None) -> str | None:
+    async def retain_system_context(self, latest: str | None) -> None:
         """Keep system context until a native turn completes with it."""
         if latest:
             self.pending_system_context.append(latest)
-        return "\n".join(self.pending_system_context) or None
 
     def require_client(self) -> CodexClientProtocol:
         if self.client is None:
@@ -1313,7 +1312,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     command=command,
                 ):
                     return
-                async with room.retained.use():
+                async with room.retained.use(
+                    prepare=partial(room.retain_system_context, contacts_msg)
+                ):
                     try:
                         await self._serve_turn(
                             room=room,
@@ -1321,7 +1322,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                             tools=tools,
                             history=history,
                             participants_msg=participants_msg,
-                            contacts_msg=contacts_msg,
                             is_session_bootstrap=is_session_bootstrap,
                         )
                     finally:
@@ -1390,14 +1390,13 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         tools: AgentToolsProtocol,
         history: CodexSessionState,
         participants_msg: str | None,
-        contacts_msg: str | None,
         is_session_bootstrap: bool,
     ) -> None:
         room_id = room.room_id
         # The turn keeps its originals, and so its audience, in this frame
         # through detached approval waits.
         audience = self._turn_audience(messages)
-        contacts_msg = room.retain_system_context(contacts_msg)
+        contacts_msg = "\n".join(room.pending_system_context) or None
         thread_id = await self._ensure_thread(
             room=room,
             history=history,
@@ -1513,6 +1512,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             seed.confirm()
             if not seed.replay_due:
                 room.pending_system_context.clear()
+        if not room.recorded:
+            room.recorded = await CODEX_RESUME_RECORD.post(
+                tools,
+                room_id=room_id,
+                seed=seed,
+                session=thread_id,
+                details={CodexMetadataKey.TRANSPORT: self.config.transport},
+            )
         await self._emit_turn_outcome(
             tools=tools,
             audience=audience,
@@ -1524,14 +1531,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             native_messages=result.native_messages,
             duration_s=_time.perf_counter() - turn_start,
         )
-        if not room.recorded:
-            room.recorded = await CODEX_RESUME_RECORD.post(
-                tools,
-                room_id=room_id,
-                seed=seed,
-                session=thread_id,
-                details={CodexMetadataKey.TRANSPORT: self.config.transport},
-            )
         await judge_detached_turn(tools, room_id=room_id)
 
     async def _emit_turn_started(
