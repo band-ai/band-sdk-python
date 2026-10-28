@@ -30,6 +30,8 @@ class PeerEvent(StrEnum):
 
 
 class PeerCommand(StrEnum):
+    INITIALIZING = "initializing"
+    RELEASE_INITIALIZE = "release_initialize"
     PERMISSION = "permission"
     PROMPTED = "prompted"
     RELEASE_PROMPT = "release_prompt"
@@ -47,6 +49,7 @@ class PeerSettings(BaseModel):
     options: list[PermissionOption] = Field(default_factory=allow_or_reject)
     reply: str | None = DEFAULT_REPLY
     hold_prompt: bool = False
+    hold_initialize: bool = False
     text: str | None = None
     stop_reason: StopReason = END_TURN_STOP
     config_options: list[SessionConfigOptionSelect] = Field(default_factory=list)

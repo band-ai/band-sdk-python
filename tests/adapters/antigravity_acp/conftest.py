@@ -16,7 +16,7 @@ from tests.framework_conformance.turnprobes import ROOM_ID
 from tests.ports import HeldPort
 
 if TYPE_CHECKING:
-    from tests.adapters.antigravity_acp.control import PermissionControl
+    from tests.adapters.antigravity_acp.control import PeerControl
     from tests.adapters.antigravity_acp.kit import AntigravityRoom
     from tests.adapters.antigravity_acp.peerconfig import PeerSettings
     from tests.integrations.acp.acp_toolkit.agent import Gate
@@ -49,16 +49,16 @@ async def open_peer(
 
 
 @pytest_asyncio.fixture(loop_scope="function")
-async def permission_control() -> AsyncIterator[PermissionControl]:
+async def peer_control() -> AsyncIterator[PeerControl]:
     from tests.adapters.antigravity_acp.control import (  # noqa: PLC0415 -- the peer imports the optional acp dependency
-        PermissionControl,
+        PeerControl,
     )
     from tests.adapters.antigravity_acp.peer import (  # noqa: PLC0415 -- the peer imports the optional acp dependency
         PEER_HOST,
     )
 
     with HeldPort(PEER_HOST) as held:
-        control = PermissionControl(held.port)
+        control = PeerControl(held.port)
         held.release()
         server = await asyncio.start_server(control.connected, PEER_HOST, control.port)
     try:

@@ -12,7 +12,7 @@ from band.core.types import ApprovalMode
 from band.integrations.acp.client_adapter import ACPPermissionRequest
 from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
-from tests.adapters.antigravity_acp.control import PermissionControl
+from tests.adapters.antigravity_acp.control import PeerControl
 from tests.adapters.antigravity_acp.kit import (
     AntigravityRoom,
     ScheduleInput,
@@ -159,18 +159,18 @@ class TestAntigravityPermissions:
     async def test_permission_after_the_native_turn_is_declined(
         self,
         open_peer: Callable[..., Awaitable[AntigravityRoom]],
-        permission_control: PermissionControl,
+        peer_control: PeerControl,
     ) -> None:
         peer = await open_peer(
             PeerSettings(
                 permission=mcp_permission(BAND_MCP_SERVER_NAME, BandTool.SEND_MESSAGE),
                 permission_on_prompt=False,
-                control_port=permission_control.port,
+                control_port=peer_control.port,
             )
         )
         await peer.send()
 
-        await permission_control.request()
+        await peer_control.request()
 
         assert peer.permission_choices() == [REJECT_ID]
 

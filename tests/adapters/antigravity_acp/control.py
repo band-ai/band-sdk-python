@@ -1,4 +1,4 @@
-"""Request an external peer's permission only after the test releases it."""
+"""Control an external peer's initialization, prompts, and permission requests."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 from tests.adapters.antigravity_acp.peerconfig import PeerCommand
 
 
-class PermissionControl:
+class PeerControl:
     def __init__(self, port: int) -> None:
         self.port = port
         self._connections: asyncio.Queue[
@@ -29,6 +29,21 @@ class PermissionControl:
 
     async def prompted(self) -> None:
         await self._exchange(PeerCommand.PROMPTED)
+
+    async def initializing(self) -> None:
+        await self._exchange(PeerCommand.INITIALIZING)
+
+    async def release_initialize(self) -> None:
+        reader, writer = await self._connections.get()
+        try:
+            writer.write((PeerCommand.RELEASE_INITIALIZE + "\n").encode())
+            await writer.drain()
+        finally:
+            self._connections.put_nowait((reader, writer))
+
+    async def disconnected(self) -> bytes:
+        reader, _ = await self._connections.get()
+        return await reader.read()
 
     async def release_prompt(self) -> None:
         await self._exchange(PeerCommand.RELEASE_PROMPT)

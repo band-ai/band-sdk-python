@@ -68,6 +68,7 @@ class AntigravityPeer(FakeACPAgent):
         self.control_task: asyncio.Task[None] | None = None
         self.prompt_started = asyncio.Event()
         self.prompt_release = asyncio.Event()
+        self.initialize_release = asyncio.Event()
         self.on_prompt(self.answer)
         self.stops_with(config.stop_reason)
         self.record(
@@ -90,6 +91,8 @@ class AntigravityPeer(FakeACPAgent):
             self.control_task = asyncio.create_task(
                 self.control(self.config.control_port)
             )
+        if self.config.hold_initialize:
+            await self.initialize_release.wait()
         capabilities = response.agent_capabilities
         return response.model_copy(
             update={
@@ -174,6 +177,11 @@ class AntigravityPeer(FakeACPAgent):
             while line := await reader.readline():
                 command = PeerCommand(line.decode().strip())
                 match command:
+                    case PeerCommand.INITIALIZING:
+                        payload = {"command": command}
+                    case PeerCommand.RELEASE_INITIALIZE:
+                        self.initialize_release.set()
+                        continue
                     case PeerCommand.PERMISSION:
                         if self.active_session is None:
                             raise ValueError(
