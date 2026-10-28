@@ -123,7 +123,12 @@ from band.integrations.acp.session_config import (
     apply_session_config_selections,
 )
 from band.integrations.acp.sessioninit import SessionSetupObserver
-from band.integrations.acp.types import ACPToolCall
+from band.integrations.acp.types import (
+    ACP_FAILURE_PROVIDER,
+    CANCELLED_STOP,
+    REFUSAL_STOP,
+    ACPToolCall,
+)
 from band.integrations.mcp import (
     BandMCPBackend,
     BandMCPBackendSettings,
@@ -179,9 +184,6 @@ class ACPPermissionRequest:
     options: tuple[PermissionOptionValue, ...]
 
 
-_PROVIDER = "acp"
-
-
 @dataclass(frozen=True)
 class SessionMcpServers:
     """The MCP servers a session is created or loaded with."""
@@ -230,6 +232,7 @@ class SessionCloseReason(StrEnum):
 
     UNCONFIGURED = "unconfigured"
     STALE_BAND_MCP_URL = "stale Band MCP URL"
+    UNSEEDED = "seeding prompt did not complete"
 
 
 def _setup_interrupted(room: ACPRoom) -> bool:
@@ -280,8 +283,8 @@ def _to_agent_failure(exc: Exception) -> AgentFailure:
     message alone.
     """
     if isinstance(exc, RequestError):
-        return AgentFailure(_PROVIDER, str(exc), str(exc.code), exc.data)
-    return AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+        return AgentFailure(ACP_FAILURE_PROVIDER, str(exc), str(exc.code), exc.data)
+    return AgentFailure(ACP_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
 
 
 # A TCP endpoint is one shared process, so it cannot serve one room each.
@@ -390,6 +393,9 @@ class ACPClientAdapter(
     session rehydration, system-context bootstrapping, Band MCP injection,
     and emitting replies back to the platform. ACP subprocess lifecycle,
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
+
+    Sessions follow the resume rule in ``band.runtime.sessionresume``; how
+    a seeding prompt settles is in ``_settle_seed``.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
@@ -463,7 +469,7 @@ class ACPClientAdapter(
         )
         self._rooms: dict[str, ACPRoom] = {}
         self._backend_turns = BackendTurns[ACPTurn](
-            self._cancel_agent_turn, provider=_PROVIDER
+            self._cancel_agent_turn, provider=ACP_FAILURE_PROVIDER
         )
         # Outlives the room's sessions; see apply_model_selection.
         self._room_selections: dict[str, ModelSelection] = {}
@@ -483,19 +489,21 @@ class ACPClientAdapter(
     async def apply_model_selection(
         self, selection: ModelSelection, *, room_id: str
     ) -> None:
-        """Switch ``room_id``'s live ACP session, checked against its catalog.
+        """Switch ``room_id``'s ACP session, checked against its catalog when applied.
 
         The switch queues behind the room's running and queued prompts, as one
-        more turn would; other rooms never wait on it. Raises
-        ``BandConfigError`` (an ``ACPConfigError`` naming what the session
-        offers, when it rejects ``selection``). Only a switch that
-        returns counts: the room then keeps what its session runs for the
-        adapter's lifetime, and every later session for it starts there
-        until one refuses it. A switch that raises may leave the live session
-        partly switched, but later sessions start where they would have
-        before it. Other rooms keep the configured selection. Refused when
-        ``resolve_session_config`` configures sessions instead. An empty
-        ``selection`` changes nothing.
+        more turn would; other rooms never wait on it. A live session switches
+        now and raises ``BandConfigError`` (an ``ACPConfigError`` naming what
+        the session offers, when it rejects ``selection``). A room whose
+        process is up without a session or one being set up keeps ``selection``
+        for its next session, whose turn fails if its catalog refuses it.
+        Only a switch that returns counts: the room keeps that selection for
+        the adapter's lifetime, and every
+        later session for it starts there until one refuses it. A switch that
+        raises may leave the live session partly switched, but later sessions
+        start where they would have before it. Other rooms keep the configured
+        selection. Refused when ``resolve_session_config`` configures sessions
+        instead. An empty ``selection`` changes nothing.
         """
         if self._resolve_session_config is not None:
             raise BandConfigError(
@@ -521,16 +529,19 @@ class ACPClientAdapter(
             raise _session_ended_mid_switch(room_id) from error
 
     async def _switch_room(self, room: ACPRoom, selection: ModelSelection) -> None:
-        async def require_live_session() -> None:
+        async def require_switchable() -> None:
             # Runs before acquisition: a switch never starts a process.
-            if room.live_session is None:
+            if room.live_session is None and not room.awaits_session:
                 raise _no_live_session(room.room_id)
 
         # Settings take the room in turn with its prompts.
-        async with room.reservation, room.retained.use(prepare=require_live_session):
+        async with room.reservation, room.retained.use(prepare=require_switchable):
             session = room.live_session
             if session is None:
-                raise _no_live_session(room.room_id)
+                if not room.awaits_session:
+                    raise _no_live_session(room.room_id)
+                self._queue_room_selection(room.room_id, selection)
+                return
             session_id, runtime = session
             async with runtime.config_lock:
                 try:
@@ -569,6 +580,15 @@ class ACPClientAdapter(
         logger.info(
             "ACP session %s for room %s now runs %s", session_id, room_id, running
         )
+
+    def _queue_room_selection(self, room_id: str, selection: ModelSelection) -> None:
+        """Start the room's next session at ``selection``, checked when applied."""
+        current = self._room_selection(room_id)
+        # Efforts belong to a model, so a new model drops the current effort.
+        base = current if selection.model in (None, current.model) else ModelSelection()
+        queued = base.model_copy(update=selection.model_dump(exclude_none=True))
+        self._room_selections[room_id] = queued
+        logger.info("Room %s's next ACP session will run %s", room_id, queued)
 
     def _room_selection(self, room_id: str) -> ModelSelection:
         return self._room_selections.get(room_id, self.model_selection)
@@ -636,7 +656,7 @@ class ACPClientAdapter(
         """The process and connection for one residency of ``room``."""
         return ACPRuntime(
             command=_resolve_launcher(self._spawn_command(room.workspace)),
-            env=self._spawn_env(),
+            env=self._spawn_env(room.room_id),
             cwd=self._spawn_cwd(room.workspace),
             auth_method=self.config.auth_method,
             client_factory=partial(self._runtime_client_factory, room, generation),
@@ -650,8 +670,13 @@ class ACPClientAdapter(
         del workspace
         return list(self.config.command)
 
-    def _spawn_env(self) -> dict[str, str] | None:
-        """The configured env over the backend's credentials, or ``None``."""
+    def _spawn_env(self, room_id: str) -> dict[str, str] | None:
+        """The configured env over the backend's credentials, or ``None``.
+
+        A backend whose agent keeps state per process environment overrides
+        this to give each room its own.
+        """
+        del room_id
         env = {**self._credential_env(), **(self.config.env or {})}
         return env or None
 
@@ -802,7 +827,9 @@ class ACPClientAdapter(
         within the owner's bound, and recovery owns what is left of it. The
         turn's own error log carries the traceback."""
         logger.warning("Room %s: ACP agent process not ready: %s", room.room_id, error)
-        await tools.send_failure(AgentFailure(_PROVIDER, PROCESS_NOT_READY_ERROR))
+        await tools.send_failure(
+            AgentFailure(ACP_FAILURE_PROVIDER, PROCESS_NOT_READY_ERROR)
+        )
 
     async def on_turn(
         self,
@@ -890,10 +917,9 @@ class ACPClientAdapter(
 
         # The emitter posts the turn's events live, in the order the ACP stream
         # delivers them (see RoomTurnEmitter), so narration stays interleaved with
-        # the permission pair and any in-room tool post. On a clean turn its
-        # __aexit__ emits the held thought (unless the turn replied) and the
-        # resume record follows; on failure neither is posted and the error is
-        # handled below.
+        # the permission pair and any in-room tool post. On failure it drops
+        # the text it holds and the error is handled below.
+        accepted = True
         try:
             async with RoomTurnEmitter(
                 tools,
@@ -913,12 +939,19 @@ class ACPClientAdapter(
                 ):
                     try:
                         async with turn_deadline:
-                            await runtime.prompt(
+                            stop_reason = await runtime.prompt_turn(
                                 session_id=session_id,
                                 prompt_text=prompt_text,
                                 on_chunk=emitter.emit,
                             )
-                            session.seed.confirm()
+                            if stop_reason == REFUSAL_STOP:
+                                logger.warning(
+                                    "Room %s: ACP agent refused the prompt",
+                                    room_id,
+                                )
+                                emitter.refused()
+                            elif stop_reason != CANCELLED_STOP:
+                                session.seed.confirm()
                     except RequestError as error:
                         if is_session_busy(error):
                             raise InputNotAccepted("ACP session is busy") from error
@@ -939,23 +972,47 @@ class ACPClientAdapter(
                         raise ACPTurnTimeoutError(
                             f"ACP turn timed out after {self.config.turn_timeout_s}s"
                         ) from None
-            await ACP_CLIENT_RESUME_RECORD.post(
-                tools,
-                room_id=room_id,
-                seed=session.seed,
-                session=session_id,
-            )
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
             reraise_delivery_cause(e)
-        except ACPTurnTimeoutError:
-            raise
         except InputNotAccepted:
+            # The agent took none of the prompt; its session awaits the seed.
+            accepted = False
+            raise
+        except ACPTurnTimeoutError:
             raise
         except Exception as error:
             await self._fail_turn(room, generation, tools, error)
             raise
+        finally:
+            if accepted:
+                self._settle_seed(room, runtime, session, generation)
+        await ACP_CLIENT_RESUME_RECORD.post(
+            tools,
+            room_id=room_id,
+            seed=session.seed,
+            session=session_id,
+        )
+
+    def _settle_seed(
+        self, room: ACPRoom, runtime: ACPRuntime, session: RoomSession, generation: int
+    ) -> None:
+        """Drop a fresh session whose seeding prompt did not complete.
+
+        Apply the shared resume rule on every accepted prompt's exit, including
+        cancellation during timeout recovery or stream flushing. A process
+        under recovery goes down with its sessions, so only one that stays up
+        is asked to close this one.
+        """
+        if not (session.seed.replay_due and room.session is session):
+            return
+        if room.retained.has_authority(generation):
+            self._retire_session(
+                room, runtime, session, reason=SessionCloseReason.UNSEEDED
+            )
+        else:
+            room.session = None
 
     @staticmethod
     async def _fail_turn(
@@ -1000,7 +1057,7 @@ class ACPClientAdapter(
         room.retained.recover(generation=generation, reason="ACP turn timed out")
         await tools.send_failure(
             AgentFailure(
-                _PROVIDER,
+                ACP_FAILURE_PROVIDER,
                 f"ACP agent response timed out after {self.config.turn_timeout_s}s",
                 FAILURE_CODE_TIMEOUT,
             )
@@ -1248,28 +1305,27 @@ class ACPClientAdapter(
         room = self._rooms.get(room_id)
         return None if room is None else room.tools
 
-    def _retire_stale_session(
-        self, room: ACPRoom, runtime: ACPRuntime, session: RoomSession
+    def _retire_session(
+        self,
+        room: ACPRoom,
+        runtime: ACPRuntime,
+        session: RoomSession,
+        *,
+        reason: SessionCloseReason,
     ) -> None:
-        """Close a session built against a Band MCP URL the backend no longer
-        serves; the room gets a fresh one on the live URL.
+        """Forget the room's session and close it in the background.
 
-        A fresh session rather than ``session/load`` with new MCP servers:
-        how an agent treats reloading a session that is still live is
-        undefined. The caller replays the transcript into the new session.
+        The room's next turn creates and seeds a fresh session.
         """
         logger.info(
-            "Band MCP server replaced; replacing ACP session %s for room %s",
+            "Replacing ACP session %s for room %s (%s)",
             session.session_id,
             room.room_id,
+            reason,
         )
+        room.session = None
         runtime.reset_session(session.session_id)
-        self._close_session_later(
-            room,
-            runtime,
-            session.session_id,
-            reason=SessionCloseReason.STALE_BAND_MCP_URL,
-        )
+        self._close_session_later(room, runtime, session.session_id, reason=reason)
 
     async def _get_or_start_band_mcp_server(
         self, room_id: str, transport: BandMCPTransport
@@ -1298,9 +1354,13 @@ class ACPClientAdapter(
         if session is not None and session.live:
             if session.band_url == mcp.band_url:
                 return session.session_id
-            room.session = None
+            # A fresh session rather than ``session/load`` with new MCP
+            # servers: how an agent treats reloading a session that is still
+            # live is undefined. The new session is seeded with the transcript.
             history = None
-            self._retire_stale_session(room, runtime, session)
+            self._retire_session(
+                room, runtime, session, reason=SessionCloseReason.STALE_BAND_MCP_URL
+            )
         setup = room.session_setup
         if setup is not None and (setup is room.abandoned_setup or setup.cancelling()):
             # A callback may still be settling an abandoned setup. Its lease
@@ -1737,7 +1797,7 @@ class ACPClientAdapter(
         )
         await tools.send_failure(
             AgentFailure(
-                _PROVIDER,
+                ACP_FAILURE_PROVIDER,
                 f"{CONFIG_FAILURE_PREFIX}{error}",
                 "acp_session_config",
                 {

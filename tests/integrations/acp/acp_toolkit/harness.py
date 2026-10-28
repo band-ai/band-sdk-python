@@ -17,7 +17,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
-from acp.schema import NewSessionResponse
+from acp.schema import NewSessionResponse, PromptResponse
 
 from band.adapters.cursor_acp import CursorACPAdapter
 from band.converters.acp_client import ACPClientMetadataKey
@@ -42,6 +42,7 @@ from band.runtime.formatters import format_current_inputs
 from band.testing import FakeAgentTools
 from tests.adapters.waiting import until
 from tests.integrations.acp.acp_toolkit.agent import (
+    END_TURN_STOP,
     EXIT_RECORD,
     FakeACPAgent,
     Gate,
@@ -146,9 +147,14 @@ class TranscriptTools(FakeAgentTools):
 # ---------------------------------------------------------------------------
 
 
+# What a scripted connection's prompt answers: the turn ended normally.
+END_TURN = PromptResponse(stop_reason=END_TURN_STOP)
+
+
 def make_acp_connection(*, http: bool = True, sse: bool = False) -> AsyncMock:
     """A scripted ACP connection whose init advertises the given MCP capabilities."""
     conn = AsyncMock()
+    conn.prompt = AsyncMock(return_value=END_TURN)
     conn.initialize = AsyncMock(
         return_value=MagicMock(
             agent_capabilities=MagicMock(mcp_capabilities=MagicMock(http=http, sse=sse))
@@ -336,7 +342,7 @@ def inject_acp_spawn(
     def _build_runtime(room: ACPRoom, generation: int) -> ACPRuntime:
         return ACPRuntime(
             command=_resolve_launcher(adapter._spawn_command(None)),
-            env=adapter._spawn_env(),
+            env=adapter._spawn_env(room.room_id),
             cwd=room.workspace,
             auth_method=adapter.config.auth_method,
             client_factory=partial(adapter._runtime_client_factory, room, generation),

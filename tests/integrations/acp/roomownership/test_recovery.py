@@ -32,10 +32,11 @@ class TestRecovery:
     async def test_the_next_turn_reloads_the_recovered_session(self) -> None:
         agent = FakeACPAgent(supports_session_load=True)
         fails_prompt(
-            agent, 1, RequestError.internal_error({"detail": "process wedged"})
+            agent, 2, RequestError.internal_error({"detail": "process wedged"})
         )
 
         async with acp_adapter(agent) as session:
+            await session.send("seeding turn")
             with pytest.raises(RequestError):
                 await session.send("hello")
             retained = session.session_id(DEFAULT_ROOM)
@@ -145,11 +146,12 @@ class TestRecovery:
                 return loaded
 
         agent = RestoringAgent(supports_session_load=True)
-        fails_prompt(agent, 1, RequestError.internal_error())
+        fails_prompt(agent, 2, RequestError.internal_error())
 
         async with acp_adapter(
             agent, fake_agent_config(inject_band_tools=True)
         ) as session:
+            await session.send("seeding turn")
             with pytest.raises(RequestError):
                 await session.send("hello")
             failed = session.last_reply

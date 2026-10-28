@@ -115,6 +115,16 @@ class ACPRoom:
             return None
         return session.session_id, runtime
 
+    @property
+    def awaits_session(self) -> bool:
+        """Check whether the next prompt will configure a fresh session."""
+        setup = self.session_setup
+        return (
+            self.runtime is not None
+            and self.session is None
+            and (setup is None or setup.done())
+        )
+
 
 class BandACPClient(ACPCollectingClient):
     """Compatibility alias for ``ACPCollectingClient``.

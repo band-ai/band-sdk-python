@@ -11,10 +11,13 @@ from tests.integrations.acp.acp_toolkit import (
     live_line,
 )
 from tests.integrations.acp.clientbehavior.kit import (
+    MARCO_REPLAY_LINE,
     REPLAY_HEADER_LINE,
     closes_the_prompt,
+    marco_message,
     rehydration_history,
     replay_boundary,
+    room_text_message,
 )
 
 
@@ -27,7 +30,7 @@ class TestHistoryReplay:
         framed as context, and the live message stays last and unduplicated."""
         agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
         history = rehydration_history(
-            "[Marco]: My favorite color is blue.",
+            MARCO_REPLAY_LINE,
             "[Fake Agent]: Noted.",
             session="stale-session",
         )
@@ -45,7 +48,7 @@ class TestHistoryReplay:
         )
 
         prompt = agent.prompt_texts()[0]
-        assert "[Marco]: My favorite color is blue." in prompt, (
+        assert MARCO_REPLAY_LINE in prompt, (
             "the room transcript was not replayed into the new session's first prompt"
         )
         assert prompt.count("What is my favorite color?") == 1, (
@@ -55,7 +58,7 @@ class TestHistoryReplay:
             "the live message must carry its sender, as the transcript lines do"
         )
         assert (
-            prompt.index("[System Context]")
+            prompt.index(SYSTEM_CONTEXT_HEADER)
             < prompt.index(REPLAY_HEADER_LINE)
             < prompt.index("[Marco]:")
             < replay_boundary(prompt)
@@ -73,9 +76,7 @@ class TestHistoryReplay:
         replay still fires, and the room still gets its reply."""
         agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
         agent.breaks_session_load()
-        history = rehydration_history(
-            "[Marco]: My favorite color is blue.", session="wedged-session"
-        )
+        history = rehydration_history(MARCO_REPLAY_LINE, session="wedged-session")
 
         async with acp_adapter(agent) as session:
             reply = await session.send(
@@ -104,9 +105,7 @@ class TestHistoryReplay:
         Band's system context once, on its first prompt."""
         agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
         agent.knows_session("session-1")
-        history = rehydration_history(
-            "[Marco]: My favorite color is blue.", session="session-1"
-        )
+        history = rehydration_history(MARCO_REPLAY_LINE, session="session-1")
 
         async with acp_adapter(agent) as session:
             await session.send(
@@ -174,7 +173,7 @@ class TestHistoryReplay:
         """The transcript is seeded into the session's first prompt only; repeating
         it on every turn would compound the duplication it exists to avoid."""
         fake_agent.will_say("ok")
-        history = rehydration_history("[Marco]: My favorite color is blue.")
+        history = rehydration_history(MARCO_REPLAY_LINE)
 
         async with acp_adapter(fake_agent) as session:
             await session.send("first question", bootstrap=True, history=history)
@@ -208,22 +207,14 @@ class TestHistoryReplay:
             await a.say(sid, step)
 
         transcript = [
-            {
-                "id": "m1",
-                "message_type": "text",
-                "sender_id": "user-marco",
-                "sender_type": "User",
-                "sender_name": "Marco",
-                "content": "My favorite color is blue.",
-            },
-            {
-                "id": "m2",
-                "message_type": "text",
-                "sender_id": "fake-agent",
-                "sender_type": "Agent",
-                "sender_name": "Fake Agent",
-                "content": "I noted your favorite color.",
-            },
+            marco_message(),
+            room_text_message(
+                "m2",
+                sender_id="fake-agent",
+                sender_type="Agent",
+                sender_name="Fake Agent",
+                content="I noted your favorite color.",
+            ),
         ]
 
         async with acp_adapter(agent) as session:
@@ -239,10 +230,9 @@ class TestHistoryReplay:
         assert reply.thoughts == ["Blue."], "the respawned turn must complete"
 
         prompt = agent.prompt_texts()[-1]
-        assert (
-            REPLAY_HEADER_LINE in prompt
-            and "[Marco]: My favorite color is blue." in prompt
-        ), "a session created after a respawn must be re-seeded from the transcript"
+        assert REPLAY_HEADER_LINE in prompt and MARCO_REPLAY_LINE in prompt, (
+            "a session created after a respawn must be re-seeded from the transcript"
+        )
         assert closes_the_prompt(prompt, live_line("What is my favorite color?")), (
             "the live message must come last so the model answers it, not the transcript"
         )

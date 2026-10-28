@@ -26,6 +26,8 @@ MOCK_ROOM = "room-123"
 # tears each one down.
 AdapterOn = Callable[..., ACPClientAdapter]
 CODEX = ACPClientAdapterConfig(command="codex")
+# The variable ``RoomEnvAdapter`` names each room's process by.
+ROOM_ENV_VAR = "AGENT_STATE_ROOM"
 
 
 def advertise_session_load(spawn: FakeSpawn) -> None:
@@ -82,3 +84,11 @@ def room_runtime(adapter: ACPClientAdapter, room: str = MOCK_ROOM) -> ACPRuntime
     runtime = adapter._rooms[room].runtime
     assert runtime is not None
     return runtime
+
+
+class RoomEnvAdapter(ACPClientAdapter):
+    """A backend whose agent keeps state per environment, so each room's
+    process gets its own."""
+
+    def _spawn_env(self, room_id: str) -> dict[str, str] | None:
+        return {**(super()._spawn_env(room_id) or {}), ROOM_ENV_VAR: room_id}

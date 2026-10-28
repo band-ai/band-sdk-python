@@ -74,9 +74,8 @@ class TestCursorTurns:
             with pytest.raises(asyncio.CancelledError):
                 await turn
             await session.adapter.backend_turns.drain()
-            assert agent.lifecycle == [
-                f"{CANCEL_RECORD} {session.session_id(DEFAULT_ROOM)}"
-            ]
+            (stopped,) = agent.session_ids()
+            assert agent.lifecycle == [f"{CANCEL_RECORD} {stopped}"]
             prompting.release.set()
 
     @pytest.mark.asyncio

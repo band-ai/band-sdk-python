@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from acp.schema import (
     PermissionOption,
+    PromptResponse,
 )
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
@@ -19,6 +20,7 @@ from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.types import ACPToolCall
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit.harness import (
+    END_TURN,
     FakeSpawn,
 )
 from tests.integrations.acp.clientadapter.kit import (
@@ -114,7 +116,7 @@ class TestACPClientAdapterPermissionHandler:
         msg = make_platform_message("Hello", room_id="room-123")
         captured: dict[str, object] = {}
 
-        async def mock_prompt(**kwargs: object) -> None:
+        async def mock_prompt(**kwargs: object) -> PromptResponse:
             tool_call = MagicMock()
             tool_call.title = "write_file"
             tool_call.tool_call_id = "tc-deny"
@@ -128,6 +130,7 @@ class TestACPClientAdapterPermissionHandler:
                 tool_call=tool_call,
             )
             captured.update(result)
+            return END_TURN
 
         mock_spawn.conn.prompt = AsyncMock(side_effect=mock_prompt)
         await adapter_with_mocks.on_message(
@@ -160,7 +163,7 @@ class TestACPClientAdapterPermissionHandler:
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
-        async def mock_prompt(**kwargs):
+        async def mock_prompt(**kwargs) -> PromptResponse:
             tool_call = MagicMock()
             tool_call.title = "band_send_message"
             tool_call.tool_call_id = "tc-perm-1"
@@ -175,6 +178,7 @@ class TestACPClientAdapterPermissionHandler:
             assert result == {
                 "outcome": {"outcome": "selected", "optionId": "allow-once"}
             }
+            return END_TURN
 
         mock_spawn.conn.prompt = AsyncMock(side_effect=mock_prompt)
 
@@ -202,7 +206,7 @@ class TestACPClientAdapterPermissionHandler:
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
-        async def mock_prompt(**kwargs):
+        async def mock_prompt(**kwargs) -> PromptResponse:
             tool_call = MagicMock()
             tool_call.title = "write_file"
             tool_call.tool_call_id = "tc-perm-1"
@@ -218,6 +222,7 @@ class TestACPClientAdapterPermissionHandler:
             assert result == {
                 "outcome": {"outcome": "selected", "optionId": "allow-once"}
             }
+            return END_TURN
 
         mock_spawn.conn.prompt = AsyncMock(side_effect=mock_prompt)
 
@@ -243,7 +248,7 @@ class TestACPClientAdapterPermissionHandler:
 
         captured_result = {}
 
-        async def mock_prompt(**kwargs):
+        async def mock_prompt(**kwargs) -> PromptResponse:
             tool_call = MagicMock()
             tool_call.title = "read_file"
             tool_call.tool_call_id = "tc-read"
@@ -257,6 +262,7 @@ class TestACPClientAdapterPermissionHandler:
                 tool_call=tool_call,
             )
             captured_result.update(result)
+            return END_TURN
 
         mock_spawn.conn.prompt = AsyncMock(side_effect=mock_prompt)
 
@@ -284,7 +290,7 @@ class TestACPClientAdapterPermissionHandler:
 
         captured_result = {}
 
-        async def mock_prompt(**kwargs):
+        async def mock_prompt(**kwargs) -> PromptResponse:
             tool_call = MagicMock()
             tool_call.title = "rm_rf"
             tool_call.tool_call_id = "tc-danger"
@@ -298,6 +304,7 @@ class TestACPClientAdapterPermissionHandler:
                 tool_call=tool_call,
             )
             captured_result.update(result)
+            return END_TURN
 
         mock_spawn.conn.prompt = AsyncMock(side_effect=mock_prompt)
 
@@ -337,7 +344,7 @@ class TestACPClientAdapterPermissionHandler:
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
-        async def mock_prompt(**kwargs):
+        async def mock_prompt(**kwargs) -> PromptResponse:
             tool_call = MagicMock()
             tool_call.title = "band-band_send_event"
             tool_call.tool_call_id = "tc-band"
@@ -348,6 +355,7 @@ class TestACPClientAdapterPermissionHandler:
                 session_id="acp-session-123",
                 tool_call=tool_call,
             )
+            return END_TURN
 
         mock_spawn.conn.prompt = AsyncMock(side_effect=mock_prompt)
 
@@ -378,7 +386,7 @@ class TestACPClientAdapterPermissionHandler:
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
-        async def mock_prompt(**kwargs):
+        async def mock_prompt(**kwargs) -> PromptResponse:
             tool_call = MagicMock(spec=[])  # No attributes by default
             tool_call.name = "bash"
             tool_call.tool_call_id = "tc-bash"
@@ -388,6 +396,7 @@ class TestACPClientAdapterPermissionHandler:
                 session_id="acp-session-123",
                 tool_call=tool_call,
             )
+            return END_TURN
 
         mock_spawn.conn.prompt = AsyncMock(side_effect=mock_prompt)
 
