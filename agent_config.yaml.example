@@ -269,6 +269,11 @@ cursor_agent:
   agent_id: ""
   api_key: ""
 
+# examples/acp/clients/antigravity.py
+antigravity_agent:
+  agent_id: ""
+  api_key: ""
+
 # 07_jetbrains_server.py
 jetbrains_acp_agent:
   agent_id: ""
