@@ -144,9 +144,6 @@ class OmpAdapterContract(ABC):
     ) -> str: ...
 
     @abstractmethod
-    def _resume_details(self, room: OmpRoom) -> dict[str, JsonValue]: ...
-
-    @abstractmethod
     async def apply_model_selection(
         self, selection: ModelSelection, *, room_id: str
     ) -> None: ...

@@ -15,13 +15,13 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
 )
 
-from band.converters.acp_client import ACPClientMetadataKey
+from band.converters.acp_client import ACP_CLIENT_RESUME_RECORD
 from band.core.protocols import FAILURE_CODE_TIMEOUT, GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
-from band.testing import FakeAgentTools, events_of_type, reported_failures
+from band.testing import FakeAgentTools, reported_failures
 from tests.integrations.acp.acp_toolkit.harness import (
     FakeSpawn,
     released,
@@ -170,13 +170,9 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        # Should have sent task event
-        task_events = events_of_type(tools, "task")
-        assert len(task_events) == 1
-        assert (
-            task_events[0]["metadata"][ACPClientMetadataKey.SESSION]
-            == "acp-session-123"
-        )
+        assert ACP_CLIENT_RESUME_RECORD.candidates(tools.events_sent) == {
+            "room-123": "acp-session-123"
+        }
 
     @pytest.mark.asyncio
     async def test_on_message_bootstrap_rehydrates(
@@ -202,6 +198,9 @@ class TestACPClientAdapterOnMessage:
 
         assert adapter_with_mocks._rooms["room-123"].session.session_id == "session-abc"
         mock_spawn.conn.load_session.assert_awaited_once()
+        assert ACP_CLIENT_RESUME_RECORD.candidates(tools.events_sent) == {
+            "room-123": "session-abc"
+        }
 
     @pytest.mark.asyncio
     async def test_on_message_creates_new_session_when_persisted_session_cannot_load(

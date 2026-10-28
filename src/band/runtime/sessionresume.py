@@ -73,9 +73,13 @@ class ResumeRecord:
         *,
         room_id: str,
         seed: SessionSeed,
-        details: Mapping[str, JsonValue],
+        session: str | None,
+        details: Mapping[str, JsonValue] | None = None,
     ) -> None:
-        """Post the room's record with ``details`` once its seed is confirmed.
+        """Post the room's record of ``session`` once its seed is confirmed.
+
+        An empty ``session`` is left out of the record; ``details`` carries
+        any adapter-specific extras.
 
         The record is resume state rather than narration, so no emit setting
         gates it. Adapters post it after every completed prompt, which also
@@ -87,6 +91,10 @@ class ResumeRecord:
             tools,
             self.label,
             MessageType.TASK,
-            metadata={self.room_key: room_id, **details},
+            metadata={
+                self.room_key: room_id,
+                **({self.session_key: session} if session else {}),
+                **(details or {}),
+            },
             log_label=self.label,
         )

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from band.adapters.omp import OmpAdapterConfig
-from band.converters.omp import OmpSessionState
+from band.converters.omp import OMP_RESUME_RECORD, OmpSessionState
 from band.integrations.ompwire import OmpCommandName
 from band.testing import FakeAgentTools
 from tests.adapters.omp.custody import owned_room
@@ -36,7 +36,8 @@ class TestSessionRestore:
             room_to_session={"room-123": str(saved)},
             replay_messages=["[Alice]: earlier"],
         )
-        await run_turn(adapter, FakeAgentTools(), history=history)
+        tools = FakeAgentTools()
+        await run_turn(adapter, tools, history=history)
         client = owned_room(adapter, "room-123").client
         prompt_text = "\n".join(await sent_prompt_messages(client))
 
@@ -48,6 +49,9 @@ class TestSessionRestore:
         assert state["sessionFile"] == str(saved)
         assert "Conversation History" not in prompt_text
         assert "[Alice]: earlier" not in prompt_text
+        assert OMP_RESUME_RECORD.candidates(tools.events_sent) == {
+            "room-123": str(saved)
+        }
 
     @pytest.mark.asyncio
     async def test_failed_restore_starts_fresh_and_replays_history(

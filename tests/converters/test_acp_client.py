@@ -11,6 +11,7 @@ from band.converters.acp_client import (
     ACPClientHistoryConverter,
     ACPClientMetadataKey,
 )
+from band.core.types import MessageType
 from band.integrations.acp.client_types import ACPClientSessionState
 
 
@@ -38,7 +39,7 @@ def session_task(
     if room_id is not None:
         metadata[ACPClientMetadataKey.ROOM] = room_id
     return {
-        "message_type": "task",
+        "message_type": MessageType.TASK,
         "content": ACP_CLIENT_RESUME_RECORD.label,
         "metadata": metadata,
     }
@@ -129,7 +130,7 @@ class TestACPClientHistoryConverter:
         """Should handle messages with None metadata gracefully."""
         raw = [
             {
-                "message_type": "task",
+                "message_type": MessageType.TASK,
                 "metadata": None,
             },
         ]
@@ -162,7 +163,7 @@ class TestACPClientHistoryConverter:
         """Should ignore metadata that doesn't contain ACP client keys."""
         raw = [
             {
-                "message_type": "task",
+                "message_type": MessageType.TASK,
                 "metadata": {
                     "acp_session_id": "session-123",  # Server key, not client
                     "acp_room_id": "room-456",

@@ -19,7 +19,7 @@ from band.converters.helpers import (
     build_replay_messages,
     new_message_marker,
 )
-from band.converters.omp import OMP_RESUME_RECORD, OmpSessionState
+from band.converters.omp import OMP_RESUME_RECORD, OmpMetadataKey, OmpSessionState
 from band.core.content import has_visible_content
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
 from band.core.protocols import (
@@ -344,5 +344,9 @@ class OmpTurnMixin(OmpAdapterContract):
         ):
             await send_event_safe(tools, closing, MessageType.THOUGHT)
         await OMP_RESUME_RECORD.post(
-            tools, room_id=room_id, seed=room.seed, details=self._resume_details(room)
+            tools,
+            room_id=room_id,
+            seed=room.seed,
+            session=room.session_file,
+            details={OmpMetadataKey.SESSION_ID: room.session_id},
         )

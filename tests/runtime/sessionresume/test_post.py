@@ -6,7 +6,7 @@ import pytest
 
 from band.runtime.sessionresume import SessionSeed
 from band.testing import FakeAgentTools
-from tests.runtime.sessionresume.kit import RECORD, confirmed, session
+from tests.runtime.sessionresume.kit import RECORD, confirmed
 
 
 class TestResumeRecordPost:
@@ -18,28 +18,46 @@ class TestResumeRecordPost:
     async def test_an_unseeded_session_posts_no_record(self, seed: SessionSeed) -> None:
         tools = FakeAgentTools()
 
-        await RECORD.post(tools, room_id="room-1", seed=seed, details=session("s1"))
+        await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
 
         assert tools.events_sent == []
 
-    async def test_a_seeded_session_is_read_back_as_the_rooms_candidate(self) -> None:
+    @pytest.mark.parametrize(
+        "seed",
+        [SessionSeed(), SessionSeed(restored=True)],
+        ids=["fresh", "restored"],
+    )
+    async def test_a_confirmed_session_is_read_back_as_the_rooms_candidate(
+        self, seed: SessionSeed
+    ) -> None:
         tools = FakeAgentTools()
 
+        await RECORD.post(tools, room_id="room-1", seed=confirmed(seed), session="s1")
+
+        assert RECORD.candidates(tools.events_sent) == {"room-1": "s1"}
+
+    async def test_a_record_without_a_session_keeps_the_earlier_candidate(
+        self,
+    ) -> None:
+        tools, seed = FakeAgentTools(), confirmed(SessionSeed())
+        await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
+
         await RECORD.post(
-            tools,
-            room_id="room-1",
-            seed=confirmed(SessionSeed()),
-            details=session("s1"),
+            tools, room_id="room-1", seed=seed, session=None, details={"extra": "x"}
         )
 
         assert RECORD.candidates(tools.events_sent) == {"room-1": "s1"}
+        assert tools.events_sent[-1]["metadata"] == {
+            RECORD.room_key: "room-1",
+            "extra": "x",
+        }
 
     async def test_a_failed_post_leaves_the_next_turns_post_to_land(self) -> None:
         tools, seed = FakeAgentTools(), confirmed(SessionSeed())
         tools.send_event_error = ConnectionError("Band REST unavailable")
-        await RECORD.post(tools, room_id="room-1", seed=seed, details=session("s1"))
+        await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
 
         tools.send_event_error = None
-        await RECORD.post(tools, room_id="room-1", seed=seed, details=session("s1"))
+        await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
 
         assert RECORD.candidates(tools.events_sent) == {"room-1": "s1"}

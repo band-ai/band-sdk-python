@@ -43,7 +43,6 @@ from typing_extensions import TypeVar, Unpack
 from band.converters.acp_client import (
     ACP_CLIENT_RESUME_RECORD,
     ACPClientHistoryConverter,
-    ACPClientMetadataKey,
 )
 from band.converters.helpers import (
     HISTORY_REPLAY_HEADER,
@@ -942,7 +941,7 @@ class ACPClientAdapter(
                 tools,
                 room_id=room_id,
                 seed=session.seed,
-                details={ACPClientMetadataKey.SESSION: session_id},
+                session=session_id,
             )
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
