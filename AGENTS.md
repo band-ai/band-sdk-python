@@ -95,7 +95,6 @@ explicit user approval.
 | [band-pr-triage](.claude/skills/band-pr-triage/SKILL.md) | a quick read-only check of whether a PR can merge or needs a full review |
 | [band-ci-triage](.claude/skills/band-ci-triage/SKILL.md) | investigating failing GitHub Actions checks on the current commit |
 | [band-security-review](.claude/skills/band-security-review/SKILL.md) | a requested security review of tool, permission, credential, or workspace boundaries |
-| [band-release-docs](.claude/skills/band-release-docs/SKILL.md) | band-sdk release notes: the CI changelog task behind `release-announce.yml`, and `/band-release-docs <tag>` to file the Fern changelog and docs PRs |
 | [band-stacked-prs](.claude/skills/band-stacked-prs/SKILL.md) | splitting work into stacked PRs or managing a PR chain with `gh stack` |
 | [band-desktop-setup](.claude/skills/band-desktop-setup/SKILL.md) | setting up, upgrading, or troubleshooting Claude Desktop as a Band agent |
 | [bug-hunting-via-example](.claude/skills/bug-hunting-via-example/SKILL.md) | using real runnable examples to reproduce and root-cause integration, concurrency, or lifecycle bugs |
