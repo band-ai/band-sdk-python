@@ -12,6 +12,8 @@ from tests.adapters.codex.seedpeer import Step
 
 
 class TestSeedModel:
+    # Generated examples each start a real peer, including on Windows.
+    @pytest.mark.timeout(180)
     @settings(max_examples=25, deadline=None)
     @given(steps=sequences)
     @example(steps=[Step.UPDATE, Step.FAIL, Step.UPDATE, Step.FAIL, Step.COMPLETE])
