@@ -22,7 +22,8 @@ from band.adapters.codex import (
     PendingApproval,
 )
 from band.client.streaming import ControlMode
-from band.converters.codex import CODEX_RESUME_RECORD, CodexMetadataKey
+from band.converters.codex import CODEX_RESUME_RECORD
+from band.converters.helpers import HISTORY_REPLAY_HEADING
 from band.core.exceptions import InputNotAccepted
 from band.core.retention import Residency, RetainedRoom
 from band.core.types import (
@@ -39,6 +40,7 @@ from band.integrations.codex import (
 from band.integrations.codex.types import (
     CodexApprovalMethod,
     CodexItemType,
+    CodexMetadataKey,
     CodexRequestMethod,
     CodexSessionState,
 )
@@ -123,6 +125,20 @@ def stored(msg: PlatformMessage) -> dict[str, Any]:
         "message_type": msg.message_type,
         "inserted_at": msg.created_at.isoformat(),
     }
+
+
+#: A room's stored history before a test's first turn, and its replay line.
+TRANSCRIPT = [stored(make_platform_message(content="earlier context"))]
+REPLAYED = "[Alice]: earlier context"
+
+
+def replayed_history(turn: dict[str, Any]) -> list[str]:
+    """The texts of a ``turn/start`` input that replay the room's history."""
+    return [
+        item["text"]
+        for item in turn["input"]
+        if item["text"].startswith(HISTORY_REPLAY_HEADING)
+    ]
 
 
 def recorded_thread(thread_id: str, room_id: str = ROOM_ID) -> dict[str, Any]:

@@ -2,22 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from band.converters.codex import (
-    CODEX_RESUME_RECORD,
-    CodexHistoryConverter,
-    CodexMetadataKey,
-)
+from band.converters.codex import CodexHistoryConverter
 from band.core.types import MessageType
-
-
-def record(room: str, thread: str) -> dict[str, Any]:
-    return {
-        "message_type": MessageType.TASK,
-        "content": CODEX_RESUME_RECORD.label,
-        "metadata": {CodexMetadataKey.ROOM: room, CodexMetadataKey.THREAD: thread},
-    }
+from band.integrations.codex.types import CodexMetadataKey
+from tests.adapters.codex.kit import recorded_thread
 
 
 class TestCodexHistoryConverter:
@@ -28,10 +16,10 @@ class TestCodexHistoryConverter:
 
     def test_each_room_resumes_its_newest_record(self) -> None:
         raw = [
-            record("room-1", "thr-old"),
+            recorded_thread("thr-old", "room-1"),
             {"message_type": MessageType.TEXT, "content": "ignored"},
-            record("room-2", "thr-other"),
-            record("room-1", "thr-new"),
+            recorded_thread("thr-other", "room-2"),
+            recorded_thread("thr-new", "room-1"),
         ]
 
         state = CodexHistoryConverter().convert(raw)
@@ -48,6 +36,8 @@ class TestCodexHistoryConverter:
             },
         }
 
-        state = CodexHistoryConverter().convert([record("room-1", "thr-1"), narration])
+        state = CodexHistoryConverter().convert(
+            [recorded_thread("thr-1", "room-1"), narration]
+        )
 
         assert state.room_to_thread == {"room-1": "thr-1"}

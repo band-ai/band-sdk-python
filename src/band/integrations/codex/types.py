@@ -66,6 +66,14 @@ CODEX_APPROVAL_METHODS: frozenset[CodexApprovalMethod] = frozenset(CodexApproval
 DYNAMIC_TOOL_CALL_METHOD = "item/tool/call"
 
 
+class CodexMetadataKey(StrEnum):
+    """Metadata keys naming a Codex room, thread and transport on Band events."""
+
+    ROOM = "codex_room_id"
+    THREAD = "codex_thread_id"
+    TRANSPORT = "codex_transport"
+
+
 class CodexTurnStatus(StrEnum):
     """``turn/completed`` statuses the adapter acts on."""
 
@@ -146,11 +154,11 @@ def build_agent_failure(
     if is_retryable is not None:
         detail["codex_is_retryable"] = bool(is_retryable)
     if thread_id:
-        detail["codex_thread_id"] = thread_id
+        detail[CodexMetadataKey.THREAD] = thread_id
     if turn_id:
         detail["codex_turn_id"] = turn_id
     if room_id:
-        detail["codex_room_id"] = room_id
+        detail[CodexMetadataKey.ROOM] = room_id
     if additional is not None:
         capped = _cap_error_detail(additional)
         if capped is not None:

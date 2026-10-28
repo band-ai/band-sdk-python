@@ -2,21 +2,11 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Any
 
 from band.core.protocols import HistoryConverter
-from band.integrations.codex.types import CodexSessionState
+from band.integrations.codex.types import CodexMetadataKey, CodexSessionState
 from band.runtime.sessionresume import ResumeRecord
-
-
-class CodexMetadataKey(StrEnum):
-    """Metadata keys of the Codex resume record, shared with its task narration."""
-
-    ROOM = "codex_room_id"
-    THREAD = "codex_thread_id"
-    TRANSPORT = "codex_transport"
-
 
 CODEX_RESUME_RECORD = ResumeRecord(
     label="Codex thread",

@@ -153,11 +153,12 @@ async def fetch_transcript(
 async def transcript_before(
     tools: AgentToolsProtocol, *, room_id: str, message_ids: AbstractSet[str]
 ) -> list[dict[str, Any]]:
-    """The room's stored messages before the turn's ``message_ids``.
+    """The room's history before the turn's ``message_ids``, as bootstrap has it.
 
     A fresh session minted off bootstrap has no history from the runtime, so
-    its replay is fetched. A failed fetch replays nothing rather than failing
-    the turn.
+    its replay is fetched and formatted like bootstrap history, mentions
+    resolved against the room's participants. A failed fetch replays nothing
+    rather than failing the turn.
     """
     try:
         stored = await _room_messages(tools, room_id)
@@ -168,7 +169,9 @@ async def transcript_before(
             exc_info=True,
         )
         return []
-    return messages_before(stored, message_ids)
+    return format_history_for_llm(
+        messages_before(stored, message_ids), participants=tools.participants
+    )
 
 
 async def _room_messages(

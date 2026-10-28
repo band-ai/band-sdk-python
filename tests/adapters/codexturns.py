@@ -194,6 +194,10 @@ class FakeCodexClient(RecordedRequests):
                 break
         self._emitted.set()
 
+    def script(self, *events: RpcEvent) -> None:
+        """Script events for turns that have not started yet."""
+        self._events.extend(events)
+
     def emit(self, *events: RpcEvent) -> None:
         """Send events now, outside any scripted turn."""
         self._released.extend(events)

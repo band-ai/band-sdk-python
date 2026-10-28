@@ -33,12 +33,8 @@ from pydantic_settings import (
 )
 from typing_extensions import Unpack
 
-from band.converters.codex import (
-    CODEX_RESUME_RECORD,
-    CodexHistoryConverter,
-    CodexMetadataKey,
-)
-from band.converters.helpers import build_replay_messages
+from band.converters.codex import CODEX_RESUME_RECORD, CodexHistoryConverter
+from band.converters.helpers import HISTORY_REPLAY_HEADING, build_replay_messages
 from band.core.adapterconfig import EnvAdapterConfig
 from band.core.content import has_visible_content
 from band.core.defaultmodels import OPENAI_MODEL
@@ -103,6 +99,7 @@ from band.integrations.codex.types import (
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
+    CodexMetadataKey,
     CodexRequestMethod,
     CodexSessionState,
     CodexTokenUsage,
@@ -125,7 +122,11 @@ from band.runtime.decisions import (
     Registration,
     Timeout,
 )
-from band.runtime.formatters import format_current_inputs, strip_leading_mentions
+from band.runtime.formatters import (
+    build_participants_message,
+    format_current_inputs,
+    strip_leading_mentions,
+)
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, render_system_prompt
 from band.runtime.sessionresume import SessionSeed, transcript_before
 from band.runtime.toolactivity import (
@@ -1422,6 +1423,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             if seed.replay_due
             else []
         )
+        if seed.replay_due and participants_msg is None:
+            # The runtime sends the roster only when it changes, so a thread
+            # abandoned unseeded may have taken the latest one with it.
+            participants_msg = build_participants_message(tools.participants)
         turn_input, has_pending_prompt_injection = self._build_turn_input(
             messages=messages,
             participants_msg=participants_msg,
@@ -2458,8 +2463,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if not thread_id:
             raise RuntimeError("Codex thread/start returned no thread id")
 
-        # Mapped at once so a process lost mid-turn restores this thread; Band
-        # history names it only once its seeding turn completes.
+        # The room's thread while its seeding turn runs: a failed seed
+        # abandons it, and Band history names it only once it is seeded.
         self._room_threads[room_id] = thread_id
         room.bind_thread(
             registration=dynamic_tools,
@@ -2627,7 +2632,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
         truncated = text_messages[-self.config.max_history_messages :]
         header = (
-            "[Conversation History]\n"
+            f"{HISTORY_REPLAY_HEADING}\n"
             "The following is the conversation history from a previous session. "
             "Use it to maintain continuity.\n"
         )
