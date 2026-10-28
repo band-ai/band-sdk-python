@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from band.adapters.codex import (
+    SYSTEM_CONTEXT_PREFIX,
+    CodexAdapter,
     CodexAdapterConfig,
 )
 from band.converters.codex import CODEX_RESUME_RECORD
@@ -35,9 +39,92 @@ from tests.adapters.codexturns import (
     turn_completed,
 )
 from tests.adapters.dispatch import deliver_event
+from tests.roomhistory import stored as stored_text
 
 
 class TestHistoryInjection:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("fetch_error", "context"),
+        [
+            (ConnectionError("Band REST unavailable"), []),
+            (
+                None,
+                [
+                    stored_text(
+                        "history without a timestamp",
+                        message_id="unknown",
+                        inserted_at=None,
+                    )
+                ],
+            ),
+        ],
+        ids=["fetch-failed", "cutoff-unavailable"],
+    )
+    async def test_unavailable_history_keeps_reseed_unrecorded_until_replay_succeeds(
+        self,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
+        caplog: pytest.LogCaptureFixture,
+        fetch_error: Exception | None,
+        context: list[dict[str, Any]],
+    ) -> None:
+        fake_client = FakeCodexClient(
+            events=[
+                turn_completed("turn-1", status=CodexTurnStatus.FAILED),
+                tool_call_request(1, BandTool.NO_REPLY),
+                turn_completed("turn-2"),
+            ]
+        )
+        adapter = await started_codex(fake_client)
+        first = agent_input("first", ToolSchemaFakeTools())
+        with pytest.raises(TurnResultAlreadyReported):
+            await deliver_event(adapter, first)
+
+        tools = ToolSchemaFakeTools()
+        tools.fetch_room_context_error = fetch_error
+        tools.set_room_context(context)
+        notice = "A contact update"
+        second = replace(
+            agent_input("again", tools, is_session_bootstrap=False), contacts_msg=notice
+        )
+        caplog.clear()
+        await deliver_event(adapter, second)
+
+        first_turn, second_turn = fake_client.params_of(CodexRequestMethod.TURN_START)
+        assert first_turn["threadId"] != second_turn["threadId"]
+        assert replayed_history(second_turn) == []
+        assert tools.turn.complete
+        assert CODEX_RESUME_RECORD.candidates(tools.events_sent) == {}
+        assert caplog.messages == [
+            "Room room-1: could not fetch history to replay into a fresh session"
+        ]
+        fake_client.script(*answered_turn("turn-3"))
+        recovered_tools = ToolSchemaFakeTools()
+        recovered = agent_input(
+            "recovered", recovered_tools, is_session_bootstrap=False
+        )
+        recovered_tools.set_room_context(
+            [stored(first.msg), stored(second.msg), stored(recovered.msg)]
+        )
+        await deliver_event(adapter, recovered)
+
+        *_, reseeded = fake_client.params_of(CodexRequestMethod.TURN_START)
+        assert reseeded["threadId"] not in {
+            first_turn["threadId"],
+            second_turn["threadId"],
+        }
+        marker = reseeded["input"][-1]["text"].split("\n", 1)[0]
+        assert replayed_history(reseeded) == [
+            f"{HISTORY_REPLAY_HEADER.format(marker=marker)}\n[Alice]: {first.msg.content}\n[Alice]: {second.msg.content}"
+        ]
+        assert {
+            "type": "text",
+            "text": f"{SYSTEM_CONTEXT_PREFIX} {notice}",
+        } in reseeded["input"]
+        assert CODEX_RESUME_RECORD.candidates(recovered_tools.events_sent) == {
+            recovered.room_id: reseeded["threadId"]
+        }
+
     @pytest.mark.asyncio
     async def test_history_injected_on_resume_failure(self) -> None:
         """Resume fails, fresh thread created, first turn input contains history block."""
@@ -229,13 +316,14 @@ class TestHistoryInjection:
         raw_history: list[dict[str, Any]] = [
             recorded_thread("thr-old"),
         ]
+        messages = [f"Message {i}" for i in range(10)]
         raw_history.extend(
             {
                 "message_type": "text",
-                "content": f"Message {i}",
+                "content": content,
                 "sender_name": "Alice",
             }
-            for i in range(10)
+            for content in messages
         )
 
         inp = agent_input("Go", tools, raw_history=raw_history)
@@ -243,12 +331,9 @@ class TestHistoryInjection:
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
         (text,) = replayed_history(turn_start)
-        # Only last 3 messages should be present
-        assert "Message 7" in text
-        assert "Message 8" in text
-        assert "Message 9" in text
-        assert "Message 0" not in text
-        assert "Message 6" not in text
+        marker = turn_start["input"][-1]["text"].splitlines()[0]
+        expected = "\n".join(f"[Alice]: {content}" for content in messages[-3:])
+        assert text == f"{HISTORY_REPLAY_HEADER.format(marker=marker)}\n{expected}"
 
     @pytest.mark.asyncio
     async def test_history_is_replayed_only_into_the_seeding_turn(self) -> None:

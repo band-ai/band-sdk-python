@@ -971,7 +971,7 @@ class ClaudeSDKAdapter(
                 session,
                 tools,
                 prompt,
-                message_ids,
+                tuple(messages),
                 distinct_sender_ids(messages),
                 release_future,
                 resume_from=resume_from,
@@ -1031,7 +1031,7 @@ class ClaudeSDKAdapter(
         session: ClaudeRoomSession,
         tools: AgentToolsProtocol,
         prompt: str,
-        message_ids: tuple[str, ...],
+        messages: Sequence[PlatformMessage],
         transcript: str | None,
     ) -> str:
         """``prompt``, preceded by the room's memory while the conversation
@@ -1046,9 +1046,7 @@ class ClaudeSDKAdapter(
         if not session.seed.replay_due:
             return prompt
         if transcript is None:
-            transcript = await self._fetch_room_memory(
-                tools, session.room_id, message_ids
-            )
+            transcript = await self._fetch_room_memory(tools, session.room_id, messages)
         session.seed.carried = transcript is not None
         if not transcript:
             return prompt
@@ -1060,14 +1058,15 @@ class ClaudeSDKAdapter(
         return f"{ROOM_MEMORY_HEADER}\n{transcript}\n\n{prompt}"
 
     async def _fetch_room_memory(
-        self, tools: AgentToolsProtocol, room_id: str, message_ids: tuple[str, ...]
+        self,
+        tools: AgentToolsProtocol,
+        room_id: str,
+        messages: Sequence[PlatformMessage],
     ) -> str | None:
         """The room's history before this turn, as the converter renders it;
         None when it cannot be fetched."""
         try:
-            raw = await fetch_transcript(
-                tools, room_id=room_id, turn_ids=set(message_ids)
-            )
+            raw = await fetch_transcript(tools, room_id=room_id, messages=messages)
         except Exception:
             logger.warning(
                 "Room %s: could not fetch history to seed the new Claude session",
@@ -1084,7 +1083,7 @@ class ClaudeSDKAdapter(
         session: ClaudeRoomSession,
         tools: AgentToolsProtocol,
         prompt: str,
-        message_ids: tuple[str, ...],
+        messages: Sequence[PlatformMessage],
         audience: tuple[str, ...],
         release_future: asyncio.Future[None],
         *,
@@ -1106,7 +1105,7 @@ class ClaudeSDKAdapter(
                 self._turn_lease(session, tools, resume_from) as client,
             ):
                 full_message = await self._seeded_prompt(
-                    session, tools, prompt, message_ids, transcript
+                    session, tools, prompt, messages, transcript
                 )
                 try:
                     await self._converse(owner, session, client, tools, full_message)
@@ -1117,7 +1116,7 @@ class ClaudeSDKAdapter(
                             session.room_id,
                         )
                         session.recover("Turn left its session unseeded")
-            logger.debug("Messages %s processed successfully", message_ids)
+            logger.debug("Messages %s processed successfully", ids_of(messages))
         finally:
             self._turn_audience.pop(session.room_id, None)
             self._release_turn(session.room_id, release_future)

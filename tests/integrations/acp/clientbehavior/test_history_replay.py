@@ -1,3 +1,5 @@
+"""Fresh ACP sessions receive a framed room transcript before live input."""
+
 from __future__ import annotations
 
 import pytest
@@ -19,6 +21,7 @@ from tests.integrations.acp.clientbehavior.kit import (
     replay_boundary,
     room_text_message,
 )
+from tests.roomhistory import DEFAULT_HISTORY_INSERTED_AT
 
 
 class TestHistoryReplay:

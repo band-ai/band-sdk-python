@@ -83,7 +83,6 @@ from band.core.types import (
     Emit,
     FeatureKwargs,
     PlatformMessage,
-    ids_of,
 )
 from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import ACPRuntime
@@ -1916,6 +1915,7 @@ class ACPClientAdapter(
         """
         try:
             context = await tools.fetch_room_context(room_id=room_id)
+            raw = messages_before(context.get("data") or [], messages)
         except Exception:
             logger.warning(
                 "Room %s: could not fetch history to re-seed the new ACP session",
@@ -1923,7 +1923,6 @@ class ACPClientAdapter(
                 exc_info=True,
             )
             return None
-        raw = messages_before(context.get("data") or [], set(ids_of(messages)))
         return build_replay_messages(raw)
 
 

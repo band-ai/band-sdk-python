@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Sequence
-from collections.abc import Set as AbstractSet
 from enum import StrEnum
 
 from band.core.types import PlatformMessage
+from band.runtime.selection import MessageKey
 from band.runtime.tools.inputs.chat import MENTION_GUIDANCE
 
 # A room message is delivered to an agent only when it @mentions it, so the
@@ -174,16 +174,27 @@ def format_current_inputs(messages: Sequence[PlatformMessage]) -> str:
     return f"{CURRENT_INPUTS_HEADING} ({len(messages)})\n{_CURRENT_INPUTS_GUIDE}\n{records}"
 
 
-def messages_before(messages: list[dict], message_ids: AbstractSet[str]) -> list[dict]:
-    """The prefix of ``messages`` strictly before the first one in ``message_ids``.
+def messages_before(
+    messages: list[dict], originals: Sequence[PlatformMessage]
+) -> list[dict]:
+    """Keep history strictly before the turn's earliest original.
 
-    Bootstrap history must stop at the turn's earliest stored original: entries
-    after it are pending turns of their own, and replaying them both exposes
-    future requests and duplicates them when their own turn arrives. When none
-    of the ids is stored the list is returned unchanged.
+    A stored original supplies the exact prefix boundary. When REST omits the
+    earliest original, use the runtime's insertion-time/id ordering instead;
+    later pending turns must never enter replay. Missing ordering makes that
+    history unavailable, rather than proving it precedes the turn.
     """
+    if not originals:
+        return messages
+    message_ids = {message.id for message in originals}
+    earliest = min(MessageKey.of_message(message) for message in originals)
+    earliest_is_stored = any(
+        message.get("id") == earliest.message_id for message in messages
+    )
     for index, message in enumerate(messages):
-        if message.get("id") in message_ids:
+        if message.get("id") in message_ids or (
+            not earliest_is_stored and MessageKey.of_stored(message) >= earliest
+        ):
             return messages[:index]
     return messages
 

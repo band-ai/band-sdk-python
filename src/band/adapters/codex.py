@@ -87,7 +87,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
     distinct_sender_ids,
-    ids_of,
 )
 from band.integrations.codex import (
     TRANSPORT_CLOSED,
@@ -131,7 +130,7 @@ from band.runtime.formatters import (
     strip_leading_mentions,
 )
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, render_system_prompt
-from band.runtime.sessionresume import SessionSeed, transcript_before
+from band.runtime.sessionresume import SessionSeed, fetch_transcript
 from band.runtime.toolactivity import (
     end_tool_activity,
     report_memory_activity,
@@ -1408,7 +1407,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         seed = room.seed
         replay = (
             await self._replay_history(
-                room_id=room_id,
+                room=room,
                 messages=messages,
                 tools=tools,
                 history=history,
@@ -1512,7 +1511,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 raise TurnResultAlreadyReported(TURN_PROCESSING_ERROR) from None
         if result.completed:
             seed.confirm()
-            room.pending_system_context.clear()
+            if not seed.replay_due:
+                room.pending_system_context.clear()
         await self._emit_turn_outcome(
             tools=tools,
             audience=audience,
@@ -2609,7 +2609,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     async def _replay_history(
         self,
         *,
-        room_id: str,
+        room: RoomCodexClient,
         messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: CodexSessionState,
@@ -2624,11 +2624,19 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             return []
         if is_session_bootstrap:
             return history.replay_messages
-        return build_replay_messages(
-            await transcript_before(
-                tools, room_id=room_id, message_ids=set(ids_of(messages))
+        try:
+            transcript = await fetch_transcript(
+                tools, room_id=room.room_id, messages=messages
             )
-        )
+        except Exception:
+            room.seed.carried = False
+            logger.warning(
+                "Room %s: could not fetch history to replay into a fresh session",
+                room.room_id,
+                exc_info=True,
+            )
+            return []
+        return build_replay_messages(transcript)
 
     async def _handle_server_request(
         self,

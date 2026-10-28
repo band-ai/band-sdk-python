@@ -16,20 +16,15 @@ each adapter.
 
 from __future__ import annotations
 
-import logging
-from collections.abc import Iterable, Mapping
-from collections.abc import Set as AbstractSet
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import JsonValue
 
 from band.core.protocols import AgentToolsProtocol, send_event_safe
-from band.core.types import MessageType
+from band.core.types import MessageType, PlatformMessage
 from band.runtime.formatters import format_history_for_llm, messages_before
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -72,7 +67,7 @@ class ResumeRecord:
         sessions: dict[str, str] = {}
         for message in raw:
             metadata = message.get("metadata")
-            if not self._is_record(message) or not isinstance(metadata, Mapping):
+            if not self.matches(message) or not isinstance(metadata, Mapping):
                 continue
             room = metadata.get(self.room_key)
             session = metadata.get(self.session_key)
@@ -80,7 +75,8 @@ class ResumeRecord:
                 sessions[room] = session
         return sessions
 
-    def _is_record(self, message: Mapping[str, Any]) -> bool:
+    def matches(self, message: Mapping[str, Any]) -> bool:
+        """Match this record's message type and label."""
         return (
             message.get("message_type") == MessageType.TASK
             and message.get("content") == self.label
@@ -121,7 +117,7 @@ class ResumeRecord:
 
 
 async def fetch_transcript(
-    tools: AgentToolsProtocol, *, room_id: str, turn_ids: AbstractSet[str]
+    tools: AgentToolsProtocol, *, room_id: str, messages: Sequence[PlatformMessage]
 ) -> list[dict[str, Any]]:
     """The room's history before the turn's earliest input, every page, in
     the shape bootstrap hands converters (mentions resolved to handles).
@@ -146,55 +142,5 @@ async def fetch_transcript(
             break
         page += 1
     return format_history_for_llm(
-        messages_before(collected, turn_ids), participants=tools.participants
+        messages_before(collected, messages), participants=tools.participants
     )
-
-
-async def transcript_before(
-    tools: AgentToolsProtocol, *, room_id: str, message_ids: AbstractSet[str]
-) -> list[dict[str, Any]]:
-    """The room's history before the turn's ``message_ids``, as bootstrap has it.
-
-    A fresh session minted off bootstrap has no history from the runtime, so
-    its replay is fetched and formatted like bootstrap history, mentions
-    resolved against the room's participants. A failed fetch replays nothing
-    rather than failing the turn.
-
-    Every page is read, oldest first, because the turn's own messages that
-    end the transcript sit on the newest one. This runs only when a session
-    is reseeded off bootstrap, and blocks only that room.
-    """
-    try:
-        stored = await _room_messages(tools, room_id)
-    except Exception:
-        logger.warning(
-            "Room %s: could not fetch history to replay into a fresh session",
-            room_id,
-            exc_info=True,
-        )
-        return []
-    return format_history_for_llm(
-        messages_before(stored, message_ids), participants=tools.participants
-    )
-
-
-async def _room_messages(
-    tools: AgentToolsProtocol, room_id: str
-) -> list[dict[str, Any]]:
-    """Every page of the room's stored context, oldest first."""
-    collected: list[dict[str, Any]] = []
-    page = 1
-    while True:
-        context = await tools.fetch_room_context(room_id=room_id, page=page)
-        data = context.get("data") or []
-        if not data:
-            return collected
-        collected.extend(data)
-        meta = context.get("meta") or {}
-        total_pages = meta.get("total_pages")
-        if isinstance(total_pages, int):
-            if page >= total_pages:
-                return collected
-        elif len(data) < int(meta.get("page_size") or len(data)):
-            return collected
-        page += 1
