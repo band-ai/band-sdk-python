@@ -19,6 +19,12 @@ if TYPE_CHECKING:
     from remote_agent.network import HTTPRoom
 
 
+# Each receipt is its own state key, so a commit journals only the entry it
+# changes and the journal grows linearly with the receipts it retains.
+OUTBOX = "wake_outbox/"
+INBOX = "wake_inbox/"
+
+
 class WakeJournal:
     def __init__(self, path: SourcePath, scope: JsonObject) -> None:
         self.scope = deepcopy(scope)
@@ -69,18 +75,19 @@ class WakeJournal:
         if event["actor"] != self.scope["actor"]:
             raise StoreError("Outbound receipt belongs to another actor")
         with self.store.lock:
-            outbox = self.store.get("wake_outbox", {})
-            prior = outbox.get(event["id"])
+            prior = self.store.get(OUTBOX + event["id"])
             if prior is not None:
                 if prior["event"] != event:
                     raise StoreError("Conflicting room receipt reuse")
                 return
-            outbox[event["id"]] = {
+            item = {
                 "event": event,
                 "targets": {actor: "pending" for actor in event["recipients"]},
             }
             self.store.commit(
-                "wake_staged", {"receipt": event["id"]}, updates={"wake_outbox": outbox}
+                "wake_staged",
+                {"receipt": event["id"]},
+                updates={OUTBOX + event["id"]: item},
             )
 
     def pending(self) -> list[JsonObject]:
@@ -91,7 +98,7 @@ class WakeJournal:
                 "kind": item["event"].get("kind"),
                 "scope": deepcopy(self.scope),
             }
-            for identifier, item in self.store.get("wake_outbox", {}).items()
+            for identifier, item in self.store.prefixed(OUTBOX).items()
             for recipient, state in item["targets"].items()
             if state == "pending"
         ]
@@ -99,8 +106,7 @@ class WakeJournal:
     def confirm(self, receipt: str, recipient: str) -> None:
         """Caller must already possess a checked transport acceptance/duplicate."""
         with self.store.lock:
-            outbox = self.store.get("wake_outbox", {})
-            item = outbox.get(receipt)
+            item = self.store.get(OUTBOX + receipt)
             if item is None or recipient not in item["targets"]:
                 raise StoreError("Unknown receipt or wake recipient")
             if item["targets"][recipient] == "confirmed":
@@ -109,7 +115,7 @@ class WakeJournal:
             self.store.commit(
                 "wake_confirmed",
                 {"receipt": receipt, "recipient": recipient},
-                updates={"wake_outbox": outbox},
+                updates={OUTBOX + receipt: item},
             )
 
     def flush(self, send: Callable[[JsonObject], JsonObject]) -> None:
@@ -140,27 +146,28 @@ class WakeJournal:
                 or len(page["events"]) > limit
             ):
                 raise StoreError("Invalid recovery inbox page")
-            inbox = self.store.get("wake_inbox", {})
+            added: JsonObject = {}
             for raw in page["events"]:
                 event = self._event(raw)
                 if self.scope["actor"] not in event["recipients"]:
                     raise StoreError("Inbox receipt is not addressed to this actor")
-                prior = inbox.get(event["id"])
+                key = INBOX + event["id"]
+                prior = added.get(key) or self.store.get(key)
                 if prior is not None and prior["event"] != event:
                     raise StoreError("Conflicting inbox receipt reuse")
                 if prior is None:
-                    inbox[event["id"]] = {"event": event, "state": "pending"}
-            if after != cursor or inbox != self.store.get("wake_inbox", {}):
+                    added[key] = {"event": event, "state": "pending"}
+            if after != cursor or added:
                 self.store.commit(
                     "wake_inbox_page",
                     {"cursor": after},
-                    updates={"wake_cursor": after, "wake_inbox": inbox},
+                    updates={"wake_cursor": after, **added},
                 )
             return {
                 "cursor": after,
                 "pending": [
                     identifier
-                    for identifier, item in inbox.items()
+                    for identifier, item in self.store.prefixed(INBOX).items()
                     if item["state"] == "pending"
                 ],
             }
@@ -168,8 +175,7 @@ class WakeJournal:
     def claim(self, receipt: str) -> JsonObject:
         """Durably claim before effects. Restart/duplicate sees held, not new work."""
         with self.store.lock:
-            inbox = self.store.get("wake_inbox", {})
-            item = inbox.get(receipt)
+            item = self.store.get(INBOX + receipt)
             if item is None:
                 raise StoreError(
                     "Receipt absent from recovered authority inbox; poll again"
@@ -180,7 +186,7 @@ class WakeJournal:
                 return {"status": "held", "receipt": receipt}
             item["state"] = "claimed"
             self.store.commit(
-                "wake_claimed", {"receipt": receipt}, updates={"wake_inbox": inbox}
+                "wake_claimed", {"receipt": receipt}, updates={INBOX + receipt: item}
             )
             return {
                 "status": "claimed",
@@ -191,15 +197,14 @@ class WakeJournal:
     def complete(self, receipt: str) -> None:
         """Host assertion: effects durably completed, or independently reconciled."""
         with self.store.lock:
-            inbox = self.store.get("wake_inbox", {})
-            item = inbox.get(receipt)
+            item = self.store.get(INBOX + receipt)
             if item is None or item["state"] == "pending":
                 raise StoreError("Only claimed work can be completed")
             if item["state"] == "completed":
                 return
             item["state"] = "completed"
             self.store.commit(
-                "wake_completed", {"receipt": receipt}, updates={"wake_inbox": inbox}
+                "wake_completed", {"receipt": receipt}, updates={INBOX + receipt: item}
             )
 
     def reconcile(self, receipt: str, decision: str, evidence: str) -> None:
@@ -218,13 +223,12 @@ class WakeJournal:
                 "Held-work reconciliation requires a decision and evidence"
             )
         with self.store.lock:
-            inbox = self.store.get("wake_inbox", {})
-            item = inbox.get(receipt)
+            item = self.store.get(INBOX + receipt)
             if item is None or item["state"] != "claimed":
                 raise StoreError("Only held claimed work can be reconciled")
             item["state"] = "pending" if decision == "retry" else "completed"
             self.store.commit(
                 "wake_reconciled",
                 {"receipt": receipt, "decision": decision, "evidence": evidence},
-                updates={"wake_inbox": inbox},
+                updates={INBOX + receipt: item},
             )

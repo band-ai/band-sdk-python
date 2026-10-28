@@ -470,6 +470,21 @@ class Store:
             ).fetchone()
             return json.loads(row[0]) if row else default
 
+    def prefixed(self, prefix: str) -> dict[str, Any]:
+        """Current values whose keys start with a nonempty ``prefix``, in key order.
+
+        Keys are returned without the prefix.
+        """
+        if not prefix:
+            raise StoreError("A state key prefix is required")
+        end = prefix[:-1] + chr(ord(prefix[-1]) + 1)
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT key,value FROM current_state WHERE key>=? AND key<? ORDER BY key",
+                (prefix, end),
+            ).fetchall()
+            return {key[len(prefix) :]: json.loads(value) for key, value in rows}
+
     def latest_snapshot(self) -> JsonObject | None:
         with self.lock:
             row = self.connection.execute(

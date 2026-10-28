@@ -240,13 +240,42 @@ with WakeJournal(sys.argv[1], json.loads(sys.argv[2])) as receiver:
         self.assertEqual(died.returncode, -signal.SIGKILL, died.stderr)
         with self.journal(self.receiver_scope()) as receiver:
             self.assertEqual(receiver.store.get("wake_cursor", 0), 0)
-            self.assertEqual(receiver.store.get("wake_inbox", {}), {})
+            self.assertIsNone(receiver.store.get("wake_inbox/" + self.event["id"]))
             receiver.recover(Mock(inbox=Mock(return_value=self.page())))
             self.assertEqual(
                 require_value(
                     receiver.claim(self.event["id"]), "Expected a claimable journal job"
                 )["status"],
                 "claimed",
+            )
+
+    def test_hundreds_of_receipts_stage_confirm_and_recover_without_wedging(
+        self,
+    ) -> None:
+        events = [
+            dict(self.event, id=f"{index:032x}", payload={"task": "x" * 400})
+            for index in range(400)
+        ]
+        with self.journal() as sender:
+            for event in events:
+                sender.stage(event)
+                sender.confirm(event["id"], "member")
+            self.assertEqual(sender.pending(), [])
+        pages = [
+            {"cursor": start + 100, "events": events[start : start + 100]}
+            for start in range(0, len(events), 100)
+        ]
+        receiver_path = self.path.with_name("receiver.sqlite3")
+        with WakeJournal(receiver_path, self.receiver_scope()) as receiver:
+            room = Mock(inbox=Mock(side_effect=pages))
+            for _ in pages:
+                receiver.recover(room)
+            for event in events:
+                receiver.claim(event["id"])
+                receiver.complete(event["id"])
+            self.assertEqual(
+                receiver.claim(events[-1]["id"]),
+                {"status": "duplicate", "receipt": events[-1]["id"]},
             )
 
     def test_cursor_conflict_and_backward_page_preserve_pending_receipts(self) -> None:
