@@ -25,10 +25,22 @@ class PermissionControl:
         self._connections.put_nowait((reader, writer))
 
     async def request(self) -> dict[str, Any]:
+        return await self._exchange(PeerCommand.PERMISSION)
+
+    async def prompted(self) -> None:
+        await self._exchange(PeerCommand.PROMPTED)
+
+    async def release_prompt(self) -> None:
+        await self._exchange(PeerCommand.RELEASE_PROMPT)
+
+    async def _exchange(self, command: PeerCommand) -> dict[str, Any]:
         reader, writer = await self._connections.get()
-        writer.write((PeerCommand.PERMISSION + "\n").encode())
-        await writer.drain()
-        return json.loads(await reader.readline())
+        try:
+            writer.write((command + "\n").encode())
+            await writer.drain()
+            return json.loads(await reader.readline())
+        finally:
+            self._connections.put_nowait((reader, writer))
 
     async def close(self) -> None:
         for writer in self._writers:

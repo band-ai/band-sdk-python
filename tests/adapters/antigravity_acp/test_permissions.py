@@ -19,7 +19,7 @@ from tests.adapters.antigravity_acp.kit import (
     local_schedule,
     mcp_permission,
 )
-from tests.adapters.antigravity_acp.peerconfig import PeerSettings
+from tests.adapters.antigravity_acp.peerconfig import DEFAULT_REPLY, PeerSettings
 from tests.integrations.acp.acp_toolkit.agent import allow_or_reject
 
 ALLOW_ID, REJECT_ID = (option.option_id for option in allow_or_reject())
@@ -76,7 +76,7 @@ class TestAntigravityPermissions:
         tools = await peer.send()
 
         assert peer.permission_choices() == [ALLOW_ID]
-        assert tools.chat == ["A reply from Antigravity."]
+        assert tools.chat == [DEFAULT_REPLY]
 
     @pytest.mark.parametrize(
         ("approval_mode", "expected"),
@@ -102,7 +102,7 @@ class TestAntigravityPermissions:
         tools = await peer.send()
 
         assert peer.permission_choices() == [expected]
-        assert tools.chat == ["A reply from Antigravity."]
+        assert tools.chat == [DEFAULT_REPLY]
 
     @pytest.mark.parametrize("approval_mode", ["auto_accept", "auto_decline"])
     async def test_native_subagent_requests_are_declined(
@@ -124,7 +124,7 @@ class TestAntigravityPermissions:
         tools = await peer.send()
 
         assert peer.permission_choices() == [REJECT_ID]
-        assert tools.chat == ["A reply from Antigravity."]
+        assert tools.chat == [DEFAULT_REPLY]
 
     async def test_external_mcp_schedule_is_not_a_native_background_tool(
         self, open_peer: Callable[..., Awaitable[AntigravityRoom]]

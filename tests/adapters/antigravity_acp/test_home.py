@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tests.adapters.antigravity_acp.kit import AntigravityRoom
+from tests.adapters.antigravity_acp.peer import SESSION_FILE
 from tests.adapters.antigravity_acp.peerconfig import PeerEvent
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_tools
 
@@ -136,4 +137,4 @@ class TestAntigravityHome:
         await peer.adapter.cleanup_all()
 
         assert home.is_dir()
-        assert (home / "peer-sessions.json").read_text() == '["fake-session-1"]'
+        assert (home / SESSION_FILE).read_text() == '["fake-session-1"]'

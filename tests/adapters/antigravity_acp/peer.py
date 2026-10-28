@@ -66,6 +66,8 @@ class AntigravityPeer(FakeACPAgent):
                 self.sessions.append({"session_id": session_id})
         self.active_session: str | None = None
         self.control_task: asyncio.Task[None] | None = None
+        self.prompt_started = asyncio.Event()
+        self.prompt_release = asyncio.Event()
         self.on_prompt(self.answer)
         self.stops_with(config.stop_reason)
         self.record(
@@ -144,6 +146,9 @@ class AntigravityPeer(FakeACPAgent):
     async def answer(self, agent: FakeACPAgent, session_id: str) -> None:
         del agent
         self.record(PeerEvent.PROMPTED, text=self.prompt_texts()[-1])
+        self.prompt_started.set()
+        if self.config.hold_prompt:
+            await self.prompt_release.wait()
         if self.config.prompt_error:
             raise RequestError.internal_error()
         if self.config.permission is not None and self.config.permission_on_prompt:
@@ -168,13 +173,22 @@ class AntigravityPeer(FakeACPAgent):
         try:
             while line := await reader.readline():
                 command = PeerCommand(line.decode().strip())
-                if self.active_session is None:
-                    raise ValueError("permission requested before a session exists")
                 match command:
                     case PeerCommand.PERMISSION:
+                        if self.active_session is None:
+                            raise ValueError(
+                                "permission requested before a session exists"
+                            )
                         response = await self.permission(self.active_session)
-                        writer.write(response.model_dump_json().encode() + b"\n")
-                        await writer.drain()
+                        payload = response.model_dump(mode="json")
+                    case PeerCommand.PROMPTED:
+                        await self.prompt_started.wait()
+                        payload = {"event": PeerEvent.PROMPTED}
+                    case PeerCommand.RELEASE_PROMPT:
+                        self.prompt_release.set()
+                        payload = {"command": command}
+                writer.write(json.dumps(payload).encode() + b"\n")
+                await writer.drain()
         finally:
             writer.close()
             with suppress(ConnectionError):

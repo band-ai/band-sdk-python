@@ -15,40 +15,49 @@ from band.integrations.acp.types import ACPToolCall
 
 class TestACPToolObservation:
     @pytest.mark.parametrize(
-        ("meta", "raw", "server", "arguments", "rejected"),
+        ("meta", "raw", "expected"),
         [
             (
                 None,
                 {"server": "band", "tool": "known", "arguments": {"x": 1}},
-                "band",
-                {"x": 1},
-                False,
+                ACPToolCall(
+                    "call", "band-known", {"x": 1}, mcp_server="band", title="native"
+                ),
             ),
             (
                 {"mcp": None},
                 {"server": "band", "tool": "known", "arguments": {"x": 1}},
-                "band",
-                {"x": 1},
-                True,
+                ACPToolCall(
+                    "call",
+                    "band-known",
+                    {"x": 1},
+                    mcp_server="band",
+                    title="native",
+                    mcp_metadata_rejected=True,
+                ),
             ),
             (
                 {"mcp": {"server": "band", "tool": "known"}},
                 {"arguments": {"x": 1}},
-                "band",
-                {"x": 1},
-                False,
+                ACPToolCall(
+                    "call", "band-known", {"x": 1}, mcp_server="band", title="native"
+                ),
             ),
-            ({"mcp": {"server": "band", "tool": "known"}}, {}, None, {}, True),
-            ({}, {}, None, {}, False),
+            (
+                {"mcp": {"server": "band", "tool": "known"}},
+                {},
+                ACPToolCall(
+                    "call", "native", {}, title="native", mcp_metadata_rejected=True
+                ),
+            ),
+            ({}, {}, ACPToolCall("call", "native", {}, title="native")),
         ],
     )
     def test_metadata_rejection_is_distinct_from_fallback_identity(
         self,
         meta: dict[str, Any] | None,
         raw: dict[str, Any],
-        server: str | None,
-        arguments: dict[str, Any],
-        rejected: bool,
+        expected: ACPToolCall,
     ) -> None:
         call = ACPToolCall.from_acp(
             ToolCallUpdate(
@@ -56,11 +65,7 @@ class TestACPToolObservation:
             )
         )
 
-        assert (call.mcp_server, call.arguments, call.mcp_metadata_rejected) == (
-            server,
-            arguments,
-            rejected,
-        )
+        assert call == expected
 
     async def test_a_permission_observer_does_not_replace_the_raw_handler_argument(
         self,

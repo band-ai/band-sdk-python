@@ -57,6 +57,7 @@ ANTIGRAVITY_WINDOWS_EXECUTABLE = "agy_acp_server.exe"
 ANTIGRAVITY_LINUX_UID_ARGUMENT = "--uid="
 TESTED_ANTIGRAVITY_VERSION = "1.4.3"
 DEFAULT_ANTIGRAVITY_HOME_ROOT = "~/.band/antigravity-acp"
+PRIVATE_HOME_MODE = 0o700
 GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 GEMINI_HOME_ENV = "GEMINI_HOME"
 INVOKE_SUBAGENT_TITLE = "Run invoke_subagent?"
@@ -180,9 +181,9 @@ class AntigravityACPAdapter(ACPClientAdapter[AntigravityACPAdapterConfig]):
         )
         if identity is not None and (path.parent != root or path.name != identity):
             raise ValueError("Antigravity home cannot alias another identity")
-        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path.mkdir(mode=PRIVATE_HOME_MODE, parents=True, exist_ok=True)
         if os.name != "nt":
-            path.chmod(0o700)
+            path.chmod(PRIVATE_HOME_MODE)
         return path
 
     def _runtime_client_factory(
@@ -230,8 +231,7 @@ class AntigravityACPAdapter(ACPClientAdapter[AntigravityACPAdapterConfig]):
                 else REJECT_ONCE_KIND
             )
             logger.info(
-                "Antigravity tool permission: room=%s kind=%s",
-                request.room_id,
+                "Antigravity tool permission: %s",
                 kind,
             )
         return option_id_of_kind(request.options, kind)

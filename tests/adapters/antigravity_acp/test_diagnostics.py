@@ -11,6 +11,7 @@ from acp.schema import ToolCallUpdate
 
 from band.adapters.antigravity_acp import TESTED_ANTIGRAVITY_VERSION
 from band.core.types import ApprovalMode
+from band.integrations.acp.permissions import ALLOW_ONCE_KIND, REJECT_ONCE_KIND
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 from tests.adapters.antigravity_acp.kit import AntigravityRoom, mcp_permission
 from tests.adapters.antigravity_acp.peer import PEER_AGENT_NAME
@@ -22,8 +23,11 @@ ALLOW_ID, REJECT_ID = (option.option_id for option in allow_or_reject())
 
 class TestAntigravityDiagnostics:
     @pytest.mark.parametrize(
-        ("approval_mode", "expected"),
-        [("auto_accept", ALLOW_ID), ("auto_decline", REJECT_ID)],
+        ("approval_mode", "expected", "kind"),
+        [
+            ("auto_accept", ALLOW_ID, ALLOW_ONCE_KIND),
+            ("auto_decline", REJECT_ID, REJECT_ONCE_KIND),
+        ],
     )
     async def test_native_permission_logs_keep_sensitive_commands_private(
         self,
@@ -31,6 +35,7 @@ class TestAntigravityDiagnostics:
         caplog: pytest.LogCaptureFixture,
         approval_mode: ApprovalMode,
         expected: str,
+        kind: str,
     ) -> None:
         caplog.set_level(logging.INFO)
         secret = "sensitive-command-argument"
@@ -49,15 +54,23 @@ class TestAntigravityDiagnostics:
         await peer.send()
 
         assert peer.permission_choices() == [expected]
-        assert {
-            record.name
+        assert [
+            (record.name, record.levelno, record.getMessage())
             for record in caplog.records
             if "permission:" in record.getMessage().lower()
             or record.getMessage().startswith("Permission request:")
-        } == {
-            "band.adapters.antigravity_acp",
-            "band.integrations.acp.client_adapter",
-        }
+        ] == [
+            (
+                "band.adapters.antigravity_acp",
+                logging.INFO,
+                f"Antigravity tool permission: {kind}",
+            ),
+            (
+                "band.integrations.acp.client_adapter",
+                logging.INFO,
+                "Permission request: selected",
+            ),
+        ]
         assert secret not in caplog.text
 
     async def test_valid_mcp_metadata_does_not_report_shape_drift(
