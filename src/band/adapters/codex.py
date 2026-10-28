@@ -152,6 +152,8 @@ from band.workspaces import (
 
 logger = logging.getLogger(__name__)
 
+SYSTEM_CONTEXT_PREFIX = "[System]:"
+
 
 def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
     """An image tool result as Codex app-server ``inputImage`` content items.
@@ -694,6 +696,8 @@ class RoomCodexClient:
     seed: SessionSeed = dataclass_field(default_factory=SessionSeed)
     # Band history names the thread: its resume record was posted.
     recorded: bool = False
+    # Runtime commits these deltas even when a turn fails; its successor needs them.
+    pending_system_context: list[str] = dataclass_field(default_factory=list)
     # Serializes this room's turns, local commands and their preparation; a
     # turn parked on a manual approval blocks only this room. Approval
     # replies are handled without it so they can resolve that wait.
@@ -722,6 +726,12 @@ class RoomCodexClient:
         self.bind_thread(
             registration=None, settings=ThreadSettings(), seed=SessionSeed()
         )
+
+    def retain_system_context(self, latest: str | None) -> str | None:
+        """Keep system context until a native turn completes with it."""
+        if latest:
+            self.pending_system_context.append(latest)
+        return "\n".join(self.pending_system_context) or None
 
     def require_client(self) -> CodexClientProtocol:
         if self.client is None:
@@ -1388,6 +1398,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         # The turn keeps its originals, and so its audience, in this frame
         # through detached approval waits.
         audience = self._turn_audience(messages)
+        contacts_msg = room.retain_system_context(contacts_msg)
         thread_id = await self._ensure_thread(
             room=room,
             history=history,
@@ -1501,6 +1512,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 raise TurnResultAlreadyReported(TURN_PROCESSING_ERROR) from None
         if result.completed:
             seed.confirm()
+            room.pending_system_context.clear()
         await self._emit_turn_outcome(
             tools=tools,
             audience=audience,
@@ -2260,6 +2272,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._sandbox_overrides.pop(room_id, None)
         self._room_task_titles.pop(room_id, None)
         self._workspaces.release(room_id, room.workspace)
+        room.pending_system_context.clear()
         if self._room_clients.get(room_id) is room:
             del self._room_clients[room_id]
 
@@ -2573,10 +2586,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             injected_system_prompt = True
 
         if participants_msg:
-            items.append({"type": "text", "text": f"[System]: {participants_msg}"})
+            items.append(
+                {"type": "text", "text": f"{SYSTEM_CONTEXT_PREFIX} {participants_msg}"}
+            )
 
         if contacts_msg:
-            items.append({"type": "text", "text": f"[System]: {contacts_msg}"})
+            items.append(
+                {"type": "text", "text": f"{SYSTEM_CONTEXT_PREFIX} {contacts_msg}"}
+            )
 
         live = format_current_inputs(messages)
         if lines := replay[-self.config.max_history_messages :]:

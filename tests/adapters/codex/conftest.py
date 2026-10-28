@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
+from unittest.mock import MagicMock
 
 import looptime
 import pytest
@@ -13,7 +14,10 @@ import pytest_asyncio
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.retention import RoomRetentionConfig
 from band.core.types import FeatureKwargs
+from band.runtime.execution import ExecutionContext
+from band.runtime.sessionconfig import SessionConfig
 from tests.adapters.codex.kit import (  # noqa: F401
+    ALICE,
     HELD_ROOM,
     NEW_ROOM,
     TRANSITION_TIMEOUT_S,
@@ -35,6 +39,24 @@ from tests.adapters.codexturns import (
     patch_codex_client,
     turn_completed,
 )
+from tests.runtime.runtimecontrol.kit import never_executes
+
+
+@pytest.fixture
+def system_context() -> Callable[[str], ExecutionContext]:
+    """Build room contexts whose system deltas use real preprocessing and commitment."""
+
+    def create(room_id: str) -> ExecutionContext:
+        context = ExecutionContext(
+            room_id,
+            MagicMock(),
+            never_executes,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        context.set_participants([ALICE])
+        return context
+
+    return create
 
 
 @pytest_asyncio.fixture(loop_scope="function")
