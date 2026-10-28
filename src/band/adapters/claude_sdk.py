@@ -1653,8 +1653,7 @@ class ClaudeSDKAdapter(
         room (best-effort). An unseeded conversation is neither kept nor
         recorded, so no resume skips its replay.
 
-        The record is posted once per id rather than after every turn, so a
-        failed post is not retried until the id changes.
+        Record each id once, retrying a failed post after the next completed turn.
         """
         room_id = session.room_id
         session.seed.confirm()
@@ -1664,10 +1663,10 @@ class ClaudeSDKAdapter(
         logger.debug("Room %s: Captured session_id %s", room_id, session_id)
         if self._recorded_session_ids.get(room_id) == session_id:
             return
-        self._recorded_session_ids[room_id] = session_id
-        await CLAUDE_SDK_RESUME_RECORD.post(
+        if await CLAUDE_SDK_RESUME_RECORD.post(
             tools, room_id=room_id, seed=session.seed, session=session_id
-        )
+        ):
+            self._recorded_session_ids[room_id] = session_id
 
     async def _on_tool_result(
         self,

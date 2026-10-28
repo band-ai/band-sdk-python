@@ -83,7 +83,7 @@ class ResumeRecord:
         seed: SessionSeed,
         session: str | None,
         details: Mapping[str, JsonValue] | None = None,
-    ) -> None:
+    ) -> bool:
         """Post the room's record of ``session`` once its seed is confirmed.
 
         An empty ``session`` is left out of the record; ``details`` carries
@@ -91,11 +91,12 @@ class ResumeRecord:
 
         The record is resume state rather than narration, so no emit setting
         gates it. When to post is each adapter's choice: posting after every
-        completed prompt also retries a post that failed before.
+        completed prompt also retries a post that failed before. Return
+        whether the record reached the room.
         """
         if not seed.seeded:
-            return
-        await send_event_safe(
+            return False
+        return await send_event_safe(
             tools,
             self.label,
             MessageType.TASK,

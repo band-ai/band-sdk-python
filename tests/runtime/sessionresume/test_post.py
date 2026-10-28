@@ -21,8 +21,9 @@ class TestResumeRecordPost:
     async def test_an_unseeded_session_posts_no_record(self, seed: SessionSeed) -> None:
         tools = FakeAgentTools()
 
-        await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
+        posted = await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
 
+        assert posted is False
         assert tools.events_sent == []
 
     @pytest.mark.parametrize(
@@ -35,8 +36,11 @@ class TestResumeRecordPost:
     ) -> None:
         tools = FakeAgentTools()
 
-        await RECORD.post(tools, room_id="room-1", seed=confirmed(seed), session="s1")
+        posted = await RECORD.post(
+            tools, room_id="room-1", seed=confirmed(seed), session="s1"
+        )
 
+        assert posted is True
         assert RECORD.candidates(tools.events_sent) == {"room-1": "s1"}
 
     async def test_a_record_without_a_session_keeps_the_earlier_candidate(
@@ -75,9 +79,10 @@ class TestResumeRecordPost:
     async def test_a_failed_post_leaves_the_next_turns_post_to_land(self) -> None:
         tools, seed = FakeAgentTools(), confirmed(SessionSeed())
         tools.send_event_error = ConnectionError("Band REST unavailable")
-        await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
+        failed = await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
 
         tools.send_event_error = None
-        await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
+        retried = await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
 
+        assert (failed, retried) == (False, True)
         assert RECORD.candidates(tools.events_sent) == {"room-1": "s1"}
