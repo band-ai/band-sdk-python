@@ -3,18 +3,20 @@ completes, and only then is it recorded for resume."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 import pytest
 
-from band.adapters.claude_sdk import ROOM_MEMORY_HEADER
+from band.adapters.claude_sdk import ROOM_MEMORY_HEADER, ClaudeSDKAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
 from band.runtime.formatters import format_history_for_llm
-from tests.adapters.claude_sdk.fakecli import EndTurn
+from tests.adapters.claude_sdk.fakecli import EndTurn, Hold
 from tests.adapters.claude_sdk.helpers import (
     AGENT_NAME,
     APPROVER,
+    TURN_TIMEOUT_S,
     ClaudeRoom,
     OpenRoom,
     said,
@@ -143,9 +145,10 @@ class TestSessionSeeding:
     async def test_an_errored_seed_is_not_recorded_and_the_next_turn_seeds_again(
         self, claude_room: OpenRoom
     ) -> None:
-        """The next turn is no bootstrap, so the history it replays is fetched
-        from the room, up to that turn's own input; once it completes, the
-        session is recorded and no later turn replays the history."""
+        """The errored seed's conversation is dropped. The next turn starts a
+        fresh one and, being no bootstrap, fetches the history it replays from
+        the room, up to that turn's own input; once it completes, the session
+        is recorded and no later turn replays the history."""
         room = await claude_room()
         again, later = room.message("again"), room.message(LATER)
         room.tools.set_room_context(
@@ -168,8 +171,10 @@ class TestSessionSeeding:
         await room.deliver(again)
         await room.send("and again")
 
-        [session] = room.claude.sessions
+        dropped, session = room.claude.sessions
         failed_seed, reseed, seeded = room.claude.prompts
+        assert room.claude.resumed == [None, None]
+        assert dropped.alive is False
         assert ROOM_MEMORY_HEADER in failed_seed
         assert reseed.startswith(f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n")
         assert LATER not in reseed
@@ -180,8 +185,9 @@ class TestSessionSeeding:
     async def test_a_reseed_without_the_history_is_not_recorded(
         self, claude_room: OpenRoom
     ) -> None:
-        """A turn whose history could not be fetched still answers, but the
-        session stays owed the history until a later turn carries it."""
+        """A turn whose history could not be fetched still answers, but leaves
+        its conversation unseeded: it is dropped, and a later turn's fresh
+        session carries the history."""
         room = await claude_room()
         room.claude.script(
             [EndTurn(is_error=True, result="overloaded")],
@@ -198,8 +204,10 @@ class TestSessionSeeding:
         assert room.persisted_sessions == []
         await room.send("and again")
 
-        [session] = room.claude.sessions
+        *dropped, session = room.claude.sessions
         _, unseeded, seeded = room.claude.prompts
+        assert room.claude.resumed == [None, None, None]
+        assert [cli.alive for cli in dropped] == [False, False]
         assert ROOM_MEMORY_HEADER not in unseeded
         assert seeded.startswith(f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n")
         assert room.persisted_sessions == [session.session_id]
@@ -226,7 +234,7 @@ class TestSessionSeeding:
         await room.crash_band_server()
         await room.send("still there?")
 
-        assert room.claude.resumed == [None, None]
+        assert room.claude.resumed == [None, None, None]
         assert room.claude.prompts[-1].startswith(
             f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n"
         )
@@ -258,3 +266,55 @@ class TestSessionSeeding:
         assert FACT in memory(reseed)
         assert MENTION_TOKEN not in memory(reseed)
         assert OWN_REPLY not in memory(reseed)
+
+    @pytest.mark.looptime
+    async def test_a_timed_out_seed_is_dropped_and_the_next_turn_starts_fresh(
+        self, claude_room: OpenRoom
+    ) -> None:
+        """An interrupted first prompt is unseeded like a failed one, even when
+        its CLI stops cleanly."""
+        room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
+        room.tools.set_room_context([stored(FACT)])
+        room.claude.script([Hold()], [room.model_reply("seeded now")])
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await room.send("hello", history=(said("Alice", FACT),))
+        assert room.persisted_sessions == []
+        await room.send("again")
+
+        dropped, session = room.claude.sessions
+        assert room.claude.resumed == [None, None]
+        assert dropped.alive is False
+        assert room.claude.prompts[-1].startswith(
+            f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n"
+        )
+        assert room.persisted_sessions == [session.session_id]
+
+    async def test_a_cancelled_seed_is_dropped_and_the_next_turn_starts_fresh(
+        self, claude_room: OpenRoom
+    ) -> None:
+        room = await claude_room()
+        room.tools.set_room_context([stored(FACT)])
+        seeding = Hold()
+        room.claude.script(
+            [seeding, room.model_reply("abandoned reply")],
+            [room.model_reply("seeded now")],
+        )
+
+        message = asyncio.create_task(
+            room.send("hello", history=(said("Alice", FACT),))
+        )
+        async with seeding:
+            message.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await message
+        assert room.persisted_sessions == []
+        await room.send("again")
+
+        _, session = room.claude.sessions
+        assert room.claude.resumed == [None, None]
+        assert room.claude.prompts[-1].startswith(
+            f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n"
+        )
+        assert room.persisted_sessions == [session.session_id]
+        assert room.chat == ["seeded now"]

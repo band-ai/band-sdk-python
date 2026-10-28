@@ -1094,7 +1094,9 @@ class ClaudeSDKAdapter(
         """Run one turn under the room's lease; always releases ``release_future``.
 
         The prompt is completed only once the lease has started or resumed
-        the CLI, since that decides whether the room's memory is owed.
+        the CLI, since that decides whether the room's memory is owed. A turn
+        that leaves its conversation unseeded retires it, so the next turn
+        starts a fresh one.
         """
         owner = await owner_ready
         self._turn_audience[session.room_id] = audience
@@ -1106,7 +1108,11 @@ class ClaudeSDKAdapter(
                 full_message = await self._seeded_prompt(
                     session, tools, prompt, message_ids, transcript
                 )
-                await self._converse(owner, session, client, tools, full_message)
+                try:
+                    await self._converse(owner, session, client, tools, full_message)
+                finally:
+                    if session.seed.replay_due:
+                        session.recover("Turn left its session unseeded")
             logger.debug("Messages %s processed successfully", message_ids)
         finally:
             self._turn_audience.pop(session.room_id, None)

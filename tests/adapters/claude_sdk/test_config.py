@@ -102,19 +102,26 @@ class TestHostConfig:
         """The unanswered approval declines at 60s, inside the 120s turn limit;
         the model then stalls, so the turn limit interrupts it and reports a
         timeout. The interrupted turn is drained, so the same CLI process answers
-        the next message with its own reply."""
+        the next message with its own reply (the session was seeded first, so
+        the timeout does not drop it)."""
         room = await claude_room(
             host_config(
                 tmp_path, turn_timeout_s=120, approvals={"timeout_decision": "decline"}
             )
         )
-        room.claude.script([LIST_FILES, Hold()], [room.model_reply("Back again.")])
+        room.claude.script(
+            [room.model_reply("Hello.")],
+            [LIST_FILES, Hold()],
+            [room.model_reply("Back again.")],
+        )
 
+        await room.send("Hi")
         await room.send("List the files")
         await room.settled()
         await room.send("And now?", sender=ADMIN)
 
         assert room.chat == [
+            "Hello.",
             asked("a-1", "Bash: `ls`"),
             timed_out("a-1", "decline"),
             "Back again.",

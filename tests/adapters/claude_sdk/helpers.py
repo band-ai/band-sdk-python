@@ -62,6 +62,9 @@ WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
 # Short enough that a held transition reports quickly, long enough for a real
 # CLI child to start and the Band MCP server to shut down on a slow runner.
 REPORTING_BUDGET = RoomRetentionConfig(transition_timeout_s=1.0)
+# Short enough to abandon a held turn quickly, long enough for the next
+# turn's real loopback round trips to the Band MCP server on a slow runner.
+TURN_TIMEOUT_S = 2.0
 # A turn still running when its room closes is cancelled at once.
 NO_SETTLE_GRACE = ClaudeSDKAdapterConfig(turn_settle_timeout_s=0)
 

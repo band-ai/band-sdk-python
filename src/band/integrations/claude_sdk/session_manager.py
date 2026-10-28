@@ -128,7 +128,8 @@ def _start_failure(error: Exception) -> BaseException:
 class ClaudeSessionSeed(SessionSeed):
     """A Claude conversation's seed. ``carried`` is false while the pending
     prompt goes without the room's history (it could not be fetched), so that
-    prompt's completion seeds nothing and the history stays owed."""
+    prompt's completion seeds nothing; like any unseeded conversation, it is
+    retired after its turn."""
 
     carried: bool = True
 

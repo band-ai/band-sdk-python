@@ -11,11 +11,11 @@ from band.client.streaming import ControlMode
 from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from tests.adapters.claude_sdk.fakecli import Hold, StreamFails
-from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET, OpenRoom
-
-# Short enough to abandon the held turn quickly, long enough for the next
-# turn's real loopback round trips to the Band MCP server on a slow runner.
-TURN_TIMEOUT_S = 2.0
+from tests.adapters.claude_sdk.helpers import (
+    REPORTING_BUDGET,
+    TURN_TIMEOUT_S,
+    OpenRoom,
+)
 
 
 @pytest.mark.looptime
@@ -25,17 +25,21 @@ class TestTurnTimeout:
         claude_room: OpenRoom,
     ) -> None:
         """The interrupted turn's own result is drained, so the next turn on the
-        same CLI process reads its own answer."""
+        same CLI process reads its own answer. The session was seeded first,
+        so the timeout does not drop it."""
         room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
-        room.claude.script([Hold()], [room.model_reply("Back again.")])
+        room.claude.script(
+            [room.model_reply("Hello.")], [Hold()], [room.model_reply("Back again.")]
+        )
 
+        await room.send("hi")
         with pytest.raises(TurnResultAlreadyReported):
             await room.send("take forever")
         await room.send("and now?")
 
         assert [f["code"] for f in room.reported_failures] == ["timeout"]
         assert room.failures == [f"Claude turn timed out after {TURN_TIMEOUT_S}s"]
-        assert room.chat == ["Back again."]
+        assert room.chat == ["Hello.", "Back again."]
         assert len(room.claude.sessions) == 1
 
     async def test_a_turn_that_ignores_the_interrupt_is_closed_and_resumed(

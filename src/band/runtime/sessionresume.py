@@ -2,9 +2,13 @@
 
 A room's resumable session is the newest one whose seeding prompt (the first,
 context-carrying one) completed; its resume record reaches room history only
-after that, whatever the emit setting. On start an adapter restores the newest
-recorded session; when there is none, or the agent cannot restore it, the
-adapter starts a fresh session and replays the room's transcript into it.
+after that, whatever the emit setting. A session is seeded only when its first
+prompt completed; a cancelled or interrupted first prompt is unseeded like a
+failed one. An unseeded session is dropped: nothing is recorded, and the next
+prompt starts a fresh session that replays the room's transcript. On start an
+adapter restores the newest recorded session; when there is none, or the agent
+cannot restore it, the adapter starts a fresh session and replays the room's
+transcript into it.
 
 The native restore call, its failure signal and how a seed is framed stay with
 each adapter.
@@ -29,8 +33,10 @@ class SessionSeed:
     """Whether a room's native session already holds the room's context.
 
     A restored session kept its own. A fresh one is owed the transcript in its
-    seeding prompt and becomes resumable only once that prompt completes; a
-    failed or refused seeding prompt leaves it unseeded.
+    seeding prompt and is seeded only when that first prompt completed; a
+    cancelled or interrupted first prompt is unseeded like a failed one. An
+    unseeded session is dropped: nothing is recorded, and the next prompt
+    starts a fresh session that replays the room's transcript.
     """
 
     restored: bool = False
