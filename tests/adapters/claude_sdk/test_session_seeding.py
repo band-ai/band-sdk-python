@@ -10,14 +10,31 @@ import pytest
 
 from band.adapters.claude_sdk import ROOM_MEMORY_HEADER
 from band.core.protocols import TurnResultAlreadyReported
+from band.runtime.formatters import format_history_for_llm
 from tests.adapters.claude_sdk.fakecli import EndTurn
-from tests.adapters.claude_sdk.helpers import ClaudeRoom, OpenRoom, said
+from tests.adapters.claude_sdk.helpers import (
+    AGENT_NAME,
+    APPROVER,
+    ClaudeRoom,
+    OpenRoom,
+    said,
+)
 from tests.converters.claude_sdk.records import legacy_record, recorded_session
 from tests.roomhistory import stored
 
 FACT = "the milk is in the fridge"
 REMEMBERED = f"[Alice]: {FACT}"
 LATER = "a message posted after the turn"
+# A mention as the platform stores it, and an earlier reply of the agent's own.
+STORED_HISTORY = [
+    stored(f"@[[{APPROVER['id']}]] {FACT}"),
+    stored("noted", message_id="own", sender_name=AGENT_NAME, sender_type="Agent"),
+]
+
+
+def memory(prompt: str) -> str:
+    """The room memory that opens ``prompt``."""
+    return prompt.partition("\n\n")[0]
 
 
 @contextmanager
@@ -209,3 +226,31 @@ class TestSessionSeeding:
         assert room.claude.prompts[-1].startswith(
             f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n"
         )
+
+    async def test_a_reseed_remembers_the_room_as_the_bootstrap_does(
+        self, claude_room: OpenRoom
+    ) -> None:
+        """Both read the same stored history: mentions resolved to handles, and
+        the agent's own messages left out alike."""
+        room = await claude_room()
+        reseeded = room.beside("room-2")
+        room.claude.script(
+            [room.model_reply("hi")],
+            [EndTurn(is_error=True, result="overloaded")],
+            [reseeded.model_reply("seeded now")],
+        )
+        bootstrap_history = format_history_for_llm(
+            STORED_HISTORY, participants=room.tools.participants
+        )
+        reseeded.tools.set_room_context(STORED_HISTORY)
+
+        await room.send("hello", history=tuple(bootstrap_history))
+        with pytest.raises(TurnResultAlreadyReported):
+            await reseeded.send("hello", history=tuple(bootstrap_history))
+        await reseeded.send("again")
+
+        bootstrap, _, reseed = room.claude.prompts
+        assert memory(reseed) == memory(bootstrap)
+        assert f"{FACT}" in memory(reseed)
+        assert "@[[" not in memory(reseed)
+        assert "noted" not in memory(reseed)

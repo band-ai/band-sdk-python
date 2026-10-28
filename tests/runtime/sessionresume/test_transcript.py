@@ -1,4 +1,5 @@
-"""A seed's transcript is the room's history before the turn, from every page."""
+"""A seed's transcript is the room's history before the turn, from every page,
+shaped as bootstrap history."""
 
 from __future__ import annotations
 
@@ -12,11 +13,19 @@ from tests.roomhistory import stored
 
 # Three pages at the platform's default page size of 50.
 HISTORY = [stored(f"message {index}", message_id=f"m{index}") for index in range(120)]
-EARLIER_IDS = [f"m{index}" for index in range(110)]
+EARLIER = [f"message {index}" for index in range(110)]
+BOB = {
+    "id": "u1",
+    "name": "Bob",
+    "handle": "bob",
+    "type": "User",
+    "role": "member",
+    "status": "active",
+}
 
 
-def ids(messages: list[dict[str, Any]]) -> list[str]:
-    return [message["id"] for message in messages]
+def contents(messages: list[dict[str, Any]]) -> list[str]:
+    return [message["content"] for message in messages]
 
 
 class TestFetchTranscript:
@@ -35,7 +44,7 @@ class TestFetchTranscript:
             tools, room_id="room-1", turn_ids={"m115", "m110"}
         )
 
-        assert ids(transcript) == EARLIER_IDS
+        assert contents(transcript) == EARLIER
         assert [call["page"] for call in tools.context_calls] == [1, 2, 3]
 
     async def test_turn_inputs_not_yet_stored_keep_the_whole_history(self) -> None:
@@ -43,7 +52,23 @@ class TestFetchTranscript:
 
         transcript = await fetch_transcript(tools, room_id="room-1", turn_ids={"new"})
 
-        assert ids(transcript) == ["m0", "m1", "m2"]
+        assert contents(transcript) == ["message 0", "message 1", "message 2"]
+
+    async def test_mentions_and_senders_read_as_on_bootstrap(self) -> None:
+        tools = FakeAgentTools(
+            participants=[BOB],
+            room_context=[
+                stored("@[[u1]] the milk is in the fridge"),
+                stored("noted", message_id="own", sender_type="Agent"),
+            ],
+        )
+
+        mention, reply = await fetch_transcript(
+            tools, room_id="room-1", turn_ids={"new"}
+        )
+
+        assert mention["content"] == "@bob the milk is in the fridge"
+        assert (mention["role"], reply["role"]) == ("user", "assistant")
 
     async def test_an_empty_room_has_an_empty_transcript(self) -> None:
         tools = FakeAgentTools()

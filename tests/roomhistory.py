@@ -8,14 +8,18 @@ from band.core.types import MessageType
 
 
 def stored(
-    content: str, *, message_id: str = "earlier", sender_name: str = "Alice"
+    content: str,
+    *,
+    message_id: str = "earlier",
+    sender_name: str = "Alice",
+    sender_type: str = "User",
 ) -> dict[str, Any]:
-    """One room text message from a person, as the platform stores it."""
+    """One room text message, as the platform stores it."""
     return {
         "id": message_id,
         "message_type": MessageType.TEXT,
         "sender_id": f"id-{sender_name}",
-        "sender_type": "User",
+        "sender_type": sender_type,
         "sender_name": sender_name,
         "content": content,
     }

@@ -21,7 +21,7 @@ from pydantic import JsonValue
 
 from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import MessageType
-from band.runtime.formatters import messages_before
+from band.runtime.formatters import format_history_for_llm, messages_before
 
 
 @dataclass
@@ -105,7 +105,8 @@ class ResumeRecord:
 async def fetch_transcript(
     tools: AgentToolsProtocol, *, room_id: str, turn_ids: AbstractSet[str]
 ) -> list[dict[str, Any]]:
-    """The room's raw history before the turn's earliest input, every page.
+    """The room's history before the turn's earliest input, every page, in
+    the shape bootstrap hands converters (mentions resolved to handles).
 
     The runtime hands an adapter the room's history only on session
     bootstrap, so a session that must be seeded later fetches it here.
@@ -126,4 +127,6 @@ async def fetch_transcript(
         elif len(data) < int(meta.get("page_size") or len(data)):
             break
         page += 1
-    return messages_before(collected, turn_ids)
+    return format_history_for_llm(
+        messages_before(collected, turn_ids), participants=tools.participants
+    )
