@@ -1112,6 +1112,10 @@ class ClaudeSDKAdapter(
                     await self._converse(owner, session, client, tools, full_message)
                 finally:
                     if session.seed.replay_due:
+                        logger.info(
+                            "Room %s: turn left the session unseeded; retiring it",
+                            session.room_id,
+                        )
                         session.recover("Turn left its session unseeded")
             logger.debug("Messages %s processed successfully", message_ids)
         finally:
