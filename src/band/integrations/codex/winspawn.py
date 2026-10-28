@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import ctypes
 import functools
+import json
 import logging
 import os
 import shutil
@@ -55,6 +56,7 @@ _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
 _JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
 _JOB_OBJECT_ASSIGN_PROCESS = 0x0001
 
+_CREATE_UNICODE_ENVIRONMENT = 0x00000400
 _CREATE_SUSPENDED = 0x00000004
 _EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 _STARTF_USESTDHANDLES = 0x00000100
@@ -805,14 +807,15 @@ class WindowsProcess:
     ) -> asyncio.subprocess.Process:
         if self.closing or self._creation is not None:
             raise SpawnFailure(None)
+        target_env = dict(os.environ if env is None else env)
         self._creation = asyncio.create_task(
-            self._create(command_for, cwd=cwd, env=env, limit=limit)
+            self._create(command_for, cwd=cwd, env=target_env, limit=limit)
         )
         # Cancelling connect must not discard a helper created by the transport.
         await asyncio.shield(self._creation)
         if self.closing or self._read_fd is None:
             raise SpawnFailure(None)
-        self._status = asyncio.create_task(self._ready())
+        self._status = asyncio.create_task(self._ready(target_env))
         line = await asyncio.shield(self._status)
         if self.closing:
             raise SpawnFailure(None)
@@ -847,9 +850,12 @@ class WindowsProcess:
             # Only the helper may keep the writer; its exit must produce EOF.
             os.close(write_fd)
 
-    async def _ready(self) -> str:
+    async def _ready(self, env: Mapping[str, str]) -> str:
         assert self._read_fd is not None
+        assert self.process is not None and self.process.stdin is not None
         try:
+            self.process.stdin.write(encode_environment(env))
+            await self.process.stdin.drain()
             return await _read_status(self._read_fd, _SPAWN_ACK_S)
         finally:
             self._close_status_pipe()
@@ -932,8 +938,38 @@ def _standard_handles() -> tuple[int, int, int]:
     )
 
 
+def encode_environment(env: Mapping[str, str]) -> bytes:
+    """Encode the private helper prelude without exposing values in argv."""
+    return (json.dumps(dict(env), ensure_ascii=True) + "\n").encode("ascii")
+
+
+def read_environment() -> dict[str, str]:
+    """Consume only the prelude, leaving provider stdin untouched."""
+    payload = bytearray()
+    while (byte := os.read(0, 1)) != b"\n":
+        if not byte:
+            raise ValueError("Missing Windows helper environment")
+        payload.extend(byte)
+    env = json.loads(payload)
+    if not isinstance(env, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in env.items()
+    ):
+        raise ValueError("Invalid Windows helper environment")
+    return env
+
+
+def environment_block(env: Mapping[str, str]) -> str:
+    """Build the sorted, double-null-terminated Unicode target environment."""
+    return (
+        "\0".join(f"{key}={env[key]}" for key in sorted(env, key=str.casefold)) + "\0\0"
+    )
+
+
 def _spawn_suspended(
-    job: ctypes.c_void_p, command: Sequence[str], status_handle: int
+    job: ctypes.c_void_p,
+    command: Sequence[str],
+    status_handle: int,
+    env: Mapping[str, str],
 ) -> tuple[ctypes.c_void_p, ctypes.c_void_p]:
     """Create the command suspended and assign it before it can run."""
     _set_inheritable(status_handle, False)
@@ -971,14 +1007,17 @@ def _spawn_suspended(
         startup.lpAttributeList = ctypes.addressof(attributes)
         cmdline = ctypes.create_unicode_buffer(subprocess.list2cmdline(list(command)))
         info = ProcessInformation()
+        environment = ctypes.create_unicode_buffer(environment_block(env))
         if not _kernel32().CreateProcessW(
             None,
             cmdline,
             None,
             None,
             True,
-            _EXTENDED_STARTUPINFO_PRESENT | _CREATE_SUSPENDED,
-            None,
+            _EXTENDED_STARTUPINFO_PRESENT
+            | _CREATE_SUSPENDED
+            | _CREATE_UNICODE_ENVIRONMENT,
+            ctypes.cast(environment, ctypes.c_void_p),
             None,
             ctypes.byref(startup),
             ctypes.byref(info),
@@ -1059,12 +1098,14 @@ def _borrow_job(name: str) -> Iterator[ctypes.c_void_p]:
             raise _win_os_error(_last_error())
 
 
-def _start_and_wait(job_name: str, status_handle: int, command: Sequence[str]) -> int:
+def _start_and_wait(
+    job_name: str, status_handle: int, command: Sequence[str], env: Mapping[str, str]
+) -> int:
     thread: ctypes.c_void_p | None = None
     try:
         try:
             with _borrow_job(job_name) as job:
-                process, thread = _spawn_suspended(job, command, status_handle)
+                process, thread = _spawn_suspended(job, command, status_handle, env)
         except OSError as exc:
             _write_status(status_handle, _winerror(exc))
             return 1
@@ -1102,7 +1143,7 @@ def main() -> int:
     if os.name != "nt":
         return 2
     job_name, status_handle, command = _parse(sys.argv[1:])
-    return _start_and_wait(job_name, status_handle, command)
+    return _start_and_wait(job_name, status_handle, command, read_environment())
 
 
 if __name__ == "__main__":

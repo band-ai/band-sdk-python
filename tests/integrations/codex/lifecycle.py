@@ -14,6 +14,17 @@ from band.integrations.codex.winspawn import Job, JobNotDrained
 class StdinPeer:
     def __init__(self) -> None:
         self.closed = False
+        self.written = bytearray()
+        self.drain_started = asyncio.Event()
+        self.drain_allowed = asyncio.Event()
+        self.drain_allowed.set()
+
+    def write(self, data: bytes) -> None:
+        self.written.extend(data)
+
+    async def drain(self) -> None:
+        self.drain_started.set()
+        await self.drain_allowed.wait()
 
     def is_closing(self) -> bool:
         return self.closed

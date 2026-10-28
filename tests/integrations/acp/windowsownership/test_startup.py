@@ -12,7 +12,10 @@ from acp.exceptions import RequestError
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.codex.winspawn import SpawnFailure
 from tests.integrations.acp.acp_toolkit.peer import ExitStage
-from tests.integrations.acp.windowsownership.initialization import InitializationReceipt
+from tests.integrations.acp.windowsownership.initialization import (
+    InitializationReceipt,
+    await_startup_signal,
+)
 from tests.integrations.acp.windowsownership.peer import OwnedPeerFactory
 
 
@@ -39,8 +42,8 @@ class TestWindowsACPStartup:
         async with owned_pipe_peer(ExitStage.INITIALIZE_WAIT) as peer:
             starting = asyncio.create_task(peer.runtime.start())
             try:
-                await peer.holder_ready.wait()
-                await initialization_receipt.received.wait()
+                await await_startup_signal(starting, peer.holder_ready)
+                await await_startup_signal(starting, initialization_receipt.received)
                 await peer.reject_initialize()
 
                 with pytest.raises(RequestError):
@@ -60,8 +63,8 @@ class TestWindowsACPStartup:
         async with owned_pipe_peer(ExitStage.INITIALIZE_WAIT) as peer:
             starting = asyncio.create_task(peer.runtime.start())
             try:
-                await peer.holder_ready.wait()
-                await initialization_receipt.received.wait()
+                await await_startup_signal(starting, peer.holder_ready)
+                await await_startup_signal(starting, initialization_receipt.received)
                 starting.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await starting
