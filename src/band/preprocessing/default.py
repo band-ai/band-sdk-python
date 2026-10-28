@@ -21,6 +21,7 @@ from band.runtime.formatters import (
     messages_before,
     replace_uuid_mentions,
 )
+from band.runtime.terminalnotice import is_terminal_delivery
 from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,15 @@ class DefaultPreprocessor(Preprocessor):
             logger.error("MessageEvent has no room_id - cannot process")
             return None
 
-        if msg_data.sender_type == "Agent" and msg_data.sender_id == agent_id:
+        # The platform sends a deadline notice in the initiator's name; it is
+        # delivered to that agent, unlike the agent's own messages.
+        if (
+            msg_data.sender_type == "Agent"
+            and msg_data.sender_id == agent_id
+            and not is_terminal_delivery(
+                msg_data.message_type, msg_data.id, msg_data.metadata, agent_id
+            )
+        ):
             logger.debug("Room %s: Skipping own message %s", room_id, msg_data.id)
             return None
 
