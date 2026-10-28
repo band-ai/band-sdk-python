@@ -2,50 +2,131 @@
 
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime
+import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from band.adapters.codex import (
+    SYSTEM_CONTEXT_PREFIX,
+    CodexAdapter,
     CodexAdapterConfig,
-    PendingApproval,
 )
-from band.core.defaultmodels import OPENAI_MODEL
+from band.converters.codex import CODEX_RESUME_RECORD
+from band.converters.helpers import HISTORY_REPLAY_HEADER, NEW_MESSAGE_MARKER_PREFIX
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import CodexJsonRpcError
-from band.integrations.codex.types import (
-    CodexRequestMethod,
-    CodexSessionState,
-)
-from band.runtime.decisions import DecisionRegistry
-from band.runtime.tools import BandTool, ToolCallOutcome
-from band.testing import (
-    events_of_type,
-    reported_failures,
-)
+from band.integrations.codex.types import CodexRequestMethod, CodexTurnStatus
+from band.runtime.formatters import CURRENT_INPUTS_HEADING
+from band.runtime.tools import BandTool
 from tests.adapters.codex.kit import (
-    ROOM_ID,
+    REPLAYED,
+    TRANSCRIPT,
     ToolSchemaFakeTools,
     agent_input,
+    answered_turn,
     make_platform_message,
-    send_bootstrap,
-    start_room_process,
-    wire_codex_room,
+    recorded_thread,
+    replayed_history,
+    stored,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
-    event_notification,
     final_text,
     make_codex_adapter,
     tool_call_request,
     turn_completed,
 )
-from tests.adapters.dispatch import deliver_event, deliver_message
+from tests.adapters.dispatch import deliver_event
+from tests.roomhistory import stored as stored_text
 
 
 class TestHistoryInjection:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("fetch_error", "context"),
+        [
+            (ConnectionError("Band REST unavailable"), []),
+            (
+                None,
+                [
+                    stored_text(
+                        "history without a timestamp",
+                        message_id="unknown",
+                        inserted_at=None,
+                    )
+                ],
+            ),
+        ],
+        ids=["fetch-failed", "cutoff-unavailable"],
+    )
+    async def test_unavailable_history_keeps_reseed_unrecorded_until_replay_succeeds(
+        self,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
+        caplog: pytest.LogCaptureFixture,
+        fetch_error: Exception | None,
+        context: list[dict[str, Any]],
+    ) -> None:
+        fake_client = FakeCodexClient(
+            events=[
+                turn_completed("turn-1", status=CodexTurnStatus.FAILED),
+                tool_call_request(1, BandTool.NO_REPLY),
+                turn_completed("turn-2"),
+            ]
+        )
+        adapter = await started_codex(fake_client)
+        first = agent_input("first", ToolSchemaFakeTools())
+        with pytest.raises(TurnResultAlreadyReported):
+            await deliver_event(adapter, first)
+
+        tools = ToolSchemaFakeTools()
+        tools.fetch_room_context_error = fetch_error
+        tools.set_room_context(context)
+        notice = "A contact update"
+        second = replace(
+            agent_input("again", tools, is_session_bootstrap=False), contacts_msg=notice
+        )
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
+            await deliver_event(adapter, second)
+
+        first_turn, second_turn = fake_client.params_of(CodexRequestMethod.TURN_START)
+        assert first_turn["threadId"] != second_turn["threadId"]
+        assert replayed_history(second_turn) == []
+        assert tools.turn.complete
+        assert CODEX_RESUME_RECORD.candidates(tools.events_sent) == {}
+        assert caplog.messages == [
+            "Room room-1: could not fetch history to replay into a fresh session"
+        ]
+        fake_client.script(*answered_turn("turn-3"))
+        recovered_tools = ToolSchemaFakeTools()
+        recovered = agent_input(
+            "recovered", recovered_tools, is_session_bootstrap=False
+        )
+        recovered_tools.set_room_context(
+            [stored(first.msg), stored(second.msg), stored(recovered.msg)]
+        )
+        await deliver_event(adapter, recovered)
+
+        *_, reseeded = fake_client.params_of(CodexRequestMethod.TURN_START)
+        assert reseeded["threadId"] not in {
+            first_turn["threadId"],
+            second_turn["threadId"],
+        }
+        marker = reseeded["input"][-1]["text"].split("\n", 1)[0]
+        assert replayed_history(reseeded) == [
+            f"{HISTORY_REPLAY_HEADER.format(marker=marker)}\n[Alice]: {first.msg.content}\n[Alice]: {second.msg.content}"
+        ]
+        assert {
+            "type": "text",
+            "text": f"{SYSTEM_CONTEXT_PREFIX} {notice}",
+        } in reseeded["input"]
+        assert CODEX_RESUME_RECORD.candidates(recovered_tools.events_sent) == {
+            recovered.room_id: reseeded["threadId"]
+        }
+
     @pytest.mark.asyncio
     async def test_history_injected_on_resume_failure(self) -> None:
         """Resume fails, fresh thread created, first turn input contains history block."""
@@ -64,11 +145,7 @@ class TestHistoryInjection:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         raw_history = [
-            {
-                "message_type": "task",
-                "content": "mapping event",
-                "metadata": {"codex_thread_id": "thr-old"},
-            },
+            recorded_thread("thr-old"),
             {
                 "message_type": "text",
                 "content": "Can you refactor the auth module?",
@@ -85,18 +162,14 @@ class TestHistoryInjection:
         await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
-        turn_input = turn_start["input"]
-        history_items = [
-            item for item in turn_input if "[Conversation History]" in item["text"]
-        ]
-        assert len(history_items) == 1
-        assert "[Alice]: Can you refactor the auth module?" in history_items[0]["text"]
+        (history,) = replayed_history(turn_start)
+        assert "[Alice]: Can you refactor the auth module?" in history
         assert (
             "[CodexAgent]: Done — split into auth_handler.py and middleware.py"
-            in history_items[0]["text"]
+            in history
         )
         # Task events should NOT appear in history context
-        assert "mapping event" not in history_items[0]["text"]
+        assert CODEX_RESUME_RECORD.label not in history
 
     @pytest.mark.asyncio
     async def test_history_not_injected_on_successful_resume(self) -> None:
@@ -113,14 +186,7 @@ class TestHistoryInjection:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         raw_history = [
-            {
-                "message_type": "task",
-                "content": "mapping",
-                "metadata": {
-                    "codex_thread_id": "thr-existing",
-                    "codex_room_id": ROOM_ID,
-                },
-            },
+            recorded_thread("thr-existing"),
             {
                 "message_type": "text",
                 "content": "Hello",
@@ -132,43 +198,42 @@ class TestHistoryInjection:
         await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
-        turn_input = turn_start["input"]
-        assert not any("[Conversation History]" in item["text"] for item in turn_input)
+        assert replayed_history(turn_start) == []
 
     @pytest.mark.asyncio
     async def test_history_not_injected_when_disabled(self) -> None:
-        """inject_history_on_resume_failure=False, no injection even on failure."""
-        events = [
-            tool_call_request(1, BandTool.NO_REPLY),
-            final_text("Done."),
-            turn_completed(),
-        ]
+        """inject_history_on_resume_failure=False: neither the bootstrap seed
+        nor a later reseed replays history, and no reseed fetches it."""
         fake_client = FakeCodexClient(
-            events=events,
-            resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
+            events=[
+                turn_completed("turn-1", status=CodexTurnStatus.FAILED),
+                tool_call_request(1, BandTool.NO_REPLY),
+                turn_completed("turn-2"),
+            ]
         )
         adapter = make_codex_adapter(
             fake_client,
             config=CodexAdapterConfig(inject_history_on_resume_failure=False),
         )
-        tools = ToolSchemaFakeTools()
-
         await adapter.on_started("Codex Agent", "A coding agent")
+        raw_history = [stored(make_platform_message(content="Hello"))]
+        seeding_input = agent_input(
+            "Continue", ToolSchemaFakeTools(), raw_history=raw_history
+        )
+        later_tools = ToolSchemaFakeTools()
+        reseeding_input = agent_input("Again", later_tools, is_session_bootstrap=False)
+        later_tools.set_room_context(
+            [*raw_history, stored(seeding_input.msg), stored(reseeding_input.msg)]
+        )
 
-        raw_history = [
-            {
-                "message_type": "text",
-                "content": "Hello",
-                "sender_name": "Alice",
-            },
-        ]
+        with pytest.raises(TurnResultAlreadyReported):
+            await deliver_event(adapter, seeding_input)
+        await deliver_event(adapter, reseeding_input)
 
-        inp = agent_input("Continue", tools, raw_history=raw_history)
-        await deliver_event(adapter, inp)
-
-        turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
-        turn_input = turn_start["input"]
-        assert not any("[Conversation History]" in item["text"] for item in turn_input)
+        seeding, reseeding = fake_client.params_of(CodexRequestMethod.TURN_START)
+        assert reseeding["threadId"] != seeding["threadId"]
+        assert replayed_history(seeding) == replayed_history(reseeding) == []
+        assert later_tools.context_calls == []
 
     @pytest.mark.asyncio
     async def test_history_filters_non_text_messages(self) -> None:
@@ -188,12 +253,7 @@ class TestHistoryInjection:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         raw_history = [
-            {
-                "message_type": "task",
-                "content": "task event",
-                "sender_name": "System",
-                "metadata": {"codex_thread_id": "thr-old", "codex_room_id": ROOM_ID},
-            },
+            {**recorded_thread("thr-old"), "sender_name": "System"},
             {
                 "message_type": "tool_call",
                 "content": '{"name": "foo"}',
@@ -226,17 +286,12 @@ class TestHistoryInjection:
         await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
-        turn_input = turn_start["input"]
-        history_items = [
-            item for item in turn_input if "[Conversation History]" in item["text"]
-        ]
-        assert len(history_items) == 1
-        text = history_items[0]["text"]
+        (text,) = replayed_history(turn_start)
         assert "[Alice]: Hello world" in text
         # "message" is not a MessageType value; nothing on the platform
         # produces it, so it does not survive replay.
         assert "[Bob]: Hi there" not in text
-        assert "task event" not in text
+        assert CODEX_RESUME_RECORD.label not in text
         assert "thinking..." not in text
         assert "oops" not in text
         assert "tool_call" not in text
@@ -261,354 +316,75 @@ class TestHistoryInjection:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         raw_history: list[dict[str, Any]] = [
-            {
-                "message_type": "task",
-                "content": "mapping",
-                "metadata": {"codex_thread_id": "thr-old", "codex_room_id": ROOM_ID},
-            },
+            recorded_thread("thr-old"),
         ]
+        messages = [f"Message {i}" for i in range(10)]
         raw_history.extend(
             {
                 "message_type": "text",
-                "content": f"Message {i}",
+                "content": content,
                 "sender_name": "Alice",
             }
-            for i in range(10)
+            for content in messages
         )
 
         inp = agent_input("Go", tools, raw_history=raw_history)
         await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
-        turn_input = turn_start["input"]
-        history_items = [
-            item for item in turn_input if "[Conversation History]" in item["text"]
-        ]
-        assert len(history_items) == 1
-        text = history_items[0]["text"]
-        # Only last 3 messages should be present
-        assert "Message 7" in text
-        assert "Message 8" in text
-        assert "Message 9" in text
-        assert "Message 0" not in text
-        assert "Message 6" not in text
+        (text,) = replayed_history(turn_start)
+        marker = turn_start["input"][-1]["text"].splitlines()[0]
+        expected = "\n".join(f"[Alice]: {content}" for content in messages[-3:])
+        assert text == f"{HISTORY_REPLAY_HEADER.format(marker=marker)}\n{expected}"
 
     @pytest.mark.asyncio
-    async def test_history_cleared_after_injection(self) -> None:
-        """Raw history removed from memory after first turn."""
-        events = [
-            tool_call_request(1, BandTool.NO_REPLY),
-            final_text("Done."),
-            turn_completed(),
-        ]
-        fake_client = FakeCodexClient(
-            events=events,
-            resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
-        )
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        tools = ToolSchemaFakeTools()
-
-        await adapter.on_started("Codex Agent", "A coding agent")
-
-        raw_history = [
-            {
-                "message_type": "text",
-                "content": "Hello",
-                "sender_name": "Alice",
-            },
-        ]
-
-        inp = agent_input("Go", tools, raw_history=raw_history)
-        await deliver_event(adapter, inp)
-
-        # After injection, stashed data should be cleaned up
-        assert ROOM_ID not in adapter._raw_history_by_room
-        assert ROOM_ID not in adapter._needs_history_injection
-
-    @pytest.mark.asyncio
-    async def test_auto_selected_model_error_propagates_without_retry(self) -> None:
-        """Auto-selected model errors propagate instead of trying another model."""
-        fake_client = FakeCodexClient(
-            turn_start_error=CodexJsonRpcError(
-                code=-32000,
-                message="Model gpt-5.5 is not available for this account",
-            ),
-            turn_start_error_once=False,
-            model_list_result={
-                "data": [
-                    {"id": "gpt-5.5", "hidden": False},
-                    {"id": "gpt-6-luna", "hidden": False},
-                ]
-            },
-        )
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Agent", "An agent")
-
-        msg = make_platform_message(room_id=ROOM_ID, content="hello")
-        with pytest.raises(CodexJsonRpcError, match="not available"):
-            await deliver_message(
-                adapter,
-                msg,
-                tools,
-                CodexSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id=ROOM_ID,
-            )
-
-        assert fake_client.request_methods.count(CodexRequestMethod.TURN_START) == 1
-        assert adapter._selected_model == "gpt-5.5"
-
-    @pytest.mark.asyncio
-    async def test_model_selection_uses_first_visible_model(self) -> None:
-        """Auto-selection uses Codex's first visible model without fallback ordering."""
-        fake_client = FakeCodexClient(
-            model_list_result={
-                "data": [
-                    {"id": "gpt-5.6-sol", "hidden": False},
-                    {"id": OPENAI_MODEL, "hidden": False},
-                ]
-            },
-        )
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
-        await adapter.on_started("Agent", "An agent")
-        await start_room_process(adapter)
-
-        assert adapter._room_clients[ROOM_ID].selected_model == "gpt-5.6-sol"
-
-    @pytest.mark.asyncio
-    async def test_explicit_model_error_propagates_without_fallback(self) -> None:
-        """When the user explicitly set a model, errors propagate — no silent fallback."""
-        fake_client = FakeCodexClient(
-            turn_start_error=CodexJsonRpcError(
-                code=-32000,
-                message="Model unavailable-test-model is not available",
-            ),
-            turn_start_error_once=False,
-            model_list_result={
-                "data": [
-                    {"id": "gpt-5.5", "hidden": False},
-                    {"id": "gpt-6-luna", "hidden": False},
-                ]
-            },
-        )
-        adapter = make_codex_adapter(
-            fake_client, config=CodexAdapterConfig(model="unavailable-test-model")
-        )
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Agent", "An agent")
-
-        msg = make_platform_message(room_id=ROOM_ID, content="hello")
-        with pytest.raises(CodexJsonRpcError, match="not available"):
-            await deliver_message(
-                adapter,
-                msg,
-                tools,
-                CodexSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id=ROOM_ID,
-            )
-
-        assert CodexRequestMethod.MODEL_LIST not in fake_client.request_methods
-
-        failures = reported_failures(tools)
-        assert len(failures) == 1
-        assert failures[0]["provider"] == "codex"
-        assert "not available" in failures[0]["message"]
-
-    @pytest.mark.asyncio
-    async def test_model_selection_uses_default_when_model_list_empty(self) -> None:
-        """Auto-selection uses the adapter default when Codex returns no visible models."""
-        fake_client = FakeCodexClient(model_list_result={"data": []})
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
-        await adapter.on_started("Agent", "An agent")
-        await start_room_process(adapter)
-
-        assert adapter._room_clients[ROOM_ID].selected_model == OPENAI_MODEL
-
-    @pytest.mark.asyncio
-    async def test_model_selection_uses_default_when_model_list_fails(self) -> None:
-        """Auto-selection uses the adapter default if model discovery fails."""
-        fake_client = FakeCodexClient(
-            model_list_error=RuntimeError("model/list unavailable")
-        )
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
-        await adapter.on_started("Agent", "An agent")
-        await start_room_process(adapter)
-
-        assert adapter._room_clients[ROOM_ID].selected_model == OPENAI_MODEL
-
-    @pytest.mark.asyncio
-    async def test_non_model_error_propagates(self) -> None:
-        """Non-model-related errors propagate from turn startup."""
-        fake_client = FakeCodexClient(
-            turn_start_error=CodexJsonRpcError(
-                code=-32001, message="Server overloaded"
-            ),
-            turn_start_error_once=False,
-        )
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig(model=None))
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Agent", "An agent")
-
-        msg = make_platform_message(room_id=ROOM_ID, content="hello")
-        with pytest.raises(CodexJsonRpcError, match="overloaded"):
-            await deliver_message(
-                adapter,
-                msg,
-                tools,
-                CodexSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id=ROOM_ID,
-            )
-
-    @pytest.mark.asyncio
-    async def test_startup_config_logged(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Startup emits a redacted config summary log line."""
-        fake_client = FakeCodexClient()
-        adapter = make_codex_adapter(
-            fake_client,
-            config=CodexAdapterConfig(
-                model="gpt-5.5", sandbox="workspace-write", approval_mode="manual"
-            ),
-        )
-
-        with caplog.at_level("INFO", logger="band.adapters.codex"):
-            await adapter.on_started("TestBot", "A test agent")
-
-        startup_logs = [
-            r for r in caplog.records if "Codex adapter started" in r.message
-        ]
-        assert len(startup_logs) == 1
-        log_msg = startup_logs[0].message
-        assert "agent=TestBot" in log_msg
-        assert "transport=stdio" in log_msg
-        assert "model=gpt-5.5" in log_msg
-        assert "sandbox=workspace-write" in log_msg
-        assert "approval_mode=manual" in log_msg
-
-    @pytest.mark.asyncio
-    async def test_codex_error_emits_event_unconditionally(self) -> None:
-        """Non-retryable Codex errors always emit a structured error event."""
+    async def test_history_is_replayed_only_into_the_seeding_turn(self) -> None:
+        """Once the seeding turn completes, later turns carry no transcript."""
         fake_client = FakeCodexClient(
             events=[
-                event_notification(
-                    "error",
-                    {"error": {"message": "Something went wrong"}, "willRetry": False},
-                ),
-                event_notification(
-                    "turn/completed",
-                    {"turn": {"id": "turn-1", "status": "failed"}},
-                ),
-            ],
+                tool_call_request(1, BandTool.NO_REPLY),
+                turn_completed("turn-1"),
+                tool_call_request(2, BandTool.NO_REPLY),
+                turn_completed("turn-2"),
+            ]
         )
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        tools = ToolSchemaFakeTools()
-        await adapter.on_started("Agent", "An agent")
-
-        msg = make_platform_message(room_id=ROOM_ID, content="do something")
-        with pytest.raises(TurnResultAlreadyReported):
-            await deliver_message(
-                adapter,
-                msg,
-                tools,
-                CodexSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id=ROOM_ID,
-            )
-
-        error_events = events_of_type(tools, "error")
-        assert len(error_events) == 1
-        assert "Something went wrong" in error_events[0]["content"]
-
-    @pytest.mark.asyncio
-    async def test_cleanup_before_start(self) -> None:
-        """Calling on_cleanup on a freshly constructed adapter should not raise."""
-        adapter = make_codex_adapter(
-            FakeCodexClient(),
-            config=CodexAdapterConfig(),
+        await adapter.on_started("Codex Agent", "A coding agent")
+        raw_history = [stored(make_platform_message(content="Hello"))]
+        seeding_input = agent_input(
+            "Go", ToolSchemaFakeTools(), raw_history=raw_history
         )
-        # No on_started called — cleanup should be safe (idempotent)
-        await adapter.on_cleanup("room-x")
-
-    @pytest.mark.asyncio
-    async def test_cleanup_clears_pending_approvals(self) -> None:
-        """on_cleanup should evict all pending approvals for the given room."""
-        fake_client = FakeCodexClient()
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        await adapter.on_started("Bot", "desc")
-
-        # Manually inject a pending approval for room-1
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[str] = loop.create_future()
-        registry: DecisionRegistry[PendingApproval] = DecisionRegistry()
-        registry.register_keyed(
-            PendingApproval(
-                request_id=1,
-                method="item/tool/call",
-                summary="test",
-                created_at=datetime.now(UTC),
-                future=fut,
-            ),
-            key="tok-1",
+        later_tools = ToolSchemaFakeTools()
+        later_input = agent_input("Again", later_tools, is_session_bootstrap=False)
+        # The room's stored transcript stays fetchable after the seed.
+        later_tools.set_room_context(
+            [*raw_history, stored(seeding_input.msg), stored(later_input.msg)]
         )
-        adapter._pending_approvals[ROOM_ID] = registry
-        wire_codex_room(adapter, fake_client, ROOM_ID)
-        adapter._room_threads[ROOM_ID] = "thr-1"
 
-        await adapter.on_cleanup(ROOM_ID)
+        await deliver_event(adapter, seeding_input)
+        await deliver_event(adapter, later_input)
 
-        assert adapter._open_approval_count(ROOM_ID) == 0
-        # The future should have been resolved (declined)
-        assert fut.done()
+        seeding, later = fake_client.params_of(CodexRequestMethod.TURN_START)
+        assert "[Alice]: Hello" in str(seeding["input"])
+        assert replayed_history(later) == []
 
     @pytest.mark.asyncio
-    async def test_tool_call_validation_error_returns_friendly_message(self) -> None:
-        """A base-tool arg-validation failure returns a user-friendly error.
-
-        AgentTools catches base-tool validation INSIDE execute_tool_call_structured and
-        returns ok=False with a friendly message (it does not raise), so the adapter
-        surfaces it via the ok=False path.
-        """
-
-        class ValidationErrorTools(ToolSchemaFakeTools):
-            async def execute_tool_call_structured(
-                self, tool_name: str, arguments: dict[str, Any]
-            ) -> ToolCallOutcome:
-                self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
-                return ToolCallOutcome(
-                    value="Invalid arguments for band_send_message: content: Field required",
-                    ok=False,
-                    error_message="content: Field required",
-                )
-
-        events = [
-            tool_call_request(99, BandTool.SEND_MESSAGE),
-            turn_completed(),
-        ]
-        fake_client = FakeCodexClient(events=events)
+    async def test_the_replay_is_framed_and_the_marker_opens_the_current_inputs(
+        self,
+    ) -> None:
+        """The replay uses the shared read-only header, and the current inputs
+        come last, under the marker that header names."""
+        fake_client = FakeCodexClient(events=answered_turn())
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        tools = ValidationErrorTools()
+        await adapter.on_started("Codex Agent", "A coding agent")
 
-        await adapter.on_started("Bot", "desc")
-        await send_bootstrap(adapter, tools=tools)
+        await deliver_event(
+            adapter, agent_input("Go", ToolSchemaFakeTools(), raw_history=TRANSCRIPT)
+        )
 
-        # The adapter should have responded to the tool call with success=False
-        error_responses = [
-            (rid, payload)
-            for rid, payload in fake_client.responses
-            if payload.get("success") is False
-        ]
-        assert len(error_responses) == 1
-        error_text = error_responses[0][1]["contentItems"][0]["text"]
-        assert "Invalid arguments for band_send_message" in error_text
+        (turn,) = fake_client.params_of(CodexRequestMethod.TURN_START)
+        *_, replay, current = [item["text"] for item in turn["input"]]
+        marker, current_inputs = current.split("\n", 1)
+        assert marker.startswith(NEW_MESSAGE_MARKER_PREFIX)
+        assert replay == HISTORY_REPLAY_HEADER.format(marker=marker) + "\n" + REPLAYED
+        assert current_inputs.startswith(CURRENT_INPUTS_HEADING)

@@ -14,6 +14,7 @@ from band.platform.event import (
 )
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.sessionconfig import SessionConfig
+from tests.roomhistory import stored
 
 
 def make_message_payload(
@@ -391,7 +392,7 @@ class TestHistoryLoading:
             is_llm_initialized=False,
             enable_context_hydration=True,
             history_messages=[
-                {"id": "msg-0", "content": "Previous message"},
+                stored("Previous message", message_id="msg-0"),
             ],
         )
         event = make_message_event()

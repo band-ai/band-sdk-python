@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -67,6 +66,23 @@ CODEX_APPROVAL_METHODS: frozenset[CodexApprovalMethod] = frozenset(CodexApproval
 DYNAMIC_TOOL_CALL_METHOD = "item/tool/call"
 
 
+class CodexMetadataKey(StrEnum):
+    """Metadata keys naming a Codex room, thread, turn and transport on Band events."""
+
+    ROOM = "codex_room_id"
+    THREAD = "codex_thread_id"
+    TURN = "codex_turn_id"
+    TRANSPORT = "codex_transport"
+
+
+class CodexTurnStatus(StrEnum):
+    """``turn/completed`` statuses the adapter acts on."""
+
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    FAILED = "failed"
+
+
 class CodexRequestMethod(StrEnum):
     """Client-to-server request methods the SDK sends to ``codex app-server``."""
 
@@ -84,15 +100,11 @@ CODEX_PROVIDER = "codex"
 
 @dataclass
 class CodexSessionState:
-    """Session state extracted from platform history for Codex rehydration."""
+    """Each room's resumable Codex thread, as Band history records it, and
+    the room's transcript for a fresh thread to replay."""
 
-    thread_id: str | None = None
-    room_id: str | None = None
-    created_at: datetime | None = None
-
-    def has_thread(self) -> bool:
-        """Return True when a persisted codex thread_id is available."""
-        return bool(self.thread_id)
+    room_to_thread: dict[str, str] = field(default_factory=dict)
+    replay_messages: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -145,11 +157,11 @@ def build_agent_failure(
     if is_retryable is not None:
         detail["codex_is_retryable"] = bool(is_retryable)
     if thread_id:
-        detail["codex_thread_id"] = thread_id
+        detail[CodexMetadataKey.THREAD] = thread_id
     if turn_id:
-        detail["codex_turn_id"] = turn_id
+        detail[CodexMetadataKey.TURN] = turn_id
     if room_id:
-        detail["codex_room_id"] = room_id
+        detail[CodexMetadataKey.ROOM] = room_id
     if additional is not None:
         capped = _cap_error_detail(additional)
         if capped is not None:

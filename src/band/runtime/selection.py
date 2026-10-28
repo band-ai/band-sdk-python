@@ -9,12 +9,14 @@ one frozen, bounded prefix. The caller owns every read, claim and write.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from band.core.timestamps import assume_utc
+from band.core.types import PlatformMessage as AdapterMessage
 from band.core.types import metadata_to_dict
 from band.platform.event import MessageEvent
 from band.runtime.messages import PlatformMessage
@@ -29,8 +31,28 @@ class MessageKey:
     message_id: str
 
     @classmethod
-    def of_message(cls, message: PlatformMessage) -> MessageKey:
+    def of_message(cls, message: PlatformMessage | AdapterMessage) -> MessageKey:
         return cls(assume_utc(message.created_at), message.id)
+
+    @classmethod
+    def of_stored(cls, message: Mapping[str, Any]) -> MessageKey:
+        """Read a stored history row's server insertion time and id."""
+        moment = message.get("inserted_at")
+        if isinstance(moment, str):
+            try:
+                moment = datetime.fromisoformat(moment)
+            except ValueError:
+                moment = None
+        message_id = message.get("id")
+        if (
+            not isinstance(moment, datetime)
+            or not isinstance(message_id, str)
+            or not message_id
+        ):
+            raise ValueError(
+                "Cannot order room history without an insertion time and id"
+            )
+        return cls(assume_utc(moment), message_id)
 
     @classmethod
     def of_event(cls, event: MessageEvent) -> MessageKey:

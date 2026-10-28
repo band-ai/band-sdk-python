@@ -12,6 +12,7 @@ from band.integrations.codex.types import (
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS
 from band.runtime.tools import BandTool
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     run_codex_turn,
     send_bootstrap,
 )
@@ -55,7 +56,9 @@ class TestTransportContractPrompt:
             client, config=CodexAdapterConfig(system_prompt="custom")
         )
         await adapter.on_started("Agent", "A coding agent")
-        await send_bootstrap(adapter, history=CodexSessionState(thread_id="restored"))
+        await send_bootstrap(
+            adapter, history=CodexSessionState(room_to_thread={ROOM_ID: "restored"})
+        )
         inputs = client.params_of(CodexRequestMethod.TURN_START)[0]["input"]
         assert inputs[0]["text"].count(COMMUNICATION_INSTRUCTIONS) == 1
         assert client.params_of(CodexRequestMethod.THREAD_RESUME)

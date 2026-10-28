@@ -15,6 +15,7 @@ from typing import Any
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.integrations.codex import TRANSPORT_CLOSED, CodexRequestMethod, RpcEvent
+from band.integrations.codex.types import CodexTurnStatus
 from tests.adapters.waiting import until
 
 
@@ -69,6 +70,7 @@ class FakeCodexClient(RecordedRequests):
         *,
         events: list[RpcEvent] | None = None,
         resume_error: Exception | None = None,
+        thread_start_error: Exception | None = None,
         turn_start_error: Exception | None = None,
         turn_start_error_once: bool = True,
         interrupt_error: Exception | None = None,
@@ -89,6 +91,7 @@ class FakeCodexClient(RecordedRequests):
         self.closed = False
         self._events = deque(events or [])
         self._resume_error = resume_error
+        self._thread_start_error = thread_start_error
         self._turn_start_error = turn_start_error
         self._turn_start_error_once = turn_start_error_once
         self._interrupt_error = interrupt_error
@@ -158,6 +161,9 @@ class FakeCodexClient(RecordedRequests):
                     **self._resumed_settings,
                 }
             case CodexRequestMethod.THREAD_START:
+                if self._thread_start_error is not None:
+                    error, self._thread_start_error = self._thread_start_error, None
+                    raise error
                 self._thread_counter += 1
                 thread_id = f"thr-{self._thread_counter}"
                 return {"thread": {"id": thread_id}, **self._started_settings}
@@ -193,6 +199,10 @@ class FakeCodexClient(RecordedRequests):
             if event.method in {"turn/completed", TRANSPORT_CLOSED}:
                 break
         self._emitted.set()
+
+    def script(self, *events: RpcEvent) -> None:
+        """Script events for turns that have not started yet."""
+        self._events.extend(events)
 
     def emit(self, *events: RpcEvent) -> None:
         """Send events now, outside any scripted turn."""
@@ -303,7 +313,9 @@ def event_request(request_id: int, method: str, params: dict[str, Any]) -> RpcEv
     )
 
 
-def turn_completed(turn_id: str = "turn-1", *, status: str = "completed") -> RpcEvent:
+def turn_completed(
+    turn_id: str = "turn-1", *, status: str = CodexTurnStatus.COMPLETED
+) -> RpcEvent:
     """The notification that ends a scripted turn."""
     return event_notification(
         "turn/completed",

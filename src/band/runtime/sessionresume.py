@@ -16,15 +16,14 @@ each adapter.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from collections.abc import Set as AbstractSet
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import JsonValue
 
 from band.core.protocols import AgentToolsProtocol, send_event_safe
-from band.core.types import MessageType
+from band.core.types import MessageType, PlatformMessage
 from band.runtime.formatters import format_history_for_llm, messages_before
 
 
@@ -68,15 +67,20 @@ class ResumeRecord:
         sessions: dict[str, str] = {}
         for message in raw:
             metadata = message.get("metadata")
-            if message.get("message_type") != MessageType.TASK or not isinstance(
-                metadata, Mapping
-            ):
+            if not self.matches(message) or not isinstance(metadata, Mapping):
                 continue
             room = metadata.get(self.room_key)
             session = metadata.get(self.session_key)
             if isinstance(room, str) and isinstance(session, str) and session:
                 sessions[room] = session
         return sessions
+
+    def matches(self, message: Mapping[str, Any]) -> bool:
+        """Match this record's message type and label."""
+        return (
+            message.get("message_type") == MessageType.TASK
+            and message.get("content") == self.label
+        )
 
     async def post(
         self,
@@ -113,7 +117,7 @@ class ResumeRecord:
 
 
 async def fetch_transcript(
-    tools: AgentToolsProtocol, *, room_id: str, turn_ids: AbstractSet[str]
+    tools: AgentToolsProtocol, *, room_id: str, messages: Sequence[PlatformMessage]
 ) -> list[dict[str, Any]]:
     """The room's history before the turn's earliest input, every page, in
     the shape bootstrap hands converters (mentions resolved to handles).
@@ -138,5 +142,5 @@ async def fetch_transcript(
             break
         page += 1
     return format_history_for_llm(
-        messages_before(collected, turn_ids), participants=tools.participants
+        messages_before(collected, messages), participants=tools.participants
     )

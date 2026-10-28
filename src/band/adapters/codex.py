@@ -33,8 +33,12 @@ from pydantic_settings import (
 )
 from typing_extensions import Unpack
 
-from band.converters.codex import CodexHistoryConverter
-from band.converters.helpers import build_replay_messages
+from band.converters.codex import CODEX_RESUME_RECORD, CodexHistoryConverter
+from band.converters.helpers import (
+    HISTORY_REPLAY_HEADER,
+    build_replay_messages,
+    new_message_marker,
+)
 from band.core.adapterconfig import EnvAdapterConfig
 from band.core.content import has_visible_content
 from band.core.defaultmodels import OPENAI_MODEL
@@ -75,7 +79,6 @@ from band.core.turn_lifecycle import (
     start_releasable_turn,
 )
 from band.core.types import (
-    AgentInput,
     ApprovalMode,
     Capability,
     Emit,
@@ -98,9 +101,11 @@ from band.integrations.codex.types import (
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
+    CodexMetadataKey,
     CodexRequestMethod,
     CodexSessionState,
     CodexTokenUsage,
+    CodexTurnStatus,
     build_agent_failure,
     parse_plan_steps,
 )
@@ -119,8 +124,13 @@ from band.runtime.decisions import (
     Registration,
     Timeout,
 )
-from band.runtime.formatters import format_current_inputs, strip_leading_mentions
+from band.runtime.formatters import (
+    build_participants_message,
+    format_current_inputs,
+    strip_leading_mentions,
+)
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, render_system_prompt
+from band.runtime.sessionresume import SessionSeed, fetch_transcript
 from band.runtime.toolactivity import (
     end_tool_activity,
     report_memory_activity,
@@ -140,6 +150,8 @@ from band.workspaces import (
 )
 
 logger = logging.getLogger(__name__)
+
+SYSTEM_CONTEXT_PREFIX = "[System]:"
 
 
 def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -481,8 +493,16 @@ class TurnResult:
     """Aggregated result from processing a single Codex turn's event stream."""
 
     native_messages: dict[str, NativeMessage] = dataclass_field(default_factory=dict)
-    turn_status: str = "failed"
+    turn_status: str = CodexTurnStatus.FAILED
     turn_error: str = ""
+
+    @property
+    def completed(self) -> bool:
+        """Whether the turn completed: only then is a seeding turn's thread seeded.
+
+        An interrupted seed is abandoned like a failed one.
+        """
+        return self.turn_status == CodexTurnStatus.COMPLETED
 
 
 def _audience_sender_ids(audience: Sequence[dict[str, str]]) -> list[str]:
@@ -671,6 +691,12 @@ class RoomCodexClient:
     settings: ThreadSettings = ThreadSettings()
     # The thread was resumed into this process; a turn confirms its tools.
     restored: bool = False
+    # Whether the thread holds the room's context yet.
+    seed: SessionSeed = dataclass_field(default_factory=SessionSeed)
+    # Band history names the thread: its resume record was posted.
+    recorded: bool = False
+    # Runtime commits these deltas even when a turn fails; its successor needs them.
+    pending_system_context: list[str] = dataclass_field(default_factory=list)
     # Serializes this room's turns, local commands and their preparation; a
     # turn parked on a manual approval blocks only this room. Approval
     # replies are handled without it so they can resolve that wait.
@@ -682,15 +708,28 @@ class RoomCodexClient:
         return self.retained.generation
 
     def bind_thread(
-        self, *, registration: list[dict[str, Any]] | None, settings: ThreadSettings
+        self,
+        *,
+        registration: list[dict[str, Any]] | None,
+        settings: ThreadSettings,
+        seed: SessionSeed,
     ) -> None:
         """Record what the thread this process now runs was started with."""
         self.registration = registration
         self.settings = settings
+        self.seed = seed
         self.restored = False
+        self.recorded = False
 
     def forget_thread(self) -> None:
-        self.bind_thread(registration=None, settings=ThreadSettings())
+        self.bind_thread(
+            registration=None, settings=ThreadSettings(), seed=SessionSeed()
+        )
+
+    async def retain_system_context(self, latest: str | None) -> None:
+        """Keep system context until a native turn completes with it."""
+        if latest:
+            self.pending_system_context.append(latest)
 
     def require_client(self) -> CodexClientProtocol:
         if self.client is None:
@@ -816,6 +855,8 @@ class CodexAdapterConfig(EnvAdapterConfig):
     additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)
     # CODEX_SKILL_ROOTS is a JSON list.
     skill_roots: list[str] = Field(default_factory=list)
+    # Replay the room's transcript into a thread Codex did not resume: none
+    # was recorded, resume failed, or an earlier seeding turn did not complete.
     inject_history_on_resume_failure: bool = True
     max_history_messages: int = 50
     max_pending_approvals_per_room: int = Field(default=50, ge=1)
@@ -917,12 +958,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     """
     Codex adapter backed by codex app-server (stdio or websocket transport).
 
-    One Band room maps to one Codex thread. Mapping is persisted in task
-    events metadata and restored via CodexHistoryConverter on bootstrap --
-    so narrowing ``emit`` to exclude ``Emit.TASK_EVENTS`` doesn't just silence
-    narration, it also stops thread-resume persistence: every restart starts
-    a fresh Codex thread instead of resuming. Leave it in ``emit`` unless
-    that's intended.
+    One Band room maps to one Codex thread. A fresh thread is sent the room's
+    transcript and recorded once, with ``CODEX_RESUME_RECORD`` whatever the
+    ``emit`` setting, after that seeding turn completes. A thread is seeded
+    only when its first turn completed; an interrupted or cancelled seed is
+    abandoned like a failed one. A restart resumes the newest recorded thread.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
@@ -988,8 +1028,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._backend_turns = BackendTurns[CodexTurn](
             self._interrupt_codex_turn, provider=CODEX_PROVIDER
         )
-        self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
-        self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
         self._token_usage: dict[str, CodexTokenUsage] = {}
         # Approval audit trail per room
@@ -1159,22 +1197,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             self.config.emit_token_usage_events,
         )
 
-    def _keep_history_for_resume_failure(self, inp: AgentInput) -> None:
-        if (
-            self.config.inject_history_on_resume_failure
-            and inp.is_session_bootstrap
-            and inp.history.raw
-        ):
-            self._raw_history_by_room[inp.room_id] = inp.history.raw
-
-    async def on_event(self, inp: AgentInput) -> None:
-        self._keep_history_for_resume_failure(inp)
-        await super().on_event(inp)
-
-    async def on_messages(self, inp: AgentInput) -> None:
-        self._keep_history_for_resume_failure(inp)
-        await super().on_messages(inp)
-
     def is_control_message(self, msg: PlatformMessage) -> bool:
         """Keep all local commands outside ordinary model input."""
         return self._extract_local_command(msg.content) is not None
@@ -1207,7 +1229,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         await self._handle_local_command(
             tools=tools,
             msg=msg,
-            history=CodexSessionState(),
             room_id=room_id,
             command=command[0],
             args=command[1],
@@ -1288,20 +1309,23 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     room=room,
                     msg=messages[0],
                     tools=tools,
-                    history=history,
                     command=command,
                 ):
                     return
-                async with room.retained.use():
-                    await self._serve_turn(
-                        room=room,
-                        messages=messages,
-                        tools=tools,
-                        history=history,
-                        participants_msg=participants_msg,
-                        contacts_msg=contacts_msg,
-                        is_session_bootstrap=is_session_bootstrap,
-                    )
+                async with room.retained.use(
+                    prepare=partial(room.retain_system_context, contacts_msg)
+                ):
+                    try:
+                        await self._serve_turn(
+                            room=room,
+                            messages=messages,
+                            tools=tools,
+                            history=history,
+                            participants_msg=participants_msg,
+                            is_session_bootstrap=is_session_bootstrap,
+                        )
+                    finally:
+                        self._abandon_unseeded_thread(room)
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
             except (TurnResultAlreadyReported, InputNotAccepted):
@@ -1339,7 +1363,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         room: RoomCodexClient,
         msg: PlatformMessage,
         tools: AgentToolsProtocol,
-        history: CodexSessionState,
         command: tuple[CodexCommand, str],
     ) -> bool:
         """Handle a local command, leasing the room's process only for those
@@ -1351,7 +1374,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             handled = await self._handle_local_command(
                 tools=tools,
                 msg=msg,
-                history=history,
                 room_id=room.room_id,
                 command=name,
                 args=args,
@@ -1368,24 +1390,41 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         tools: AgentToolsProtocol,
         history: CodexSessionState,
         participants_msg: str | None,
-        contacts_msg: str | None,
         is_session_bootstrap: bool,
     ) -> None:
         room_id = room.room_id
         # The turn keeps its originals, and so its audience, in this frame
         # through detached approval waits.
         audience = self._turn_audience(messages)
+        contacts_msg = "\n".join(room.pending_system_context) or None
         thread_id = await self._ensure_thread(
             room=room,
             history=history,
             tools=tools,
             is_session_bootstrap=is_session_bootstrap,
         )
+        seed = room.seed
+        replay = (
+            await self._replay_history(
+                room=room,
+                messages=messages,
+                tools=tools,
+                history=history,
+                is_session_bootstrap=is_session_bootstrap,
+            )
+            if seed.replay_due
+            else []
+        )
+        if seed.replay_due and participants_msg is None:
+            # The runtime sends the roster only when it changes, so a thread
+            # abandoned unseeded may have taken the latest one with it.
+            participants_msg = build_participants_message(tools.participants)
         turn_input, has_pending_prompt_injection = self._build_turn_input(
             messages=messages,
             participants_msg=participants_msg,
             contacts_msg=contacts_msg,
             room_id=room_id,
+            replay=replay,
         )
         turn_params: dict[str, Any] = {"threadId": thread_id, "input": turn_input}
         self._apply_turn_overrides(turn_params, room_id=room_id)
@@ -1438,7 +1477,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     room_id=room_id,
                     thread_id=thread_id,
                     turn_id=native.turn_id,
-                    result=TurnResult(turn_status="failed", turn_error=str(error)),
+                    result=TurnResult(
+                        turn_status=CodexTurnStatus.FAILED, turn_error=str(error)
+                    ),
                     turn_start=turn_start,
                 )
                 raise
@@ -1461,12 +1502,24 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     thread_id=thread_id,
                     turn_id=native.turn_id,
                     result=TurnResult(
-                        turn_status="failed",
+                        turn_status=CodexTurnStatus.FAILED,
                         turn_error=TURN_PROCESSING_ERROR,
                     ),
                     turn_start=turn_start,
                 )
                 raise TurnResultAlreadyReported(TURN_PROCESSING_ERROR) from None
+        if result.completed:
+            seed.confirm()
+            if not seed.replay_due:
+                room.pending_system_context.clear()
+        if not room.recorded:
+            room.recorded = await CODEX_RESUME_RECORD.post(
+                tools,
+                room_id=room_id,
+                seed=seed,
+                session=thread_id,
+                details={CodexMetadataKey.TRANSPORT: self.config.transport},
+            )
         await self._emit_turn_outcome(
             tools=tools,
             audience=audience,
@@ -1502,9 +1555,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 ),
                 message_type="task",
                 metadata={
-                    "codex_thread_id": thread_id,
-                    "codex_turn_id": turn_id,
-                    "codex_room_id": room_id,
+                    CodexMetadataKey.THREAD: thread_id,
+                    CodexMetadataKey.TURN: turn_id,
+                    CodexMetadataKey.ROOM: room_id,
                 },
                 log_label="turn started task event",
                 log_level=logging.DEBUG,
@@ -1522,9 +1575,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 message_type="task",
                 metadata={
                     "codex_event_type": "turn_lifecycle",
-                    "codex_room_id": room_id,
-                    "codex_thread_id": thread_id,
-                    "codex_turn_id": turn_id,
+                    CodexMetadataKey.ROOM: room_id,
+                    CodexMetadataKey.THREAD: thread_id,
+                    CodexMetadataKey.TURN: turn_id,
                     "codex_turn_status": "started",
                     "codex_input_summary": input_summary,
                 },
@@ -1645,9 +1698,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                                 "streaming": True,
                                 "codex_item_id": item_id,
                                 "codex_event_type": event.method,
-                                "codex_room_id": room_id,
-                                "codex_thread_id": thread_id,
-                                "codex_turn_id": turn_id,
+                                CodexMetadataKey.ROOM: room_id,
+                                CodexMetadataKey.THREAD: thread_id,
+                                CodexMetadataKey.TURN: turn_id,
                             },
                             log_label="reasoning delta",
                             log_level=logging.DEBUG,
@@ -1666,9 +1719,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                                 "streaming": True,
                                 "subtype": "plan",
                                 "codex_item_id": item_id,
-                                "codex_room_id": room_id,
-                                "codex_thread_id": thread_id,
-                                "codex_turn_id": turn_id,
+                                CodexMetadataKey.ROOM: room_id,
+                                CodexMetadataKey.THREAD: thread_id,
+                                CodexMetadataKey.TURN: turn_id,
                             },
                             log_label="plan delta",
                             log_level=logging.DEBUG,
@@ -1717,9 +1770,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                             message_type="task",
                             metadata={
                                 "codex_event_type": "context_compaction",
-                                "codex_room_id": room_id,
-                                "codex_thread_id": compacted_thread,
-                                "codex_turn_id": compacted_turn or None,
+                                CodexMetadataKey.ROOM: room_id,
+                                CodexMetadataKey.THREAD: compacted_thread,
+                                CodexMetadataKey.TURN: compacted_turn or None,
                             },
                             log_label="context compaction event",
                             log_level=logging.DEBUG,
@@ -1771,9 +1824,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                                 "streaming": True,
                                 "subtype": "commentary",
                                 "codex_item_id": item_id,
-                                "codex_room_id": room_id,
-                                "codex_thread_id": thread_id,
-                                "codex_turn_id": turn_id,
+                                CodexMetadataKey.ROOM: room_id,
+                                CodexMetadataKey.THREAD: thread_id,
+                                CodexMetadataKey.TURN: turn_id,
                             },
                             log_label="commentary delta",
                             log_level=logging.DEBUG,
@@ -1807,7 +1860,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     continue
 
                 if event.method == TRANSPORT_CLOSED:
-                    result.turn_status = "failed"
+                    result.turn_status = CodexTurnStatus.FAILED
                     result.turn_error = TRANSPORT_LOST_ERROR
                     # Skipped when an earlier "error" notification in this same
                     # turn already reported one, so one incident isn't posted
@@ -1826,9 +1879,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         if isinstance(params.get("turn"), dict)
                         else {}
                     )
-                    result.turn_status = str(turn_payload.get("status") or "failed")
+                    result.turn_status = str(
+                        turn_payload.get("status") or CodexTurnStatus.FAILED
+                    )
                     result.turn_error = self._extract_turn_error(turn_payload)
-                    if result.turn_status != "failed":
+                    if result.turn_status != CodexTurnStatus.FAILED:
                         break
                     # Skipped when an earlier "error" notification in this same
                     # turn already reported one, so one incident isn't posted
@@ -1843,7 +1898,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         )
                     raise TurnResultAlreadyReported(result.turn_error or "Turn failed")
         except TurnResultAlreadyReported as error:
-            result.turn_status = "failed"
+            result.turn_status = CodexTurnStatus.FAILED
             result.turn_error = str(error)
             await self._emit_failed_turn_outcome(
                 tools=tools,
@@ -1878,7 +1933,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             await tools.send_failure(
                 AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
             )
-            result.turn_status = "failed"
+            result.turn_status = CodexTurnStatus.FAILED
             result.turn_error = timeout_message
             # A raise from here lands in this try's own except clauses, not the
             # sibling `except TurnResultAlreadyReported` above -- Python never
@@ -2216,6 +2271,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._sandbox_overrides.pop(room_id, None)
         self._room_task_titles.pop(room_id, None)
         self._workspaces.release(room_id, room.workspace)
+        room.pending_system_context.clear()
         if self._room_clients.get(room_id) is room:
             del self._room_clients[room_id]
 
@@ -2225,9 +2281,24 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if thread_id is not None:
             self._token_usage.pop(thread_id, None)
         self._prompt_injected_rooms.discard(room_id)
-        self._needs_history_injection.discard(room_id)
-        self._raw_history_by_room.pop(room_id, None)
         return thread_id
+
+    def _abandon_unseeded_thread(self, room: RoomCodexClient) -> None:
+        """Forget a fresh thread whose seeding turn did not complete.
+
+        Band history never named it, so the next turn starts a new thread and
+        replays the kept transcript into it.
+        """
+        if room.seed.replay_due and (
+            thread_id := self._forget_room_thread(room.room_id)
+        ):
+            logger.info(
+                "Room %s: abandoning Codex thread %s; its seeding turn did not "
+                "complete",
+                room.room_id,
+                thread_id,
+            )
+            room.forget_thread()
 
     async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
         roots = self.config.skill_roots
@@ -2281,14 +2352,12 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 self._confirm_restored_tools(room, tools, thread_id)
             return thread_id
         client = room.require_client()
-        if is_session_bootstrap and (named := history.thread_id):
+        if is_session_bootstrap and (named := history.room_to_thread.get(room_id)):
             resumed = await self._resume_from_history(
                 room=room, client=client, named=named, tools=tools
             )
             if resumed is not None:
                 return resumed
-        else:
-            self._raw_history_by_room.pop(room_id, None)
         return await self._start_thread(room=room, client=client, tools=tools)
 
     def _confirm_restored_tools(
@@ -2334,14 +2403,15 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 named,
                 exc,
             )
-            if self.config.inject_history_on_resume_failure:
-                self._needs_history_injection.add(room_id)
             return None
         thread_id = _result_id(result, "thread") or named
         self._room_threads[room_id] = thread_id
         # Band history does not record which tools the thread was started with.
-        room.bind_thread(registration=None, settings=ThreadSettings.reported_by(result))
-        self._raw_history_by_room.pop(room_id, None)
+        room.bind_thread(
+            registration=None,
+            settings=ThreadSettings.reported_by(result),
+            seed=SessionSeed(restored=True),
+        )
         if Emit.TASK_EVENTS in self.features.emit:
             await send_event_safe(
                 tools,
@@ -2353,8 +2423,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 ),
                 message_type="task",
                 metadata={
-                    "codex_thread_id": thread_id,
-                    "codex_room_id": room_id,
+                    CodexMetadataKey.THREAD: thread_id,
+                    CodexMetadataKey.ROOM: room_id,
                     "codex_resumed": True,
                 },
                 log_label="thread resumed task event",
@@ -2385,10 +2455,13 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if not thread_id:
             raise RuntimeError("Codex thread/start returned no thread id")
 
-        # Recorded at once: a process lost from here on restores this thread.
+        # The room's thread while its seeding turn runs: a seed that does not
+        # complete abandons it, and Band history names it only once one does.
         self._room_threads[room_id] = thread_id
         room.bind_thread(
-            registration=dynamic_tools, settings=ThreadSettings.reported_by(started)
+            registration=dynamic_tools,
+            settings=ThreadSettings.reported_by(started),
+            seed=SessionSeed(),
         )
 
         if Emit.TASK_EVENTS in self.features.emit:
@@ -2402,10 +2475,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 ),
                 message_type="task",
                 metadata={
-                    "codex_thread_id": thread_id,
-                    "codex_room_id": room_id,
+                    CodexMetadataKey.THREAD: thread_id,
+                    CodexMetadataKey.ROOM: room_id,
                     "codex_created_at": datetime.now(UTC).isoformat(),
-                    "codex_transport": self.config.transport,
+                    CodexMetadataKey.TRANSPORT: self.config.transport,
                 },
                 log_label="thread mapped task event",
                 log_level=logging.DEBUG,
@@ -2497,6 +2570,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         participants_msg: str | None,
         contacts_msg: str | None,
         room_id: str,
+        replay: list[str],
     ) -> tuple[list[dict[str, str]], bool]:
         items: list[dict[str, str]] = []
         injected_system_prompt = False
@@ -2510,35 +2584,58 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
             injected_system_prompt = True
 
-        if room_id in self._needs_history_injection:
-            self._needs_history_injection.discard(room_id)
-            raw_history = self._raw_history_by_room.pop(room_id, None)
-            if raw_history:
-                context = self._format_history_context(raw_history)
-                if context:
-                    items.append({"type": "text", "text": context})
-
         if participants_msg:
-            items.append({"type": "text", "text": f"[System]: {participants_msg}"})
+            items.append(
+                {"type": "text", "text": f"{SYSTEM_CONTEXT_PREFIX} {participants_msg}"}
+            )
 
         if contacts_msg:
-            items.append({"type": "text", "text": f"[System]: {contacts_msg}"})
+            items.append(
+                {"type": "text", "text": f"{SYSTEM_CONTEXT_PREFIX} {contacts_msg}"}
+            )
 
-        items.append({"type": "text", "text": format_current_inputs(messages)})
+        live = format_current_inputs(messages)
+        if lines := replay[-self.config.max_history_messages :]:
+            # The header tells the model the current inputs follow this marker.
+            marker = new_message_marker()
+            framed = HISTORY_REPLAY_HEADER.format(marker=marker)
+            items.append({"type": "text", "text": f"{framed}\n" + "\n".join(lines)})
+            live = f"{marker}\n{live}"
+
+        items.append({"type": "text", "text": live})
         return items, injected_system_prompt
 
-    def _format_history_context(self, raw: list[dict[str, Any]]) -> str | None:
-        text_messages = build_replay_messages(raw)
-        if not text_messages:
-            return None
+    async def _replay_history(
+        self,
+        *,
+        room: RoomCodexClient,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: CodexSessionState,
+        is_session_bootstrap: bool,
+    ) -> list[str]:
+        """The transcript lines a fresh thread's seeding turn replays.
 
-        truncated = text_messages[-self.config.max_history_messages :]
-        header = (
-            "[Conversation History]\n"
-            "The following is the conversation history from a previous session. "
-            "Use it to maintain continuity.\n"
-        )
-        return header + "\n".join(truncated)
+        Only the bootstrap turn carries history; a thread reseeded later
+        fetches it, so it also sees requests of turns that failed to seed.
+        """
+        if not self.config.inject_history_on_resume_failure:
+            return []
+        if is_session_bootstrap:
+            return history.replay_messages
+        try:
+            transcript = await fetch_transcript(
+                tools, room_id=room.room_id, messages=messages
+            )
+        except Exception:
+            room.seed.carried = False
+            logger.warning(
+                "Room %s: could not fetch history to replay into a fresh session",
+                room.room_id,
+                exc_info=True,
+            )
+            return []
+        return build_replay_messages(transcript)
 
     async def _handle_server_request(
         self,
@@ -2857,9 +2954,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             if turn_error:
                 summary += f" | Error: {turn_error}"
             metadata: dict[str, Any] = {
-                "codex_room_id": room_id,
-                "codex_thread_id": thread_id,
-                "codex_turn_id": turn_id,
+                CodexMetadataKey.ROOM: room_id,
+                CodexMetadataKey.THREAD: thread_id,
+                CodexMetadataKey.TURN: turn_id,
                 "codex_turn_status": turn_status,
                 "codex_error": turn_error or None,
             }
@@ -2888,9 +2985,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         ):
             lifecycle_metadata: dict[str, Any] = {
                 "codex_event_type": "turn_lifecycle",
-                "codex_room_id": room_id,
-                "codex_thread_id": thread_id,
-                "codex_turn_id": turn_id,
+                CodexMetadataKey.ROOM: room_id,
+                CodexMetadataKey.THREAD: thread_id,
+                CodexMetadataKey.TURN: turn_id,
                 "codex_turn_status": turn_status,
             }
             # Match the marker path: only include duration once it's been
@@ -2920,7 +3017,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if not include_reply:
             return
 
-        if turn_status == "completed":
+        if turn_status == CodexTurnStatus.COMPLETED:
             if not tools.turn.replied and Emit.THOUGHTS in self.features.emit:
                 for item_id, message in native_messages.items():
                     text = message.unstreamed_text
@@ -2932,9 +3029,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         message_type="thought",
                         metadata={
                             "codex_item_id": item_id,
-                            "codex_room_id": room_id,
-                            "codex_thread_id": thread_id,
-                            "codex_turn_id": turn_id,
+                            CodexMetadataKey.ROOM: room_id,
+                            CodexMetadataKey.THREAD: thread_id,
+                            CodexMetadataKey.TURN: turn_id,
                         },
                         log_label="Codex completed thought",
                     )
@@ -2949,7 +3046,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 await finish_automatic_reply(tools, None, mentions)
             return
 
-        if turn_status == "interrupted":
+        if turn_status == CodexTurnStatus.INTERRUPTED:
             outcome_text = "I stopped before completing this request."
         elif turn_error:
             outcome_text = (
@@ -2983,10 +3080,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         item_id = str(
             item.get("id") or item.get("callId") or item.get("toolCallId") or ""
         )
-        metadata = {
-            "codex_room_id": room_id,
-            "codex_thread_id": thread_id,
-            "codex_turn_id": turn_id,
+        metadata: dict[str, Any] = {
+            CodexMetadataKey.ROOM: room_id,
+            CodexMetadataKey.THREAD: thread_id,
+            CodexMetadataKey.TURN: turn_id,
         }
 
         try:
@@ -3313,7 +3410,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         "codex_event_type": "approval_request",
                         "codex_approval_type": self._approval_type(event.method),
                         "codex_approval_method": event.method,
-                        "codex_room_id": room_id,
+                        CodexMetadataKey.ROOM: room_id,
                         "codex_approval_options": [
                             "accept",
                             "acceptForSession",
@@ -3447,9 +3544,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         )
 
         metadata: dict[str, Any] = {
-            "codex_room_id": room_id,
-            "codex_thread_id": thread_id,
-            "codex_turn_id": turn_id,
+            CodexMetadataKey.ROOM: room_id,
+            CodexMetadataKey.THREAD: thread_id,
+            CodexMetadataKey.TURN: turn_id,
             "codex_event_method": method,
             "codex_task_phase": task_phase,
         }
@@ -3573,9 +3670,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             message_type="task",
             metadata={
                 "codex_plan_steps": step_dicts,
-                "codex_room_id": room_id,
-                "codex_thread_id": thread_id,
-                "codex_turn_id": turn_id,
+                CodexMetadataKey.ROOM: room_id,
+                CodexMetadataKey.THREAD: thread_id,
+                CodexMetadataKey.TURN: turn_id,
             },
             log_label="plan steps",
             log_level=logging.DEBUG,
@@ -3608,8 +3705,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if usage is None or usage.total_tokens == 0:
             return
         metadata = usage.to_metadata()
-        metadata["codex_thread_id"] = thread_id
-        metadata["codex_room_id"] = room_id
+        metadata[CodexMetadataKey.THREAD] = thread_id
+        metadata[CodexMetadataKey.ROOM] = room_id
         await send_event_safe(
             tools,
             content=usage.format_summary(),
@@ -3663,9 +3760,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
         metadata: dict[str, Any] = {
             "codex_event_type": "turn_diff",
-            "codex_thread_id": thread_id,
-            "codex_turn_id": turn_id,
-            "codex_room_id": room_id,
+            CodexMetadataKey.THREAD: thread_id,
+            CodexMetadataKey.TURN: turn_id,
+            CodexMetadataKey.ROOM: room_id,
             "codex_files_changed": files_changed,
             "codex_diff": diff_content,
         }
@@ -3761,7 +3858,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 "codex_approval_decision": entry.decision,
                 "codex_decided_by": entry.decided_by,
                 "codex_session_level": entry.session_level,
-                "codex_room_id": room_id,
+                CodexMetadataKey.ROOM: room_id,
                 "codex_timestamp": entry.timestamp,
             },
             log_label="approval audit event",
@@ -3773,7 +3870,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         *,
         tools: AgentToolsProtocol,
         msg: PlatformMessage,
-        history: CodexSessionState,
         room_id: str,
         command: CodexCommand,
         args: str,
@@ -3785,7 +3881,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             return True
 
         if command == CodexCommand.STATUS:
-            mapped_thread = self._room_threads.get(room_id) or history.thread_id or None
+            mapped_thread = self._room_threads.get(room_id)
             usage = (
                 self._token_usage.get(mapped_thread or "") if mapped_thread else None
             )

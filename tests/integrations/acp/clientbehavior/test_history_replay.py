@@ -1,3 +1,5 @@
+"""Fresh ACP sessions receive a framed room transcript before live input."""
+
 from __future__ import annotations
 
 import pytest

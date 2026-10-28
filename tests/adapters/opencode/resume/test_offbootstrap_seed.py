@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
+
+import pytest
 
 from band.adapters.opencode import OpencodeAdapter
 from band.converters.opencode import OPENCODE_RESUME_RECORD
@@ -22,6 +25,7 @@ from tests.adapters.opencode.resume.kit import (
     room_tools,
     started,
 )
+from tests.roomhistory import DEFAULT_HISTORY_INSERTED_AT, stored
 
 
 class TestOffBootstrapSeed:
@@ -51,8 +55,19 @@ class TestOffBootstrapSeed:
             ROOM_ID: "sess-2"
         }
 
+    @pytest.mark.parametrize(
+        ("fetch_error", "context"),
+        [
+            (RuntimeError("context unavailable"), []),
+            (None, [stored("unknown ordering", inserted_at=None)]),
+        ],
+        ids=["fetch-failed", "cutoff-unavailable"],
+    )
     async def test_a_prompt_sent_without_the_transcript_records_nothing(
-        self, make_adapter: Callable[..., OpencodeAdapter]
+        self,
+        make_adapter: Callable[..., OpencodeAdapter],
+        fetch_error: Exception | None,
+        context: list[dict[str, Any]],
     ) -> None:
         client = FakeOpencodeClient(
             prompt_event_sequences=[
@@ -63,7 +78,8 @@ class TestOffBootstrapSeed:
         )
         adapter = await started(make_adapter(client, emit=()))
         unreachable, retried = room_tools(), room_tools()
-        unreachable.fetch_room_context_error = RuntimeError("context unavailable")
+        unreachable.fetch_room_context_error = fetch_error
+        unreachable.set_room_context(context)
 
         await adapter.on_event(
             room_input(room_tools(), history=TRANSCRIPT, bootstrap=True)
@@ -88,6 +104,7 @@ class TestOffBootstrapSeed:
             "id": "msg-mention",
             "message_type": MessageType.TEXT,
             "content": f"@[[{BOB['id']}]] the code word is heron.",
+            "inserted_at": DEFAULT_HISTORY_INSERTED_AT,
             "sender_id": "user-1",
             "sender_name": "Alice",
             "sender_type": "User",

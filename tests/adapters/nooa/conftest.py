@@ -10,6 +10,7 @@ import pytest
 
 from band.client.rest import AsyncRestClient
 from band.testing import FakeAgentTools
+from tests.roomhistory import DEFAULT_HISTORY_INSERTED_AT
 from tests.runtime.helpers import rest_client_over
 
 # NOOA supports Python 3.12 and 3.13 on POSIX only; elsewhere no module in this
@@ -46,6 +47,7 @@ async def history_rest() -> AsyncIterator[AsyncRestClient]:
                                 "sender_type": "User",
                                 "sender_name": "Alice",
                                 "message_type": "text",
+                                "inserted_at": DEFAULT_HISTORY_INSERTED_AT,
                             }
                         ],
                         "metadata": {"has_more": False, "limit": 50},

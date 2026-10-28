@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from band.adapters.omp import OMP_SESSION_DIRECTORY, OmpAdapterConfig
-from band.converters.omp import OmpHistoryConverter, OmpMetadataKey
+from band.converters.omp import OMP_RESUME_RECORD, OmpHistoryConverter, OmpMetadataKey
 from band.core.types import MessageType
 from band.testing import FakeAgentTools
 from band.testing.fake_tools import events_of_type
@@ -25,6 +25,7 @@ class TestSessionPersist:
         prior = [
             {
                 "message_type": MessageType.TASK,
+                "content": OMP_RESUME_RECORD.label,
                 "metadata": {
                     OmpMetadataKey.ROOM: "room-123",
                     OmpMetadataKey.SESSION: f"/workspace/{OMP_SESSION_DIRECTORY}/saved.jsonl",
