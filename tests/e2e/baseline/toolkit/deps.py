@@ -40,6 +40,10 @@ from urllib.parse import urlparse
 from band.integrations.acp.cursor import CURSOR_CLI_BINARY
 from band.integrations.omp import OMP_MIN_BUN
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.antigravity import (
+    antigravity_api_key,
+    antigravity_command,
+)
 from tests.e2e.baseline.toolkit.omp_credentials import (
     native_omp_command,
     omp_command,
@@ -170,6 +174,7 @@ class Dep(Enum):
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
     STRANDS = "strands"
     NOOA = "nooa"  # the nooa package is importable (Python 3.12-3.13, not Windows)
+    ANTIGRAVITY = "antigravity"  # API key, acp extra, and native server command
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
     CURSOR_CLI = "cursor_cli"  # the `agent` CLI and noninteractive auth for Cursor ACP
     OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
@@ -199,6 +204,15 @@ def _google_available(settings: BaselineSettings) -> bool:
         return True
     return creds.google_genai_use_vertexai == "true" and bool(
         creds.google_cloud_project
+    )
+
+
+def _antigravity_available(settings: BaselineSettings) -> bool:
+    """Require native API-key auth, the ACP extra, and the selected executable."""
+    return (
+        bool(antigravity_api_key(settings))
+        and importlib.util.find_spec("acp") is not None
+        and shutil.which(antigravity_command(settings)[0]) is not None
     )
 
 
@@ -381,6 +395,12 @@ _DEPS: dict[Dep, DepSpec] = {
         _google_available,
         "GOOGLE_API_KEY/GEMINI_API_KEY or Vertex AI env "
         "(GOOGLE_GENAI_USE_VERTEXAI + GOOGLE_CLOUD_PROJECT) not set",
+        lane=Lane.GOOGLE,
+    ),
+    Dep.ANTIGRAVITY: DepSpec(
+        _antigravity_available,
+        "Antigravity requires GEMINI_API_KEY or GOOGLE_API_KEY, band-sdk[acp], "
+        "and the native server executable on PATH or in ANTIGRAVITY_COMMAND (JSON argv)",
         lane=Lane.GOOGLE,
     ),
     Dep.CODEX_CLI: DepSpec(

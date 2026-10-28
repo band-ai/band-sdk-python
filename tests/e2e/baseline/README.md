@@ -631,7 +631,7 @@ the `dev` extra but are split out for isolation.
 | `nooa` | `dev-strands-nooa` | nooa | Anthropic key; Python 3.12–3.13 on POSIX; Linux-only E2E lane |
 | `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth |
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
-| `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
+| `google` | `dev` | gemini, google_adk, antigravity_acp | provider keys and the checksum-pinned Antigravity native bundle; split from `core` so Google rate-limit flakiness is isolated |
 | `backends` | `dev` | codex, opencode, copilot_acp, cursor_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), the `copilot` CLI (`Dep.COPILOT_CLI` + `Dep.ANTHROPIC` — Anthropic BYOK; optional `GITHUB_TOKEN` for the Copilot-hosted smokes), and Cursor `agent` CLI (`CURSOR_API_KEY` in CI; local `agent login` also works) |
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 | `parlant` | `dev-parlant` | *(none — parlant is a bespoke smoke, not a registered matrix adapter; pinned via `@lane(Lane.PARLANT)`)* | provider keys; isolated venv (parlant's `griffe`/`griffelib` transitive deps collide with pydantic_ai's — `pyproject.toml [tool.uv] conflicts`); no server setup — the smoke spins up its own in-process Parlant server |
@@ -942,9 +942,29 @@ workflow emits no `letta × windows` cell — every other lane runs on both OSes
 
 `e2e_pending` (which once excluded Letta) is now a reason *string*
 (`str | None`), pinned to an explicit allowlist in
-`tests/framework_conformance/test_agent_wiring_rules.py`. Antigravity ACP is
-staged there until its [CI installation and Google-lane qualification](https://linear.app/thenvoi/issue/INT-1948/feat-install-and-qualify-antigravity-acp-in-the-google-e2e-lane)
-are complete; that work removes both its pending reason and allowlist entry.
+`tests/framework_conformance/test_agent_wiring_rules.py`.
+
+### Antigravity ACP
+
+The Google lane installs the complete native Antigravity 1.4.3 bundle on Ubuntu
+and Windows through `.github/scripts/setup-antigravity.py`. Both fresh downloads
+and cached archives must match the pinned SHA256 before extraction. CI caches
+only the release archive; each job gets a fresh installation and private native
+session homes.
+
+For a local run, install the complete bundle (including `localharness_external`)
+and put its executable on `PATH`, or set `ANTIGRAVITY_COMMAND` to a JSON argv
+array. Paths and arguments containing spaces remain individual argv entries.
+The dependency gate requires `band-sdk[acp]`, a reachable native executable, and
+`GEMINI_API_KEY` or `GOOGLE_API_KEY` (Gemini takes precedence). Vertex-only
+credentials do not authenticate this server.
+
+The matrix builder uses the shared Gemini model, `auto_decline` for requested
+native permissions, and a disposable workspace and home. Rebuilding through
+`cell.run_as` creates a fresh home, so the ordinary rejoin case tests platform
+history fallback. The dedicated native-resume smoke retains its private home
+across adapter instances to exercise the native load path. Native reads and
+`schedule` can bypass ACP permission requests; `auto_decline` is not a sandbox.
 
 
 ### Legacy OpenAI environments

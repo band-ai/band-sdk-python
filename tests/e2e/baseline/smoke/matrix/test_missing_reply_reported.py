@@ -1,11 +1,4 @@
-"""Matrix scenario: a turn that did nothing is reported once and marked FAILED.
-
-The agent has no ``band_send_message`` or ``band_no_reply`` and a prompt that
-makes it read the roster and stop, so its turn can neither reply nor decline.
-The SDK reports the missing reply as exactly one ``error`` event carrying
-band-sdk-core's text, and the delivery ends FAILED instead of a false
-PROCESSED.
-"""
+"""Matrix scenario: a turn that did nothing is reported once and marked FAILED."""
 
 from __future__ import annotations
 
@@ -26,85 +19,96 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 IGNORES_EXCLUDE_TOOLS = "ignores exclude_tools, so band_no_reply stays callable"
 
 
-@per_adapter(
-    runs_tool_loop=True,
-    prompt=silent_turn_prompt(),
-    features=AdapterFeatures(exclude_tools={BandTool.SEND_MESSAGE, BandTool.NO_REPLY}),
-    exclude=[
-        ExcludedAdapter(
-            Adapter.COPILOT_SDK,
-            "relays the model's final text, so an empty turn can't be scripted reliably",
+class TestMissingReplyReported:
+    @per_adapter(
+        runs_tool_loop=True,
+        prompt=silent_turn_prompt(),
+        features=AdapterFeatures(
+            exclude_tools={BandTool.SEND_MESSAGE, BandTool.NO_REPLY}
         ),
-        *(
-            ExcludedAdapter(adapter, IGNORES_EXCLUDE_TOOLS)
-            for adapter in (
-                Adapter.ANTHROPIC,
-                Adapter.CLAUDE_SDK,
-                Adapter.GEMINI,
-                Adapter.GOOGLE_ADK,
+        exclude=[
+            ExcludedAdapter(
+                Adapter.COPILOT_SDK,
+                "relays the model's final text, so an empty turn can't be scripted reliably",
+            ),
+            *(
+                ExcludedAdapter(adapter, IGNORES_EXCLUDE_TOOLS)
+                for adapter in (
+                    Adapter.ANTHROPIC,
+                    Adapter.CLAUDE_SDK,
+                    Adapter.GEMINI,
+                    Adapter.GOOGLE_ADK,
+                )
+            ),
+        ],
+    )
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_a_turn_that_did_nothing_is_reported_and_failed(
+        self,
+        agent: ProvisionedAgent,
+        resource_manager: ResourceManager,
+        user_ops: UserOps,
+        reply_capture: CaptureFactory,
+    ) -> None:
+        await self.assert_missing_reply(
+            agent, resource_manager, user_ops, reply_capture
+        )
+
+    async def assert_missing_reply(
+        self,
+        agent: ProvisionedAgent,
+        resource_manager: ResourceManager,
+        user_ops: UserOps,
+        reply_capture: CaptureFactory,
+    ) -> None:
+        room_id = await resource_manager.provision_room(
+            title=f"e2e-missing-reply-{agent.adapter_id}", participants=[agent.id]
+        )
+
+        async with reply_capture(room_id) as capture:
+            mid = await user_ops.send_message(
+                room_id,
+                "Run the silent-turn check.",
+                mention_id=agent.id,
+                mention_name=agent.name,
             )
+            reached = await capture.wait_for_delivery(
+                mid, agent.id, until={DeliveryStatus.FAILED, DeliveryStatus.PROCESSED}
+            )
+            errors = await capture.errors(sender_id=agent.id)
+            messages = await capture.events(MessageType.TEXT, sender_id=agent.id)
+            calls = await capture.tool_calls(sender_id=agent.id)
+
+        assert reached is DeliveryStatus.FAILED, (
+            "expected a silent turn, but the agent completed it with "
+            f"tools {[call.name for call in calls]} and messages "
+            f"{[message.content for message in messages]}"
+        )
+        assert [error.content for error in errors] == [
+            band_sdk_core.missing_reply_message()
+        ]
+        messages.assert_none()
+
+    @per_adapter(
+        Adapter.CODEX,
+        Adapter.ANTIGRAVITY_ACP,
+        Adapter.COPILOT_ACP,
+        Adapter.CURSOR_ACP,
+        Adapter.OMP_ACP,
+        Adapter.OMP,
+        prompt=silent_turn_prompt(),
+        features=AdapterFeatures(
+            exclude_tools={BandTool.SEND_MESSAGE, BandTool.NO_REPLY}
         ),
-    ],
-)
-@pytest.mark.asyncio(loop_scope="session")
-async def test_a_turn_that_did_nothing_is_reported_and_failed(
-    agent: ProvisionedAgent,
-    resource_manager: ResourceManager,
-    user_ops: UserOps,
-    reply_capture: CaptureFactory,
-) -> None:
-    await assert_missing_reply(agent, resource_manager, user_ops, reply_capture)
-
-
-async def assert_missing_reply(
-    agent: ProvisionedAgent,
-    resource_manager: ResourceManager,
-    user_ops: UserOps,
-    reply_capture: CaptureFactory,
-) -> None:
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-missing-reply-{agent.adapter_id}", participants=[agent.id]
     )
-
-    async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
-            room_id,
-            "Run the silent-turn check.",
-            mention_id=agent.id,
-            mention_name=agent.name,
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends(
+        self,
+        agent: ProvisionedAgent,
+        resource_manager: ResourceManager,
+        user_ops: UserOps,
+        reply_capture: CaptureFactory,
+    ) -> None:
+        await self.assert_missing_reply(
+            agent, resource_manager, user_ops, reply_capture
         )
-        reached = await capture.wait_for_delivery(
-            mid, agent.id, until={DeliveryStatus.FAILED, DeliveryStatus.PROCESSED}
-        )
-        errors = await capture.errors(sender_id=agent.id)
-        messages = await capture.events(MessageType.TEXT, sender_id=agent.id)
-        calls = await capture.tool_calls(sender_id=agent.id)
-
-    assert reached is DeliveryStatus.FAILED, (
-        "expected a silent turn, but the agent completed it with "
-        f"tools {[call.name for call in calls]} and messages "
-        f"{[message.content for message in messages]}"
-    )
-    assert [error.content for error in errors] == [
-        band_sdk_core.missing_reply_message()
-    ]
-    messages.assert_none()
-
-
-@per_adapter(
-    Adapter.CODEX,
-    Adapter.COPILOT_ACP,
-    Adapter.CURSOR_ACP,
-    Adapter.OMP_ACP,
-    Adapter.OMP,
-    prompt=silent_turn_prompt(),
-    features=AdapterFeatures(exclude_tools={BandTool.SEND_MESSAGE, BandTool.NO_REPLY}),
-)
-@pytest.mark.asyncio(loop_scope="session")
-async def test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends(
-    agent: ProvisionedAgent,
-    resource_manager: ResourceManager,
-    user_ops: UserOps,
-    reply_capture: CaptureFactory,
-) -> None:
-    await assert_missing_reply(agent, resource_manager, user_ops, reply_capture)

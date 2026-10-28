@@ -36,6 +36,10 @@ from tests.e2e.baseline.toolkit.adapters import (
     _reject_tools,
     adapter,
 )
+from tests.e2e.baseline.toolkit.antigravity import (
+    antigravity_api_key,
+    antigravity_command,
+)
 from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.omp_credentials import (
     native_omp_command,
@@ -610,10 +614,9 @@ def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
 
 @adapter(
     Adapter.ANTIGRAVITY_ACP,
-    requires=[Dep.GOOGLE],
+    requires=[Dep.ANTIGRAVITY],
     supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
-    e2e_pending="CI server installation and live Google qualification are pending",
 )
 def _build_antigravity_acp(
     s: BaselineSettings,
@@ -628,7 +631,7 @@ def _build_antigravity_acp(
         AntigravityACPAdapterConfig,
     )
 
-    api_key = s.llm_credentials.gemini_api_key or s.llm_credentials.google_api_key
+    api_key = antigravity_api_key(s)
     if not api_key:
         raise ValueError("Antigravity requires GEMINI_API_KEY or GOOGLE_API_KEY")
     sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-antigravity-acp-")
@@ -638,6 +641,7 @@ def _build_antigravity_acp(
         "custom_section": prompt or "",
         "model": s.llm_models.gemini_model,
         "gemini_api_key": api_key,
+        "command": antigravity_command(s),
         "gemini_home": os.path.join(sandbox.name, "antigravity-home"),
         "approval_mode": "auto_decline",
     }
