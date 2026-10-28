@@ -93,6 +93,7 @@ from band.runtime.startup import (
     release_adapter,
     start_adapter,
 )
+from band.runtime.terminalnotice import is_terminal_delivery
 from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
@@ -410,6 +411,20 @@ class OneShotInvoker:
                 # ``RoomExecutions.destroy``'s cleanup-callback hook
                 # in the long-running path.
                 return await self._cleanup_room(event_type, cast(str, room_id))
+            case {
+                "decision": "skip_self",
+                "room_id": room_id,
+                "message_id": message_id,
+            } if is_terminal_delivery(
+                payload.get("message_type", ""),
+                cast(str, message_id),
+                payload.get("metadata"),
+                self._agent_id,
+            ):
+                # The platform sends a deadline notice in the initiator's name.
+                return await self._process_message_event(
+                    room_id=cast(str, room_id), payload=payload
+                )
             case {"decision": "skip_self", "message_id": message_id}:
                 logger.debug("Skipping self-message %s", message_id)
                 return {"status": OneShotStatus.SKIPPED_SELF, "message_id": message_id}
@@ -633,7 +648,7 @@ class OneShotInvoker:
                 )
                 break
             match evaluate_drain_candidate(
-                _drain_candidate(stale), seen_ids, self._agent_id
+                _drain_candidate(stale, self._agent_id), seen_ids, self._agent_id
             ):
                 case {"decision": "no_candidate"}:
                     break
@@ -802,7 +817,9 @@ class OneShotInvoker:
 # --- Module-level helpers (no state, easy to unit-test) ---
 
 
-def _drain_candidate(msg: RestPlatformMessage | None) -> DrainCandidate | None:
+def _drain_candidate(
+    msg: RestPlatformMessage | None, agent_id: str
+) -> DrainCandidate | None:
     """``/next``'s dataclass fields are unvalidated; core rejects a non-string.
 
     ``PlatformMessage`` declares ``sender_id``/``sender_type`` as ``str``, but
@@ -811,10 +828,13 @@ def _drain_candidate(msg: RestPlatformMessage | None) -> DrainCandidate | None:
     the triggering message was already marked processed. ``or ""`` keeps
     today's behavior: an empty sender never matches self-echo, so it falls
     through to the snapshot check exactly as a real "no match" candidate
-    would.
+    would. A deadline notice sent in this agent's name takes the same path:
+    it is not an echo, and ``/next`` keeps returning it until it is settled.
     """
     if msg is None:
         return None
+    if is_terminal_delivery(msg.message_type, msg.id, msg.metadata, agent_id):
+        return {"id": msg.id, "sender_id": "", "sender_type": ""}
     return {
         "id": msg.id,
         "sender_id": msg.sender_id or "",
