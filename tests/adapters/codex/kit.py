@@ -22,11 +22,13 @@ from band.adapters.codex import (
     PendingApproval,
 )
 from band.client.streaming import ControlMode
+from band.converters.codex import CODEX_RESUME_RECORD, CodexMetadataKey
 from band.core.exceptions import InputNotAccepted
 from band.core.retention import Residency, RetainedRoom
 from band.core.types import (
     AgentInput,
     HistoryProvider,
+    MessageType,
     PlatformMessage,
 )
 from band.integrations.codex import (
@@ -108,6 +110,31 @@ def agent_input(
         is_session_bootstrap=is_session_bootstrap,
         room_id=room_id,
     )
+
+
+def stored(msg: PlatformMessage) -> dict[str, Any]:
+    """``msg`` as the platform's room context returns it."""
+    return {
+        "id": msg.id,
+        "content": msg.content,
+        "sender_id": msg.sender_id,
+        "sender_type": msg.sender_type,
+        "sender_name": msg.sender_name,
+        "message_type": msg.message_type,
+        "inserted_at": msg.created_at.isoformat(),
+    }
+
+
+def recorded_thread(thread_id: str, room_id: str = ROOM_ID) -> dict[str, Any]:
+    """The history entry of a room's Codex resume record."""
+    return {
+        "message_type": MessageType.TASK,
+        "content": CODEX_RESUME_RECORD.label,
+        "metadata": {
+            CodexMetadataKey.ROOM: room_id,
+            CodexMetadataKey.THREAD: thread_id,
+        },
+    }
 
 
 class ToolSchemaFakeTools(FakeAgentTools):
@@ -416,12 +443,12 @@ ACCEPTED = {"decision": "accept"}
 REFUSED_AUTONOMOUS_TURN = (False, DECLINED)
 
 
-def answered_turn() -> list[RpcEvent]:
+def answered_turn(turn_id: str = "turn-1") -> list[RpcEvent]:
     """A turn explicitly completed through a Band decline tool."""
     return [
         tool_call_request(1, BandTool.NO_REPLY),
         final_text("Done."),
-        turn_completed(),
+        turn_completed(turn_id),
     ]
 
 

@@ -9,15 +9,18 @@ import pytest
 from band.adapters.codex import (
     CodexAdapterConfig,
 )
+from band.converters.codex import CODEX_RESUME_RECORD
 from band.integrations.codex import CodexJsonRpcError
 from band.integrations.codex.types import (
     CodexRequestMethod,
 )
 from band.runtime.tools import BandTool
 from tests.adapters.codex.kit import (
-    ROOM_ID,
     ToolSchemaFakeTools,
     agent_input,
+    make_platform_message,
+    recorded_thread,
+    stored,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -48,11 +51,7 @@ class TestHistoryInjection:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         raw_history = [
-            {
-                "message_type": "task",
-                "content": "mapping event",
-                "metadata": {"codex_thread_id": "thr-old", "codex_room_id": ROOM_ID},
-            },
+            recorded_thread("thr-old"),
             {
                 "message_type": "text",
                 "content": "Can you refactor the auth module?",
@@ -80,7 +79,7 @@ class TestHistoryInjection:
             in history_items[0]["text"]
         )
         # Task events should NOT appear in history context
-        assert "mapping event" not in history_items[0]["text"]
+        assert CODEX_RESUME_RECORD.label not in history_items[0]["text"]
 
     @pytest.mark.asyncio
     async def test_history_not_injected_on_successful_resume(self) -> None:
@@ -97,14 +96,7 @@ class TestHistoryInjection:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         raw_history = [
-            {
-                "message_type": "task",
-                "content": "mapping",
-                "metadata": {
-                    "codex_thread_id": "thr-existing",
-                    "codex_room_id": ROOM_ID,
-                },
-            },
+            recorded_thread("thr-existing"),
             {
                 "message_type": "text",
                 "content": "Hello",
@@ -172,12 +164,7 @@ class TestHistoryInjection:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         raw_history = [
-            {
-                "message_type": "task",
-                "content": "task event",
-                "sender_name": "System",
-                "metadata": {"codex_thread_id": "thr-old", "codex_room_id": ROOM_ID},
-            },
+            {**recorded_thread("thr-old"), "sender_name": "System"},
             {
                 "message_type": "tool_call",
                 "content": '{"name": "foo"}',
@@ -220,7 +207,7 @@ class TestHistoryInjection:
         # "message" is not a MessageType value; nothing on the platform
         # produces it, so it does not survive replay.
         assert "[Bob]: Hi there" not in text
-        assert "task event" not in text
+        assert CODEX_RESUME_RECORD.label not in text
         assert "thinking..." not in text
         assert "oops" not in text
         assert "tool_call" not in text
@@ -245,11 +232,7 @@ class TestHistoryInjection:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         raw_history: list[dict[str, Any]] = [
-            {
-                "message_type": "task",
-                "content": "mapping",
-                "metadata": {"codex_thread_id": "thr-old", "codex_room_id": ROOM_ID},
-            },
+            recorded_thread("thr-old"),
         ]
         raw_history.extend(
             {
@@ -290,17 +273,19 @@ class TestHistoryInjection:
         )
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         await adapter.on_started("Codex Agent", "A coding agent")
-        raw_history = [
-            {"message_type": "text", "content": "Hello", "sender_name": "Alice"}
-        ]
+        raw_history = [stored(make_platform_message(content="Hello"))]
+        seeding_input = agent_input(
+            "Go", ToolSchemaFakeTools(), raw_history=raw_history
+        )
+        later_tools = ToolSchemaFakeTools()
+        later_input = agent_input("Again", later_tools, is_session_bootstrap=False)
+        # The room's stored transcript stays fetchable after the seed.
+        later_tools.set_room_context(
+            [*raw_history, stored(seeding_input.msg), stored(later_input.msg)]
+        )
 
-        await deliver_event(
-            adapter, agent_input("Go", ToolSchemaFakeTools(), raw_history=raw_history)
-        )
-        await deliver_event(
-            adapter,
-            agent_input("Again", ToolSchemaFakeTools(), is_session_bootstrap=False),
-        )
+        await deliver_event(adapter, seeding_input)
+        await deliver_event(adapter, later_input)
 
         seeding, later = fake_client.params_of(CodexRequestMethod.TURN_START)
         assert "[Alice]: Hello" in str(seeding["input"])

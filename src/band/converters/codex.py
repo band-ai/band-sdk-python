@@ -11,11 +11,7 @@ from band.runtime.sessionresume import ResumeRecord
 
 
 class CodexMetadataKey(StrEnum):
-    """Metadata keys of the Codex adapter's resume record.
-
-    Only the record names the room: narration that names a thread must not
-    read back as one.
-    """
+    """Metadata keys of the Codex resume record, shared with its task narration."""
 
     ROOM = "codex_room_id"
     THREAD = "codex_thread_id"

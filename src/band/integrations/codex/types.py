@@ -66,6 +66,14 @@ CODEX_APPROVAL_METHODS: frozenset[CodexApprovalMethod] = frozenset(CodexApproval
 DYNAMIC_TOOL_CALL_METHOD = "item/tool/call"
 
 
+class CodexTurnStatus(StrEnum):
+    """``turn/completed`` statuses the adapter acts on."""
+
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    FAILED = "failed"
+
+
 class CodexRequestMethod(StrEnum):
     """Client-to-server request methods the SDK sends to ``codex app-server``."""
 

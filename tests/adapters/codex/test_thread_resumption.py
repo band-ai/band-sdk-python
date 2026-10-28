@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -19,6 +18,9 @@ from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,
     agent_input,
     answered_turn,
+    make_platform_message,
+    recorded_thread,
+    stored,
 )
 from tests.adapters.codexturns import (
     FIRST_THREAD_ID,
@@ -27,10 +29,20 @@ from tests.adapters.codexturns import (
     turn_completed,
 )
 
-TRANSCRIPT = [
-    {"message_type": "text", "content": "earlier context", "sender_name": "Alice"}
-]
+TRANSCRIPT = [stored(make_platform_message(content="earlier context"))]
 REPLAYED = "[Alice]: earlier context"
+HISTORY_HEADING = "[Conversation History]"
+
+
+def replayed(turn: dict[str, Any]) -> list[str]:
+    """The transcript lines a ``turn/start`` replayed, if any."""
+    return [
+        line
+        for item in turn["input"]
+        if item["text"].startswith(HISTORY_HEADING)
+        for line in item["text"].splitlines()
+        if line.startswith("[Alice]")
+    ]
 
 
 def turn_inputs(*processes: FakeCodexClient) -> list[dict[str, Any]]:
@@ -52,17 +64,7 @@ class TestThreadResumption:
         fake_client = FakeCodexClient(events=answered_turn())
         adapter = await started_codex(fake_client)
 
-        raw_history = [
-            {
-                "message_type": "task",
-                "content": "historical mapping",
-                "metadata": {
-                    "codex_thread_id": "thr-history",
-                    "codex_room_id": ROOM_ID,
-                    "codex_created_at": datetime.now(UTC).isoformat(),
-                },
-            }
-        ]
+        raw_history = [recorded_thread("thr-history")]
         await adapter.on_event(
             agent_input(
                 "continue work",
@@ -219,6 +221,13 @@ class TestThreadResumption:
         assert REPLAYED in str(seeding["input"])
 
     @pytest.mark.parametrize(
+        ("bootstrap_history", "expected_replay"),
+        [
+            pytest.param(TRANSCRIPT, [REPLAYED, "[Alice]: first turn"], id="room"),
+            pytest.param([], ["[Alice]: first turn"], id="new-room"),
+        ],
+    )
+    @pytest.mark.parametrize(
         ("processes", "failure"),
         [
             pytest.param(
@@ -261,20 +270,24 @@ class TestThreadResumption:
         started_codex: Callable[..., Awaitable[CodexAdapter]],
         processes: Callable[[], list[FakeCodexClient]],
         failure: type[Exception],
+        bootstrap_history: list[dict[str, Any]],
+        expected_replay: list[str],
     ) -> None:
         """Narration naming the unseeded thread is no resume record, and the
-        next turn starts a fresh thread and replays the transcript into it."""
+        next turn starts a fresh thread and replays the room's stored
+        transcript into it, the failed turn's request included."""
         room = processes()
         adapter = await started_codex(*room, emit_turn_task_markers=True)
         tools_failed, tools_next = ToolSchemaFakeTools(), ToolSchemaFakeTools()
+        failed = agent_input("first turn", tools_failed, raw_history=bootstrap_history)
+        following = agent_input("next turn", tools_next, is_session_bootstrap=False)
+        tools_next.set_room_context(
+            [*bootstrap_history, stored(failed.msg), stored(following.msg)]
+        )
 
         with pytest.raises(failure):
-            await adapter.on_event(
-                agent_input("first turn", tools_failed, raw_history=TRANSCRIPT)
-            )
-        await adapter.on_event(
-            agent_input("next turn", tools_next, is_session_bootstrap=False)
-        )
+            await adapter.on_event(failed)
+        await adapter.on_event(following)
 
         assert CODEX_RESUME_RECORD.candidates(tools_failed.events_sent) == {}
         assert all(
@@ -286,7 +299,65 @@ class TestThreadResumption:
         )
         assert starts == 2
         reseeding = turn_inputs(*room)[-1]
-        assert REPLAYED in str(reseeding["input"])
+        assert replayed(reseeding) == expected_replay
         assert CODEX_RESUME_RECORD.candidates(tools_next.events_sent) == {
             ROOM_ID: reseeding["threadId"]
         }
+
+    async def test_an_interrupted_seed_is_recorded_and_its_thread_continues(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """Codex took the interrupted turn's input, transcript included, so
+        the thread is seeded: the room keeps it and Band history names it."""
+        client = FakeCodexClient(
+            events=[
+                turn_completed("turn-1", status="interrupted"),
+                *answered_turn("turn-2"),
+            ]
+        )
+        adapter = await started_codex(client)
+        tools_first = ToolSchemaFakeTools()
+
+        await adapter.on_event(
+            agent_input("start a long job", tools_first, raw_history=TRANSCRIPT)
+        )
+        await adapter.on_event(
+            agent_input("continue", ToolSchemaFakeTools(), is_session_bootstrap=False)
+        )
+
+        seeding, following = turn_inputs(client)
+        assert following["threadId"] == seeding["threadId"] == FIRST_THREAD_ID
+        assert replayed(following) == []
+        assert CODEX_RESUME_RECORD.candidates(tools_first.events_sent) == {
+            ROOM_ID: FIRST_THREAD_ID
+        }
+
+    async def test_a_thread_is_recorded_once_and_a_failed_post_is_retried(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        client = FakeCodexClient(
+            events=[
+                *answered_turn("turn-1"),
+                *answered_turn("turn-2"),
+                *answered_turn("turn-3"),
+            ]
+        )
+        # Without narration the record is the turn's only event.
+        adapter = await started_codex(client, features={"emit": ()})
+        tools = ToolSchemaFakeTools()
+        tools.send_event_error = ConnectionError("Band REST unavailable")
+
+        await adapter.on_event(agent_input("first", tools, raw_history=TRANSCRIPT))
+        tools.send_event_error = None
+        for content in ("second", "third"):
+            await adapter.on_event(
+                agent_input(content, tools, is_session_bootstrap=False)
+            )
+
+        records = [
+            event
+            for event in tools.events_sent
+            if event["content"] == CODEX_RESUME_RECORD.label
+        ]
+        assert len(records) == 1
+        assert CODEX_RESUME_RECORD.candidates(records) == {ROOM_ID: FIRST_THREAD_ID}

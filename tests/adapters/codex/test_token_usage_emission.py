@@ -6,7 +6,7 @@ import pytest
 
 from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexTokenUsage
-from tests.adapters.codex.kit import ToolSchemaFakeTools
+from tests.adapters.codex.kit import ROOM_ID, ToolSchemaFakeTools
 from tests.adapters.codexturns import (
     FakeCodexClient,
     make_codex_adapter,
@@ -33,7 +33,9 @@ class TestTokenUsageEmission:
         # Seed an empty CodexTokenUsage (total_tokens == 0) and call the
         # emit helper directly.  It should short-circuit.
         adapter._token_usage["thread-x"] = CodexTokenUsage()
-        await adapter._emit_token_usage_event(tools=tools, thread_id="thread-x")
+        await adapter._emit_token_usage_event(
+            tools=tools, thread_id="thread-x", room_id=ROOM_ID
+        )
 
         usage_events = [
             e
