@@ -49,14 +49,17 @@ class TestResumeRecordPost:
 
         assert RECORD.candidates(tools.events_sent) == {"room-1": "s1"}
 
-    async def test_an_empty_session_is_left_out_of_the_record(self) -> None:
+    @pytest.mark.parametrize("empty", ["", None], ids=["empty", "missing"])
+    async def test_an_empty_session_is_left_out_of_the_record(
+        self, empty: str | None
+    ) -> None:
         tools = FakeAgentTools()
 
         await RECORD.post(
             tools,
             room_id="room-1",
             seed=confirmed(SessionSeed()),
-            session=None,
+            session=empty,
             details={"extra": "x"},
         )
 

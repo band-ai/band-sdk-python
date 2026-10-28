@@ -221,6 +221,8 @@ ACP_TRANSITION_TIMEOUT_S = 30.0
 # How a turn reports a room process that did not start or stop within
 # ``retention.transition_timeout_s``.
 PROCESS_NOT_READY_ERROR = "ACP agent process did not become ready in time"
+# Opens the Band context sent with the first prompt of an ACP session.
+SYSTEM_CONTEXT_HEADER = "[System Context]"
 
 
 class SessionCloseReason(StrEnum):
@@ -1200,7 +1202,7 @@ class ACPClientAdapter(
             f"Use each MCP tool's schema for its argument names.{room_hint}\n"
         )
 
-        return f"[System Context]\n{system_prompt}\n{room_context}"
+        return f"{SYSTEM_CONTEXT_HEADER}\n{system_prompt}\n{room_context}"
 
     def _build_local_mcp_server_config(
         self, backend: BandMCPBackend, transport: BandMCPTransport, room_id: str
