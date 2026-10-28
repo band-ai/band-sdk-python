@@ -8,6 +8,7 @@ from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import reported_failures
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
+    PROMPT_REJECTED_STATUS,
     AnyHTTPStatusError,
     FakeOpencodeClient,
     event_message_updated,
@@ -76,7 +77,7 @@ class TestPrompts:
                     event_session_idle("sess-2"),
                 ]
             ],
-            prompt_exceptions=[AnyHTTPStatusError(500, "sess-1")],
+            prompt_exceptions=[AnyHTTPStatusError(PROMPT_REJECTED_STATUS, "sess-1")],
         )
         adapter = make_adapter(fake_client)
 

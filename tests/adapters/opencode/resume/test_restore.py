@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from band.adapters.opencode import OpencodeAdapter
+from band.core.types import MessageType
 from tests.adapters.opencode.helpers import FakeOpencodeClient, event_session_error
 from tests.adapters.opencode.resume.kit import (
     ROOM_ID,
@@ -52,9 +53,7 @@ class TestRestore:
         await adapter.on_event(
             room_input(room_tools(), history=history, bootstrap=True)
         )
-        await adapter.on_event(
-            room_input(room_tools(), history=history, bootstrap=False)
-        )
+        await adapter.on_event(room_input(room_tools(), history=[], bootstrap=False))
 
         assert client.created_sessions == []
         assert prompts(client) == [("sess-1", False), ("sess-1", False)]
@@ -66,7 +65,7 @@ class TestRestore:
         seeding prompt ran, so such a record may name an unseeded session."""
         legacy_record = {
             "id": "evt-legacy",
-            "message_type": "task",
+            "message_type": MessageType.TASK,
             "content": "OpenCode session created: `sess-old`",
             "sender_id": "agent-1",
             "sender_type": "Agent",

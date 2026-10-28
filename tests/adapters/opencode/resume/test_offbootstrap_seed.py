@@ -6,8 +6,9 @@ from collections.abc import Callable
 
 from band.adapters.opencode import OpencodeAdapter
 from band.converters.opencode import OPENCODE_RESUME_RECORD
+from band.core.types import MessageType
 from band.testing import FakeAgentTools
-from tests.adapters.audiences import ROOM_MEMBERS
+from tests.adapters.audiences import BOB, ROOM_MEMBERS
 from tests.adapters.opencode.helpers import FakeOpencodeClient, event_session_error
 from tests.adapters.opencode.resume.kit import (
     LATER,
@@ -85,8 +86,8 @@ class TestOffBootstrapSeed:
     ) -> None:
         mention = {
             "id": "msg-mention",
-            "message_type": "text",
-            "content": "@[[user-2]] the code word is heron.",
+            "message_type": MessageType.TEXT,
+            "content": f"@[[{BOB['id']}]] the code word is heron.",
             "sender_id": "user-1",
             "sender_name": "Alice",
             "sender_type": "User",
@@ -98,5 +99,5 @@ class TestOffBootstrapSeed:
         await adapter.on_event(room_input(tools, history=[], bootstrap=False))
 
         seed = prompt_text(client.prompt_calls[0])
-        assert "@bob the code word is heron." in seed
-        assert "@[[user-2]]" not in seed
+        assert f"@{BOB['handle']} the code word is heron." in seed
+        assert f"@[[{BOB['id']}]]" not in seed

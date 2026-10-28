@@ -11,6 +11,7 @@ from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.converters.opencode import OPENCODE_RESUME_RECORD
 from tests.adapters.opencode.helpers import (
     COMPUTE_BUDGET_S,
+    PROMPT_REJECTED_STATUS,
     AnyHTTPStatusError,
     FakeOpencodeClient,
     event_session_error,
@@ -27,8 +28,6 @@ from tests.adapters.opencode.resume.kit import (
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
-
-PROMPT_REJECTED_STATUS = 500
 
 
 class TestFailedSeed:

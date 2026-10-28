@@ -48,7 +48,7 @@ class OpencodeHistoryConverter(HistoryConverter[OpencodeSessionState]):
 
 
 def _session_registrations(raw: Iterable[Mapping[str, Any]]) -> dict[str, str]:
-    """The MCP registration that recorded each OpenCode session in ``raw``.
+    """Map each OpenCode session in ``raw`` to the MCP registration that recorded it.
 
     Only resume records count, read by the same rule as
     ``OPENCODE_RESUME_RECORD.candidates``.

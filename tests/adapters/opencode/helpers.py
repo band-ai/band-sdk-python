@@ -519,6 +519,10 @@ class AnyHTTPStatusError(httpx.HTTPStatusError):
         super().__init__("status error", request=request, response=response)
 
 
+#: The status a scripted OpenCode server rejects a prompt with.
+PROMPT_REJECTED_STATUS = 500
+
+
 #: The first ask each scripted OpenCode turn raises in the control tests.
 PERMISSION_ASK = event_permission("sess-1", "req-1")
 QUESTION_ASK = event_question("sess-1", "q-1", "Which word?")

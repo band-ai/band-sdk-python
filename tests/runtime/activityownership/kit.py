@@ -55,6 +55,7 @@ async def report_every_kind(tools: object) -> None:
     await end_tool_activity(tools)
 
 
+# Posting, not lifecycle-only: OpenCode posts its resume record whatever the emit.
 class ActivityPlatform(PostingPlatform):
     """Activity posts advertise a detail-supporting version; queued responses
     answer them before the default echo."""

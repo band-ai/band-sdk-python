@@ -7,7 +7,7 @@ from typing import Any
 
 from band.adapters.opencode import OpencodeAdapter
 from band.converters.helpers import build_replay_messages
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import AgentInput, HistoryProvider, MessageType, PlatformMessage
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.helpers import (
@@ -25,7 +25,7 @@ ROOM_ID = "room-1"
 TRANSCRIPT: list[dict[str, Any]] = [
     {
         "id": "msg-earlier",
-        "message_type": "text",
+        "message_type": MessageType.TEXT,
         "content": "Remember the code word is heron.",
         "sender_id": "user-1",
         "sender_name": "Alice",
@@ -38,7 +38,7 @@ QUESTION = make_platform_message(room_id=ROOM_ID, content="What is the code word
 #: A message that reached the room after ``QUESTION``.
 LATER = {
     "id": "msg-later",
-    "message_type": "text",
+    "message_type": MessageType.TEXT,
     "content": "Never mind.",
     "sender_id": "user-1",
     "sender_name": "Alice",

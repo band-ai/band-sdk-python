@@ -278,9 +278,10 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
 
     Session resume follows ``band.runtime.sessionresume``: once its seeding
     prompt completes, the room's OpenCode session is recorded in a task event,
-    once per session, whatever the ``emit`` setting. A fresh session whose
-    seeding prompt fails, times out or is stopped is forgotten, not deleted,
-    so the room's next turn seeds a new one.
+    once per session, whatever the ``emit`` setting. A session counts as
+    seeded only once its first prompt completes; one whose first prompt fails,
+    times out, is stopped or cancelled, or goes without the room transcript is
+    forgotten, not deleted, so the room's next turn seeds a new one.
     """
 
     # Emit.TASK_EVENTS is accepted for compatibility and has no effect.
@@ -1001,7 +1002,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
     def _resumable_session(
         self, room_id: str, history: OpencodeSessionState
     ) -> str | None:
-        """The room's recorded session, unless another registration recorded it."""
+        """Return the room's recorded session unless another registration owns it."""
         session = history.room_to_session.get(room_id)
         if session is None:
             return None
@@ -1031,7 +1032,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         messages: Sequence[PlatformMessage],
         is_session_bootstrap: bool,
     ) -> list[str] | None:
-        """The room transcript owed to a session that does not hold it yet.
+        """Return the room transcript owed to a session that does not hold it yet.
 
         The runtime hands history to the adapter only on session bootstrap, so
         a session seeded later (an earlier seed failed, or the live session
@@ -1124,7 +1125,8 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                     await self.backend_turns.stop(room_id)
                     await self._report_timeout(room_id, turn)
                     return
-            # A prompt completes when its session goes idle without an error.
+            # A prompt completes when its session goes idle without an error; a
+            # stopped or cancelled one never gets here, so it seeds nothing.
             completed = turn.last_error_message is None
             if completed:
                 room_state.seed.confirm()

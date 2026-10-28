@@ -11,6 +11,7 @@ import httpx
 from band.adapters.opencode import OpencodeAdapter
 from band.testing.fake_tools import FakeAgentTools
 from tests.adapters.opencode.helpers import (
+    PROMPT_REJECTED_STATUS,
     AnyHTTPStatusError,
     BandMCPCalls,
     FakeOpencodeClient,
@@ -24,7 +25,6 @@ from tests.mcpbackends import BackendStarts, backends_created_by
 
 # The fake server numbers the first session it creates.
 SESSION_ID = "sess-1"
-PROMPT_REJECTED_STATUS = 500
 
 
 def seed_failure() -> type[BaseException]:
