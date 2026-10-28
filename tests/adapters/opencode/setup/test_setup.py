@@ -310,9 +310,8 @@ class TestSetup:
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(
-                session_id="sess-existing",
-                mcp_server_name=adapter._mcp_server_name,
-                room_id="room-1",
+                room_to_session={"room-1": "sess-existing"},
+                session_registrations={"sess-existing": adapter._mcp_server_name},
             ),
             participants_msg=None,
             contacts_msg=None,
@@ -336,9 +335,8 @@ class TestSetup:
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(
-                session_id="sess-stale",
-                mcp_server_name="band_old",
-                room_id="room-1",
+                room_to_session={"room-1": "sess-stale"},
+                session_registrations={"sess-stale": "band_old"},
             ),
             participants_msg=None,
             contacts_msg=None,
@@ -370,8 +368,7 @@ class TestSetup:
             make_platform_message(content="Continue from before"),
             tools_protocol(tools),
             OpencodeSessionState(
-                session_id="sess-missing",
-                room_id="room-1",
+                room_to_session={"room-1": "sess-missing"},
                 replay_messages=[
                     "[Alice]: Earlier question",
                     "[OpenCode Agent]: Earlier answer",
@@ -379,7 +376,7 @@ class TestSetup:
             ),
             participants_msg=None,
             contacts_msg=None,
-            is_session_bootstrap=False,
+            is_session_bootstrap=True,
             room_id="room-1",
         )
 

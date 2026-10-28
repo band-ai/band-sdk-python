@@ -127,7 +127,7 @@ class TestQuestionReplies:
             adapter,
             make_platform_message(content="Ship the adapter"),
             tools_protocol(tools),
-            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+            OpencodeSessionState(room_to_session={"room-1": "sess-1"}),
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,

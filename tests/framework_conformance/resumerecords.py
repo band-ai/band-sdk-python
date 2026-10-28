@@ -17,11 +17,12 @@ import sys
 from band.converters.acp_client import ACP_CLIENT_RESUME_RECORD
 from band.converters.claude_sdk import CLAUDE_SDK_RESUME_RECORD
 from band.converters.omp import OMP_RESUME_RECORD
+from band.converters.opencode import OPENCODE_RESUME_RECORD
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import MessageType
 from band.runtime.sessionresume import ResumeRecord
 from band.testing.fake_tools import FakeAgentTools
-from tests.framework_conformance.resumeprobes import acp, claudesdk, omp
+from tests.framework_conformance.resumeprobes import acp, claudesdk, omp, opencode
 from tests.framework_conformance.resumeprobes.probe import ResumeProbe
 
 RESUME_PROBES: dict[str, ResumeProbe] = {
@@ -35,6 +36,9 @@ RESUME_PROBES: dict[str, ResumeProbe] = {
         CLAUDE_SDK_RESUME_RECORD, claudesdk.seed_claude_sdk, claudesdk.seed_failure
     ),
     "OmpAdapter": ResumeProbe(OMP_RESUME_RECORD, omp.seed_omp, omp.seed_failure),
+    "OpencodeAdapter": ResumeProbe(
+        OPENCODE_RESUME_RECORD, opencode.seed_opencode, opencode.seed_failure
+    ),
 }
 
 

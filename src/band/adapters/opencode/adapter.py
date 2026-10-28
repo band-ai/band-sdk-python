@@ -9,7 +9,6 @@ import logging
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any, ClassVar, TypeAlias, TypeVar
 
 import httpx
@@ -19,7 +18,12 @@ from typing_extensions import Unpack
 from band.adapters.opencode.approvals.ports import ApprovalPorts
 from band.adapters.opencode.approvals.room import RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
-from band.converters.opencode import OpencodeHistoryConverter
+from band.converters.helpers import build_replay_messages
+from band.converters.opencode import (
+    OPENCODE_RESUME_RECORD,
+    OpencodeHistoryConverter,
+    OpencodeMetadataKey,
+)
 from band.core.content import has_visible_content
 from band.core.delivery import automatic_mentions, finish_automatic_reply
 from band.core.exceptions import BandConnectionError, InputNotAccepted
@@ -40,6 +44,7 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
     distinct_sender_ids,
+    ids_of,
 )
 from band.integrations.mcp import (
     BandMCPBackendSettings,
@@ -66,8 +71,13 @@ from band.integrations.opencode import (
     parse_opencode_event,
 )
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
-from band.runtime.formatters import SENDER_METADATA_INSTRUCTION, format_current_inputs
+from band.runtime.formatters import (
+    SENDER_METADATA_INSTRUCTION,
+    format_current_inputs,
+    messages_before,
+)
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
+from band.runtime.sessionresume import SessionSeed
 from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
 
 logger = logging.getLogger(__name__)
@@ -138,7 +148,7 @@ class RoomState:
     # Bound in _get_or_create_room_state at construction, and rebound by
     # _begin_turn on every subsequent turn.
     approvals: RoomApprovals = field(init=False)
-    persisted_session_id: str | None = None
+    seed: SessionSeed = field(default_factory=SessionSeed)
     # Request ids ever asked in this room, kept at room (not turn) scope so a
     # reply naming one still gets "no longer pending" feedback even after
     # _begin_turn has replaced the RoomApprovals that originally asked it.
@@ -263,12 +273,10 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         with answers or ``reject`` before ``question_wait_timeout_s``.
       * ``auto_reject`` -- questions are rejected immediately.
 
-    ``Emit.TASK_EVENTS`` is more than narration here: the room's OpenCode
-    ``session_id`` is persisted in task event metadata and read back by
-    OpencodeHistoryConverter to resume the server-side session. Narrowing
-    ``emit`` to exclude it doesn't just silence updates, it also stops
-    resumption -- every restart creates a fresh OpenCode session instead of
-    reattaching. Leave it in ``emit`` unless that's intended.
+    Session resume follows ``band.runtime.sessionresume``: after each prompt
+    that completes, the room's OpenCode session is recorded in a task event
+    whatever the ``emit`` setting. A fresh session whose seeding prompt fails
+    is forgotten, not deleted, so the room's next turn seeds a new one.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
@@ -418,8 +426,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         logger.info(
             "OpenCode adapter started: agent=%s, base_url=%s, "
             "provider=%s, model=%s, approval_mode=%s, "
-            "question_mode=%s, execution_reporting=%s, "
-            "task_events=%s, custom_tools=%d",
+            "question_mode=%s, execution_reporting=%s, custom_tools=%d",
             agent_name,
             self.config.base_url,
             self.config.provider_id or "default",
@@ -427,7 +434,6 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             self.config.approval_mode,
             self.config.question_mode,
             Emit.TOOL_CALLS in self.features.emit,
-            Emit.TASK_EVENTS in self.features.emit,
             len(self._custom_tools),
         )
 
@@ -488,14 +494,14 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
 
         turn: TurnState | None = None
         try:
-            session_id, created = await self._ensure_session(room_state, history)
-            if Emit.TASK_EVENTS in self.features.emit and (
-                room_state.persisted_session_id != session_id or is_session_bootstrap
-            ):
-                await self._emit_session_task_event(
-                    room_state,
-                    status="created" if created else "resumed",
-                )
+            session_id = await self._ensure_session(room_state, history)
+            replay = await self._seed_replay(
+                room_state,
+                tools,
+                history,
+                messages=messages,
+                is_session_bootstrap=is_session_bootstrap,
+            )
 
             turn = self._begin_turn(
                 room_state,
@@ -527,16 +533,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                         messages,
                         participants_msg,
                         contacts_msg,
-                        # A newly-created server session holds no prior context, so
-                        # seed it with the converted in-session history. This covers
-                        # both the 404-recovery case and a fresh session created
-                        # because no prior id was recoverable — e.g. turn 2 of an
-                        # in-session exchange after the in-memory session id was lost.
-                        # Without this the model sees only the latest message and
-                        # answers "I don't recall". A reused session (created is
-                        # False) already holds the history server-side, so we must
-                        # not replay and double it.
-                        replay_messages=(history.replay_messages if created else None),
+                        replay_messages=replay,
                     ),
                     system=self._build_turn_system(room_id),
                     model=self._build_model_payload(),
@@ -950,56 +947,105 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
 
     async def _ensure_session(
         self, room_state: RoomState, history: OpencodeSessionState
-    ) -> tuple[str, bool]:
-        if self._client is None:
+    ) -> str:
+        """The room's OpenCode session: its live one, else its resumable one,
+        else a fresh one owed the room's transcript."""
+        client = self._client
+        if client is None:
             raise RuntimeError("OpenCode client is not initialized")
 
-        restored_session_id = room_state.session_id
-        if restored_session_id is None and history.session_id:
-            # A session persisted before the adapter recorded its registration
-            # carries no name. Treating that as ours keeps the upgrade from
-            # discarding every existing room's server-side conversation.
-            if history.mcp_server_name in (None, self._mcp_server_name):
-                restored_session_id = history.session_id
-            else:
-                logger.info(
-                    "OpenCode session %s belongs to MCP registration %s; "
-                    "creating a new session for %s",
-                    history.session_id,
-                    history.mcp_server_name,
-                    self._mcp_server_name,
-                )
-        created = False
+        if room_state.session_id and await self._session_exists(
+            client, room_state.session_id
+        ):
+            return room_state.session_id
 
-        if restored_session_id:
-            try:
-                session = await self._client.get_session(restored_session_id)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code != 404:
-                    raise
-                logger.info(
-                    "OpenCode session %s no longer exists; creating a new session",
-                    restored_session_id,
-                )
-                session = await self._client.create_session(
-                    title=self._build_session_title(room_state.room_id),
-                )
-                created = True
-            session_id = str(session["id"])
+        candidate = self._resumable_session(room_state.room_id, history)
+        if candidate and await self._session_exists(client, candidate):
+            session_id, seed = candidate, SessionSeed(restored=True)
         else:
-            session = await self._client.create_session(
+            session = await client.create_session(
                 title=self._build_session_title(room_state.room_id),
             )
-            session_id = str(session["id"])
-            created = True
+            session_id, seed = str(session["id"]), SessionSeed()
 
         async with self._state_lock:
-            if room_state.session_id and room_state.session_id != session_id:
-                self._room_by_session.pop(room_state.session_id, None)
+            self._forget_session(room_state)
             room_state.session_id = session_id
+            room_state.seed = seed
             self._room_by_session[session_id] = room_state.room_id
+        return session_id
 
-        return session_id, created
+    async def _session_exists(
+        self, client: OpencodeClientProtocol, session_id: str
+    ) -> bool:
+        try:
+            await client.get_session(session_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            logger.info("OpenCode session %s no longer exists", session_id)
+            return False
+        return True
+
+    def _resumable_session(
+        self, room_id: str, history: OpencodeSessionState
+    ) -> str | None:
+        """The room's recorded session, unless another registration recorded it.
+
+        A session recorded before registrations were tracked carries none;
+        treating it as ours keeps an upgrade from discarding every room's
+        server-side conversation.
+        """
+        session = history.room_to_session.get(room_id)
+        if session is None:
+            return None
+        registration = history.session_registrations.get(session)
+        if registration in (None, self._mcp_server_name):
+            return session
+        logger.info(
+            "OpenCode session %s belongs to MCP registration %s; "
+            "creating a new session for %s",
+            session,
+            registration,
+            self._mcp_server_name,
+        )
+        return None
+
+    def _forget_session(self, room_state: RoomState) -> None:
+        if room_state.session_id:
+            self._room_by_session.pop(room_state.session_id, None)
+        room_state.session_id = None
+
+    async def _seed_replay(
+        self,
+        room_state: RoomState,
+        tools: AgentToolsProtocol,
+        history: OpencodeSessionState,
+        *,
+        messages: Sequence[PlatformMessage],
+        is_session_bootstrap: bool,
+    ) -> list[str] | None:
+        """The room transcript owed to a session that does not hold it yet.
+
+        The runtime hands history to the adapter only on session bootstrap, so
+        a session seeded later (an earlier seed failed, or the live session
+        vanished) re-fetches it.
+        """
+        if not room_state.seed.replay_due:
+            return None
+        if is_session_bootstrap:
+            return history.replay_messages
+        try:
+            context = await tools.fetch_room_context(room_id=room_state.room_id)
+        except Exception:
+            logger.warning(
+                "Room %s: could not fetch history to seed the new OpenCode session",
+                room_state.room_id,
+                exc_info=True,
+            )
+            return None
+        raw = messages_before(context.get("data") or [], set(ids_of(messages)))
+        return build_replay_messages(raw)
 
     def _begin_turn(
         self,
@@ -1055,6 +1101,10 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                     await self.backend_turns.stop(room_id)
                     await self._report_timeout(room_id, turn)
                     return
+            # A prompt completes when its session goes idle without an error.
+            completed = turn.last_error_message is None
+            if completed:
+                room_state.seed.confirm()
             try:
                 await self._deliver_fallback_text(room_state.room_id, turn)
                 await judge_detached_turn(turn.tools, room_id=room_state.room_id)
@@ -1064,6 +1114,16 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                     "Failed to deliver the OpenCode turn result for room %s", room_id
                 )
                 await self._report_delivery_failure(turn)
+            if completed:
+                await OPENCODE_RESUME_RECORD.post(
+                    turn.tools,
+                    room_id=room_id,
+                    seed=room_state.seed,
+                    session=turn.session_id,
+                    details={
+                        OpencodeMetadataKey.MCP_SERVER_NAME: self._mcp_server_name
+                    },
+                )
         finally:
             # Release the input handler waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
@@ -1210,42 +1270,21 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             if watcher is not None and watcher is not expected_task:
                 watcher.cancel()
             room_state.turn.approvals.cancel()
+            if room_state.seed.replay_due:
+                # The seeding prompt never completed, so the session is not
+                # resumable; it stays on the server, unused.
+                logger.info(
+                    "OpenCode session %s was not seeded; room %s will seed a new one",
+                    room_state.session_id,
+                    room_state.room_id,
+                )
+                self._forget_session(room_state)
         room_state.turn = None
 
     @staticmethod
     def _resolve_future(future: asyncio.Future[None] | None) -> None:
         if future is not None and not future.done():
             future.set_result(None)
-
-    async def _emit_session_task_event(
-        self, room_state: RoomState, *, status: str
-    ) -> None:
-        if room_state.tools is None or not room_state.session_id:
-            return
-
-        created_at = datetime.now(UTC).isoformat()
-        # Best-effort bookkeeping: a transient post failure must not abort the
-        # turn before the model runs (the input handler would catch
-        # it and drop the user's message). Leave persisted_session_id unset on
-        # failure so the next turn retries the event.
-        try:
-            await room_state.tools.send_event(
-                f"OpenCode session {status}: `{room_state.session_id}`",
-                "task",
-                metadata={
-                    "opencode_session_id": room_state.session_id,
-                    "opencode_mcp_server_name": self._mcp_server_name,
-                    "opencode_room_id": room_state.room_id,
-                    "opencode_created_at": created_at,
-                },
-            )
-        except Exception:
-            logger.exception(
-                "Failed to emit OpenCode session task event for room %s",
-                room_state.room_id,
-            )
-            return
-        room_state.persisted_session_id = room_state.session_id
 
     async def _deliver_fallback_text(self, room_id: str, turn: TurnState) -> None:
         text = "\n".join(

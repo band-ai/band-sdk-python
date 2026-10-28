@@ -39,9 +39,11 @@ from tests.framework_conformance.stopprobes import (
 from tests.framework_conformance.turnprobes import ROOM_ID
 from tests.mcpbackends import backends_created_by
 
-# The fake server numbers its first session.
+# The fake server numbers its sessions; a stopped seeding prompt leaves its
+# session unseeded, so the room's next message runs in the second one.
 SESSION_ID = "sess-1"
 PROMPT_FIRST_SESSION = f"prompt {SESSION_ID}"
+PROMPT_SECOND_SESSION = "prompt sess-2"
 ABORT_FIRST_SESSION = f"abort {SESSION_ID}"
 CLIENT_CLOSED = "client closed"
 TIMEOUT_REPORTED = "timeout reported"
@@ -340,7 +342,7 @@ CASES: dict[str, StopCase] = {
     ),
     "next-message-waits-for-the-abort": StopCase(
         run=next_message_waits_for_the_abort,
-        expected=[PROMPT_FIRST_SESSION, ABORT_FIRST_SESSION, PROMPT_FIRST_SESSION],
+        expected=[PROMPT_FIRST_SESSION, ABORT_FIRST_SESSION, PROMPT_SECOND_SESSION],
     ),
     "late-mcp-call-during-held-abort": StopCase(
         run=late_mcp_call_during_held_abort,

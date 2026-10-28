@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 
 
 @dataclass
 class OpencodeSessionState:
-    """Session metadata persisted in Band task events."""
+    """Each room's resumable OpenCode session, read from its resume records.
 
-    session_id: str | None = None
-    mcp_server_name: str | None = None
-    room_id: str | None = None
-    created_at: datetime | None = None
+    ``session_registrations`` names the MCP registration that recorded each
+    session; a session recorded before registrations were tracked has none.
+    """
+
+    room_to_session: dict[str, str] = field(default_factory=dict)
+    session_registrations: dict[str, str] = field(default_factory=dict)
     replay_messages: list[str] = field(default_factory=list)
