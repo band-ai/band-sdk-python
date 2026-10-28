@@ -44,7 +44,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
     distinct_sender_ids,
-    ids_of,
 )
 from band.integrations.mcp import (
     BandMCPBackendSettings,
@@ -1045,6 +1044,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             return history.replay_messages
         try:
             context = await tools.fetch_room_context(room_id=room_state.room_id)
+            raw = messages_before(context.get("data") or [], messages)
         except Exception:
             logger.warning(
                 "Room %s: could not fetch history to seed the new OpenCode session",
@@ -1053,7 +1053,6 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             )
             room_state.seed.carried = False
             return None
-        raw = messages_before(context.get("data") or [], set(ids_of(messages)))
         return build_replay_messages(
             format_history_for_llm(raw, participants=tools.participants)
         )

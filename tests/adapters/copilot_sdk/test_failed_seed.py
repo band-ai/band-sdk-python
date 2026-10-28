@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from band.adapters.copilot_sdk import HISTORY_HEADING
@@ -17,6 +19,7 @@ from tests.adapters.copilot_sdk.fakes import (
     room_with_earlier_message,
     run_message,
 )
+from tests.roomhistory import stored
 
 pytestmark = requires_copilot_sdk
 
@@ -80,15 +83,26 @@ class TestFailedSeed:
         assert len(reported_failures(tools)) == 1
         assert client.deleted == []
 
+    @pytest.mark.parametrize(
+        ("fetch_error", "context"),
+        [
+            (ConnectionError("Band REST unavailable"), []),
+            (None, [stored("unknown ordering", inserted_at=None)]),
+        ],
+        ids=["fetch-failed", "cutoff-unavailable"],
+    )
     async def test_an_unfetchable_transcript_prompts_the_fresh_session_unreplayed(
         self,
+        fetch_error: Exception | None,
+        context: list[dict[str, Any]],
     ):
         client = FakeCopilotClient(prompt_errors=[RuntimeError("model unavailable")])
         adapter = await make_started_adapter(client)
         tools = room_with_earlier_message()
         with pytest.raises(RuntimeError, match="model unavailable"):
             await run_message(adapter, tools)
-        tools.fetch_room_context_error = ConnectionError("Band REST unavailable")
+        tools.fetch_room_context_error = fetch_error
+        tools.set_room_context(context)
 
         await run_message(adapter, tools, is_session_bootstrap=False)
 

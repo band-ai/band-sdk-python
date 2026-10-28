@@ -659,6 +659,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         assert self.history_converter is not None  # set in __init__
         try:
             context = await tools.fetch_room_context(room_id=room_id)
+            raw = messages_before(context.get("data") or [], messages)
         except Exception:
             logger.warning(
                 "Room %s: could not fetch history to seed the new Copilot session",
@@ -666,7 +667,6 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 exc_info=True,
             )
             return ""
-        raw = messages_before(context.get("data") or [], set(ids_of(messages)))
         return self.history_converter.convert(raw).text
 
     async def _resume_session(

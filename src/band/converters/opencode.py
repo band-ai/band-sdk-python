@@ -8,7 +8,6 @@ from typing import Any
 
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import HistoryConverter
-from band.core.types import MessageType
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.sessionresume import ResumeRecord
 
@@ -56,7 +55,7 @@ def _session_registrations(raw: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     records = (
         message.get("metadata")
         for message in raw
-        if message.get("message_type") == MessageType.TASK
+        if OPENCODE_RESUME_RECORD.matches(message)
     )
     return {
         entry[OpencodeMetadataKey.SESSION]: entry[OpencodeMetadataKey.MCP_SERVER_NAME]

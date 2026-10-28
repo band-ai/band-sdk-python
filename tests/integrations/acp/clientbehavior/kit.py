@@ -22,6 +22,7 @@ from tests.integrations.acp.acp_toolkit import (
     TranscriptTools,
 )
 from tests.integrations.acp.acp_toolkit.agent import Gate
+from tests.roomhistory import DEFAULT_HISTORY_INSERTED_AT
 
 REPLAY_HEADER_LINE = HISTORY_REPLAY_HEADER.splitlines()[0]
 
@@ -101,6 +102,7 @@ def room_text_message(
         "sender_type": sender_type,
         "sender_name": sender_name,
         "content": content,
+        "inserted_at": DEFAULT_HISTORY_INSERTED_AT,
     }
 
 

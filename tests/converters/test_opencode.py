@@ -30,6 +30,18 @@ def _record(
 
 
 class TestOpencodeHistoryConverter:
+    def test_task_narration_cannot_replace_a_sessions_mcp_registration(self) -> None:
+        record = _record("room-1", "sess-1", "band-good")
+        narration = _record("room-1", "sess-1", "band-other")
+        narration["content"] = "tool narration"
+
+        state = OpencodeHistoryConverter().convert([record, narration])
+
+        assert state == OpencodeSessionState(
+            room_to_session={"room-1": "sess-1"},
+            session_registrations={"sess-1": "band-good"},
+        )
+
     def test_each_room_resumes_its_newest_recorded_session(self) -> None:
         state = OpencodeHistoryConverter().convert(
             [

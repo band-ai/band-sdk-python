@@ -29,6 +29,7 @@ from band.core.types import USAGE_METADATA_KEY, MessageType, PlatformMessage
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.framework_conformance.turnprobes import turn_input
+from tests.roomhistory import DEFAULT_HISTORY_INSERTED_AT
 
 requires_copilot_sdk = pytest.mark.skipif(
     not _COPILOT_SDK_AVAILABLE,
@@ -87,6 +88,7 @@ def room_message(message_id: str, content: str) -> dict[str, Any]:
         "sender_type": "User",
         "sender_name": "Alice",
         "content": content,
+        "inserted_at": DEFAULT_HISTORY_INSERTED_AT,
     }
 
 
