@@ -38,14 +38,15 @@ class TestACPClientAdapterDeadConnectionRecovery:
         assert response.session_id == "sess-a"
 
     @pytest.mark.asyncio
-    async def test_prompt_error_recovers_the_process_and_keeps_the_session(
+    async def test_prompt_error_recovers_the_process_and_keeps_a_seeded_session(
         self, adapter_on: AdapterOn
     ) -> None:
         conn = scripted_conn({"room-1": "sess-1"})
-        conn.prompt = AsyncMock(side_effect=RuntimeError("Process died"))
+        conn.prompt = AsyncMock(side_effect=[END_TURN, RuntimeError("Process died")])
         adapter = adapter_on(conn)
         tools = FakeAgentTools()
 
+        await send_to(adapter, "room-1")
         with pytest.raises(RuntimeError, match="Process died"):
             await send_to(adapter, "room-1", tools)
         room = adapter._rooms["room-1"]

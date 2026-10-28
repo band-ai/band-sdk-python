@@ -3,10 +3,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from band.converters.acp_client import ACP_CLIENT_RESUME_RECORD
 from band.converters.helpers import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
 )
+from band.core.types import MessageType
+from band.integrations.acp.client_adapter import SYSTEM_CONTEXT_HEADER
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
 )
@@ -16,6 +19,7 @@ from band.runtime.prompts import (
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
+    TranscriptTools,
 )
 
 REPLAY_HEADER_LINE = HISTORY_REPLAY_HEADER.splitlines()[0]
@@ -91,7 +95,7 @@ def room_text_message(
     """A text message as the platform returns it in the room's context."""
     return {
         "id": message_id,
-        "message_type": "text",
+        "message_type": MessageType.TEXT,
         "sender_id": sender_id,
         "sender_type": sender_type,
         "sender_name": sender_name,
@@ -102,6 +106,20 @@ def room_text_message(
 MARCO_SAYS = "My favorite color is blue."
 # How the transcript replay renders ``marco_message``.
 MARCO_REPLAY_LINE = f"[Marco]: {MARCO_SAYS}"
+
+
+def seeded(prompt: str) -> bool:
+    """Whether ``prompt`` carries the Band context and Marco's transcript."""
+    return SYSTEM_CONTEXT_HEADER in prompt and MARCO_REPLAY_LINE in prompt
+
+
+def resume_records(tools: TranscriptTools) -> dict[str, str]:
+    """The room-to-session resume records ``tools`` posted."""
+    return ACP_CLIENT_RESUME_RECORD.candidates(tools.events_sent)
+
+
+# What an agent says when it refuses a prompt over its quota.
+QUOTA_TEXT = "You have exhausted your daily quota for this model."
 
 
 def marco_message() -> dict[str, Any]:

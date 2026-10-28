@@ -39,7 +39,7 @@ class TestCursorRecoverySequences:
         @agent.on_prompt
         async def fail_twice(peer: FakeACPAgent, session_id: str) -> None:
             peer.knows_session(session_id)
-            if len(peer.prompts) <= 2:
+            if len(peer.prompts) in (2, 3):
                 raise failure
             await peer.call_mcp_tool(
                 session_id=session_id,
@@ -49,6 +49,7 @@ class TestCursorRecoverySequences:
             )
 
         async with cursor(agent, inject_band_tools=True) as session:
+            await session.send_judged("seeding turn")
             failures = []
             for message in ("first failure", "second failure"):
                 with pytest.raises(RequestError):
@@ -146,7 +147,7 @@ class TestCursorRecoverySequences:
             try:
                 async with asyncio.timeout(TEST_GUARD_S):
                     await old_tools.reporting.received.wait()
-                    old_session = session.session_id(DEFAULT_ROOM)
+                    (old_session,) = agent.session_ids()
                     leaving = asyncio.create_task(
                         session.adapter.on_cleanup(DEFAULT_ROOM)
                     )

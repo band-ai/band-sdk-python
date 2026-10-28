@@ -54,9 +54,10 @@ class TestBatchTurns:
         self, opened: Opened
     ) -> None:
         agent = FakeACPAgent(supports_session_load=True)
-        fails_prompt(agent, 1, RequestError.internal_error({"detail": "wedged"}))
+        fails_prompt(agent, 2, RequestError.internal_error({"detail": "wedged"}))
 
         async with opened(agent) as session:
+            await session.send("seeding turn")
             with pytest.raises(RequestError):
                 await session.send("hello")
             retained = session.session_id(DEFAULT_ROOM)
