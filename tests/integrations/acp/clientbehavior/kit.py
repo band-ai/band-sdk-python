@@ -21,6 +21,7 @@ from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     TranscriptTools,
 )
+from tests.integrations.acp.acp_toolkit.agent import Gate
 
 REPLAY_HEADER_LINE = HISTORY_REPLAY_HEADER.splitlines()[0]
 
@@ -149,3 +150,18 @@ def antigravity_mcp_call(server: str, tool: str, **arguments: str) -> dict[str, 
         "raw_input": {"arguments": arguments, **arguments},
         "meta": {"mcp": {"server": server, "tool": tool}},
     }
+
+
+class HeldThoughts(TranscriptTools):
+    """Hold the first thought post until ``posting`` is released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.posting = Gate()
+
+    async def send_event(
+        self, content: str, message_type: str, metadata: dict[str, Any] | None = None
+    ) -> Any:
+        if message_type == MessageType.THOUGHT and not self.posting.received.is_set():
+            await self.posting.hold()
+        return await super().send_event(content, message_type, metadata)

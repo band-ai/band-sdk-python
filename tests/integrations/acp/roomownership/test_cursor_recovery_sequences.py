@@ -120,7 +120,8 @@ class TestCursorRecoverySequences:
             assert served.texts == ["selected model served"]
             assert served.errors == []
             assert agent.config_selections() == [(MODEL_OPTION_ID, "b")]
-            assert agent.cancelled_sessions == [session.session_id(DEFAULT_ROOM)]
+            stopped, _ = agent.session_ids()
+            assert agent.cancelled_sessions == [stopped]
 
     @pytest.mark.asyncio
     async def test_leave_joins_a_failure_report_before_rejoin_while_another_room_serves(

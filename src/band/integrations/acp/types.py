@@ -36,6 +36,8 @@ PromptOutcome = ACPStopReason | AgentFailure
 # The stop reason with which an ACP agent declines a prompt (e.g. an exhausted
 # model quota); its message chunks say why.
 REFUSAL_STOP: Final[StopReason] = "refusal"
+# The stop reason of a prompt the client stopped with ``session/cancel``.
+CANCELLED_STOP: Final[StopReason] = "cancelled"
 # A refusal's failure message when the agent gave no text of its own.
 REFUSAL_FAILURE_MESSAGE = "The ACP agent refused the prompt."
 # ``AgentFailure.code`` of a refused prompt (a Band code, not a stop reason).

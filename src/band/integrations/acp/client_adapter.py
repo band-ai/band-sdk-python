@@ -125,6 +125,7 @@ from band.integrations.acp.session_config import (
 from band.integrations.acp.sessioninit import SessionSetupObserver
 from band.integrations.acp.types import (
     ACP_FAILURE_PROVIDER,
+    CANCELLED_STOP,
     REFUSAL_STOP,
     ACPToolCall,
 )
@@ -231,7 +232,7 @@ class SessionCloseReason(StrEnum):
 
     UNCONFIGURED = "unconfigured"
     STALE_BAND_MCP_URL = "stale Band MCP URL"
-    UNSEEDED = "seeding prompt refused or failed"
+    UNSEEDED = "seeding prompt did not complete"
 
 
 def _setup_interrupted(room: ACPRoom) -> bool:
@@ -393,10 +394,8 @@ class ACPClientAdapter(
     and emitting replies back to the platform. ACP subprocess lifecycle,
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
 
-    Sessions follow the resume rule in ``band.runtime.sessionresume``. A
-    fresh session whose seeding prompt is refused or raises is dropped and
-    leaves no resume record; one whose seeding prompt is stopped counts as
-    seeded. A refused prompt on a seeded or restored session keeps it.
+    Sessions follow the resume rule in ``band.runtime.sessionresume``; how
+    a seeding prompt settles is in ``_settle_seed``.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
@@ -496,10 +495,10 @@ class ACPClientAdapter(
         more turn would; other rooms never wait on it. A live session switches
         now and raises ``BandConfigError`` (an ``ACPConfigError`` naming what
         the session offers, when it rejects ``selection``). A room whose
-        process is up without a session (its seeding prompt was refused)
-        keeps ``selection`` for its next session, whose turn fails if that
-        session's catalog refuses it. Only a switch that returns counts: the
-        room then keeps that selection for the adapter's lifetime, and every
+        process is up without a session or one being set up keeps ``selection``
+        for its next session, whose turn fails if its catalog refuses it.
+        Only a switch that returns counts: the room keeps that selection for
+        the adapter's lifetime, and every
         later session for it starts there until one refuses it. A switch that
         raises may leave the live session partly switched, but later sessions
         start where they would have before it. Other rooms keep the configured
@@ -530,19 +529,16 @@ class ACPClientAdapter(
             raise _session_ended_mid_switch(room_id) from error
 
     async def _switch_room(self, room: ACPRoom, selection: ModelSelection) -> None:
-        def awaits_session() -> bool:
-            return room.runtime is not None and room.session is None
-
         async def require_switchable() -> None:
             # Runs before acquisition: a switch never starts a process.
-            if room.live_session is None and not awaits_session():
+            if room.live_session is None and not room.awaits_session:
                 raise _no_live_session(room.room_id)
 
         # Settings take the room in turn with its prompts.
         async with room.reservation, room.retained.use(prepare=require_switchable):
             session = room.live_session
             if session is None:
-                if not awaits_session():
+                if not room.awaits_session:
                     raise _no_live_session(room.room_id)
                 self._queue_room_selection(room.room_id, selection)
                 return
@@ -921,8 +917,9 @@ class ACPClientAdapter(
 
         # The emitter posts the turn's events live, in the order the ACP stream
         # delivers them (see RoomTurnEmitter), so narration stays interleaved with
-        # the permission pair and any in-room tool post. On failure it posts
-        # nothing and the error is handled below.
+        # the permission pair and any in-room tool post. On failure it drops
+        # the text it holds and the error is handled below.
+        accepted = True
         try:
             async with RoomTurnEmitter(
                 tools,
@@ -937,13 +934,6 @@ class ACPClientAdapter(
                     session_id=session_id,
                 )
                 turn_deadline = asyncio.timeout(self.config.turn_timeout_s)
-
-                def confirm_stopped_seed() -> None:
-                    # A stopped seeding prompt reached the agent; one cut off
-                    # by the turn deadline did not complete.
-                    if not turn_deadline.expired():
-                        session.seed.confirm()
-
                 async with self.backend_turns.running(
                     room_id, ACPTurn(runtime, session_id)
                 ):
@@ -953,7 +943,6 @@ class ACPClientAdapter(
                                 session_id=session_id,
                                 prompt_text=prompt_text,
                                 on_chunk=emitter.emit,
-                                on_cancelled=confirm_stopped_seed,
                             )
                             if stop_reason == REFUSAL_STOP:
                                 logger.warning(
@@ -961,7 +950,7 @@ class ACPClientAdapter(
                                     room_id,
                                 )
                                 emitter.refused()
-                            else:
+                            elif stop_reason != CANCELLED_STOP:
                                 session.seed.confirm()
                     except RequestError as error:
                         if is_session_busy(error):
@@ -983,52 +972,47 @@ class ACPClientAdapter(
                         raise ACPTurnTimeoutError(
                             f"ACP turn timed out after {self.config.turn_timeout_s}s"
                         ) from None
-            self._drop_unseeded_session(room, runtime, session)
-            await ACP_CLIENT_RESUME_RECORD.post(
-                tools,
-                room_id=room_id,
-                seed=session.seed,
-                session=session_id,
-            )
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
-            self._drop_unseeded_session(room, runtime, session)
             reraise_delivery_cause(e)
-        except ACPTurnTimeoutError:
-            self._drop_unseeded_session(room, runtime, session, recovering=True)
-            raise
         except InputNotAccepted:
+            # The agent took none of the prompt; its session awaits the seed.
+            accepted = False
+            raise
+        except ACPTurnTimeoutError:
             raise
         except Exception as error:
-            self._drop_unseeded_session(room, runtime, session, recovering=True)
             await self._fail_turn(room, generation, tools, error)
             raise
+        finally:
+            if accepted:
+                self._settle_seed(room, runtime, session, generation)
+        await ACP_CLIENT_RESUME_RECORD.post(
+            tools,
+            room_id=room_id,
+            seed=session.seed,
+            session=session_id,
+        )
 
-    def _drop_unseeded_session(
-        self,
-        room: ACPRoom,
-        runtime: ACPRuntime,
-        session: RoomSession,
-        *,
-        recovering: bool = False,
+    def _settle_seed(
+        self, room: ACPRoom, runtime: ACPRuntime, session: RoomSession, generation: int
     ) -> None:
-        """Retire a fresh session whose seeding prompt was refused or failed.
+        """Drop a fresh session whose seeding prompt did not complete.
 
-        Only a completed seeding prompt makes a session the room's, so the
-        room's next turn starts a fresh session with the transcript instead.
-        A ``recovering`` process is stopped with its sessions, so it is not
-        asked to close this one. A transcript too large for the turn timeout
-        therefore keeps timing out; bounding the replay is a separate concern.
+        Apply the shared resume rule on every accepted prompt's exit, including
+        cancellation during timeout recovery or stream flushing. A process
+        under recovery goes down with its sessions, so only one that stays up
+        is asked to close this one.
         """
         if not (session.seed.replay_due and room.session is session):
             return
-        if recovering:
-            room.session = None
-        else:
+        if room.retained.has_authority(generation):
             self._retire_session(
                 room, runtime, session, reason=SessionCloseReason.UNSEEDED
             )
+        else:
+            room.session = None
 
     @staticmethod
     async def _fail_turn(

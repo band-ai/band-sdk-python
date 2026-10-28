@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 from typing import TypeVar, cast
 
 from acp import text_block
@@ -217,27 +217,15 @@ class ACPSessionOperations(ABC):
         session_id: str,
         prompt_text: str,
         on_chunk: ChunkSink | None = None,
-        on_cancelled: Callable[[], None] | None = None,
     ) -> StopReason:
-        """Run one prompt to its end and return why the agent stopped.
-
-        ``on_cancelled`` runs when the caller is cancelled after the prompt
-        was sent, so the agent received it.
-        """
+        """Run one prompt to its end and return why the agent stopped."""
         conn = await self.ensure_connection()
         if on_chunk is not None and self._client is not None:
             self._client.set_sink(session_id, on_chunk)
         try:
-            # The connection queues the request before its first suspension, so
-            # a cancel raised here comes after the prompt was sent.
-            try:
-                response = await self._request(
-                    conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
-                )
-            except asyncio.CancelledError:
-                if on_cancelled is not None:
-                    on_cancelled()
-                raise
+            response = await self._request(
+                conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
+            )
             if self._client is not None:
                 await self._client.flush(session_id)
         finally:

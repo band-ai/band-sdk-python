@@ -1,10 +1,10 @@
 """Only a completed seeding prompt makes a fresh ACP session the room's.
 
-A seeding prompt the agent refuses or that raises leaves no resume record and
-no mapping, so the next turn, recovery or restart starts a fresh session with
-the full context and transcript. A stopped seeding prompt reached the agent, so
-it counts as seeded. A restored session already holds the room's context and is
-kept through a refusal.
+A seeding prompt that the agent refuses or stops, or that is stopped, times
+out or raises, leaves no resume record and no mapping, so the next turn,
+recovery or restart starts a fresh session with the full context and
+transcript. A restored session already holds the room's context and is kept
+through a refusal.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from band.integrations.acp.client_adapter import (
     SYSTEM_CONTEXT_HEADER,
     ACPTurnTimeoutError,
 )
-from band.integrations.acp.types import REFUSAL_STOP
+from band.integrations.acp.types import CANCELLED_STOP, REFUSAL_STOP
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
     FakeACPAgent,
@@ -27,10 +27,14 @@ from tests.integrations.acp.acp_toolkit import (
     acp_adapter,
 )
 from tests.integrations.acp.acp_toolkit.agent import END_TURN_STOP
-from tests.integrations.acp.acp_toolkit.harness import fake_agent_config
+from tests.integrations.acp.acp_toolkit.harness import (
+    SlowFailureReports,
+    fake_agent_config,
+)
 from tests.integrations.acp.clientbehavior.kit import (
     MARCO_REPLAY_LINE,
     QUOTA_TEXT,
+    HeldThoughts,
     marco_message,
     rehydration_history,
     resume_records,
@@ -123,35 +127,118 @@ class TestSessionSeeding:
         _, fresh = agent.session_ids()
         assert resume_records(timing_out) == {}
         assert agent.session_load_requests == []
+        # The recovered process went down with the session; none was closed.
+        assert agent.closed_sessions == []
+        assert agent.prompts[1]["session_id"] == fresh
+        assert seeded(agent.prompt_texts()[1])
+
+    @pytest.mark.looptime
+    async def test_a_stop_while_a_timed_out_seed_is_reported_leaves_a_new_session(
+        self,
+    ) -> None:
+        agent = FakeACPAgent(supports_session_load=True)
+        prompting = holds_prompt(agent, 1)
+        reporting = SlowFailureReports(lost=0)
+        async with acp_adapter(agent, fake_agent_config(turn_timeout_s=10)) as session:
+            handler = asyncio.create_task(
+                session.send(
+                    "first?",
+                    bootstrap=True,
+                    history=rehydration_history(MARCO_REPLAY_LINE),
+                    tools=reporting,
+                )
+            )
+            await reporting.reporting.received.wait()
+            handler.cancel()
+            reporting.reporting.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await handler
+            prompting.release.set()
+            (timed_out,) = agent.session_ids()
+            agent.knows_session(timed_out)
+            await session.send(QUESTION, room_context=[marco_message()])
+
+        _, fresh = agent.session_ids()
+        assert agent.session_load_requests == []
         assert agent.prompts[1]["session_id"] == fresh
         assert seeded(agent.prompt_texts()[1])
 
     @pytest.mark.asyncio
-    async def test_a_stopped_seed_counts_as_seeded(self) -> None:
-        """The agent received the stopped seed, so the next prompt neither
-        replays the transcript nor loses the session to a refusal."""
+    async def test_a_stopped_seed_leaves_the_next_turn_a_new_seeded_session(
+        self,
+    ) -> None:
         agent = FakeACPAgent()
         prompting = holds_prompt(agent, 1)
+        stopped_tools = TranscriptTools()
         async with acp_adapter(agent) as session:
             handler = asyncio.create_task(
                 session.send(
                     "first?",
                     bootstrap=True,
                     history=rehydration_history(MARCO_REPLAY_LINE),
+                    tools=stopped_tools,
                 )
             )
             await prompting.received.wait()
             await stop(session, handler)
             prompting.release.set()
-            agent.stops_with(REFUSAL_STOP)
             await session.send(QUESTION, room_context=[marco_message()])
             await session.retired_sessions_closed()
-            kept = session.session_id(DEFAULT_ROOM)
 
-        assert agent.session_ids() == [kept]
-        assert [prompt["session_id"] for prompt in agent.prompts] == [kept] * 2
-        assert agent.closed_sessions == []
-        assert MARCO_REPLAY_LINE not in agent.prompt_texts()[1]
+        stopped, fresh = agent.session_ids()
+        assert resume_records(stopped_tools) == {}
+        assert agent.closed_sessions == [stopped]
+        assert agent.prompts[1]["session_id"] == fresh
+        assert seeded(agent.prompt_texts()[1])
+
+    @pytest.mark.asyncio
+    async def test_a_seed_the_agent_stops_leaves_the_next_turn_a_new_seeded_session(
+        self,
+    ) -> None:
+        agent = FakeACPAgent().stops_with(CANCELLED_STOP)
+        stopped_tools = TranscriptTools()
+        async with acp_adapter(agent) as session:
+            await session.send(
+                "first?",
+                bootstrap=True,
+                history=rehydration_history(MARCO_REPLAY_LINE),
+                tools=stopped_tools,
+            )
+            agent.stops_with(END_TURN_STOP)
+            await session.send(QUESTION, room_context=[marco_message()])
+            await session.retired_sessions_closed()
+
+        stopped, fresh = agent.session_ids()
+        assert resume_records(stopped_tools) == {}
+        assert agent.closed_sessions == [stopped]
+        assert agent.prompts[1]["session_id"] == fresh
+        assert seeded(agent.prompt_texts()[1])
+
+    @pytest.mark.asyncio
+    async def test_a_stop_while_the_seed_flushes_leaves_the_next_turn_a_new_session(
+        self,
+    ) -> None:
+        """The stop lands while the answered seed's last thought posts."""
+        agent = FakeACPAgent().will_think("pondering")
+        thinking = HeldThoughts()
+        async with acp_adapter(agent) as session:
+            handler = asyncio.create_task(
+                session.send(
+                    "first?",
+                    bootstrap=True,
+                    history=rehydration_history(MARCO_REPLAY_LINE),
+                    tools=thinking,
+                )
+            )
+            await thinking.posting.received.wait()
+            await stop(session, handler)
+            await session.send(QUESTION, room_context=[marco_message()])
+            await session.retired_sessions_closed()
+
+        stopped, fresh = agent.session_ids()
+        assert agent.closed_sessions == [stopped]
+        assert agent.prompts[1]["session_id"] == fresh
+        assert seeded(agent.prompt_texts()[1])
 
     @pytest.mark.asyncio
     async def test_a_refused_seed_leaves_nothing_to_resume_after_a_restart(
