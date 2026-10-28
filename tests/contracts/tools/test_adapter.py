@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import cast
 
 from anthropic.types import Message, ToolUseBlock, Usage
@@ -53,7 +54,12 @@ class TestAdapter:
             adapter_tools = cast(AgentToolsProtocol, tools)
             peer.reject = True
             rejected, _ = await adapter._process_tool_calls(response, adapter_tools)
-            assert rejected[0]["is_error"] is True
+            refusal = json.loads(rejected[0]["content"])
+            assert (refusal["ok"], refusal["status"]) == (False, "rejected")
+            assert (refusal["reason"], refusal["detail"]) == (
+                "not_an_opening",
+                {"kind": "question", "opening_kinds": ["assign"]},
+            )
             assert not tools.turn.complete
             peer.reject = False
             accepted, _ = await adapter._process_tool_calls(response, adapter_tools)

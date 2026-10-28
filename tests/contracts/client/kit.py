@@ -75,7 +75,12 @@ class RoomPeer:
                     "actor": self.actor,
                     "version": 2,
                 }
-                if not self.reject:
+                if self.reject:
+                    body.update(
+                        reason="not_an_opening",
+                        detail={"kind": proposal["kind"], "opening_kinds": ["assign"]},
+                    )
+                else:
                     self.accepted[proposal["id"]] = body
                 if original is not None:
                     body = {"status": "duplicate", "original": original}

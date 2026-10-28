@@ -5,7 +5,6 @@ from __future__ import annotations
 from pydantic import Field
 
 from band.contracts.client import ContractRoom
-from band.contracts.errors import ContractProposalRejected
 from band.contracts.models import FrozenModel, Identifier, Nonnegative
 from band.contracts.wire import JsonObject
 from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
@@ -61,10 +60,10 @@ class BoundContractTools:
                 expected_version=request.expected_version,
             )
         )
-        if result["status"] not in ("accepted", "duplicate"):
-            raise ContractProposalRejected(
-                "The native contract authority rejected this proposal"
-            )
+        if result["status"] == "rejected":
+            # A failed tool output keeps the room's reason and detail, so the
+            # model can correct its proposal instead of retrying blindly.
+            return {"ok": False, **result}
         return result
 
 
