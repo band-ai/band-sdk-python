@@ -33,6 +33,9 @@ requires_copilot_sdk = pytest.mark.skipif(
     reason="github-copilot-sdk not installed (pip install band-sdk[copilot_sdk])",
 )
 
+# The heading that frames a transcript replayed into a fresh session.
+HISTORY_HEADING = "[Previous conversation context:]"
+
 if _COPILOT_SDK_AVAILABLE:
     from copilot.generated.session_events import SessionErrorData, SessionIdleData
 

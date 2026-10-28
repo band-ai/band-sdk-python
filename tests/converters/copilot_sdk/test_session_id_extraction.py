@@ -11,7 +11,7 @@ from band.converters.copilot_sdk import (
 from band.core.types import MessageType
 
 
-def resume_record(**metadata: str) -> dict[str, Any]:
+def resume_record(metadata: dict[str, str]) -> dict[str, Any]:
     return {
         "content": "Copilot SDK session",
         "message_type": MessageType.TASK,
@@ -30,11 +30,11 @@ class TestSessionIdExtraction:
     def test_the_newest_record_names_the_rooms_session(self):
         raw = [
             resume_record(
-                **{CopilotMetadataKey.ROOM: "room-1", CopilotMetadataKey.SESSION: "old"}
+                {CopilotMetadataKey.ROOM: "room-1", CopilotMetadataKey.SESSION: "old"}
             ),
             ALICE,
             resume_record(
-                **{CopilotMetadataKey.ROOM: "room-1", CopilotMetadataKey.SESSION: "new"}
+                {CopilotMetadataKey.ROOM: "room-1", CopilotMetadataKey.SESSION: "new"}
             ),
         ]
 
@@ -44,7 +44,7 @@ class TestSessionIdExtraction:
 
     def test_a_record_without_a_room_is_not_resumable(self):
         """Records written before seeds were confirmed carry no room id."""
-        raw = [resume_record(**{CopilotMetadataKey.SESSION: "unconfirmed"})]
+        raw = [resume_record({CopilotMetadataKey.SESSION: "unconfirmed"})]
 
         result = CopilotSDKHistoryConverter().convert(raw)
 
@@ -54,7 +54,7 @@ class TestSessionIdExtraction:
         raw = [
             ALICE,
             resume_record(
-                **{CopilotMetadataKey.ROOM: "room-1", CopilotMetadataKey.SESSION: "s"}
+                {CopilotMetadataKey.ROOM: "room-1", CopilotMetadataKey.SESSION: "s"}
             ),
         ]
 

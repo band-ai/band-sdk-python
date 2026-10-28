@@ -6,6 +6,7 @@ import pytest
 
 from band.converters.copilot_sdk import COPILOT_RESUME_RECORD
 from tests.adapters.copilot_sdk.fakes import (
+    HISTORY_HEADING,
     FakeCopilotClient,
     ToolSchemaFakeTools,
     make_started_adapter,
@@ -14,8 +15,6 @@ from tests.adapters.copilot_sdk.fakes import (
 )
 
 pytestmark = requires_copilot_sdk
-
-REPLAY_HEADER = "[Previous conversation context:]"
 
 
 def room_with_earlier_message() -> ToolSchemaFakeTools:
@@ -48,7 +47,7 @@ class TestFailedSeed:
         failed, fresh = client.sessions
         assert client.resume_calls == []
         assert fresh.session_id != failed.session_id
-        assert f"{REPLAY_HEADER}\n[Alice]: my name is Alice" in fresh.prompts[0]
+        assert f"{HISTORY_HEADING}\n[Alice]: my name is Alice" in fresh.prompts[0]
         assert COPILOT_RESUME_RECORD.candidates(tools.events_sent) == {
             "room-1": fresh.session_id
         }
@@ -67,4 +66,4 @@ class TestFailedSeed:
 
         resumed = client.sessions[-1]
         assert client.resume_calls == [seeded.session_id]
-        assert REPLAY_HEADER not in resumed.prompts[0]
+        assert HISTORY_HEADING not in resumed.prompts[0]
