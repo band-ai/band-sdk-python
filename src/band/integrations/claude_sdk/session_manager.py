@@ -124,21 +124,6 @@ def _start_failure(error: Exception) -> BaseException:
     return error
 
 
-@dataclass
-class ClaudeSessionSeed(SessionSeed):
-    """A Claude conversation's seed. ``carried`` is false while the pending
-    prompt goes without the room's history (it could not be fetched), so that
-    prompt's completion seeds nothing; like any unseeded conversation, it is
-    retired after its turn."""
-
-    carried: bool = True
-
-    def confirm(self) -> None:
-        """Record that the seeding prompt completed, if it carried the history."""
-        if self.carried:
-            super().confirm()
-
-
 class ClaudeRoomSession:
     """A room's Claude CLI session and everything it keeps until closure.
 
@@ -155,7 +140,7 @@ class ClaudeRoomSession:
     ) -> None:
         self.room_id = room_id
         self.session_id: str | None = None
-        self.seed = ClaudeSessionSeed()
+        self.seed = SessionSeed()
         self.client: ClaudeSDKClient | None = None
         self.transport: Transport | None = None
         self._manager = manager
@@ -255,7 +240,7 @@ class ClaudeRoomSession:
             # The conversation is dropped only once a new one is running.
             await self._connect(generation, resume=None)
             self.session_id = None
-        self.seed = ClaudeSessionSeed(restored=self.session_id is not None)
+        self.seed = SessionSeed(restored=self.session_id is not None)
 
     def _may_start_fresh(self, resume: bool) -> bool:
         """Whether a failed resume may give way to a new session: never on a

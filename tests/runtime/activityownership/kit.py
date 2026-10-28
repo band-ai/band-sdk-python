@@ -21,7 +21,7 @@ from band.runtime.toolactivity import (
 )
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import SUPPORTED_VERSION
-from tests.runtime.helpers import ALICE, LifecyclePlatform, is_message_post, page
+from tests.runtime.helpers import PostingPlatform, is_message_post
 
 CONTROL_MESSAGE_ID = "approve"
 
@@ -55,7 +55,8 @@ async def report_every_kind(tools: object) -> None:
     await end_tool_activity(tools)
 
 
-class ActivityPlatform(LifecyclePlatform):
+# Posting, not lifecycle-only: OpenCode posts its resume record whatever the emit.
+class ActivityPlatform(PostingPlatform):
     """Activity posts advertise a detail-supporting version; queued responses
     answer them before the default echo."""
 
@@ -118,11 +119,8 @@ class ActivityPlatform(LifecyclePlatform):
             self.late_changes.append((body, waited))
 
     def answer(self, request: httpx.Request) -> httpx.Response:
-        tail = request.url.path.rsplit("/", 1)[-1]
-        if tail == "participants":
-            return page([{**ALICE, "role": "member", "status": "active"}])
         if is_message_post(request):
-            self.posts.append(tail)
+            self.posts.append(request.url.path.rsplit("/", 1)[-1])
             self.room_messages.append(message_content(request))
             return httpx.Response(
                 201, json={"data": {"id": "m-1", "success": True, "recipients": []}}

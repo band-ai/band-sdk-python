@@ -15,6 +15,13 @@ from tests.framework_configs.adapters import ADAPTER_CONFIGS
 from tests.framework_configs.converters import CONVERTER_CONFIGS
 
 
+@pytest.fixture
+def collection_project(pytester: pytest.Pytester) -> pytest.Pytester:
+    """Keep synthetic collection inside its pytester-owned project."""
+    pytester.makeini("[pytest]")
+    return pytester
+
+
 @pytest.fixture(params=CONVERTER_CONFIGS, ids=lambda c: c.framework_id)
 def converter_config(request):
     """Yield each ConverterConfig in turn."""

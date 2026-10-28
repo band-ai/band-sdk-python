@@ -157,7 +157,7 @@ class TestReplySelection:
             adapter,
             make_platform_message(content="approve req-1"),
             tools_protocol(FakeAgentTools(participants=ROOM_MEMBERS)),
-            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+            OpencodeSessionState(),
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,

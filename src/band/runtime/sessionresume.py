@@ -36,11 +36,14 @@ class SessionSeed:
     seeding prompt and is seeded only when that first prompt completed; a
     cancelled or interrupted first prompt is unseeded like a failed one. An
     unseeded session is dropped: nothing is recorded, and the next prompt
-    starts a fresh session that replays the room's transcript.
+    starts a fresh session that replays the room's transcript. ``carried`` is
+    false when the pending prompt lacks the transcript, so its completion
+    seeds nothing.
     """
 
     restored: bool = False
     seeded: bool = False
+    carried: bool = True
 
     @property
     def replay_due(self) -> bool:
@@ -49,7 +52,7 @@ class SessionSeed:
 
     def confirm(self) -> None:
         """Record that the session's seeding prompt completed."""
-        self.seeded = True
+        self.seeded = self.seeded or self.carried
 
 
 @dataclass(frozen=True)

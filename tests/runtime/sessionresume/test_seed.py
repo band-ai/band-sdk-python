@@ -16,8 +16,17 @@ class TestSessionSeed:
             (SessionSeed(restored=True), False),
             (confirmed(SessionSeed()), False),
             (confirmed(SessionSeed(restored=True)), False),
+            (confirmed(SessionSeed(carried=False)), True),
+            (confirmed(SessionSeed(seeded=True, carried=False)), False),
         ],
-        ids=["fresh", "restored", "fresh-seeded", "restored-prompted"],
+        ids=[
+            "fresh",
+            "restored",
+            "fresh-seeded",
+            "restored-prompted",
+            "prompted-without-transcript",
+            "seeded-then-prompted-without-transcript",
+        ],
     )
     def test_replay_is_due_only_for_an_unseeded_fresh_session(
         self, seed: SessionSeed, replay_due: bool

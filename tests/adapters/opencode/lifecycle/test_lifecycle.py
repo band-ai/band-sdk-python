@@ -344,7 +344,7 @@ class TestLifecycle:
                 adapter,
                 make_platform_message(content="second"),
                 tools_protocol(tools),
-                OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+                OpencodeSessionState(),
                 participants_msg=None,
                 contacts_msg=None,
                 is_session_bootstrap=False,
@@ -483,10 +483,11 @@ class TestLifecycle:
         fake_client = FakeOpencodeClient(
             prompt_event_sequences=[
                 [],  # interrupted: no terminal event ever arrives
+                # The interrupted seed left sess-1 unseeded, so a new session runs.
                 [
-                    event_message_updated("sess-1", "msg-2"),
-                    event_text_part("sess-1", "msg-2", "after the interrupt"),
-                    event_session_idle("sess-1"),
+                    event_message_updated("sess-2", "msg-2"),
+                    event_text_part("sess-2", "msg-2", "after the interrupt"),
+                    event_session_idle("sess-2"),
                 ],
             ]
         )
