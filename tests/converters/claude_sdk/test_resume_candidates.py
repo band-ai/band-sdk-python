@@ -11,7 +11,7 @@ from band.converters.claude_sdk import (
 )
 from band.core.types import MessageType
 from band.runtime.context_serialization import context_item_to_dict
-from tests.adapters.claude_sdk.helpers import legacy_record, recorded_session
+from tests.converters.claude_sdk.records import legacy_record, recorded_session
 
 ROOM = "room-1"
 ALICE_SAID = {

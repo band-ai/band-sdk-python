@@ -36,12 +36,15 @@ from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManager,
 )
 from band.integrations.mcp.backends import BandMCPBackend
+from band.runtime.formatters import format_message_for_llm
 from band.runtime.tools import BAND_MCP_SERVER_NAME, MCP_TOOL_PREFIX
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
 from tests.adapters.dispatch import deliver_event
 from tests.baseline.decisions import ModelDecision
+from tests.converters.claude_sdk.records import recorded_session
 from tests.mcpclient import crash_backend
+from tests.roomhistory import stored
 
 # The agent metadata every test adapter is started with.
 AGENT_NAME = "Test Agent"
@@ -113,48 +116,8 @@ def room_message(
 
 
 def said(sender_name: str, content: str) -> dict[str, Any]:
-    """One earlier room message, as raw platform history."""
-    return {
-        "message_type": MessageType.TEXT,
-        "role": "user",
-        "sender_name": sender_name,
-        "content": content,
-    }
-
-
-def stored(
-    sender_name: str, content: str, *, message_id: str = "earlier"
-) -> dict[str, Any]:
-    """One earlier room message from a person, as the platform stores it."""
-    return {
-        "id": message_id,
-        "message_type": MessageType.TEXT,
-        "sender_id": f"id-{sender_name}",
-        "sender_type": "User",
-        "sender_name": sender_name,
-        "content": content,
-    }
-
-
-def recorded_session(room_id: str, session_id: str) -> dict[str, Any]:
-    """The resume record a room persisted for a Claude session, as raw history."""
-    return {
-        "content": CLAUDE_SDK_RESUME_RECORD.label,
-        "message_type": MessageType.TASK,
-        "metadata": {
-            CLAUDE_SDK_RESUME_RECORD.room_key: room_id,
-            CLAUDE_SDK_RESUME_RECORD.session_key: session_id,
-        },
-    }
-
-
-def legacy_record(session_id: str) -> dict[str, Any]:
-    """A session id recorded before records named their room, as raw history."""
-    return {
-        "content": CLAUDE_SDK_RESUME_RECORD.label,
-        "message_type": MessageType.TASK,
-        "metadata": {CLAUDE_SDK_RESUME_RECORD.session_key: session_id},
-    }
+    """One earlier room message, as the runtime hands it over on bootstrap."""
+    return format_message_for_llm(stored(content, sender_name=sender_name))
 
 
 class ClaudeRoom:

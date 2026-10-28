@@ -8,21 +8,24 @@ import pytest
 from band.adapters.claude_sdk import ROOM_MEMORY_HEADER
 from band.core.protocols import TurnResultAlreadyReported
 from tests.adapters.claude_sdk.fakecli import EndTurn
-from tests.adapters.claude_sdk.helpers import (
-    OpenRoom,
-    legacy_record,
-    recorded_session,
-    said,
-    stored,
-)
+from tests.adapters.claude_sdk.helpers import ClaudeRoom, OpenRoom, said
+from tests.converters.claude_sdk.records import legacy_record, recorded_session
+from tests.roomhistory import stored
 
 FACT = "the milk is in the fridge"
 REMEMBERED = f"[Alice]: {FACT}"
+LATER = "a message posted after the turn"
 
 
-async def unreachable(**_: object) -> dict[str, object]:
-    """A room history fetch while the platform cannot be reached."""
-    raise ConnectionError("platform unreachable")
+async def answer_without_the_history(room: ClaudeRoom) -> None:
+    """Fail the room's seed (its first scripted turn errors), then answer its
+    second turn while the room's history cannot be fetched."""
+    room.tools.set_room_context([stored(FACT)])
+    with pytest.raises(TurnResultAlreadyReported):
+        await room.send("hello", history=(said("Alice", FACT),))
+    room.tools.fetch_room_context_error = ConnectionError("platform unreachable")
+    await room.send("again")
+    room.tools.fetch_room_context_error = None
 
 
 class TestSessionSeeding:
@@ -85,7 +88,7 @@ class TestSessionSeeding:
         """The crash policy forgets the seeded session, so the next process
         starts a new one that is owed the room's history again."""
         room = await claude_room()
-        room.tools.set_room_context([stored("Alice", FACT)])
+        room.tools.set_room_context([stored(FACT)])
         room.claude.script([room.model_reply("hi")], [room.model_reply("back")])
 
         await room.send("hello", history=(said("Alice", FACT),))
@@ -103,7 +106,7 @@ class TestSessionSeeding:
         self, claude_room: OpenRoom
     ) -> None:
         room = await claude_room()
-        room.tools.set_room_context([stored("Alice", FACT)])
+        room.tools.set_room_context([stored(FACT)])
         room.claude.script([room.model_reply("hi")], [room.model_reply("back")])
 
         await room.send("hello", history=(said("Alice", FACT),))
@@ -118,10 +121,16 @@ class TestSessionSeeding:
         self, claude_room: OpenRoom
     ) -> None:
         """The next turn is no bootstrap, so the history it replays is fetched
-        from the room; once it completes, the session is recorded and no
-        later turn replays the history."""
+        from the room, up to that turn's own input; once it completes, the
+        session is recorded and no later turn replays the history."""
         room = await claude_room()
-        room.tools.set_room_context([stored("Alice", FACT)])
+        room.tools.set_room_context(
+            [
+                stored(FACT),
+                stored("again", message_id="msg-2", sender_name="Bob"),
+                stored(LATER, message_id="msg-3"),
+            ]
+        )
         room.claude.script(
             [EndTurn(is_error=True, result="overloaded")],
             [room.model_reply("seeded now")],
@@ -139,6 +148,7 @@ class TestSessionSeeding:
         failed_seed, reseed, seeded = room.claude.prompts
         assert ROOM_MEMORY_HEADER in failed_seed
         assert reseed.startswith(f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n")
+        assert LATER not in reseed
         assert ROOM_MEMORY_HEADER not in seeded
         assert room.persisted_sessions == [session.session_id]
         assert room.chat == ["seeded now", "still here"]
@@ -149,21 +159,14 @@ class TestSessionSeeding:
         """A turn whose history could not be fetched still answers, but the
         session stays owed the history until a later turn carries it."""
         room = await claude_room()
-        room.tools.set_room_context([stored("Alice", FACT)])
         room.claude.script(
             [EndTurn(is_error=True, result="overloaded")],
             [room.model_reply("answered without memory")],
             [room.model_reply("seeded now")],
         )
 
-        with pytest.raises(TurnResultAlreadyReported):
-            await room.send("hello", history=(said("Alice", FACT),))
-        fetch_room_context = room.tools.fetch_room_context
-        room.tools.fetch_room_context = unreachable
-        await room.send("again")
+        await answer_without_the_history(room)
         assert room.persisted_sessions == []
-
-        room.tools.fetch_room_context = fetch_room_context
         await room.send("and again")
 
         [session] = room.claude.sessions
@@ -179,19 +182,13 @@ class TestSessionSeeding:
         """A turn that answered without the history keeps no mapping, so a
         later restart starts fresh and hands the new session the history."""
         room = await claude_room()
-        room.tools.set_room_context([stored("Alice", FACT)])
         room.claude.script(
             [EndTurn(is_error=True, result="overloaded")],
             [room.model_reply("answered without memory")],
             [room.model_reply("seeded now")],
         )
 
-        with pytest.raises(TurnResultAlreadyReported):
-            await room.send("hello", history=(said("Alice", FACT),))
-        fetch_room_context = room.tools.fetch_room_context
-        room.tools.fetch_room_context = unreachable
-        await room.send("again")
-        room.tools.fetch_room_context = fetch_room_context
+        await answer_without_the_history(room)
         await room.crash_band_server()
         await room.send("still there?")
 

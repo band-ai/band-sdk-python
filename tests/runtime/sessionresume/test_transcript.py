@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from band.runtime.sessionresume import fetch_transcript
 from band.testing import FakeAgentTools
-from tests.runtime.sessionresume.kit import stored
+from tests.roomhistory import stored
 
 # Three pages at the platform's default page size of 50.
-HISTORY = [stored(f"m{index}") for index in range(120)]
+HISTORY = [stored(f"message {index}", message_id=f"m{index}") for index in range(120)]
 EARLIER_IDS = [f"m{index}" for index in range(110)]
 
 
@@ -18,9 +20,16 @@ def ids(messages: list[dict[str, Any]]) -> list[str]:
 
 
 class TestFetchTranscript:
-    async def test_every_page_up_to_the_turns_earliest_input_is_kept(self) -> None:
-        """The turn's inputs and everything after them are turns of their own."""
+    @pytest.mark.parametrize(
+        "reports_page_count", [True, False], ids=["page-count", "short-page"]
+    )
+    async def test_every_page_up_to_the_turns_earliest_input_is_kept(
+        self, reports_page_count: bool
+    ) -> None:
+        """The turn's inputs and everything after them are turns of their own.
+        Without a page count, a short page ends the history."""
         tools = FakeAgentTools(room_context=HISTORY)
+        tools.reports_context_page_count = reports_page_count
 
         transcript = await fetch_transcript(
             tools, room_id="room-1", turn_ids={"m115", "m110"}
@@ -29,18 +38,17 @@ class TestFetchTranscript:
         assert ids(transcript) == EARLIER_IDS
         assert [call["page"] for call in tools.context_calls] == [1, 2, 3]
 
-    async def test_a_short_page_ends_history_without_a_page_count(self) -> None:
-        tools = FakeAgentTools(room_context=HISTORY)
-        serve_page = tools.fetch_room_context
+    async def test_turn_inputs_not_yet_stored_keep_the_whole_history(self) -> None:
+        tools = FakeAgentTools(room_context=HISTORY[:3])
 
-        async def without_page_count(**request: Any) -> dict[str, Any]:
-            context = await serve_page(**request)
-            del context["meta"]["total_pages"]
-            return context
+        transcript = await fetch_transcript(tools, room_id="room-1", turn_ids={"new"})
 
-        tools.fetch_room_context = without_page_count
+        assert ids(transcript) == ["m0", "m1", "m2"]
 
-        transcript = await fetch_transcript(tools, room_id="room-1", turn_ids={"m110"})
+    async def test_an_empty_room_has_an_empty_transcript(self) -> None:
+        tools = FakeAgentTools()
 
-        assert ids(transcript) == EARLIER_IDS
-        assert [call["page"] for call in tools.context_calls] == [1, 2, 3]
+        transcript = await fetch_transcript(tools, room_id="room-1", turn_ids={"new"})
+
+        assert transcript == []
+        assert [call["page"] for call in tools.context_calls] == [1]

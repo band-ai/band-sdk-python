@@ -30,14 +30,11 @@ class SessionSeed:
 
     A restored session kept its own. A fresh one is owed the transcript in its
     seeding prompt and becomes resumable only once that prompt completes; a
-    failed or refused seeding prompt leaves it unseeded. ``carried`` is false
-    while the pending prompt goes without the transcript (it could not be
-    fetched), so its completion seeds nothing.
+    failed or refused seeding prompt leaves it unseeded.
     """
 
     restored: bool = False
     seeded: bool = False
-    carried: bool = True
 
     @property
     def replay_due(self) -> bool:
@@ -46,7 +43,7 @@ class SessionSeed:
 
     def confirm(self) -> None:
         """Record that the session's seeding prompt completed."""
-        self.seeded = self.seeded or self.carried
+        self.seeded = True
 
 
 @dataclass(frozen=True)
@@ -87,8 +84,8 @@ class ResumeRecord:
         any adapter-specific extras.
 
         The record is resume state rather than narration, so no emit setting
-        gates it. Adapters post it after every completed prompt, which also
-        retries a post that failed before.
+        gates it. When to post is each adapter's choice: posting after every
+        completed prompt also retries a post that failed before.
         """
         if not seed.seeded:
             return

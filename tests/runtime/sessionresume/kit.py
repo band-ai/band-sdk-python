@@ -32,15 +32,3 @@ def confirmed(seed: SessionSeed) -> SessionSeed:
     """``seed`` after its seeding prompt completed."""
     seed.confirm()
     return seed
-
-
-def stored(message_id: str) -> dict[str, Any]:
-    """One stored room text message, as the platform serves it."""
-    return {
-        "id": message_id,
-        "message_type": MessageType.TEXT,
-        "sender_id": "user-1",
-        "sender_type": "User",
-        "sender_name": "Alice",
-        "content": f"message {message_id}",
-    }
