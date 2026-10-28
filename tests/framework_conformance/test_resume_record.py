@@ -38,10 +38,9 @@ class TestResumeRecord:
     def test_every_adapter_using_the_rule_has_a_probe(self) -> None:
         adapters = band_adapters()
 
-        unprobed = {
-            name
-            for name, cls in adapters.items()
-            if uses_session_resume(cls) and not probed(cls, adapters)
-        }
+        using = {name for name, cls in adapters.items() if uses_session_resume(cls)}
 
-        assert unprobed == set()
+        assert RESUME_PROBES.keys() & adapters.keys() <= using, (
+            "the guard must recognise every adapter it already probes"
+        )
+        assert {name for name in using if not probed(adapters[name], adapters)} == set()

@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import sys
-import tempfile
-
-import pytest
-
 from band.testing.fake_tools import FakeAgentTools
+from tests.framework_conformance.ompadapter import started_omp_adapter
 from tests.framework_conformance.resumeprobes.probe import SeedOutcome
 from tests.framework_conformance.turnprobes import turn_input
 from tests.integrations.omppeers.base import PEER_SESSION_FILE
-from tests.paths import REPO_ROOT
 
 
 def seed_failure() -> type[BaseException]:
@@ -24,30 +19,8 @@ def seed_failure() -> type[BaseException]:
 
 
 async def seed_omp(outcome: SeedOutcome, tools: FakeAgentTools) -> str:
-    pytest.importorskip("psutil")
-    from band.adapters.omp import (  # noqa: PLC0415 -- requires the optional omp extra
-        OmpAdapter,
-        OmpAdapterConfig,
-    )
-
-    with tempfile.TemporaryDirectory(prefix="band-conformance-omp-") as workspace:
-        adapter = OmpAdapter(
-            OmpAdapterConfig(
-                cwd=workspace,
-                command=(
-                    sys.executable,
-                    "-u",
-                    "-m",
-                    "tests.framework_conformance.resumeprobes.omppeer",
-                    outcome,
-                ),
-                env={"PYTHONPATH": str(REPO_ROOT)},
-            ),
-            emit=(),
-        )
-        try:
-            await adapter.on_started("Agent", "A coding agent")
-            await adapter.on_event(turn_input(tools))
-        finally:
-            await adapter.cleanup_all()
+    async with started_omp_adapter(
+        "tests.framework_conformance.resumeprobes.omppeer", outcome, emit=()
+    ) as adapter:
+        await adapter.on_event(turn_input(tools))
     return PEER_SESSION_FILE

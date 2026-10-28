@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from unittest.mock import ANY
+
 import pytest
 
+from band.core.types import MessageType
 from band.runtime.sessionresume import SessionSeed
 from band.testing import FakeAgentTools
 from tests.runtime.sessionresume.kit import RECORD, confirmed
@@ -42,15 +45,29 @@ class TestResumeRecordPost:
         tools, seed = FakeAgentTools(), confirmed(SessionSeed())
         await RECORD.post(tools, room_id="room-1", seed=seed, session="s1")
 
-        await RECORD.post(
-            tools, room_id="room-1", seed=seed, session=None, details={"extra": "x"}
-        )
+        await RECORD.post(tools, room_id="room-1", seed=seed, session=None)
 
         assert RECORD.candidates(tools.events_sent) == {"room-1": "s1"}
-        assert tools.events_sent[-1]["metadata"] == {
-            RECORD.room_key: "room-1",
-            "extra": "x",
-        }
+
+    async def test_an_empty_session_is_left_out_of_the_record(self) -> None:
+        tools = FakeAgentTools()
+
+        await RECORD.post(
+            tools,
+            room_id="room-1",
+            seed=confirmed(SessionSeed()),
+            session=None,
+            details={"extra": "x"},
+        )
+
+        assert tools.events_sent == [
+            {
+                "id": ANY,
+                "content": RECORD.label,
+                "message_type": MessageType.TASK,
+                "metadata": {RECORD.room_key: "room-1", "extra": "x"},
+            }
+        ]
 
     async def test_a_failed_post_leaves_the_next_turns_post_to_land(self) -> None:
         tools, seed = FakeAgentTools(), confirmed(SessionSeed())
