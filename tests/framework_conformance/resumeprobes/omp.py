@@ -8,8 +8,9 @@ import tempfile
 import pytest
 
 from band.testing.fake_tools import FakeAgentTools
-from tests.framework_conformance.resumeprobes import SeedOutcome
+from tests.framework_conformance.resumeprobes.probe import SeedOutcome
 from tests.framework_conformance.turnprobes import turn_input
+from tests.integrations.omppeers.base import PEER_SESSION_FILE
 from tests.paths import REPO_ROOT
 
 
@@ -22,7 +23,7 @@ def seed_failure() -> type[BaseException]:
     return OmpPromptError
 
 
-async def seed_omp(outcome: SeedOutcome, tools: FakeAgentTools) -> None:
+async def seed_omp(outcome: SeedOutcome, tools: FakeAgentTools) -> str:
     pytest.importorskip("psutil")
     from band.adapters.omp import (  # noqa: PLC0415 -- requires the optional omp extra
         OmpAdapter,
@@ -49,3 +50,4 @@ async def seed_omp(outcome: SeedOutcome, tools: FakeAgentTools) -> None:
             await adapter.on_event(turn_input(tools))
         finally:
             await adapter.cleanup_all()
+    return PEER_SESSION_FILE

@@ -23,14 +23,14 @@ class TestResumeCandidates:
 
         assert RECORD.candidates(history) == {"room-1": "saved"}
 
-    @pytest.mark.parametrize("cleared", ["", None, 7], ids=["empty", "null", "int"])
-    def test_an_unusable_session_clears_the_candidate(self, cleared: object) -> None:
+    @pytest.mark.parametrize("unusable", ["", None, 7], ids=["empty", "null", "int"])
+    def test_an_unusable_session_keeps_the_candidate(self, unusable: object) -> None:
         history = [
             record("room-1", **session("saved")),
-            record("room-1", **session(cleared)),
+            record("room-1", **session(unusable)),
         ]
 
-        assert RECORD.candidates(history) == {}
+        assert RECORD.candidates(history) == {"room-1": "saved"}
 
     def test_only_task_events_are_records(self) -> None:
         history = [

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from band.integrations.ompwire import OmpPromptStatus
 from tests.framework_conformance.outcomeprobes import REPLY
-from tests.framework_conformance.resumeprobes import SeedOutcome
+from tests.framework_conformance.resumeprobes.probe import SeedOutcome
 from tests.framework_conformance.turnprobes import TurnScript
 from tests.framework_conformance.turnprobes.omppeer import TurnPeer
 from tests.integrations.ompframes import Frame

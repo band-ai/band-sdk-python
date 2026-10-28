@@ -5,9 +5,8 @@ from __future__ import annotations
 import pytest
 
 from tests.framework_conformance.outcomeprobes import band_adapters
-from tests.framework_conformance.resumeprobes import SeedOutcome
+from tests.framework_conformance.resumeprobes.probe import SeedOutcome
 from tests.framework_conformance.resumerecords import (
-    OUTSIDE_THE_RULE,
     RESUME_PROBES,
     probed,
     resume_records,
@@ -32,9 +31,9 @@ class TestResumeRecord:
     ) -> None:
         probe, tools = RESUME_PROBES[adapter], turn_tools()
 
-        await probe.seed(SeedOutcome.CONFIRMED, tools)
+        session = await probe.seed(SeedOutcome.CONFIRMED, tools)
 
-        assert list(probe.record.candidates(tools.events_sent)) == [ROOM_ID]
+        assert probe.record.candidates(tools.events_sent) == {ROOM_ID: session}
 
     def test_every_adapter_using_the_rule_has_a_probe(self) -> None:
         adapters = band_adapters()
@@ -45,4 +44,4 @@ class TestResumeRecord:
             if uses_session_resume(cls) and not probed(cls, adapters)
         }
 
-        assert unprobed - OUTSIDE_THE_RULE.keys() == set()
+        assert unprobed == set()

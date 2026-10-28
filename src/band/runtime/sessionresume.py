@@ -53,24 +53,18 @@ class ResumeRecord:
     session_key: str
 
     def candidates(self, raw: Iterable[Mapping[str, Any]]) -> dict[str, str]:
-        """Each room's newest recorded session in ``raw`` history.
-
-        A record without the session key leaves its room's candidate as it
-        was; one whose session is empty or unusable clears it.
-        """
+        """Each room's newest recorded session in ``raw`` history."""
         sessions: dict[str, str] = {}
         for message in raw:
-            match message.get("message_type"), message.get("metadata"):
-                case (
-                    MessageType.TASK,
-                    {self.room_key: str() as room, self.session_key: str() as session},
-                ) if session:
-                    sessions[room] = session
-                case MessageType.TASK, {
-                    self.room_key: str() as room,
-                    self.session_key: _,
-                }:
-                    sessions.pop(room, None)
+            metadata = message.get("metadata")
+            if message.get("message_type") != MessageType.TASK or not isinstance(
+                metadata, Mapping
+            ):
+                continue
+            room = metadata.get(self.room_key)
+            session = metadata.get(self.session_key)
+            if isinstance(room, str) and isinstance(session, str) and session:
+                sessions[room] = session
         return sessions
 
     async def post(

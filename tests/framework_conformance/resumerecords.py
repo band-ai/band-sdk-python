@@ -1,9 +1,8 @@
-"""Every adapter that resumes a native session follows one resume rule.
+"""The registry of resume-record probes and the helpers that read their turns.
 
-The rule lives in ``band.runtime.sessionresume``: a session's resume record
-reaches room history only after its seeding prompt completed, whatever the
-emit setting. Each probe (see ``resumeprobes``) drives one seeding turn
-through the adapter's real ``on_event``.
+The rule they check lives in ``band.runtime.sessionresume``. Each probe (see
+``resumeprobes.probe``) drives one seeding turn through the adapter's real
+``on_event``.
 
 To add an adapter: write its probe in ``resumeprobes/<name>.py`` and register
 it in ``RESUME_PROBES`` under its class name; a subclass is covered by its
@@ -21,7 +20,8 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import MessageType
 from band.runtime.sessionresume import ResumeRecord
 from band.testing.fake_tools import FakeAgentTools
-from tests.framework_conformance.resumeprobes import ResumeProbe, acp, omp
+from tests.framework_conformance.resumeprobes import acp, omp
+from tests.framework_conformance.resumeprobes.probe import ResumeProbe
 
 RESUME_PROBES: dict[str, ResumeProbe] = {
     "ACPClientAdapter": ResumeProbe(
@@ -31,15 +31,6 @@ RESUME_PROBES: dict[str, ResumeProbe] = {
         ACP_CLIENT_RESUME_RECORD, acp.seed_omp_acp, acp.seed_failure
     ),
     "OmpAdapter": ResumeProbe(OMP_RESUME_RECORD, omp.seed_omp, omp.seed_failure),
-}
-
-#: Adapters that resume a native session outside the shared rule, and why.
-OUTSIDE_THE_RULE = {
-    "LettaAdapter": (
-        "records its server-side agent and conversation at setup, before any "
-        "prompt, and only with task events on; how the rule applies to a "
-        "server-held agent is decided separately"
-    ),
 }
 
 

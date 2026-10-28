@@ -14,7 +14,11 @@ from band.integrations.ompwire import (
     OmpEventType,
     OmpState,
 )
-from tests.integrations.omppeers.base import COMPLETE
+from tests.integrations.omppeers.base import (
+    COMPLETE,
+    PEER_SESSION_FILE,
+    PEER_SESSION_ID,
+)
 from tests.integrations.omprpc.events import (
     EventRecorder,
     follow_up_texts,
@@ -77,8 +81,8 @@ class TestPromptNarrationAndResults:
         assert message.usage.cost.total == 0.33
         state = OmpState.model_validate(await client.request("get_state"))
         assert (state.sessionId, state.sessionFile, state.isSettled) == (
-            "session-local",
-            "/local/session.jsonl",
+            PEER_SESSION_ID,
+            PEER_SESSION_FILE,
             True,
         )
         assert state.model is not None
