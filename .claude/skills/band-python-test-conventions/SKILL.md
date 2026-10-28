@@ -153,7 +153,9 @@ When a suite outgrows one file, make it a package: `conftest.py` for
 fixtures, a plain helper module (`kit.py`, a Hypothesis `lifecycle.py`) for
 shared doubles, and one test file per concern. Keep domain fixtures in the
 package's own `conftest.py`; the root `tests/conftest.py` holds only what
-the whole suite shares.
+the whole suite shares. A test package's `__init__.py` is empty or holds only
+a docstring: shared types, probes and helpers go in a named helper module
+(`kit.py`, `probe.py`), never in `__init__.py`.
 
 A helper module in that package is not a collected test. Its module
 docstring names the role (kit, peer, lifecycle model). It does not define a

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[a2a_gateway_demo]>=4.0.0"]
+# dependencies = ["band-sdk[a2a_gateway_demo]>=6.0.1"]
 # ///
 """
 Run A2A Gateway with Demo Orchestrator Agent.

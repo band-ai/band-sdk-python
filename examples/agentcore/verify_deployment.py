@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk>=4.0.0"]
+# dependencies = ["band-sdk>=6.0.1"]
 # ///
 """Post-deployment smoke check for the AgentCore demo in this folder.
 

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[pydantic-ai]>=4.0.0"]
+# dependencies = ["band-sdk[pydantic-ai]>=6.0.1"]
 # ///
 """
 Jerry the mouse agent using Pydantic AI.

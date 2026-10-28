@@ -1,9 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[omp]>=4.0.0"]
+# dependencies = ["band-sdk[omp]>=6.0.1"]
+# [tool.uv.sources]
+# band-sdk = { path = ".." }
 # ///
 """
 OMP native RPC client — bridge Band rooms to ``omp --mode rpc``.
+
+Run from this repository checkout: OMP is not included in SDK 6.0.1 on PyPI.
+The inline source override installs the checkout containing this example.
 
 The SDK owns one process per room, registers Band tools as native host tools,
 and waits through background continuations until the session is settled.
