@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from types import ModuleType
 
 import pytest
@@ -20,6 +21,7 @@ def antigravity_example(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
         EXAMPLES_ROOT / "acp" / "clients" / "antigravity.py",
         "antigravity_client_example",
     )
-    for field in module.Settings.model_fields:
-        monkeypatch.delenv(field.upper(), raising=False)
+    for name in tuple(os.environ):
+        if name.lower() in module.Settings.model_fields:
+            monkeypatch.delenv(name)
     return module
