@@ -246,13 +246,22 @@ else's review.
    the root cause, the level, or the best outside option and gets a fresh
    independent review, while a wording fix needs neither. Present the same
    summary, opened with what changed since the last round.
-5. Move to Phase 8 only on an explicit signal ("looks good", "finalize this",
+5. Move to Phase 7a only on an explicit signal ("looks good", "finalize this",
    "attach it", "lock it in"), never on a quiet pause.
+
+## Phase 7a — Validate the agreed design
+
+After the user's finalization signal, run [scenario-validation.md](scenario-validation.md)
+against the agreed version before publication, including for light plans.
+Repair deficiencies and repeat the affected scenarios as that guide requires.
+If a repair needs a material decision, return to Phase 7 for discussion and
+renewed finalization. Continue to Phase 8 only when this gate passes.
 
 ## Phase 8 — Publish the finalized plan
 
 1. Re-read the plan file as a whole: the agreed version, not an earlier round;
    internally consistent; citing a source only where a decision rests on it.
+   Confirm Phase 7a covers this version; changed design invalidates affected results.
    Strip every trace of narration or history (see "The plan is NOT a history
    book" above). Any open question or TBD left means it isn't final — go back
    to Phase 7.
@@ -261,7 +270,8 @@ else's review.
    separate agent can run verbatim to implement the plan exactly as agreed.
    It carries the ticket identifier and title, the root cause and level (so
    the implementer doesn't fall back to a symptom patch), the non-goals, the
-   chosen library and pinned version if any, the scenarios, the files and
+   chosen library and pinned version if any, the validated scenarios and remaining
+   checks/limitations from Design validation, the files and
    tests to touch, and this repo's non-negotiables (root cause not a patch,
    DRY, no magic values, the test plan as written). It ends with the
    Definition of done, and requires the implementer to show each check's
