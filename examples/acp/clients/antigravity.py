@@ -19,7 +19,7 @@ from antigravitysettings import Settings, build_config
 from dotenv import load_dotenv
 
 from band import Agent, configure_logging
-from band.adapters import AntigravityACPAdapter
+from band.adapters.antigravity_acp import AntigravityACPAdapter
 
 logger = logging.getLogger(__name__)
 

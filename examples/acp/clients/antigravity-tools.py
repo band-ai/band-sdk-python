@@ -24,19 +24,23 @@ from pydantic import BaseModel, Field
 from band import Agent, configure_logging
 from band.adapters.antigravity_acp import AntigravityACPAdapter
 from band.core.types import Capability, Emit
+from band.runtime.custom_tools import get_custom_tool_name
 
 logger = logging.getLogger(__name__)
-TASK_INSTRUCTIONS = (
-    "Use digest for SHA256 calculations. Use Band task-board tools to "
-    "track shared work when requested, and read back the result before reporting "
-    "success. Native agent tasks are separate from the shared Band task board."
-)
 
 
 class DigestInput(BaseModel):
     """Calculate the SHA256 digest of UTF-8 text."""
 
     text: str = Field(min_length=1, description="Text to hash exactly as supplied")
+
+
+TASK_INSTRUCTIONS = (
+    f"Use {get_custom_tool_name(DigestInput)} for SHA256 calculations. "
+    "Use Band task-board tools to "
+    "track shared work when requested, and read back the result before reporting "
+    "success. Native agent tasks are separate from the shared Band task board."
+)
 
 
 def digest(input: DigestInput) -> str:
