@@ -22,7 +22,9 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from ctypes import wintypes
@@ -47,7 +49,24 @@ _ERROR_BROKEN_PIPE = 109
 _ERROR_INVALID_PARAMETER = 87
 _ERROR_MORE_DATA = 234
 _STATUS_READ_SIZE = 256
+_ERROR_NO_DATA = 23
 _PATH_BUFFER_SIZE = 260
+
+_FILE_TYPE_PIPE = 3  # winbase.h: DISK=1, CHAR=2, PIPE=3
+_DUPLICATE_SAME_ACCESS = 0x2
+# The relay: a Codex child whose parent stderr is a pipe gets its own pipe,
+# drained by two helper threads — a reader that moves bytes from the child's
+# pipe into a bounded buffer (it never touches the destination, so the child
+# can never be blocked by a stalled destination), and a writer that forwards
+# buffered bytes to the original pipe whenever it accepts them. Child
+# progress outranks stderr telemetry completeness: on buffer overflow the
+# oldest bytes are dropped and a truncation marker rides out with the next
+# accepted write.
+_STDERR_RELAY_PIPE_BYTES = 1 << 16
+_STDERR_BUFFER_BYTES = 1 << 20
+_STDERR_TRUNCATION_MARKER = (
+    b"[band-integrations-codex] stderr truncated: %d bytes dropped\n"
+)
 
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x00000008
@@ -287,6 +306,33 @@ def _kernel32() -> Any:
         ctypes.c_void_p,
     ]
     library.WriteFile.restype = wintypes.BOOL
+    library.ReadFile.argtypes = [
+        handle,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+    library.ReadFile.restype = wintypes.BOOL
+    library.GetFileType.argtypes = [handle]
+    library.GetFileType.restype = wintypes.DWORD
+    library.CreatePipe.argtypes = [
+        ctypes.POINTER(handle),
+        ctypes.POINTER(handle),
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    library.CreatePipe.restype = wintypes.BOOL
+    library.DuplicateHandle.argtypes = [
+        handle,
+        handle,
+        handle,
+        ctypes.POINTER(handle),
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    library.DuplicateHandle.restype = wintypes.BOOL
     library.PeekNamedPipe.argtypes = [
         handle,
         ctypes.c_void_p,
@@ -965,6 +1011,168 @@ def environment_block(env: Mapping[str, str]) -> str:
     )
 
 
+def _duplicate_for_process(handle: int) -> int:
+    current = ctypes.c_void_p(-1)
+    target = ctypes.c_void_p()
+    if not _kernel32().DuplicateHandle(
+        current,
+        ctypes.c_void_p(handle),
+        current,
+        ctypes.byref(target),
+        0,
+        False,
+        _DUPLICATE_SAME_ACCESS,
+    ):
+        _fail("DuplicateHandle")
+    return int(target.value or 0)
+
+
+class _StderrBuffer:
+    """Bounded thread-safe byte buffer between the relay's two threads.
+
+    Overflow drops the oldest bytes so the reader never waits for the
+    destination; dropped bytes are counted, and the count travels out as
+    a truncation marker line with the next accepted write.
+    """
+
+    def __init__(self, limit: int = _STDERR_BUFFER_BYTES) -> None:
+        self._limit = limit
+        self._chunks: deque[bytes] = deque()
+        self._size = 0
+        self._dropped = 0
+        self._marker_pending = False
+        self._eof = False
+        self._condition = threading.Condition()
+
+    def push(self, data: bytes) -> None:
+        with self._condition:
+            self._chunks.append(data)
+            self._size += len(data)
+            while self._chunks and self._size > self._limit:
+                oldest = self._chunks.popleft()
+                self._size -= len(oldest)
+                self._dropped += len(oldest)
+                self._marker_pending = True
+            self._condition.notify_all()
+
+    def pop(self) -> bytes:
+        """Wait for the next chunk; return empty bytes only after EOF."""
+        with self._condition:
+            while not self._chunks and not self._eof:
+                self._condition.wait()
+            if not self._chunks:
+                return b""
+            data = self._chunks.popleft()
+            self._size -= len(data)
+            if self._marker_pending:
+                self._marker_pending = False
+                data = _STDERR_TRUNCATION_MARKER % self._dropped + data
+            return data
+
+    def mark_eof(self) -> None:
+        with self._condition:
+            self._eof = True
+            self._condition.notify_all()
+
+
+class _StderrRelay:
+    """The open handles and shared buffer of one stderr relay."""
+
+    __slots__ = ("buffer", "child", "read", "sink")
+
+    def __init__(self, read: int, child: int, sink: int, buffer: _StderrBuffer) -> None:
+        self.read = read
+        self.child = child
+        self.sink = sink
+        self.buffer = buffer
+
+
+def _stderr_relay(standard_error: int) -> _StderrRelay | None:
+    """Return the relay structure when stderr is an inherited pipe.
+
+    A piped stderr may have no reader for its lifetime (the helper's
+    caller can stop draining it), and a full pipe then blocks every
+    writer that inherited the handle — including the Codex child,
+    forever. The relay hands the child a dedicated pipe whose reader
+    thread always drains it into a bounded buffer, while a writer thread
+    forwards bytes to the original handle as fast as that destination
+    accepts them. Forwarding is then best-effort within a fixed memory
+    bound; the child stays writable. Console and file stderr pass
+    through untouched.
+    """
+    if _kernel32().GetFileType(ctypes.c_void_p(standard_error)) != _FILE_TYPE_PIPE:
+        return None
+    read = ctypes.c_void_p()
+    write = ctypes.c_void_p()
+    if not _kernel32().CreatePipe(
+        ctypes.byref(read), ctypes.byref(write), None, _STDERR_RELAY_PIPE_BYTES
+    ):
+        _fail("CreatePipe")
+    child = int(write.value or 0)
+    relay_read = int(read.value or 0)
+    try:
+        _set_inheritable(child, True)
+        sink = _duplicate_for_process(standard_error)
+    except BaseException:
+        _kernel32().CloseHandle(ctypes.c_void_p(relay_read))
+        _kernel32().CloseHandle(ctypes.c_void_p(child))
+        raise
+    return _StderrRelay(relay_read, child, sink, _StderrBuffer())
+
+
+def _stderr_chunks(read: int) -> Iterator[bytes]:
+    data = (ctypes.c_char * _STDERR_RELAY_PIPE_BYTES)()
+    while True:
+        written = wintypes.DWORD()
+        if not _kernel32().ReadFile(
+            ctypes.c_void_p(read),
+            data,
+            _STDERR_RELAY_PIPE_BYTES,
+            ctypes.byref(written),
+            None,
+        ):
+            break
+        if written.value:
+            yield bytes(memoryview(data)[: written.value])
+
+
+def _drain_stderr(read: int, buffer: _StderrBuffer) -> None:
+    """Copy the child's stderr into *buffer*; never touches the sink."""
+    try:
+        for chunk in _stderr_chunks(read):
+            buffer.push(chunk)
+    finally:
+        buffer.mark_eof()
+        _kernel32().CloseHandle(ctypes.c_void_p(read))
+
+
+def _forward_stderr(sink: int, buffer: _StderrBuffer) -> None:
+    """Write buffered bytes to the original stderr pipe, dropping once gone."""
+    gone = False
+    try:
+        while True:
+            data = buffer.pop()
+            if not data:
+                break
+            if gone:
+                continue
+            written = wintypes.DWORD()
+            payload = ctypes.create_string_buffer(data)
+            if not _kernel32().WriteFile(
+                ctypes.c_void_p(sink),
+                payload,
+                len(data),
+                ctypes.byref(written),
+                None,
+            ):
+                code = _last_error()
+                if code not in (_ERROR_BROKEN_PIPE, _ERROR_NO_DATA):
+                    logger.warning("Codex stderr relay write failed: winerror %s", code)
+                gone = True
+    finally:
+        _kernel32().CloseHandle(ctypes.c_void_p(sink))
+
+
 def _spawn_suspended(
     job: ctypes.c_void_p,
     command: Sequence[str],
@@ -976,67 +1184,97 @@ def _spawn_suspended(
     standard = _standard_handles()
     for handle in standard:
         _set_inheritable(handle, True)
-    inherited = (ctypes.c_void_p * 3)(*(ctypes.c_void_p(handle) for handle in standard))
+    relay = _stderr_relay(standard[2])
+    child_stderr = relay.child if relay is not None else standard[2]
+    inherited = (ctypes.c_void_p * 3)(
+        ctypes.c_void_p(standard[0]),
+        ctypes.c_void_p(standard[1]),
+        ctypes.c_void_p(child_stderr),
+    )
     jobs = (ctypes.c_void_p * 1)(job)
     # Job membership is fixed at creation. Assigning afterwards leaves a
     # window where killing this helper orphans a suspended process outside
     # the job, and that process keeps the room directory open.
-    attributes = _attribute_list(
-        (
-            (
-                _PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                ctypes.cast(inherited, ctypes.c_void_p),
-                ctypes.sizeof(inherited),
-            ),
-            (
-                _PROC_THREAD_ATTRIBUTE_JOB_LIST,
-                ctypes.cast(jobs, ctypes.c_void_p),
-                ctypes.sizeof(jobs),
-            ),
-        )
-    )
     process: ctypes.c_void_p | None = None
     thread: ctypes.c_void_p | None = None
     try:
-        startup = StartupInfoEx()
-        startup.StartupInfo.cb = ctypes.sizeof(StartupInfoEx)
-        startup.StartupInfo.dwFlags = _STARTF_USESTDHANDLES
-        startup.StartupInfo.hStdInput = standard[0]
-        startup.StartupInfo.hStdOutput = standard[1]
-        startup.StartupInfo.hStdError = standard[2]
-        startup.lpAttributeList = ctypes.addressof(attributes)
-        cmdline = ctypes.create_unicode_buffer(subprocess.list2cmdline(list(command)))
-        info = ProcessInformation()
-        environment = ctypes.create_unicode_buffer(environment_block(env))
-        if not _kernel32().CreateProcessW(
-            None,
-            cmdline,
-            None,
-            None,
-            True,
-            _EXTENDED_STARTUPINFO_PRESENT
-            | _CREATE_SUSPENDED
-            | _CREATE_UNICODE_ENVIRONMENT,
-            ctypes.cast(environment, ctypes.c_void_p),
-            None,
-            ctypes.byref(startup),
-            ctypes.byref(info),
-        ):
-            raise _win_os_error(_last_error())
-        process = info.hProcess
-        thread = info.hThread
-        child_thread = thread
-        thread = None
-        if process is None or child_thread is None:
-            raise _win_os_error(_last_error())
-        return process, child_thread
+        attributes = _attribute_list(
+            (
+                (
+                    _PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                    ctypes.cast(inherited, ctypes.c_void_p),
+                    ctypes.sizeof(inherited),
+                ),
+                (
+                    _PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                    ctypes.cast(jobs, ctypes.c_void_p),
+                    ctypes.sizeof(jobs),
+                ),
+            )
+        )
+        try:
+            startup = StartupInfoEx()
+            startup.StartupInfo.cb = ctypes.sizeof(StartupInfoEx)
+            startup.StartupInfo.dwFlags = _STARTF_USESTDHANDLES
+            startup.StartupInfo.hStdInput = standard[0]
+            startup.StartupInfo.hStdOutput = standard[1]
+            startup.StartupInfo.hStdError = child_stderr
+            startup.lpAttributeList = ctypes.addressof(attributes)
+            cmdline = ctypes.create_unicode_buffer(
+                subprocess.list2cmdline(list(command))
+            )
+            info = ProcessInformation()
+            environment = ctypes.create_unicode_buffer(environment_block(env))
+            if not _kernel32().CreateProcessW(
+                None,
+                cmdline,
+                None,
+                None,
+                True,
+                _EXTENDED_STARTUPINFO_PRESENT
+                | _CREATE_SUSPENDED
+                | _CREATE_UNICODE_ENVIRONMENT,
+                ctypes.cast(environment, ctypes.c_void_p),
+                None,
+                ctypes.byref(startup),
+                ctypes.byref(info),
+            ):
+                raise _win_os_error(_last_error())
+            process = info.hProcess
+            thread = info.hThread
+            child_thread = thread
+            thread = None
+            if process is None or child_thread is None:
+                raise _win_os_error(_last_error())
+            if relay is not None:
+                # The child holds its own copy; closing ours lets the
+                # reader see EOF exactly when the child tree stops writing.
+                _kernel32().CloseHandle(ctypes.c_void_p(relay.child))
+                threading.Thread(
+                    target=_drain_stderr,
+                    args=(relay.read, relay.buffer),
+                    name="band-codex-stderr-reader",
+                    daemon=True,
+                ).start()
+                threading.Thread(
+                    target=_forward_stderr,
+                    args=(relay.sink, relay.buffer),
+                    name="band-codex-stderr-writer",
+                    daemon=True,
+                ).start()
+                relay = None
+            return process, child_thread
+        finally:
+            _kernel32().DeleteProcThreadAttributeList(attributes)
     except OSError:
         if process is not None:
             _kernel32().TerminateProcess(process, 1)
             _kernel32().CloseHandle(process)
         raise
     finally:
-        _kernel32().DeleteProcThreadAttributeList(attributes)
+        if relay is not None:
+            for relay_handle in (relay.read, relay.child, relay.sink):
+                _kernel32().CloseHandle(ctypes.c_void_p(relay_handle))
         if thread is not None:
             _kernel32().CloseHandle(thread)
 
