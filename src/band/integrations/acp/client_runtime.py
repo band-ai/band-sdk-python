@@ -40,7 +40,7 @@ from band.integrations.acp.stderr import (
     STDERR_TAIL_LINES,
     ACPStderrDrain,
 )
-from band.integrations.acp.stream import ChunkSink
+from band.integrations.acp.stream import TurnSink
 from band.integrations.acp.transport import (
     ACP_DEFAULT_STDIO_LIMIT_BYTES,
     ACP_STDIO_LIMIT_BYTES,
@@ -61,11 +61,11 @@ __all__ = [
     "ACPConnectionProtocol",
     "ACPRuntime",
     "ACPSpawnContextProtocol",
-    "ChunkSink",
     "ElicitationHandler",
     "ElicitationNarrator",
     "PermissionHandler",
     "PermissionNarrator",
+    "TurnSink",
     "allow_permission",
     "cancel_permission",
     "elicitation_requested_schema",

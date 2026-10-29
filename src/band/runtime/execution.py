@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Hashable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -218,8 +218,11 @@ class ScopeActivityObserver:
     context: ExecutionContext
     scope: TurnScope
 
-    async def update(self, activity: AgentActivityDetail) -> None:
-        await self.context.observe_activity(self.scope, activity=activity)
+    async def start(self, key: Hashable, activity: AgentActivityDetail) -> None:
+        self.context.start_activity(self.scope, key, activity)
+
+    async def end(self, key: Hashable) -> None:
+        self.context.end_activity(self.scope, key)
 
     def permission_wait(self) -> AbstractContextManager[None]:
         return self.context.permission_wait(self.scope)
@@ -1249,15 +1252,17 @@ class ExecutionContext:
             return None
         return owner.activity.detail
 
-    async def observe_activity(
-        self,
-        scope: TurnScope,
-        *,
-        activity: AgentActivityDetail | None = None,
+    def start_activity(
+        self, scope: TurnScope, key: Hashable, activity: AgentActivityDetail
     ) -> None:
-        """Record a turn's activity; never starts reporting or waits on it."""
+        """Record a turn's running activity; never starts reporting or waits on it."""
         before = self._visible_activity
-        scope.activity.apply(activity=activity)
+        scope.activity.start(key, activity)
+        self._refresh_activity(before)
+
+    def end_activity(self, scope: TurnScope, key: Hashable) -> None:
+        before = self._visible_activity
+        scope.activity.end(key)
         self._refresh_activity(before)
 
     @contextmanager

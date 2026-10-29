@@ -106,7 +106,7 @@ class TestCustomTools:
 
         tools = FakeAgentTools()
         await execute_custom_tool(
-            (LookupInput, post_to_ticketing), {"topic": "x"}, turn=tools.turn
+            (LookupInput, post_to_ticketing), {"topic": "x"}, tools=tools
         )
 
         assert tools.turn.complete
@@ -116,9 +116,7 @@ class TestCustomTools:
             return "found"
 
         tools = FakeAgentTools()
-        await execute_custom_tool(
-            (LookupInput, lookup), {"topic": "x"}, turn=tools.turn
-        )
+        await execute_custom_tool((LookupInput, lookup), {"topic": "x"}, tools=tools)
 
         assert not tools.turn.complete
 
@@ -130,7 +128,7 @@ class TestCustomTools:
         tools = FakeAgentTools()
         with pytest.raises(RuntimeError):
             await execute_custom_tool(
-                (LookupInput, broken), {"topic": "x"}, turn=tools.turn
+                (LookupInput, broken), {"topic": "x"}, tools=tools
             )
 
         assert not tools.turn.complete
@@ -154,9 +152,7 @@ class TestCustomTools:
             return output
 
         tools = FakeAgentTools()
-        await execute_custom_tool(
-            (LookupInput, refused), {"topic": "x"}, turn=tools.turn
-        )
+        await execute_custom_tool((LookupInput, refused), {"topic": "x"}, tools=tools)
 
         assert await report_unsettled_turn(tools, room_id="room-1")
         assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
@@ -170,9 +166,7 @@ class TestCustomTools:
             return {"ok": False, "error": "upstream refused"}
 
         tools = FakeAgentTools()
-        await execute_custom_tool(
-            (LookupInput, refused), {"topic": "x"}, turn=tools.turn
-        )
+        await execute_custom_tool((LookupInput, refused), {"topic": "x"}, tools=tools)
         await relay_reply(tools, "The operation failed.", ["@alice"])
 
         assert tools.chat == ["The operation failed."]

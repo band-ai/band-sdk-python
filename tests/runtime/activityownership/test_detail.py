@@ -12,9 +12,9 @@ from band.platform.event import PlatformEvent
 from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
 from band.runtime.toolactivity import (
-    end_tool_activity,
-    report_memory_activity,
-    report_tool_activity,
+    end_activity,
+    start_memory_activity,
+    start_tool_activity,
 )
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import (
@@ -41,16 +41,18 @@ class TestOwnedDetail:
     ) -> None:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
-            await activity_platform.shown(end_tool_activity(tools))
+            await activity_platform.shown(start_tool_activity(tools, "bash", "Bash"))
+            await activity_platform.shown(end_activity(tools, "bash"))
             with ExitStack() as waits:
                 await activity_platform.shown(
                     partial(waits.enter_context, permission_wait(tools))
                 )
                 # Hidden behind the wait: the room keeps seeing permission.
-                await report_tool_activity(tools, "Edit")
+                await start_tool_activity(tools, "edit", "Edit")
                 await activity_platform.shown(waits.close)
-            await activity_platform.shown(report_memory_activity(tools))
+            await activity_platform.shown(start_memory_activity(tools, "memory"))
+            await activity_platform.shown(end_activity(tools, "memory"))
+            await activity_platform.shown(end_activity(tools, "edit"))
             await tools.send_message("Done", mentions=["alice"])
 
         ctx = execution(handler)
@@ -63,6 +65,9 @@ class TestOwnedDetail:
             PERMISSION_BODY,
             tool_body("Edit"),
             MEMORY_BODY,
+            # Memory ending reveals the tool still running.
+            tool_body("Edit"),
+            REASONING_BODY,
             # The reply is a Band tool call too; it ends back at reasoning.
             REASONING_BODY,
             IDLE_BODY,
@@ -80,7 +85,7 @@ class TestOwnedDetail:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
             captured.append(tools)
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(start_tool_activity(tools, "bash", "Bash"))
             workers.append(bind_turn_task(tools, asyncio.create_task(release.wait())))
 
         ctx = execution(handler)
@@ -93,13 +98,13 @@ class TestOwnedDetail:
             # The keep-alive repeats PERMISSION while the wait holds.
             await activity_platform.next_body()
             # Hidden behind the wait: the room keeps seeing permission.
-            await report_tool_activity(owner, "Edit")
+            await start_tool_activity(owner, "edit", "Edit")
             await activity_platform.shown(waits.close)
         release.set()
         await workers[0].task
         await activity_platform.next_body()
         await ctx._join_activity_completion()
-        await end_tool_activity(owner)
+        await end_activity(owner, "edit")
         await past_a_keep_alive()
         assert activity_platform.activity_bodies == [
             REASONING_BODY,
@@ -123,7 +128,9 @@ class TestOwnedDetail:
                 if len(turns) > 1:
                     return
                 tools = AgentTools.from_context(ctx)
-                await activity_platform.shown(report_tool_activity(tools, "Bash"))
+                await activity_platform.shown(
+                    start_tool_activity(tools, "bash", "Bash")
+                )
                 await activity_platform.shown(
                     partial(waits.enter_context, permission_wait(tools))
                 )

@@ -20,6 +20,7 @@ from band.integrations.acp.types import (
     CollectedChunk,
     ToolStatus,
 )
+from band.runtime.toolactivity import end_activity, start_tool_activity
 from band.runtime.tools import TurnEffect, turn_effect
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,8 @@ class RoomTurnEmitter:
     outside this emitter.
 
     Which narration kinds reach the room is controlled by the emit set passed
-    at construction (``None``: all kinds — the historical default).
+    at construction (``None``: all kinds — the historical default). The tool
+    calls the agent runs show as the turn's activity whatever that set is.
     """
 
     def __init__(
@@ -116,6 +118,12 @@ class RoomTurnEmitter:
                     "Unhandled ACP chunk type %r; not posting to the room",
                     chunk.chunk_type,
                 )
+
+    async def tool_started(self, call: ACPToolCall) -> None:
+        await start_tool_activity(self._tools, call.tool_call_id, call.name)
+
+    async def tool_ended(self, tool_call_id: str) -> None:
+        await end_activity(self._tools, tool_call_id)
 
     def _stage_tool_outcome(self, chunk: CollectedChunk) -> None:
         """Stage successful external effects until the prompt closes cleanly."""

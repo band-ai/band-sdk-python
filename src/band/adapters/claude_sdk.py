@@ -158,7 +158,7 @@ from band.runtime.formatters import (
 )
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX
 from band.runtime.sessionresume import fetch_transcript
-from band.runtime.toolactivity import end_tool_activity, report_tool_activity
+from band.runtime.toolactivity import end_activity, start_tool_activity
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BAND_MCP_SERVER_NAME,
@@ -1518,7 +1518,7 @@ class ClaudeSDKAdapter(
         tool_name = self._semantic_tool_name(block.name)
         pending_tool_names[block.id] = block.name
         if not _served_by_band(block.name):
-            await report_tool_activity(tools, tool_name)
+            await start_tool_activity(tools, block.id, tool_name)
         await self._narrate_tool_call(block, tool_name, room_id, tools)
 
     async def _narrate_tool_call(
@@ -1681,7 +1681,7 @@ class ClaudeSDKAdapter(
         """
         sdk_tool_name = pending_tool_names.pop(block.tool_use_id, None)
         if sdk_tool_name is not None and not _served_by_band(sdk_tool_name):
-            await end_tool_activity(tools)
+            await end_activity(tools, block.tool_use_id)
         result_tool_name = (
             None if sdk_tool_name is None else self._semantic_tool_name(sdk_tool_name)
         )

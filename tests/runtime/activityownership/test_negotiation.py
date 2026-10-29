@@ -7,7 +7,7 @@ import pytest
 
 from band.platform.event import PlatformEvent
 from band.runtime.execution import ExecutionContext
-from band.runtime.toolactivity import report_tool_activity
+from band.runtime.toolactivity import start_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import (
     BOOLEAN_BODY,
@@ -32,7 +32,7 @@ class TestTurnNegotiation:
 
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(start_tool_activity(tools, "bash", "Bash"))
 
         ctx = execution(handler)
         await deliver_event(ctx, make_message_event())
@@ -52,7 +52,7 @@ class TestTurnNegotiation:
                 return
             tools = AgentTools.from_context(ctx)
             activity_platform.activity_responses.append(httpx.Response(422))
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(start_tool_activity(tools, "bash", "Bash"))
             # The resend, then one keep-alive.
             await activity_platform.bodies_reach(4)
 

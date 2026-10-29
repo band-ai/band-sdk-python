@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Hashable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import Any
@@ -13,7 +13,6 @@ from band_rest.types.agent_activity_detail import AgentActivityDetail
 
 from band.runtime.activity import (
     MEMORY,
-    REASONING,
     ActivityObserver,
     activity_observer_of,
     tool_call_activity,
@@ -47,12 +46,21 @@ def method_reports_activity(name: str) -> bool:
     return name != BandTool.SEND_EVENT
 
 
-async def _show(observer: ActivityObserver, detail: AgentActivityDetail) -> None:
+async def _start(
+    observer: ActivityObserver, key: Hashable, detail: AgentActivityDetail
+) -> None:
     """Activity is best-effort: a failed report never changes the tool's outcome."""
     try:
-        await observer.update(detail)
+        await observer.start(key, detail)
     except Exception:
         logger.warning("Could not report %s activity", detail.kind, exc_info=True)
+
+
+async def _end(observer: ActivityObserver, key: Hashable) -> None:
+    try:
+        await observer.end(key)
+    except Exception:
+        logger.warning("Could not report the end of an activity", exc_info=True)
 
 
 @contextmanager
@@ -67,7 +75,7 @@ def suppress_tool_activity() -> Iterator[None]:
 
 @asynccontextmanager
 async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
-    """Show ``name`` as the turn's activity until the tool ends.
+    """Show ``name`` as running in the turn's activity until the tool ends.
 
     Only the outermost call reports, so a tool that calls other Band tools
     shows as itself throughout. The observer is resolved once so the end lands
@@ -77,30 +85,31 @@ async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
     if observer is None or _showing_tool.get():
         yield
         return
+    key = object()
     try:
         with suppress_tool_activity():
-            await _show(observer, tool_detail(name))
+            await _start(observer, key, tool_detail(name))
             yield
     finally:
-        await _show(observer, REASONING)
+        await _end(observer, key)
 
 
-async def _show_on(tools: object, detail: AgentActivityDetail) -> None:
+async def start_tool_activity(tools: object, key: Hashable, name: str) -> None:
+    """Show ``name`` as running under ``key``, for a tool whose start and end
+    arrive as separate events; starting a running key again renames it."""
     if observer := activity_observer_of(tools):
-        await _show(observer, detail)
+        await _start(observer, key, tool_detail(name))
 
 
-async def report_tool_activity(tools: object, name: str) -> None:
-    """Show ``name`` for a tool whose start and end arrive as separate events."""
-    await _show_on(tools, tool_detail(name))
+async def start_memory_activity(tools: object, key: Hashable) -> None:
+    if observer := activity_observer_of(tools):
+        await _start(observer, key, MEMORY)
 
 
-async def end_tool_activity(tools: object) -> None:
-    await _show_on(tools, REASONING)
-
-
-async def report_memory_activity(tools: object) -> None:
-    await _show_on(tools, MEMORY)
+async def end_activity(tools: object, key: Hashable) -> None:
+    """End what ``key`` shows; an unknown or already ended key changes nothing."""
+    if observer := activity_observer_of(tools):
+        await _end(observer, key)
 
 
 def _observing(

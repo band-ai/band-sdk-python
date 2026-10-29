@@ -16,7 +16,6 @@ from band.integrations.parlant.sessiontools import (
     require_session_tools,
 )
 from band.runtime.custom_tools import CustomToolDef, execute_custom_tool
-from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import tool_result_text
 
 # Parlant delivers every argument as a string, which only lax validation
@@ -30,14 +29,12 @@ def build_custom_tool(tool_def: CustomToolDef) -> Any:
     described = describe_custom_tool(input_model)
 
     async def run(context: ToolContext, **arguments: Any) -> ToolResult:
-        tools = require_session_tools(context)
-        async with tool_activity(tools, described.name):
-            result = await execute_custom_tool(
-                tool_def,
-                parse_delivered(arguments, described.fields),
-                turn=tools.turn,
-                strict=STRICT_VALIDATION,
-            )
+        result = await execute_custom_tool(
+            tool_def,
+            parse_delivered(arguments, described.fields),
+            tools=require_session_tools(context),
+            strict=STRICT_VALIDATION,
+        )
         return ToolResult(data=tool_result_text(result))
 
     run.__name__ = described.name

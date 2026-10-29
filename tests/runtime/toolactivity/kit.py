@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Hashable
 from typing import Any
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
@@ -40,17 +41,24 @@ def band_tool_server(
 
 
 class UnreachableObserver(ActivityRecorder):
-    """Records each observation, then fails to deliver it."""
+    """Records each start and end, then fails to deliver it."""
 
-    async def update(self, activity: AgentActivityDetail) -> None:
-        await super().update(activity)
+    async def start(self, key: Hashable, activity: AgentActivityDetail) -> None:
+        await super().start(key, activity)
+        raise RuntimeError("activity endpoint down")
+
+    async def end(self, key: Hashable) -> None:
+        await super().end(key)
         raise RuntimeError("activity endpoint down")
 
 
 class CancelledObserver(ActivityRecorder):
     """A report that is cancelled before it lands."""
 
-    async def update(self, activity: AgentActivityDetail) -> None:
+    async def start(self, key: Hashable, activity: AgentActivityDetail) -> None:
+        raise asyncio.CancelledError
+
+    async def end(self, key: Hashable) -> None:
         raise asyncio.CancelledError
 
 

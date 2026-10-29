@@ -565,7 +565,7 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
                     result = await execute_custom_tool(
-                        custom_tool, tool_input, turn=tools.turn
+                        custom_tool, tool_input, tools=tools
                     )
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)

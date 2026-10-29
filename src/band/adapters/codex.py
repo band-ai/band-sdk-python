@@ -132,10 +132,9 @@ from band.runtime.formatters import (
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, render_system_prompt
 from band.runtime.sessionresume import SessionSeed, fetch_transcript
 from band.runtime.toolactivity import (
-    end_tool_activity,
-    report_memory_activity,
-    report_tool_activity,
-    tool_activity,
+    end_activity,
+    start_memory_activity,
+    start_tool_activity,
 )
 from band.runtime.tools import (
     get_band_tool_category,
@@ -536,6 +535,10 @@ def _thread_id(event: RpcEvent) -> str | None:
     params = _event_params(event)
     thread_id = params.get("threadId")
     return str(thread_id) if thread_id else None
+
+
+def _item_id(item: dict[str, Any]) -> str:
+    return str(item.get("id") or item.get("callId") or item.get("toolCallId") or "")
 
 
 def _delegated_threads(event: RpcEvent) -> set[str]:
@@ -1839,7 +1842,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     item = params.get("item")
                     if isinstance(item, dict):
                         if item.get("type") in _ACTIVITY_ITEM_TYPES:
-                            await end_tool_activity(tools)
+                            await end_activity(tools, _item_id(item))
                         if item.get("type") == CodexItemType.AGENT_MESSAGE:
                             message = result.native_messages.setdefault(
                                 str(item["id"]),
@@ -2693,10 +2696,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    async with tool_activity(tools, tool_name):
-                        result = await execute_custom_tool(
-                            custom_tool, arguments, turn=tools.turn
-                        )
+                    result = await execute_custom_tool(
+                        custom_tool, arguments, tools=tools
+                    )
                     success = True
                 else:
                     # Structured: a base tool (e.g. band_send_message) can fail without
@@ -3077,9 +3079,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         processing (e.g. a transient 403 from the load balancer).
         """
         item_type = item.get("type", "")
-        item_id = str(
-            item.get("id") or item.get("callId") or item.get("toolCallId") or ""
-        )
+        item_id = _item_id(item)
         metadata: dict[str, Any] = {
             CodexMetadataKey.ROOM: room_id,
             CodexMetadataKey.THREAD: thread_id,
@@ -3108,10 +3108,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     ) -> None:
         item_type = item.get("type", "")
         if item_type == CodexItemType.CONTEXT_COMPACTION:
-            await report_memory_activity(tools)
+            await start_memory_activity(tools, _item_id(item))
         elif item_type in _TOOL_ITEM_TYPES:
             name = self._extract_tool_item(item_type, item).name
-            await report_tool_activity(tools, name)
+            await start_tool_activity(tools, _item_id(item), name)
 
     async def _emit_item_event(
         self,

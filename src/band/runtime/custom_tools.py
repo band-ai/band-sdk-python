@@ -17,7 +17,8 @@ from pydantic import BaseModel, ValidationError
 from pydantic.json_schema import GenerateJsonSchema
 
 from band.core.exceptions import InvalidToolArgumentsError
-from band.core.turn import Turn
+from band.core.protocols import AgentToolsProtocol
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools.registry import ALL_TOOL_NAMES
 from band.runtime.tools.schema import is_failed_tool_output
 from band.runtime.tools.types import TurnEffect
@@ -219,7 +220,7 @@ async def execute_custom_tool(
     tool: CustomToolDef,
     arguments: dict[str, Any],
     *,
-    turn: Turn | None,
+    tools: AgentToolsProtocol | None,
     strict: bool | None = None,
 ) -> Any:
     """
@@ -228,8 +229,10 @@ async def execute_custom_tool(
     Args:
         tool: (InputModel, callable) tuple
         arguments: Raw arguments dict from LLM
-        turn: The turn to record the tool's declared effect on, or ``None``
-            when the tool is not bound to a room, so it cannot settle a turn.
+        tools: The room tools whose turn records the tool's declared effect
+            and shows its activity while the handler runs, or ``None`` when
+            the tool is not bound to a room, so it settles no turn and shows
+            no activity.
         strict: Overrides the input model's own strictness; ``None`` keeps it.
 
     Returns:
@@ -256,14 +259,14 @@ async def execute_custom_tool(
         raise ValueError(
             f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
         )
-    return await invoke_validated_custom_tool(tool, validated, turn=turn)
+    return await invoke_validated_custom_tool(tool, validated, tools=tools)
 
 
 async def invoke_validated_custom_tool(
     tool: CustomToolDef,
     validated: Any,
     *,
-    turn: Turn | None,
+    tools: AgentToolsProtocol | None,
 ) -> Any:
     """
     Execute a custom tool whose arguments are already a validated InputModel
@@ -273,13 +276,13 @@ async def invoke_validated_custom_tool(
     pydantic-ai validates tool args natively): re-serializing the instance to
     a dict and re-validating would break models using field aliases, so the
     instance is passed through as-is. Async/zero-argument handler semantics
-    match :func:`execute_custom_tool` exactly, and so does ``turn``.
+    match :func:`execute_custom_tool` exactly, and so does ``tools``.
     """
     model, func = tool
+    tool_name = get_custom_tool_name(model)
 
     accepts_input = _custom_tool_accepts_input(func)
     if not accepts_input and model.model_fields:
-        tool_name = get_custom_tool_name(model)
         raise ValueError(
             f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
         )
@@ -289,9 +292,10 @@ async def invoke_validated_custom_tool(
     # sync/async functions AND callable objects with an async __call__ (for which
     # asyncio.iscoroutinefunction returns False, so a bare check would leak the
     # coroutine unawaited).
-    result = func(*args)
-    if inspect.isawaitable(result):
-        result = await result
-    if turn is not None and not is_failed_tool_output(result):
-        turn.record(declared_effect(func) or TurnEffect.OBSERVE)
+    async with tool_activity(tools, tool_name):
+        result = func(*args)
+        if inspect.isawaitable(result):
+            result = await result
+    if tools is not None and not is_failed_tool_output(result):
+        tools.turn.record(declared_effect(func) or TurnEffect.OBSERVE)
     return result

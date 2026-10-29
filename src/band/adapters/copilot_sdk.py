@@ -869,7 +869,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             custom_tool = find_custom_tool(self._custom_tools, tool_name)
             if custom_tool:
                 result = await execute_custom_tool(
-                    custom_tool, arguments, turn=room_tools.turn
+                    custom_tool, arguments, tools=room_tools
                 )
             else:
                 # Structured variant: a base tool (e.g. band_send_message) can fail

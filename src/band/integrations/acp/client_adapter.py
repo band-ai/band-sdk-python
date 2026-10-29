@@ -941,7 +941,7 @@ class ACPClientAdapter(
                             stop_reason = await runtime.prompt_turn(
                                 session_id=session_id,
                                 prompt_text=prompt_text,
-                                on_chunk=emitter.emit,
+                                sink=emitter,
                             )
                             if stop_reason == REFUSAL_STOP:
                                 logger.warning(

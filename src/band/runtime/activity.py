@@ -3,6 +3,7 @@ observer a turn reports it through."""
 
 from __future__ import annotations
 
+from collections.abc import Hashable
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from inspect import getattr_static
@@ -18,7 +19,9 @@ PERMISSION = AgentActivityDetail(kind="permission")
 
 
 class ActivityObserver(Protocol):
-    async def update(self, activity: AgentActivityDetail) -> None: ...
+    async def start(self, key: Hashable, activity: AgentActivityDetail) -> None: ...
+
+    async def end(self, key: Hashable) -> None: ...
 
     def permission_wait(self) -> AbstractContextManager[None]: ...
 
@@ -37,9 +40,16 @@ def names_only(activity: AgentActivityDetail) -> AgentActivityDetail:
 
 @dataclass
 class TurnActivity:
-    """What one turn is doing; a person's wait overrides its progress."""
+    """What one turn is doing: the most recently started activity still running,
+    else reasoning; a person's wait overrides both.
 
-    progress: AgentActivityDetail = REASONING
+    Each running activity is held under its own key, so one that ends never
+    hides another still running, whichever reporter owns either of them.
+    """
+
+    _running: dict[Hashable, AgentActivityDetail] = field(
+        default_factory=dict, repr=False
+    )
     _permission_owners: set[object] = field(default_factory=set, repr=False)
 
     @property
@@ -55,17 +65,20 @@ class TurnActivity:
     def release_permission(self, owner: object) -> None:
         self._permission_owners.discard(owner)
 
+    def start(self, key: Hashable, activity: AgentActivityDetail) -> None:
+        """Hold ``activity`` under ``key``; restarting a key renames it in place."""
+        self._running[key] = names_only(activity)
+
+    def end(self, key: Hashable) -> None:
+        self._running.pop(key, None)
+
+    @property
+    def progress(self) -> AgentActivityDetail:
+        return next(reversed(self._running.values()), REASONING)
+
     @property
     def detail(self) -> AgentActivityDetail:
         return PERMISSION if self.waiting else self.progress
-
-    def apply(
-        self,
-        *,
-        activity: AgentActivityDetail | None = None,
-    ) -> None:
-        if activity is not None:
-            self.progress = names_only(activity)
 
 
 def activity_observer_of(tools: object) -> ActivityObserver | None:

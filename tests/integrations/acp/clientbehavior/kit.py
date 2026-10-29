@@ -17,6 +17,7 @@ from band.runtime.prompts import (
     SYSTEM_UPDATE_PREFIX,
 )
 from band.runtime.tools import BAND_MCP_SERVER_NAME
+from band.testing.activity import ActivityRecorder
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     TranscriptTools,
@@ -130,6 +131,11 @@ def seeded(prompt: str) -> bool:
 def resume_records(tools: TranscriptTools) -> dict[str, str]:
     """The room-to-session resume records ``tools`` posted."""
     return ACP_CLIENT_RESUME_RECORD.candidates(tools.events_sent)
+
+
+def observed_tools(recorder: ActivityRecorder) -> TranscriptTools:
+    """A turn's tools whose activity ``recorder`` observes."""
+    return recorder.observing(TranscriptTools())
 
 
 # What an agent says when it refuses a prompt over its quota.
