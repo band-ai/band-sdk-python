@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from band_rest.types.agent_activity_detail import AgentActivityDetail
 
 from band.core.types import Emit
 from band.integrations.omp import OMP_FORM_APPROVE
@@ -30,27 +28,7 @@ from tests.adapters.omp.activitykit import (
 @pytest.mark.usefixtures("native_startup_ready")
 class TestActivityOwnership:
     @pytest.mark.parametrize(
-        ("emit", "after_callback", "after_host_end", "expected_events"),
-        [
-            (
-                EMIT_ON,
-                tool_call_activity(BandTool.LOOKUP_PEERS),
-                tool_call_activity("read"),
-                [
-                    shown_tool("read"),
-                    shown_tool(BandTool.LOOKUP_PEERS),
-                    shown_tool("read"),
-                    SHOWN_REASONING,
-                ],
-            ),
-            (
-                EMIT_OFF,
-                REASONING,
-                REASONING,
-                [shown_tool(BandTool.LOOKUP_PEERS), SHOWN_REASONING],
-            ),
-        ],
-        ids=["native-owner", "band-wrapper-with-narration-off"],
+        "emit", [EMIT_ON, EMIT_OFF], ids=["narration-on", "narration-off"]
     )
     async def test_host_callback_does_not_finish_native_activity(
         self,
@@ -58,9 +36,6 @@ class TestActivityOwnership:
         tmp_path: Path,
         mock_rest_client: MagicMock,
         emit: tuple[Emit, ...],
-        after_callback: AgentActivityDetail,
-        after_host_end: AgentActivityDetail,
-        expected_events: list[dict[str, Any]],
     ) -> None:
         async with activity_turn(
             monkeypatch, tmp_path, mock_rest_client, emit=emit
@@ -76,14 +51,21 @@ class TestActivityOwnership:
                 )
             )
             assert not result.is_error
-            assert turn.recorder.activity.detail == after_callback
+            assert turn.recorder.activity.detail == tool_call_activity(
+                BandTool.LOOKUP_PEERS
+            )
 
             await turn.runtime.on_event(tool_end("host", BandTool.LOOKUP_PEERS))
-            assert turn.recorder.activity.detail == after_host_end
+            assert turn.recorder.activity.detail == tool_call_activity("read")
             await turn.runtime.on_event(tool_end("native", "read"))
             await turn.finish()
 
-            assert turn.recorder.events == expected_events
+            assert turn.recorder.events == [
+                shown_tool("read"),
+                shown_tool(BandTool.LOOKUP_PEERS),
+                shown_tool("read"),
+                SHOWN_REASONING,
+            ]
             assert turn.recorder.activity.detail == REASONING
 
     async def test_permission_wait_overrides_tool_progress_then_restores_it(

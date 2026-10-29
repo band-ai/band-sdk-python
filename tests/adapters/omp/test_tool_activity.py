@@ -1,9 +1,8 @@
-"""Native OMP tool activity follows narration and call ownership."""
+"""Native OMP tool activity is independent of narration and follows call ownership."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -22,18 +21,14 @@ from tests.adapters.omp.activitykit import (
 
 class TestOmpToolActivity:
     @pytest.mark.parametrize(
-        ("emit", "expected_activity", "narrated"),
-        [
-            (EMIT_ON, [shown_tool("Bash"), SHOWN_REASONING], True),
-            (EMIT_OFF, [], False),
-        ],
+        ("emit", "narrated"),
+        [(EMIT_ON, True), (EMIT_OFF, False)],
         ids=["narration-on", "narration-off"],
     )
-    async def test_tool_activity_follows_the_narration_switch(
+    async def test_tool_activity_is_reported_whether_or_not_it_is_narrated(
         self,
         tmp_path: Path,
         emit: tuple[Emit, ...],
-        expected_activity: list[dict[str, Any]],
         narrated: bool,
     ) -> None:
         adapter = make_adapter(tmp_path, emit)
@@ -46,7 +41,7 @@ class TestOmpToolActivity:
         )
         await adapter._emit_event(tool_end("call-1", "Bash"), turn)
 
-        assert recorder.events == expected_activity
+        assert recorder.events == [shown_tool("Bash"), SHOWN_REASONING]
         assert bool(tools.events_sent) is narrated
 
     async def test_only_the_name_reaches_the_recorder(self, tmp_path: Path) -> None:

@@ -48,8 +48,8 @@ class OmpEventMixin(OmpAdapterContract):
                     event.toolName, args, preserve_native_semantics=True
                 )
                 turn.calls[event.toolCallId] = (name, arguments)
+                await report_tool_activity(turn.tools, name)
                 if emit_tool_calls:
-                    await report_tool_activity(turn.tools, name)
                     await send_event_safe(
                         turn.tools,
                         self._encode_tool_call(name, arguments, event.toolCallId),
@@ -60,12 +60,11 @@ class OmpEventMixin(OmpAdapterContract):
                 if call is None:
                     return
                 name, _arguments = call
-                if emit_tool_calls:
-                    if turn.calls:
-                        remaining_name = next(reversed(turn.calls.values()))[0]
-                        await report_tool_activity(turn.tools, remaining_name)
-                    else:
-                        await end_tool_activity(turn.tools)
+                if turn.calls:
+                    remaining_name = next(reversed(turn.calls.values()))[0]
+                    await report_tool_activity(turn.tools, remaining_name)
+                else:
+                    await end_tool_activity(turn.tools)
                 if not self.config.inject_band_tools and not event.isError:
                     turn.tools.turn.record(turn_effect(name))
                 if emit_tool_calls:

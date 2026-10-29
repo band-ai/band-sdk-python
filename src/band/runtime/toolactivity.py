@@ -56,11 +56,8 @@ async def _show(observer: ActivityObserver, detail: AgentActivityDetail) -> None
 
 
 @contextmanager
-def suppress_tool_activity(*, enabled: bool = True) -> Iterator[None]:
+def suppress_tool_activity() -> Iterator[None]:
     """Leave activity reporting to the enclosing owner or native events."""
-    if not enabled:
-        yield
-        return
     token = _showing_tool.set(True)
     try:
         yield
