@@ -13,12 +13,12 @@ from band.adapters.antigravity_acp import AntigravityACPAdapterConfig
 
 class TestAntigravityExampleSettings:
     def test_missing_provider_credentials_fail_before_startup(
-        self, antigravity_example: ModuleType
+        self, antigravity_settings: ModuleType
     ) -> None:
         with pytest.raises(ValueError) as error:
-            antigravity_example.build_adapter(antigravity_example.Settings())
+            antigravity_settings.build_config(antigravity_settings.Settings())
 
-        assert str(error.value) == antigravity_example.MISSING_PROVIDER_KEY
+        assert str(error.value) == antigravity_settings.MISSING_PROVIDER_KEY
 
     @pytest.mark.parametrize(
         ("environment", "expected_key"),
@@ -32,7 +32,7 @@ class TestAntigravityExampleSettings:
     )
     def test_provider_key_selection_is_explicit(
         self,
-        antigravity_example: ModuleType,
+        antigravity_settings: ModuleType,
         monkeypatch: pytest.MonkeyPatch,
         environment: dict[str, str],
         expected_key: str,
@@ -40,15 +40,13 @@ class TestAntigravityExampleSettings:
         for name, value in environment.items():
             monkeypatch.setenv(name, value)
 
-        adapter = antigravity_example.build_adapter(antigravity_example.Settings())
+        config = antigravity_settings.build_config(antigravity_settings.Settings())
 
-        assert adapter.config == AntigravityACPAdapterConfig(
-            gemini_api_key=expected_key
-        )
+        assert config == AntigravityACPAdapterConfig(gemini_api_key=expected_key)
 
     def test_json_argv_and_session_settings_reach_the_adapter(
         self,
-        antigravity_example: ModuleType,
+        antigravity_settings: ModuleType,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
@@ -67,9 +65,9 @@ class TestAntigravityExampleSettings:
         for name, value in environment.items():
             monkeypatch.setenv(name, value)
 
-        adapter = antigravity_example.build_adapter(antigravity_example.Settings())
+        config = antigravity_settings.build_config(antigravity_settings.Settings())
 
-        assert adapter.config == AntigravityACPAdapterConfig(
+        assert config == AntigravityACPAdapterConfig(
             command=command,
             cwd=workspace,
             gemini_api_key="provider-key",
@@ -80,11 +78,25 @@ class TestAntigravityExampleSettings:
         )
 
     def test_provider_keys_are_hidden_from_settings_repr(
-        self, antigravity_example: ModuleType
+        self, antigravity_settings: ModuleType
     ) -> None:
-        settings = antigravity_example.Settings(
+        settings = antigravity_settings.Settings(
             gemini_api_key="private-gemini-key", google_api_key="private-google-key"
         )
 
         assert "private-gemini-key" not in repr(settings)
         assert "private-google-key" not in repr(settings)
+
+    def test_example_instructions_extend_the_shared_configuration(
+        self, antigravity_settings: ModuleType
+    ) -> None:
+        settings = antigravity_settings.Settings(gemini_api_key="provider-key")
+
+        config = antigravity_settings.build_config(
+            settings, custom_section="Use the requested application tools."
+        )
+
+        assert config == AntigravityACPAdapterConfig(
+            gemini_api_key="provider-key",
+            custom_section="Use the requested application tools.",
+        )

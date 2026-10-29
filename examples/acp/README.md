@@ -26,6 +26,8 @@ backend via `ACPClientAdapter`.
 | `bridge_architecture.py` | Fully env-driven bridge configuration |
 | `copilot.py` | GitHub Copilot CLI (`copilot --acp`) over stdio |
 | `antigravity.py` | Google's standalone Antigravity ACP server with private native room state |
+| `antigravity-tools.py` | Application-defined SHA256 tool, shared task board, and visible tool events |
+| `antigravity-memory.py` | Durable Band memory that can be recalled from another room |
 
 ## `copilot_docker/` — Copilot-in-a-container deployments
 
@@ -142,6 +144,47 @@ ANTIGRAVITY_COMMAND='["C:/Users/me/Antigravity ACP/agy_acp_server.exe"]'
 Model/thinking overrides must appear in the server's advertised catalog; an
 unsupported value fails the turn visibly. The SDK reapplies configured selections
 after loading a native session.
+
+### More features
+
+All three scripts share the credential and native settings above. Give each
+concurrently running example its own Band agent identity and config entry:
+`antigravity_agent`, `antigravity_tools_agent`, or `antigravity_memory_agent`.
+Stop the current process before restarting the same identity.
+
+**Application tools and task boards:**
+
+```bash
+uv run examples/acp/clients/antigravity-tools.py
+```
+
+Try: `Use digest to hash 'hello', create a Band task containing the digest,
+mark your work completed, then read its details and history.` The custom tool
+executes in the SDK process through the embedded MCP server. Task tools update
+the shared Band room board; native Antigravity tasks are separate. Tool events
+show the real calls in the room. Task support is opt-in in this example.
+
+**Durable memory:**
+
+```bash
+uv run examples/acp/clients/antigravity-memory.py
+```
+
+Try: `Remember in Band memory that I prefer concise status updates.` Then add the
+same agent to a different room and ask: `What do you remember about my update
+style? Search Band memory.` This checks persistent platform memory without
+relying on the earlier room's native conversation. Memory belongs to that agent;
+a second example identity does not inherit it.
+
+**Permissions and room isolation:** with the basic example, set
+`ANTIGRAVITY_APPROVAL_MODE=auto_decline` and request a shell command that writes a
+temporary workspace file. Requested shell execution should be refused; Band
+messaging and participant lookup remain available. Workspace reads and scheduling
+have the native limitations below. To check isolation, give the same agent a
+different conversation note in two rooms and ask for each note independently.
+For collaboration, add two separately configured examples to one room and ask one
+to mention the other through Band messaging. For restart recall, stop and relaunch
+the same identity with the same home/workspace settings before asking for its note.
 
 ### State and permission boundaries
 

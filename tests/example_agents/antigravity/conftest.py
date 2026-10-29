@@ -16,10 +16,10 @@ if importlib.util.find_spec("acp") is None:
 
 
 @pytest.fixture
-def antigravity_example(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+def antigravity_settings(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     module = load_script_module(
-        EXAMPLES_ROOT / "acp" / "clients" / "antigravity.py",
-        "antigravity_client_example",
+        EXAMPLES_ROOT / "acp" / "clients" / "antigravitysettings.py",
+        "antigravity_example_settings",
     )
     for name in tuple(os.environ):
         if name.lower() in module.Settings.model_fields:

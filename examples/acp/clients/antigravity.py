@@ -15,53 +15,18 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from antigravitysettings import Settings, build_config
 from dotenv import load_dotenv
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
-from band.adapters import AntigravityACPAdapter, AntigravityACPAdapterConfig
-from band.core.types import ApprovalMode
+from band.adapters import AntigravityACPAdapter
 
 logger = logging.getLogger(__name__)
-DEFAULT_CONFIG = AntigravityACPAdapterConfig()
-MISSING_PROVIDER_KEY = "Set GEMINI_API_KEY or GOOGLE_API_KEY in .env.test"
-
-
-class Settings(BaseSettings):
-    """Read example overrides while retaining the SDK's native defaults."""
-
-    model_config = SettingsConfigDict(
-        extra="ignore", case_sensitive=False, env_ignore_empty=True
-    )
-
-    gemini_api_key: str = Field(default="", repr=False)
-    google_api_key: str = Field(default="", repr=False)
-    antigravity_command: tuple[str, ...] = DEFAULT_CONFIG.command
-    acp_agent_cwd: str | None = DEFAULT_CONFIG.cwd
-    antigravity_home: str = DEFAULT_CONFIG.gemini_home
-    antigravity_model: str | None = DEFAULT_CONFIG.model
-    antigravity_reasoning_effort: str | None = DEFAULT_CONFIG.reasoning_effort
-    antigravity_approval_mode: ApprovalMode = DEFAULT_CONFIG.approval_mode
 
 
 def build_adapter(settings: Settings) -> AntigravityACPAdapter:
     """Build the room adapter with an explicitly supplied provider credential."""
-    api_key = settings.gemini_api_key or settings.google_api_key
-    if not api_key:
-        raise ValueError(MISSING_PROVIDER_KEY)
-
-    return AntigravityACPAdapter(
-        AntigravityACPAdapterConfig(
-            command=settings.antigravity_command,
-            cwd=settings.acp_agent_cwd,
-            gemini_api_key=api_key,
-            gemini_home=settings.antigravity_home,
-            model=settings.antigravity_model,
-            reasoning_effort=settings.antigravity_reasoning_effort,
-            approval_mode=settings.antigravity_approval_mode,
-        )
-    )
+    return AntigravityACPAdapter(build_config(settings))
 
 
 async def main() -> None:

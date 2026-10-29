@@ -350,3 +350,13 @@ jerry_agent:
 support_agent:
   agent_id: ""
   api_key: ""
+
+# Antigravity custom-tool/task-board example (use a separate remote agent)
+antigravity_tools_agent:
+  agent_id: "your-antigravity-tools-agent-id"
+  api_key: "your-antigravity-tools-agent-api-key"
+
+# Antigravity durable-memory example (use a separate remote agent)
+antigravity_memory_agent:
+  agent_id: "your-antigravity-memory-agent-id"
+  api_key: "your-antigravity-memory-agent-api-key"
