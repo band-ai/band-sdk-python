@@ -304,7 +304,7 @@ class TestSubprocessCleanup:
             "band.integrations.codex.winspawn._write_status",
             lambda _handle, code: written.append(code),
         )
-        assert _start_and_wait("missing", 1, ("codex",)) == 1
+        assert _start_and_wait("missing", 1, ("codex",), {}) == 1
         assert written == [5]
 
     @pytest.mark.parametrize(

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from acp import run_agent
+from acp.exceptions import RequestError
 from acp.schema import (
     InitializeResponse,
     LoadSessionResponse,
@@ -101,9 +102,14 @@ async def controlled_exit(peer: StdioPeer, port: int) -> asyncio.Task[None]:
 
     async def exit_when_requested() -> None:
         try:
-            command = await reader.readline()
-            if command not in (b"", control_line(PipeCommand.EXIT)):
-                raise ValueError(f"Unexpected agent command: {command!r}")
+            while command := await reader.readline():
+                match PipeCommand(command.decode().strip()):
+                    case PipeCommand.EXIT:
+                        return
+                    case PipeCommand.REJECT_INITIALIZE:
+                        peer.initialization_rejected.set()
+                    case _:
+                        raise ValueError(f"Unexpected agent command: {command!r}")
         finally:
             writer.close()
             peer.exit_process()
@@ -120,6 +126,7 @@ class StdioPeer(FakeACPAgent):
         self.code = code
         self.lines = lines
         self.crash_marker = crash_marker
+        self.initialization_rejected = asyncio.Event()
         self.on_prompt(self.exit_on_prompt)
 
     def exit_process(self) -> None:
@@ -137,7 +144,8 @@ class StdioPeer(FakeACPAgent):
             case ExitStage.INITIALIZE_WAIT:
                 sys.stderr.write(INITIALIZE_PENDING_LINE + "\n")
                 sys.stderr.flush()
-                await asyncio.Future[None]()
+                await self.initialization_rejected.wait()
+                raise RequestError.internal_error()
         return await super().initialize(protocol_version, client_capabilities, **kwargs)
 
     async def fail_protocol(self) -> None:

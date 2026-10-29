@@ -19,6 +19,8 @@ from acp.schema import (
 
 logger = logging.getLogger(__name__)
 ACP_STDIO_LIMIT_BYTES = 16 * 1024 * 1024
+# asyncio's subprocess default when the builtin transport override is disabled.
+ACP_DEFAULT_STDIO_LIMIT_BYTES = 64 * 1024
 
 
 def tcp_spawn_process(

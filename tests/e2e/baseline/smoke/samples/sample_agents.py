@@ -131,14 +131,16 @@ COST_MULTI_TURN_AGENT = {
 # Adapters excluded from every per-turn-usage gate (the usage smokes and the
 # restart usage split). Keep this registry-derived fan honest: only adapters
 # unable to observe per-turn usage belong here.
+ACP_USAGE_UNAVAILABLE = "ACP adapter does not emit per-turn token usage"
 USAGE_EXCLUSIONS = (
     ExcludedAdapter(Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"),
     ExcludedAdapter(
         Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
     ),
-    ExcludedAdapter(Adapter.COPILOT_ACP, "ACP exposes no per-turn token-usage updates"),
-    ExcludedAdapter(Adapter.CURSOR_ACP, "ACP exposes no per-turn token-usage updates"),
-    ExcludedAdapter(Adapter.OMP_ACP, "ACP exposes no per-turn token-usage updates"),
+    ExcludedAdapter(Adapter.ANTIGRAVITY_ACP, ACP_USAGE_UNAVAILABLE),
+    ExcludedAdapter(Adapter.COPILOT_ACP, ACP_USAGE_UNAVAILABLE),
+    ExcludedAdapter(Adapter.CURSOR_ACP, ACP_USAGE_UNAVAILABLE),
+    ExcludedAdapter(Adapter.OMP_ACP, ACP_USAGE_UNAVAILABLE),
     ExcludedAdapter(Adapter.OMP, "native OMP adapter does not emit per-turn usage"),
 )
 

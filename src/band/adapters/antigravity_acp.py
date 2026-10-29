@@ -29,6 +29,7 @@ from typing import ClassVar
 from pydantic import Field, field_validator
 from typing_extensions import Unpack
 
+from band.core.retention.config import RoomRetentionConfig
 from band.core.types import ApprovalMode, FeatureKwargs
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -56,6 +57,7 @@ ANTIGRAVITY_EXECUTABLE = "agy_acp_server.par"
 ANTIGRAVITY_WINDOWS_EXECUTABLE = "agy_acp_server.exe"
 ANTIGRAVITY_LINUX_UID_ARGUMENT = "--uid="
 TESTED_ANTIGRAVITY_VERSION = "1.4.3"
+ANTIGRAVITY_TRANSITION_TIMEOUT_S = 60.0
 DEFAULT_ANTIGRAVITY_HOME_ROOT = "~/.band/antigravity-acp"
 PRIVATE_HOME_MODE = 0o700
 GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
@@ -92,6 +94,12 @@ class AntigravityACPAdapterConfig(ACPClientAdapterConfig):
     gemini_api_key: str | None = Field(default=None, repr=False)
     gemini_home: str = Field(default=DEFAULT_ANTIGRAVITY_HOME_ROOT, min_length=1)
     approval_mode: ApprovalMode = "auto_accept"
+    # Concurrent Windows initialization can exceed the generic ACP budget.
+    retention: RoomRetentionConfig = Field(
+        default_factory=lambda: RoomRetentionConfig(
+            transition_timeout_s=ANTIGRAVITY_TRANSITION_TIMEOUT_S
+        )
+    )
 
     @field_validator("env")
     @classmethod

@@ -203,6 +203,9 @@ class Backends(BaseSettings):
     cursor_command: str = ""  # CURSOR_COMMAND (override the `agent` binary + args)
     cursor_api_key: str = Field(default="", repr=False)  # CURSOR_API_KEY
 
+    # JSON argv preserves executable paths and arguments containing spaces.
+    antigravity_command: tuple[str, ...] | None = None  # ANTIGRAVITY_COMMAND
+
     # OMP (oh-my-pi) over ACP (`omp_acp` adapter). Defaults to `omp acp` with
     # provider-qualified OMP_MODEL (passed as --model); override binary/args via OMP_COMMAND.
     # Native RPC needs its own complete override because ACP requires a subcommand.
@@ -218,6 +221,15 @@ class Backends(BaseSettings):
     # (observed: gpt-5.6-terra); OPENAI_MODEL keeps billed turns cheap and
     # deterministic.
     copilot_hosted_model: str = OPENAI_MODEL  # COPILOT_HOSTED_MODEL
+
+    @field_validator("antigravity_command")
+    @classmethod
+    def validate_antigravity_command(
+        cls, value: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        if value is not None and (not value or any(not arg.strip() for arg in value)):
+            raise ValueError("ANTIGRAVITY_COMMAND must contain nonempty argv entries")
+        return value
 
     @field_validator("codex_model")
     @classmethod

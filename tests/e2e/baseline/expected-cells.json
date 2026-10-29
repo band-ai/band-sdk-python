@@ -618,6 +618,24 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/antigravity/test_cancellation.py::TestAntigravityCancellation::test_cancelled_native_tool_settles_before_resource_closes",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/antigravity/test_native_sessions.py::TestAntigravityNativeSessions::test_native_sessions_resume_per_agent_and_room",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/copilotsdk/test_handler.py::TestAskUserHandler::test_copilot_ask_user_handler_round_trips_to_room_reply",
       "adapter": "suite",
       "lanes": [
@@ -649,6 +667,42 @@
       "adapter": "suite",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/omp/test_permission_cancel.py::TestOmpPermissionCancel::test_omp_native_permission_is_cancelled",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/omp/test_permission_deny.py::TestOmpPermissionDeny::test_omp_native_permission_is_denied",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/omp/test_raw_rpc.py::TestOmpRawRpc::test_omp_raw_rpc_prompt_completes",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/omp/test_tool_narration.py::TestOmpToolNarration::test_omp_band_tool_call_is_narrated",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -865,42 +919,6 @@
       "adapter": "suite",
       "lanes": [
         "nooa"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/adapters/omp/test_tool_narration.py::TestOmpToolNarration::test_omp_band_tool_call_is_narrated",
-      "adapter": "suite",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/adapters/omp/test_permission_cancel.py::TestOmpPermissionCancel::test_omp_native_permission_is_cancelled",
-      "adapter": "suite",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/adapters/omp/test_permission_deny.py::TestOmpPermissionDeny::test_omp_native_permission_is_denied",
-      "adapter": "suite",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/adapters/omp/test_raw_rpc.py::TestOmpRawRpc::test_omp_raw_rpc_prompt_completes",
-      "adapter": "suite",
-      "lanes": [
-        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -1515,6 +1533,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -1668,6 +1695,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -1815,6 +1851,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -1968,6 +2013,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -2121,6 +2175,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -2274,6 +2337,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -2427,6 +2499,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -2585,6 +2666,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-antigravity_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-claude_sdk]",
       "adapter": "suite",
       "lanes": [
@@ -2733,6 +2823,15 @@
       "adapter": "suite",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-antigravity_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -3230,6 +3329,22 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "ACP adapter does not emit per-turn token usage"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -3260,7 +3375,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
@@ -3317,7 +3432,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
@@ -3394,7 +3509,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
@@ -3443,6 +3558,22 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "ACP adapter does not emit per-turn token usage"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -3473,7 +3604,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -3530,7 +3661,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -3607,7 +3738,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -3953,6 +4084,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py::test_build_adapter_constructs_each",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py::test_build_adapter_constructs_each",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -4124,6 +4264,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py::test_per_adapter_replies",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py::test_per_adapter_replies",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -4289,6 +4438,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_burst_recall.py::test_burst_handled_then_spanning_recall",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -4487,6 +4645,22 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "claude_sdk",
       "lanes": [
         "backends",
@@ -5033,6 +5207,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_list_contacts_across_contacts_adapters",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_list_contacts_across_contacts_adapters",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -5177,6 +5360,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_memory_survives_adapter_rehydration",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_memory_survives_adapter_rehydration",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -5315,6 +5507,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_recall_memory_across_memory_adapters",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -5492,6 +5693,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_store_memory_across_memory_adapters",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_store_memory_across_memory_adapters",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -5636,6 +5846,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_task_lifecycle_across_task_adapters",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_task_lifecycle_across_task_adapters",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -5774,6 +5993,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_concurrent_instances.py::test_concurrent_same_adapter_instances_each_reply",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -5952,6 +6180,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_context_recall.py::test_recalls_after_rejoin",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -6165,6 +6402,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_context_recall.py::test_recalls_within_session",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -6844,6 +7090,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_loop_suppression.py::test_peer_message_drives_turn_without_loop",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_loop_suppression.py::test_peer_message_drives_turn_without_loop",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -6996,7 +7251,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "agno",
       "lanes": [
         "core"
@@ -7005,7 +7260,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "anthropic",
       "lanes": [
         "backends",
@@ -7021,7 +7276,7 @@
       "reason": "ignores exclude_tools, so band_no_reply stays callable"
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "claude_sdk",
       "lanes": [
         "backends",
@@ -7037,7 +7292,7 @@
       "reason": "ignores exclude_tools, so band_no_reply stays callable"
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "copilot_sdk",
       "lanes": [
         "backends",
@@ -7053,7 +7308,7 @@
       "reason": "relays the model's final text, so an empty turn can't be scripted reliably"
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "crewai",
       "lanes": [
         "crewai"
@@ -7062,7 +7317,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "gemini",
       "lanes": [
         "backends",
@@ -7078,7 +7333,7 @@
       "reason": "ignores exclude_tools, so band_no_reply stays callable"
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "google_adk",
       "lanes": [
         "backends",
@@ -7094,7 +7349,7 @@
       "reason": "ignores exclude_tools, so band_no_reply stays callable"
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "langgraph",
       "lanes": [
         "core"
@@ -7103,7 +7358,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "nooa",
       "lanes": [
         "nooa"
@@ -7112,7 +7367,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "pydantic_ai",
       "lanes": [
         "core"
@@ -7121,7 +7376,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed",
       "adapter": "strands",
       "lanes": [
         "strands"
@@ -7130,7 +7385,16 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
       "adapter": "codex",
       "lanes": [
         "backends"
@@ -7139,7 +7403,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
       "adapter": "copilot_acp",
       "lanes": [
         "backends"
@@ -7148,7 +7412,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
       "adapter": "cursor_acp",
       "lanes": [
         "backends"
@@ -7157,7 +7421,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
       "adapter": "omp",
       "lanes": [
         "backends"
@@ -7166,7 +7430,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -7175,7 +7439,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "agno",
       "lanes": [
         "core"
@@ -7184,7 +7448,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "anthropic",
       "lanes": [
         "core"
@@ -7193,7 +7457,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -7202,7 +7466,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "copilot_sdk",
       "lanes": [
         "core"
@@ -7211,7 +7475,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "crewai",
       "lanes": [
         "crewai"
@@ -7220,7 +7484,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "gemini",
       "lanes": [
         "google"
@@ -7229,7 +7493,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "google_adk",
       "lanes": [
         "google"
@@ -7238,7 +7502,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "langgraph",
       "lanes": [
         "core"
@@ -7247,7 +7511,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "nooa",
       "lanes": [
         "nooa"
@@ -7256,7 +7520,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "pydantic_ai",
       "lanes": [
         "core"
@@ -7265,7 +7529,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply",
       "adapter": "strands",
       "lanes": [
         "strands"
@@ -7274,7 +7538,16 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
       "adapter": "codex",
       "lanes": [
         "backends"
@@ -7283,7 +7556,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
       "adapter": "copilot_acp",
       "lanes": [
         "backends"
@@ -7292,7 +7565,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
       "adapter": "cursor_acp",
       "lanes": [
         "backends"
@@ -7301,7 +7574,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
       "adapter": "omp",
       "lanes": [
         "backends"
@@ -7310,7 +7583,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::TestNoReply::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -7332,6 +7605,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_noisy_room.py::test_recall_and_ignore_crosstalk_in_busy_room",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -7874,6 +8156,22 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "ACP adapter does not emit per-turn token usage"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -7895,7 +8193,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
@@ -7952,7 +8250,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
@@ -8020,7 +8318,7 @@
         "strands"
       ],
       "status": "na",
-      "reason": "ACP exposes no per-turn token-usage updates"
+      "reason": "ACP adapter does not emit per-turn token usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
@@ -8054,6 +8352,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_offline.py::test_recalls_offline_note_on_cold_boot",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -8239,6 +8546,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_partial.py::test_partial_reboot_preserves_context_and_peer",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null
@@ -8431,6 +8747,15 @@
       "adapter": "anthropic",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_isolation.py::test_rooms_keep_isolated_context",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
       ],
       "status": "pass",
       "reason": null

@@ -1,4 +1,4 @@
-"""Antigravity's pending builder uses API keys and owns disposable native state."""
+"""Antigravity's builder uses API keys and owns disposable native state."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 from band.core.types import AdapterFeatures, Capability
 from band.workspaces import create_room_workspace_resolver
 from tests.adaptercleanup import HostKind, host_for
-from tests.e2e.baseline.settings import BaselineSettings, LLMCredentials
+from tests.e2e.baseline.settings import Backends, BaselineSettings, LLMCredentials
 from tests.e2e.baseline.toolkit.adapters import Adapter, build_adapter
 
 if TYPE_CHECKING:
@@ -31,10 +31,12 @@ class TestAntigravityBuilder:
     async def test_api_key_configuration_and_native_state_are_owned_until_host_stop(
         self, gemini_key: str, google_key: str, expected_key: str
     ) -> None:
+        command = ("native installation/server.exe", "argument with spaces")
         settings = BaselineSettings(
+            backends=Backends(antigravity_command=command),
             llm_credentials=LLMCredentials(
                 gemini_api_key=gemini_key, google_api_key=google_key
-            )
+            ),
         )
         adapter = cast(
             "AntigravityACPAdapter",
@@ -48,6 +50,7 @@ class TestAntigravityBuilder:
         sandbox = Path(adapter.config.gemini_home).parent
         async with host_for(adapter, HostKind.AGENT) as host:
             await host.start()
+            assert adapter.config.command == command
             assert adapter.config.gemini_api_key == expected_key
             assert adapter.config.model == settings.llm_models.gemini_model
             assert adapter.config.custom_section == "Use the room tools"

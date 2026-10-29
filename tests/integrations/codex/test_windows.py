@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections.abc import Sequence
@@ -26,26 +27,25 @@ class TestWindowsJobCleanup:
         pythonpath.mkdir()
         client = CodexStdioClient(
             command=[
-                sys.executable,
+                sys._base_executable,  # type: ignore[attr-defined]
                 "-c",
                 (
-                    "import pathlib, sys; "
-                    "pathlib.Path('observed').write_text('\\n'.join(sys.path))"
+                    "import json, pathlib, sys; "
+                    "pathlib.Path('observed').write_text(json.dumps("
+                    "{'path': sys.path, 'prefix': sys.prefix}))"
                 ),
             ],
             cwd=str(workdir),
-            env={"PYTHONPATH": pythonpath.name},
+            env={"PYTHONPATH": pythonpath.name, "__PYVENV_LAUNCHER__": sys.executable},
         )
         try:
             await client.connect()
             assert client._proc is not None
             await client._proc.wait()
-            observed = {
-                Path(path).resolve()
-                for path in (workdir / "observed").read_text().splitlines()
-                if path
-            }
-            assert pythonpath.resolve() in observed
+            observed = json.loads((workdir / "observed").read_text())
+            paths = {Path(path).resolve() for path in observed["path"] if path}
+            assert pythonpath.resolve() in paths
+            assert Path(observed["prefix"]).samefile(sys.prefix)
         finally:
             await client.close()
 
