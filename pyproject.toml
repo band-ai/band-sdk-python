@@ -75,7 +75,7 @@ pydantic-ai = [
     "openai>=3.26.0,<4",
 ]
 anthropic = [
-    "anthropic>=0.75.0,<2",
+    "anthropic>=0.75.0,<3",
 ]
 langgraph = [
     "langchain>=1.0.0",
@@ -218,7 +218,7 @@ dev = [
     # Include pydantic-ai for testing
     "pydantic-ai-slim[anthropic,openai]>=2.55.0",
     # Include anthropic for testing
-    "anthropic>=0.75.0,<2",
+    "anthropic>=0.75.0,<3",
     # Include claude_sdk for testing
     "claude-agent-sdk>=0.2.159",
     # Include copilot_sdk for testing
@@ -304,7 +304,7 @@ dev-crewai = [
     "pillow>=12.1.1",
     # Anthropic client: the baseline E2E conftest imports it at module load and
     # the LLM judge needs it. A thin client (pydantic <3), so no crewai conflict.
-    "anthropic>=0.75.0,<2",
+    "anthropic>=0.75.0,<3",
     # A2A e2e smokes import band.integrations.a2a at module load, no crewai conflict
     "a2a-sdk>=1.1.2,<2",
     # Pretty E2E test output
@@ -339,7 +339,7 @@ dev-parlant = [
     "werkzeug>=3.1.6",
     # Anthropic client: the baseline E2E conftest imports it at module load and
     # the LLM judge needs it. A thin client (pydantic <3), so no parlant conflict.
-    "anthropic>=0.75.0,<2",
+    "anthropic>=0.75.0,<3",
     # A2A e2e smokes import band.integrations.a2a at module load, no parlant conflict
     "a2a-sdk>=1.1.2,<2",
     # Pretty E2E test output
@@ -372,7 +372,7 @@ dev-strands-nooa = [
     "nooa>=0.0.10,<0.1; python_version >= '3.12' and python_version < '3.14' and sys_platform != 'win32'",
     "openai>=2.0.0,<3",
     # Shared clients for baseline collection and the judge.
-    "anthropic>=0.75.0,<2",
+    "anthropic>=0.75.0,<3",
     "a2a-sdk>=1.1.2,<2",
     "langchain>=1.0.0",
     "langchain-core>=1.2.11",
