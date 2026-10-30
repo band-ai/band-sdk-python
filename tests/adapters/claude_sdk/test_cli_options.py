@@ -103,12 +103,15 @@ class TestCliOptions:
         assert SEND_MESSAGE_MCP_NAME in options.allowed_tools
         assert options.setting_sources == []
 
-    async def test_every_flag_the_cli_gets_is_adapter_owned(
+    async def test_every_canonically_named_flag_the_cli_gets_is_adapter_owned(
         self, claude_room: OpenRoom, tmp_path: Path
     ) -> None:
-        # What the SDK may put on the child's argv is exactly the adapter's own
-        # vocabulary: every emitted flag is reserved against raw extra_args, so no
-        # host-supplied spelling can shadow an adapter-emitted one.
+        # What the SDK may put on the child's argv is the adapter's own vocabulary plus
+        # the host's explicitly raw flags. The reserved check rejects a raw *exact-name*
+        # duplicate of an adapter-owned flag; a malformed spelling (e.g. ``settings=x``,
+        # with an embedded ``=``) is not the canonical name and passes the exact-match
+        # check -- a pre-existing validator gap, not introduced here (tracked separately).
+        # This test pins the canonical-name guarantee only.
         settings = tmp_path / "team-settings.json"
         settings.write_text('{"model": "sonnet"}')
         cli = ClaudeCLIOptions(
@@ -134,8 +137,9 @@ class TestCliOptions:
         emitted = _emitted_flags(options)
         # Every owned flag arrives through the adapter's typed configuration...
         assert emitted >= SDK_OWNED_CLI_FLAGS
-        # ...and nothing else can appear except the host's own raw additions, so no
-        # spelling outside the reserved vocabulary shadows an adapter-emitted flag.
+        # ...and no canonical name outside that set appears except the host's raw
+        # additions, so the adapter's typed flags cannot be duplicated by a raw
+        # exact-name spelling.
         assert emitted <= SDK_OWNED_CLI_FLAGS | set(cli.extra_args)
         assert options.extra_args == {"debug-to-stderr": None}
 

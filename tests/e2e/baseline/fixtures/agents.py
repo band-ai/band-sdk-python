@@ -167,7 +167,8 @@ def peer(
         prompt=each.prompt,
         features=each.features,
         tools=each.tools,
-        builder_kwargs=each.builder_kwargs,
+        # builder_kwargs steer the CELL's adapter builder specifically; handing them
+        # to a foreign-framework peer's builder would raise on an undeclared argument.
     )
 
 

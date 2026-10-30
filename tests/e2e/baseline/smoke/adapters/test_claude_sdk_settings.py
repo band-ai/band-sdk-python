@@ -71,7 +71,7 @@ class TestClaudeSdkSettings:
         )
 
         async with (
-            cell.run_as(identity, builder_kwargs={"cli_settings": str(settings)}),
+            cell.run_as(identity, cli_settings=str(settings)),
             reply_capture(room_id) as capture,
         ):
             word = unique_marker("settings-turn")

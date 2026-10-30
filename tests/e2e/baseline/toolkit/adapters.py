@@ -325,21 +325,24 @@ def build_adapter(
     features: AdapterFeatures | None = None,
     tools: list[ToolSpec] | None = None,
     workspace_for_room: WorkspaceResolver | None = None,
+    **builder_kwargs: Any,
 ) -> SimpleAdapter[Any]:
     """Construct the adapter registered under ``adapter_id``.
 
     ``prompt`` is a steering system prompt (each builder routes it to the right
     constructor argument); ``features`` flips capabilities/emission on. An unknown
-    id is a programming error and names the registered set.
+    id is a programming error and names the registered set. ``builder_kwargs`` are
+    adapter-specific steering forwarded to that adapter's builder — an argument the
+    builder does not declare raises there, never silently.
     """
     spec = _REGISTRY.get(adapter_id)
     if spec is None:
         raise ValueError(
             f"unknown adapter {adapter_id!r}; registered: {sorted(_REGISTRY)}"
         )
-    kwargs = (
-        {} if workspace_for_room is None else {"workspace_for_room": workspace_for_room}
-    )
+    kwargs: dict[str, Any] = dict(builder_kwargs)
+    if workspace_for_room is not None:
+        kwargs["workspace_for_room"] = workspace_for_room
     return spec.build(settings, prompt=prompt, features=features, tools=tools, **kwargs)
 
 
