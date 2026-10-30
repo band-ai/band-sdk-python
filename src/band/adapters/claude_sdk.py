@@ -226,6 +226,7 @@ SDK_OWNED_CLI_FLAGS: frozenset[str] = frozenset(
         "plugin-dir",
         "resume",
         "setting-sources",
+        "settings",
         "thinking-display",
         "verbose",
     }
@@ -241,7 +242,6 @@ BAND_UNSAFE_CLI_FLAGS: frozenset[str] = frozenset(
         "strict-mcp-config",
         "system-prompt",
         "system-prompt-file",
-        "settings",
         "agents",
         "bare",
         "dangerously-skip-permissions",
@@ -275,6 +275,16 @@ class ClaudeCLIOptions(BaseAdapterConfig):
         extra_args: Additional CLI flags by bare name, ``{"flag": "value"}``
             or ``{"flag": None}`` for a bare flag. Flags in
             ``RESERVED_CLI_FLAGS`` are rejected.
+        settings: Explicit Claude configuration passed to the CLI verbatim —
+            a settings file path or inline JSON, mirroring
+            ``claude_agent_sdk.ClaudeAgentOptions.settings``. Opt-in: with
+            none the CLI is launched without ``--settings`` and only
+            ``setting_sources`` decides what host config loads. Selecting it
+            does not enable user/project setting sources, and the file's
+            contents are the operator's own trusted configuration: native
+            permission rules, managed policy, hooks and plugins inside it
+            keep Claude Code's own precedence, which this SDK neither
+            overrides nor validates.
     """
 
     cli_path: str | None = None
@@ -282,6 +292,7 @@ class ClaudeCLIOptions(BaseAdapterConfig):
     add_dirs: tuple[str, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)
     extra_args: dict[str, str | None] = Field(default_factory=dict)
+    settings: str | None = None
 
     @field_validator("extra_args")
     @classmethod
@@ -316,6 +327,7 @@ class ClaudeCLIOptions(BaseAdapterConfig):
             "add_dirs": list(self.add_dirs),
             "env": dict(self.env),
             "extra_args": dict(self.extra_args),
+            "settings": self.settings,
         }
 
 

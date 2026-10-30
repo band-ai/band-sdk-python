@@ -16,6 +16,7 @@ from claude_agent_sdk.types import (
 
 from band.adapters.claude_sdk import (
     BAND_MCP_TOKEN_ENV,
+    RESERVED_CLI_FLAGS,
     SDK_OWNED_CLI_FLAGS,
     ClaudeApprovalOptions,
     ClaudeCLIOptions,
@@ -102,9 +103,23 @@ class TestCliOptions:
         assert SEND_MESSAGE_MCP_NAME in options.allowed_tools
         assert options.setting_sources == []
 
-    async def test_sdk_owned_flags_match_what_the_adapter_makes_the_sdk_emit(
+    async def test_every_canonically_named_flag_the_cli_gets_is_adapter_owned(
         self, claude_room: OpenRoom, tmp_path: Path
     ) -> None:
+        # What the SDK may put on the child's argv is the adapter's own vocabulary plus
+        # the host's explicitly raw flags. The reserved check rejects a raw *exact-name*
+        # duplicate of an adapter-owned flag; a malformed spelling (e.g. ``settings=x``,
+        # with an embedded ``=``) is not the canonical name and passes the exact-match
+        # check -- a pre-existing validator gap, not introduced here (tracked separately).
+        # This test pins the canonical-name guarantee only.
+        settings = tmp_path / "team-settings.json"
+        settings.write_text('{"model": "sonnet"}')
+        cli = ClaudeCLIOptions(
+            plugin_dirs=(str(tmp_path),),
+            add_dirs=(str(tmp_path),),
+            extra_args={"debug-to-stderr": None},
+            settings=str(settings),
+        )
         room = await claude_room(
             ClaudeSDKAdapterConfig(
                 model="sonnet",
@@ -113,15 +128,120 @@ class TestCliOptions:
                 max_thinking_tokens=1024,
                 cwd=tmp_path,
                 approvals=ClaudeApprovalOptions(mode="manual"),
-                cli=ClaudeCLIOptions(
-                    plugin_dirs=(str(tmp_path),), add_dirs=(str(tmp_path),)
-                ),
+                cli=cli,
             )
         )
 
         options = await _cli_options(room, session_id="sess-1")
 
-        assert _emitted_flags(options) == SDK_OWNED_CLI_FLAGS
+        emitted = _emitted_flags(options)
+        # Every owned flag arrives through the adapter's typed configuration...
+        assert emitted >= SDK_OWNED_CLI_FLAGS
+        # ...and no canonical name outside that set appears except the host's raw
+        # additions, so the adapter's typed flags cannot be duplicated by a raw
+        # exact-name spelling.
+        assert emitted <= SDK_OWNED_CLI_FLAGS | set(cli.extra_args)
+        assert options.extra_args == {"debug-to-stderr": None}
+
+    async def test_typed_settings_reaches_the_cli_exactly_once(
+        self, claude_room: OpenRoom, tmp_path: Path
+    ) -> None:
+        settings = tmp_path / "team-settings.json"
+        settings.write_text('{"model": "sonnet"}')
+        room = await claude_room(
+            ClaudeSDKAdapterConfig(cli=ClaudeCLIOptions(settings=str(settings)))
+        )
+
+        options = await _cli_options(room)
+
+        assert options.settings == str(settings)
+        argv = sdk_cli_argv(options)
+        assert argv.count("--settings") == 1
+        assert argv[argv.index("--settings") + 1] == str(settings)
+
+    async def test_no_settings_flag_for_an_agent_that_selected_none(
+        self, claude_room: OpenRoom
+    ) -> None:
+        room = await claude_room(ClaudeSDKAdapterConfig())
+
+        options = await _cli_options(room)
+
+        assert options.settings is None
+        assert "--settings" not in sdk_cli_argv(options)
+
+    async def test_inline_json_settings_pass_through_untouched(
+        self, claude_room: OpenRoom
+    ) -> None:
+        # The SDK accepts a path or inline JSON; the adapter hands the exact text to
+        # the CLI and interprets nothing — no rewrite, no file access here.
+        inline = '{"permissions": {"defaultMode": "plan"}}'
+        room = await claude_room(
+            ClaudeSDKAdapterConfig(cli=ClaudeCLIOptions(settings=inline))
+        )
+
+        options = await _cli_options(room)
+
+        assert options.settings == inline
+        argv = sdk_cli_argv(options)
+        assert argv[argv.index("--settings") + 1] == inline
+
+    async def test_settings_survives_fresh_resume_and_the_fresh_replacement(
+        self, claude_room: OpenRoom, tmp_path: Path
+    ) -> None:
+        # options_for() copies base_options per room session, so the selection must
+        # ride every way a session begins: a fresh room, the bootstrap resume of a
+        # recorded session, and the fresh session that heals an unresumable one.
+        settings = tmp_path / "team-settings.json"
+        settings.write_text('{"model": "sonnet"}')
+        config = ClaudeSDKAdapterConfig(cli=ClaudeCLIOptions(settings=str(settings)))
+        first = await claude_room(config)
+        second = await claude_room(config)
+        third = await claude_room(config)
+        first.claude.unresumable.add("sess-broken")
+        first.claude.script(
+            [first.model_reply("first")],
+            [first.model_reply("resumed")],
+            [first.model_reply("replaced")],
+        )
+
+        await first.send("one")
+        await second.send("two", session_id="sess-from-history")
+        await third.send("three", session_id="sess-broken")
+
+        launches = first.claude.sessions
+        assert [session.options.resume for session in launches] == [
+            None,
+            "sess-from-history",
+            "sess-broken",
+            None,
+        ]
+        assert all(session.options.settings == str(settings) for session in launches)
+        assert first.chat + second.chat + third.chat == ["first", "resumed", "replaced"]
+
+    async def test_settings_leaves_band_wiring_and_permission_routing_in_place(
+        self, claude_room: OpenRoom, tmp_path: Path
+    ) -> None:
+        # A selected settings file must not widen what Band exposes: the MCP backend
+        # stays the single "band" server, the reply tools stay allowed, host setting
+        # sources stay closed, and the approval callback keeps its routing.
+        settings = tmp_path / "team-settings.json"
+        settings.write_text('{"model": "sonnet"}')
+        room = await claude_room(
+            ClaudeSDKAdapterConfig(
+                approvals=ClaudeApprovalOptions(mode="manual"),
+                cli=ClaudeCLIOptions(settings=str(settings)),
+            )
+        )
+
+        options = await _cli_options(room)
+
+        assert list(options.mcp_servers) == ["band"]
+        assert SEND_MESSAGE_MCP_NAME in options.allowed_tools
+        assert options.setting_sources == []
+        assert options.can_use_tool is not None
+        argv = sdk_cli_argv(options)
+        assert argv[argv.index("--permission-prompt-tool") + 1] == "stdio"
+        assert argv.count("--settings") == 1
 
     @pytest.mark.parametrize(
         ("emit", "display"),
@@ -140,9 +260,7 @@ class TestCliOptions:
         assert options.thinking is not None
         assert options.thinking.get("display") == display
 
-    @pytest.mark.parametrize(
-        "flag", ["mcp-config", "effort", "settings", "dangerously-skip-permissions"]
-    )
+    @pytest.mark.parametrize("flag", sorted(RESERVED_CLI_FLAGS))
     def test_extra_args_cannot_replace_adapter_owned_flags(self, flag: str) -> None:
         with pytest.raises(ValueError, match="adapter-owned CLI flags"):
             ClaudeCLIOptions(extra_args={flag: "x"})

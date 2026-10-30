@@ -13,8 +13,9 @@ topologies build through ``AdapterCell`` so construction + run wiring lives in o
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
+from typing import Any
 
 import pytest
 
@@ -50,6 +51,7 @@ def _make_cell(
     prompt: str | None,
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None,
+    builder_kwargs: Mapping[str, Any] | None = None,
 ) -> AdapterCell:
     """Build an ``AdapterCell`` with the decorator's steering, defaulting the prompt."""
     return AdapterCell(
@@ -59,6 +61,7 @@ def _make_cell(
         prompt=prompt if prompt is not None else _SHORT_PROMPT,
         features=features,
         tools=tools,
+        builder_kwargs=dict(builder_kwargs or {}),
     )
 
 
@@ -126,6 +129,7 @@ def cell(
         prompt=each.prompt,
         features=each.features,
         tools=each.tools,
+        builder_kwargs=each.builder_kwargs,
     )
 
 
@@ -163,6 +167,8 @@ def peer(
         prompt=each.prompt,
         features=each.features,
         tools=each.tools,
+        # builder_kwargs steer the CELL's adapter builder specifically; handing them
+        # to a foreign-framework peer's builder would raise on an undeclared argument.
     )
 
 
