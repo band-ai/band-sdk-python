@@ -30,9 +30,9 @@ decorators and the handle from one place.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from typing import ClassVar, Self
+from typing import Any, ClassVar, Self
 
 import pytest
 from _pytest.mark.structures import ParameterSet
@@ -160,6 +160,7 @@ class PerAdapter(MarkerPayload):
     tools: list[ToolSpec] | None
     peer: Adapter | None = None
     exclude: tuple[ExcludedAdapter, ...] = ()
+    builder_kwargs: Mapping[str, Any] | None = None
 
 
 def with_adapters(
@@ -246,6 +247,7 @@ def per_adapter(
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
     tools: list[ToolSpec] | None = None,
+    builder_kwargs: Mapping[str, Any] | None = None,
 ) -> Callable[[Callable[..., object]], Callable[..., object]]:
     """Fan a test across the adapter matrix — one invocation per selected adapter.
 
@@ -309,7 +311,12 @@ def per_adapter(
             "the filter or fix the registry drift"
         )
     build = PerAdapter(
-        prompt=prompt, features=features, tools=tools, peer=peer, exclude=excluded
+        prompt=prompt,
+        features=features,
+        tools=tools,
+        peer=peer,
+        exclude=excluded,
+        builder_kwargs=builder_kwargs,
     )
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:

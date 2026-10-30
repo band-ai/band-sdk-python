@@ -109,8 +109,10 @@ def _build_claude_sdk(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
     workspace_for_room: WorkspaceResolver | None = None,
+    cli_settings: str | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.claude_sdk import (  # noqa: PLC0415 -- isolates the claude_sdk extra from the other frameworks this file builds
+        ClaudeCLIOptions,
         ClaudeSDKAdapter,
         ClaudeSDKAdapterConfig,
     )
@@ -120,6 +122,14 @@ def _build_claude_sdk(
         ClaudeSDKAdapterConfig(
             model=s.llm_models.anthropic_model,
             custom_section=prompt,
+            # A host-selected settings file (path or inline JSON) rides the typed CLI
+            # options exactly as a production caller would set it; None keeps the
+            # default launch untouched.
+            **(
+                {"cli": ClaudeCLIOptions(settings=cli_settings)}
+                if cli_settings is not None
+                else {}
+            ),
         ),
         workspace_for_room=workspace_for_room
         or create_room_workspace_resolver(sandbox.name),

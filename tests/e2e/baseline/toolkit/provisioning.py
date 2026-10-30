@@ -15,7 +15,7 @@ import asyncio
 import hashlib
 import logging
 import uuid
-from collections.abc import AsyncGenerator, Iterator, Sequence
+from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
@@ -731,6 +731,7 @@ class AdapterCell:
     prompt: str | None = None
     features: AdapterFeatures | None = None
     tools: list[ToolSpec] | None = None
+    builder_kwargs: Mapping[str, Any] = field(default_factory=dict)
 
     def build(
         self,
@@ -739,15 +740,19 @@ class AdapterCell:
         features: AdapterFeatures | None = None,
         tools: list[ToolSpec] | None = None,
         workspace_for_room: WorkspaceResolver | None = None,
+        **builder_kwargs: Any,
     ) -> SimpleAdapter[Any]:
-        """Construct (do not run) this cell's adapter; arguments override cell defaults."""
+        """Construct (do not run) this cell's adapter; arguments override cell defaults.
+
+        ``builder_kwargs`` are forwarded to this adapter's registry builder — the seam
+        for builder-specific steering (e.g. Claude's ``cli_settings``) that no shared
+        field owns; they override the cell's decorated defaults per call.
+        """
         # Overrides use None-means-"cell default" (not a sentinel): no test needs to
         # clear a default back to "no prompt", so the sentinel would be dead machinery.
-        kwargs = (
-            {}
-            if workspace_for_room is None
-            else {"workspace_for_room": workspace_for_room}
-        )
+        kwargs: dict[str, Any] = {**self.builder_kwargs, **builder_kwargs}
+        if workspace_for_room is not None:
+            kwargs["workspace_for_room"] = workspace_for_room
         return build_adapter(
             self.adapter_id,
             self.settings,
@@ -777,6 +782,7 @@ class AdapterCell:
         tools: list[ToolSpec] | None = None,
         session_config: SessionConfig | None = None,
         observer: InvocationObserver | None = None,
+        **builder_kwargs: Any,
     ) -> AsyncGenerator[ProvisionedAgent, None]:
         """Run a *fresh* adapter under an existing ``identity`` for the block.
 
@@ -789,7 +795,9 @@ class AdapterCell:
         ``observer`` watches the built adapter's turns; its parked turns are freed
         before the agent stops, so a failing test never waits on its own barrier.
         """
-        adapter = self.build(prompt=prompt, features=features, tools=tools)
+        adapter = self.build(
+            prompt=prompt, features=features, tools=tools, **builder_kwargs
+        )
         with self.resources.track_running(identity.id):
             async with running_observed_agent(
                 identity,
@@ -808,6 +816,7 @@ class AdapterCell:
         prompt: str | None = None,
         features: AdapterFeatures | None = None,
         tools: list[ToolSpec] | None = None,
+        **builder_kwargs: Any,
     ) -> AsyncGenerator[Agent, None]:
         """Like :meth:`run_as`, but yields the live ``Agent`` itself.
 
@@ -815,7 +824,9 @@ class AdapterCell:
         ``band.testing.transport.force_transport_disconnect`` for reconnect
         coverage) via ``agent.runtime.link``.
         """
-        adapter = self.build(prompt=prompt, features=features, tools=tools)
+        adapter = self.build(
+            prompt=prompt, features=features, tools=tools, **builder_kwargs
+        )
         with self.resources.track_running(identity.id):
             async with running_agent_with_handle(
                 identity, adapter, self.settings
@@ -832,6 +843,7 @@ class AdapterCell:
         tools: list[ToolSpec] | None = None,
         session_config: SessionConfig | None = None,
         observer: InvocationObserver | None = None,
+        **builder_kwargs: Any,
     ) -> AsyncGenerator[ProvisionedAgent, None]:
         """Provision an identity and run this cell's adapter as it for the block.
 
@@ -845,6 +857,7 @@ class AdapterCell:
             tools=tools,
             session_config=session_config,
             observer=observer,
+            **builder_kwargs,
         ) as running:
             yield running
 

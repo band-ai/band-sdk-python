@@ -771,6 +771,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_claude_sdk_settings.py::TestClaudeSdkSettings::test_a_selected_settings_file_acts_while_the_room_gets_its_reply",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_shell_approval_is_required[approve]",
       "adapter": "suite",
       "lanes": [
