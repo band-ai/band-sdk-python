@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from acp.helpers import start_tool_call
 from acp.schema import DeclineElicitationResponse
 
 from band.integrations.acp.client_runtime import ACPCollectingClient
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.types import CollectedChunk, ToolStatus
 from tests.integrations.acp.acp_toolkit.sink import NarrationSink
 from tests.integrations.acp.clientruntime.concurrency import ConcurrencyProbe
 
@@ -20,20 +22,6 @@ class TestACPCollectingClientSerialization:
     serialize the per-session ingest→sink path so room posts keep causal order,
     and must not lose a sink failure (the transport suppresses handler
     exceptions without a trace)."""
-
-    @pytest.fixture
-    def probe(self) -> ConcurrencyProbe:
-        return ConcurrencyProbe()
-
-    @staticmethod
-    def _tool_call(title: str, call_id: str) -> MagicMock:
-        return MagicMock(
-            session_update="tool_call",
-            title=title,
-            tool_call_id=call_id,
-            raw_input=None,
-            status="in_progress",
-        )
 
     @pytest.mark.asyncio
     async def test_concurrently_dispatched_updates_post_in_arrival_order(
@@ -57,7 +45,12 @@ class TestACPCollectingClientSerialization:
         await asyncio.gather(
             *(
                 asyncio.create_task(
-                    client.session_update("s1", self._tool_call(f"tool-{i}", f"tc-{i}"))
+                    client.session_update(
+                        "s1",
+                        start_tool_call(
+                            f"tc-{i}", f"tool-{i}", status=ToolStatus.IN_PROGRESS.value
+                        ),
+                    )
                 )
                 for i in range(3)
             )
@@ -79,7 +72,8 @@ class TestACPCollectingClientSerialization:
                 pass
 
         async def handler(
-            narrate_permission: object | None = None,
+            narrate_permission: Callable[[Awaitable[None]], Awaitable[None]]
+            | None = None,
             **kwargs: object,
         ) -> dict[str, object]:
             async def denied_posts() -> None:
@@ -96,7 +90,10 @@ class TestACPCollectingClientSerialization:
         client.set_permission_handler("s1", handler)
 
         await asyncio.gather(
-            client.session_update("s1", self._tool_call("tool-0", "tc-0")),
+            client.session_update(
+                "s1",
+                start_tool_call("tc-0", "tool-0", status=ToolStatus.IN_PROGRESS.value),
+            ),
             client.request_permission(
                 options=[], session_id="s1", tool_call=MagicMock()
             ),
@@ -116,7 +113,8 @@ class TestACPCollectingClientSerialization:
                 pass
 
         async def handler(
-            narrate_elicitation: object | None = None,
+            narrate_elicitation: Callable[[Awaitable[None]], Awaitable[None]]
+            | None = None,
             **kwargs: object,
         ) -> object:
             async def denied_posts() -> None:
@@ -133,7 +131,10 @@ class TestACPCollectingClientSerialization:
         client.set_elicitation_handler("s1", handler)
 
         await asyncio.gather(
-            client.session_update("s1", self._tool_call("tool-0", "tc-0")),
+            client.session_update(
+                "s1",
+                start_tool_call("tc-0", "tool-0", status=ToolStatus.IN_PROGRESS.value),
+            ),
             client.create_elicitation("Approve?", mode=MagicMock(session_id="s1")),
         )
 
@@ -180,13 +181,16 @@ class TestACPCollectingClientSerialization:
                 options=[], session_id="s1", tool_call=MagicMock()
             )
         )
-        await decision_started.wait()
-
-        await client.session_update("s1", self._tool_call("tool-0", "tc-0"))
-
-        assert posted == ["tool-0"]
-        release_decision.set()
-        await permission
+        try:
+            await decision_started.wait()
+            await client.session_update(
+                "s1",
+                start_tool_call("tc-0", "tool-0", status=ToolStatus.IN_PROGRESS.value),
+            )
+            assert posted == ["tool-0"]
+        finally:
+            release_decision.set()
+            await permission
 
     @pytest.mark.asyncio
     async def test_sink_failure_is_logged_and_keeps_the_chunk_buffered(
@@ -204,7 +208,10 @@ class TestACPCollectingClientSerialization:
         client.set_sink("s1", NarrationSink(sink))
 
         with caplog.at_level(logging.ERROR):
-            await client.session_update("s1", self._tool_call("tool-0", "tc-0"))
+            await client.session_update(
+                "s1",
+                start_tool_call("tc-0", "tool-0", status=ToolStatus.IN_PROGRESS.value),
+            )
 
         chunks = client.get_collected_chunks("s1")
         assert [chunk.content for chunk in chunks] == ["tool-0"]

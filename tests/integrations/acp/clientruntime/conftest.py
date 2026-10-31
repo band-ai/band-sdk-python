@@ -13,12 +13,18 @@ from tests.integrations.acp.acp_toolkit.peer import (
     ExitStage,
     stdio_peer_config,
 )
+from tests.integrations.acp.clientruntime.concurrency import ConcurrencyProbe
 from tests.integrations.acp.clientruntime.kit import (
     RUNTIME_LOGGER,
     InitializationObserver,
     StdioRuntimeFactory,
 )
 from tests.paths import REPO_ROOT
+
+
+@pytest.fixture
+def probe() -> ConcurrencyProbe:
+    return ConcurrencyProbe()
 
 
 @pytest.fixture
