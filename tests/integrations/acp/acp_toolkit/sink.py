@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from band.integrations.acp.types import ACPToolCall, CollectedChunk
+from band.integrations.acp.types import ACPToolActivity, CollectedChunk
 
 
 @dataclass(frozen=True)
@@ -18,7 +18,7 @@ class NarrationSink:
     async def emit(self, chunk: CollectedChunk) -> None:
         await self.post(chunk)
 
-    async def tool_started(self, call: ACPToolCall) -> None:
+    async def tool_started(self, call: ACPToolActivity) -> None:
         del call
 
     async def tool_ended(self, tool_call_id: str) -> None:

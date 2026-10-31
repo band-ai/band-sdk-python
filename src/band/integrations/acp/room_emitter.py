@@ -15,6 +15,7 @@ from band.integrations.acp.types import (
     ACP_FAILURE_PROVIDER,
     REFUSAL_FAILURE_CODE,
     REFUSAL_FAILURE_MESSAGE,
+    ACPToolActivity,
     ACPToolCall,
     ACPToolResult,
     ChunkType,
@@ -63,7 +64,7 @@ class RoomTurnEmitter:
         *,
         emit: frozenset[Emit] | None = None,
         records_tool_effects: bool = False,
-        activity_name: Callable[[ACPToolCall], str] | None = None,
+        activity_name: Callable[[ACPToolActivity], str] | None = None,
     ) -> None:
         """``records_tool_effects``: the turn's tools run out of process, so
         each completed call's effect is recorded on the turn from the stream.
@@ -123,7 +124,7 @@ class RoomTurnEmitter:
                     chunk.chunk_type,
                 )
 
-    async def tool_started(self, call: ACPToolCall) -> None:
+    async def tool_started(self, call: ACPToolActivity) -> None:
         name = (
             self._activity_name(call)
             if self._activity_name

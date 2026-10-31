@@ -126,6 +126,7 @@ from band.integrations.acp.types import (
     ACP_FAILURE_PROVIDER,
     CANCELLED_STOP,
     REFUSAL_STOP,
+    ACPToolActivity,
     ACPToolCall,
 )
 from band.integrations.mcp import (
@@ -1286,7 +1287,7 @@ class ACPClientAdapter(
         """
         return canonicalize_mcp_tool_name(name, self._own_tool_names)
 
-    def _activity_tool_name(self, call: ACPToolCall) -> str:
+    def _activity_tool_name(self, call: ACPToolActivity) -> str:
         """Report only an identity from this adapter's Band registration."""
         if (
             self.config.inject_band_tools

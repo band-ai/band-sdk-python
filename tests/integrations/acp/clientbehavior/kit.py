@@ -189,3 +189,8 @@ def band_activity_call(
         status=status,
         raw_input={"server": BAND_MCP_SERVER_NAME, "tool": tool, "arguments": {}},
     )
+
+
+def band_activity_metadata(tool: str) -> dict[str, object]:
+    """The provider extension naming a registered Band tool without its arguments."""
+    return {"mcp": {"server": BAND_MCP_SERVER_NAME, "tool": tool}}

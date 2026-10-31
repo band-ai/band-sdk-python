@@ -21,7 +21,11 @@ from band.runtime.activity import (
 )
 from band.runtime.tools.types import BandTool
 from band.testing.activity import ActivityRecorder
-from tests.integrations.acp.clientbehavior.kit import band_activity_call, observed_tools
+from tests.integrations.acp.clientbehavior.kit import (
+    band_activity_call,
+    band_activity_metadata,
+    observed_tools,
+)
 
 TOOLS = (BandTool.GET_PARTICIPANTS, BandTool.LOOKUP_PEERS)
 
@@ -29,6 +33,8 @@ TOOLS = (BandTool.GET_PARTICIPANTS, BandTool.LOOKUP_PEERS)
 class Step(StrEnum):
     START = auto()
     UPDATE = auto()
+    IDENTITY = auto()
+    REJECT_IDENTITY = auto()
     RESET = auto()
 
 
@@ -40,6 +46,8 @@ class Frame:
 
     @property
     def effective_status(self) -> ToolStatus | None:
+        if self.step in (Step.IDENTITY, Step.REJECT_IDENTITY):
+            return None
         if self.step == Step.START and self.status is None:
             return ToolStatus.PENDING
         return self.status
@@ -78,9 +86,14 @@ def expected_activity(history: list[Frame]) -> AgentActivityDetail:
             for index, status in statuses
             if index > last_pending and status == ToolStatus.IN_PROGRESS
         )
+        identities = [
+            frame.step
+            for _, frame in frames
+            if frame.step in (Step.START, Step.IDENTITY, Step.REJECT_IDENTITY)
+        ]
         name = (
             tool
-            if any(frame.step == Step.START for _, frame in frames)
+            if identities and identities[-1] != Step.REJECT_IDENTITY
             else UNKNOWN_ACTIVITY_TOOL_NAME
         )
         running.append((started, name))
@@ -116,13 +129,21 @@ async def play_steps(steps: list[tuple[Step, int, int, ToolStatus | None]]) -> N
         else:
             frame = Frame(step, slot, status)
             histories[room].append(frame)
-            update = (
-                band_activity_call(str(slot), TOOLS[slot], status)
-                if step == Step.START
-                else update_tool_call(
-                    str(slot), status=cast(ToolCallStatus | None, status)
-                )
-            )
+            match step:
+                case Step.START:
+                    update = band_activity_call(str(slot), TOOLS[slot], status)
+                case Step.UPDATE:
+                    update = update_tool_call(
+                        str(slot), status=cast(ToolCallStatus | None, status)
+                    )
+                case Step.IDENTITY:
+                    update = update_tool_call(str(slot)).model_copy(
+                        update={"field_meta": band_activity_metadata(TOOLS[slot])}
+                    )
+                case Step.REJECT_IDENTITY:
+                    update = update_tool_call(str(slot)).model_copy(
+                        update={"field_meta": {"mcp": None}}
+                    )
             await client.session_update(str(room), update)
         for current in range(2):
             assert recorders[current].activity.detail == expected_activity(

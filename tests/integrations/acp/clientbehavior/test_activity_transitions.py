@@ -17,7 +17,11 @@ from tests.integrations.acp.acp_toolkit import (
     fake_agent_config,
 )
 from tests.integrations.acp.acp_toolkit.agent import cursor_mcp_naming
-from tests.integrations.acp.clientbehavior.kit import band_activity_call, observed_tools
+from tests.integrations.acp.clientbehavior.kit import (
+    band_activity_call,
+    band_activity_metadata,
+    observed_tools,
+)
 
 FIRST = BandTool.GET_PARTICIPANTS
 SECOND = BandTool.LOOKUP_PEERS
@@ -100,6 +104,65 @@ class TestActivityTransitions:
                     SHOWN_REASONING,
                 ],
             ),
+            (
+                [
+                    start_tool_call("a", "private", status=ToolStatus.IN_PROGRESS),
+                    update_tool_call("a").model_copy(
+                        update={"field_meta": band_activity_metadata(FIRST)},
+                    ),
+                    update_tool_call("a", status=ToolStatus.COMPLETED),
+                ],
+                [
+                    shown_tool(UNKNOWN_ACTIVITY_TOOL_NAME),
+                    shown_tool(FIRST),
+                    SHOWN_REASONING,
+                ],
+            ),
+            (
+                [
+                    band_activity_call("a", FIRST, ToolStatus.IN_PROGRESS),
+                    update_tool_call("a").model_copy(
+                        update={"field_meta": {"mcp": None}}
+                    ),
+                    update_tool_call("a").model_copy(
+                        update={"field_meta": band_activity_metadata(FIRST)},
+                    ),
+                    update_tool_call("a", status=ToolStatus.COMPLETED),
+                ],
+                [
+                    shown_tool(FIRST),
+                    shown_tool(UNKNOWN_ACTIVITY_TOOL_NAME),
+                    shown_tool(FIRST),
+                    SHOWN_REASONING,
+                ],
+            ),
+            (
+                [
+                    start_tool_call("a", "private", status=ToolStatus.IN_PROGRESS),
+                    band_activity_call("b", SECOND, ToolStatus.IN_PROGRESS),
+                    update_tool_call("a").model_copy(
+                        update={"field_meta": band_activity_metadata(FIRST)},
+                    ),
+                    update_tool_call("b", status=ToolStatus.COMPLETED),
+                    update_tool_call("a", status=ToolStatus.COMPLETED),
+                ],
+                [
+                    shown_tool(UNKNOWN_ACTIVITY_TOOL_NAME),
+                    shown_tool(SECOND),
+                    shown_tool(FIRST),
+                    SHOWN_REASONING,
+                ],
+            ),
+            (
+                [
+                    band_activity_call("a", FIRST, ToolStatus.IN_PROGRESS),
+                    update_tool_call("a").model_copy(
+                        update={"field_meta": {"other": "metadata"}}
+                    ),
+                    update_tool_call("a", status=ToolStatus.COMPLETED),
+                ],
+                [shown_tool(FIRST), SHOWN_REASONING],
+            ),
         ],
         ids=[
             "pending-does-not-hide-running",
@@ -108,6 +171,10 @@ class TestActivityTransitions:
             "resume-starts-again",
             "update-without-start",
             "late-name-keeps-order",
+            "metadata-only-renames-running",
+            "metadata-only-rejection-and-recovery",
+            "metadata-only-rename-keeps-order",
+            "unrelated-metadata-retains-identity",
         ],
     )
     async def test_partial_call_lifecycle(

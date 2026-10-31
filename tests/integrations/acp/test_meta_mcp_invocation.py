@@ -39,7 +39,6 @@ class TestMetaMcpInvocation:
             name=BandTool.SEND_MESSAGE,
             arguments=ARGUMENTS,
             mcp_server="band",
-            mcp_tool=BandTool.SEND_MESSAGE,
             title=TITLE,
         )
 

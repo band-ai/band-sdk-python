@@ -4,18 +4,18 @@ which tool calls are running."""
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Protocol
 
 from band.integrations.acp.results import fold_result
 from band.integrations.acp.types import (
+    ACPToolActivity,
     ACPToolCall,
     ACPToolResult,
     ChunkType,
     CollectedChunk,
     ToolStatus,
 )
-from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class CallActivity:
     """Retain ACP partial status and identity, independently of narration buffers."""
 
-    call: ACPToolCall
+    call: ACPToolActivity
     status: object = ToolStatus.PENDING
 
 
@@ -34,7 +34,7 @@ class TurnSink(Protocol):
     async def emit(self, chunk: CollectedChunk) -> None:
         """Publish one finalized chunk."""
 
-    async def tool_started(self, call: ACPToolCall) -> None:
+    async def tool_started(self, call: ACPToolActivity) -> None:
         """Show ``call`` as running; a call id already running is renamed."""
 
     async def tool_ended(self, tool_call_id: str) -> None:
@@ -96,21 +96,14 @@ class ACPChunkStream:
         if not call_id:
             return
         calls = self._activity_calls.setdefault(session_id, {})
-        state = calls.setdefault(
-            call_id, CallActivity(ACPToolCall(call_id, UNKNOWN_ACTIVITY_TOOL_NAME, {}))
-        )
+        state = calls.setdefault(call_id, CallActivity(ACPToolActivity(call_id)))
         if _is_terminal(state.status):
             return
-        revision = chunk.tool
-        if isinstance(revision, ACPToolCall) and (
+        revision = chunk.activity
+        if revision is not None and (
             revision.mcp_tool is not None or revision.mcp_metadata_rejected
         ):
-            state.call = replace(
-                state.call,
-                mcp_server=revision.mcp_server or state.call.mcp_server,
-                mcp_tool=revision.mcp_tool,
-                mcp_metadata_rejected=revision.mcp_metadata_rejected,
-            )
+            state.call = revision
         previous = state.status
         if (status := chunk.metadata.get("status")) is not None:
             state.status = status
@@ -167,7 +160,7 @@ class ACPChunkStream:
             emitted.add(call_id)
             await self.finalize(session_id, canonical)
 
-    async def _call_running(self, session_id: str, call: ACPToolCall) -> None:
+    async def _call_running(self, session_id: str, call: ACPToolActivity) -> None:
         if sink := self._sinks.get(session_id):
             await sink.tool_started(call)
 

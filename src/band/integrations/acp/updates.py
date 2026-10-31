@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from band.integrations.acp.results import unwrap_structured_result
 from band.integrations.acp.types import (
+    ACPToolActivity,
     ACPToolCall,
     ChunkType,
     CollectedChunk,
@@ -74,6 +75,7 @@ class ACPUpdateParser:
             content=call.name,
             metadata=metadata,
             tool=call,
+            activity=ACPToolActivity.from_acp(update),
         )
 
     def _tool_result_chunk(self, update: object) -> CollectedChunk:
@@ -104,6 +106,7 @@ class ACPUpdateParser:
             from_raw=from_raw,
             echo=echo,
             tool=self._call_revision(update),
+            activity=ACPToolActivity.from_acp(update),
         )
 
     def _call_revision(self, update: object) -> ACPToolCall | None:
