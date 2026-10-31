@@ -21,7 +21,12 @@ class TestACPToolObservation:
                 None,
                 {"server": "band", "tool": "known", "arguments": {"x": 1}},
                 ACPToolCall(
-                    "call", "band-known", {"x": 1}, mcp_server="band", title="native"
+                    "call",
+                    "band-known",
+                    {"x": 1},
+                    mcp_server="band",
+                    mcp_tool="known",
+                    title="native",
                 ),
             ),
             (
@@ -32,6 +37,7 @@ class TestACPToolObservation:
                     "band-known",
                     {"x": 1},
                     mcp_server="band",
+                    mcp_tool="known",
                     title="native",
                     mcp_metadata_rejected=True,
                 ),
@@ -40,7 +46,12 @@ class TestACPToolObservation:
                 {"mcp": {"server": "band", "tool": "known"}},
                 {"arguments": {"x": 1}},
                 ACPToolCall(
-                    "call", "band-known", {"x": 1}, mcp_server="band", title="native"
+                    "call",
+                    "band-known",
+                    {"x": 1},
+                    mcp_server="band",
+                    mcp_tool="known",
+                    title="native",
                 ),
             ),
             (

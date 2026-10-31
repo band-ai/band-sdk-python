@@ -322,9 +322,15 @@ class FakeACPAgent:
         raw_input: Any = None,
         result: Any = None,
         status: str = "completed",
+        start_status: str | None = None,
     ) -> FakeACPAgent:
         async def _action(a: FakeACPAgent, sid: str) -> None:
-            await a.emit(sid, start_tool_call(tool_call_id, title, raw_input=raw_input))
+            await a.emit(
+                sid,
+                start_tool_call(
+                    tool_call_id, title, raw_input=raw_input, status=start_status
+                ),
+            )
             if result is not None:
                 await a.emit(
                     sid,

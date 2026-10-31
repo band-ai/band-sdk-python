@@ -4,6 +4,7 @@ which tool calls are running."""
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from band.integrations.acp.results import fold_result
@@ -14,8 +15,17 @@ from band.integrations.acp.types import (
     CollectedChunk,
     ToolStatus,
 )
+from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CallActivity:
+    """Retain ACP partial status and identity, independently of narration buffers."""
+
+    call: ACPToolCall
+    status: object = ToolStatus.PENDING
 
 
 class TurnSink(Protocol):
@@ -43,24 +53,23 @@ class ACPChunkStream:
         self._emitted_results: dict[str, set[str]] = {}
         self._open_runs: dict[str, CollectedChunk] = {}
         self._sinks: dict[str, TurnSink] = {}
+        self._activity_calls: dict[str, dict[str, CallActivity]] = {}
 
     async def ingest(self, session_id: str, chunk: CollectedChunk) -> None:
         """Coalesce text deltas and publish discrete tool lifecycle boundaries."""
+        await self._observe_activity(session_id, chunk)
         if chunk.chunk_type == ChunkType.TOOL_RESULT:
             revision, chunk.tool = chunk.tool, None
-            if isinstance(revision, ACPToolCall) and self._revise_held_call(
-                session_id, revision
+            if (
+                isinstance(revision, ACPToolCall)
+                and self._revise_held_call(session_id, revision)
+                and _carries_no_result(chunk)
             ):
-                await self._call_running(session_id, revision)
-                if _carries_no_result(chunk):
-                    return
+                return
         if isinstance(chunk.tool, ACPToolCall) and chunk.tool.tool_call_id:
             self._tool_calls.setdefault(session_id, {})[chunk.tool.tool_call_id] = (
                 chunk.tool
             )
-            # A call first reported finished gets no later update to end it.
-            if not _is_terminal(chunk.metadata.get("status")):
-                await self._call_running(session_id, chunk.tool)
         if chunk.chunk_type in self._COALESCED_CHUNK_TYPES:
             open_run = self._open_runs.get(session_id)
             if open_run is not None and open_run.chunk_type == chunk.chunk_type:
@@ -79,6 +88,36 @@ class ACPChunkStream:
                 self._open_runs[session_id] = chunk
             case _:
                 await self.finalize(session_id, chunk)
+
+    async def _observe_activity(self, session_id: str, chunk: CollectedChunk) -> None:
+        if chunk.chunk_type not in (ChunkType.TOOL_CALL, ChunkType.TOOL_RESULT):
+            return
+        call_id = str(chunk.metadata.get("tool_call_id") or "")
+        if not call_id:
+            return
+        calls = self._activity_calls.setdefault(session_id, {})
+        state = calls.setdefault(
+            call_id, CallActivity(ACPToolCall(call_id, UNKNOWN_ACTIVITY_TOOL_NAME, {}))
+        )
+        if _is_terminal(state.status):
+            return
+        revision = chunk.tool
+        if isinstance(revision, ACPToolCall) and (
+            revision.mcp_tool is not None or revision.mcp_metadata_rejected
+        ):
+            state.call = replace(
+                state.call,
+                mcp_server=revision.mcp_server or state.call.mcp_server,
+                mcp_tool=revision.mcp_tool,
+                mcp_metadata_rejected=revision.mcp_metadata_rejected,
+            )
+        previous = state.status
+        if (status := chunk.metadata.get("status")) is not None:
+            state.status = status
+        if state.status == ToolStatus.IN_PROGRESS:
+            await self._call_running(session_id, state.call)
+        elif previous == ToolStatus.IN_PROGRESS:
+            await self._call_ended(session_id, call_id)
 
     def _revise_held_call(self, session_id: str, revision: ACPToolCall) -> bool:
         """Apply ``revision`` to the held input-less call it names, if any."""
@@ -127,8 +166,6 @@ class ACPChunkStream:
         if terminal and call_id not in emitted:
             emitted.add(call_id)
             await self.finalize(session_id, canonical)
-        if terminal:
-            await self._call_ended(session_id, call_id)
 
     async def _call_running(self, session_id: str, call: ACPToolCall) -> None:
         if sink := self._sinks.get(session_id):
@@ -198,6 +235,7 @@ class ACPChunkStream:
         self._session_chunks.pop(session_id, None)
         self._result_chunks.pop(session_id, None)
         self._tool_calls.pop(session_id, None)
+        self._activity_calls.pop(session_id, None)
         self._emitted_results.pop(session_id, None)
         self._open_runs.pop(session_id, None)
         self._sinks.pop(session_id, None)

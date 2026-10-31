@@ -113,6 +113,7 @@ class ACPToolCall:
     mcp_server: str | None = None
     title: str | None = None
     mcp_metadata_rejected: bool = False
+    mcp_tool: str | None = None
 
     @classmethod
     def from_acp(
@@ -148,6 +149,7 @@ class ACPToolCall:
             name=name,
             arguments=arguments,
             mcp_server=invocation[0] if invocation is not None else None,
+            mcp_tool=invocation[1] if invocation is not None else None,
             title=title if isinstance(title, str) else None,
             mcp_metadata_rejected=(
                 isinstance(meta, dict)

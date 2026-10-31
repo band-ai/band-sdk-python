@@ -137,7 +137,9 @@ class TestCodexToolItemActivity:
                 final_text("Done."),
                 turn_completed(),
             )
-            await sending
-            await adapter.cleanup_all()
+            try:
+                await sending
+            finally:
+                await adapter.cleanup_all()
 
         assert recorder.events == expected

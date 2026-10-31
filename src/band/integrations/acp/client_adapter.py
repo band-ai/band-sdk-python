@@ -134,6 +134,7 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
+from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME
 from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
@@ -925,6 +926,7 @@ class ACPClientAdapter(
                 emit=self.features.emit,
                 # Injected Band tools record their own effects in process.
                 records_tool_effects=not self.config.inject_band_tools,
+                activity_name=self._activity_tool_name,
             ) as emitter:
                 self._install_turn_handlers(
                     runtime,
@@ -1283,6 +1285,21 @@ class ACPClientAdapter(
         adapter registered is rewritten; anything else passes through.
         """
         return canonicalize_mcp_tool_name(name, self._own_tool_names)
+
+    def _activity_tool_name(self, call: ACPToolCall) -> str:
+        """Report only an identity from this adapter's Band registration."""
+        if (
+            self.config.inject_band_tools
+            and not call.mcp_metadata_rejected
+            and call.mcp_server == BAND_MCP_SERVER_NAME
+            and any(
+                definition.name == call.mcp_tool
+                for definition in self._tool_definitions
+            )
+        ):
+            assert call.mcp_tool is not None
+            return call.mcp_tool
+        return UNKNOWN_ACTIVITY_TOOL_NAME
 
     def _mcp_settings(self) -> BandMCPBackendSettings:
         return BandMCPBackendSettings(
