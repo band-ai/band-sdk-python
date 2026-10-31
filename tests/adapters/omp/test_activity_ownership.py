@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from band.core.types import Emit
-from band.integrations.omp import OMP_FORM_APPROVE
+from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from band.integrations.ompwire import OmpHostToolCall
 from band.runtime.activity import PERMISSION, REASONING, tool_call_activity
 from band.runtime.tools.types import BandTool
@@ -68,11 +68,23 @@ class TestActivityOwnership:
             ]
             assert turn.recorder.activity.detail == REASONING
 
+    @pytest.mark.parametrize(
+        ("choice", "expected_value", "cancelled"),
+        [
+            (OMP_FORM_APPROVE, OMP_FORM_APPROVE, False),
+            (OMP_FORM_DENY, OMP_FORM_DENY, False),
+            (None, None, True),
+        ],
+        ids=["approve", "deny", "cancel"],
+    )
     async def test_permission_wait_overrides_tool_progress_then_restores_it(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         mock_rest_client: MagicMock,
+        choice: str | None,
+        expected_value: str | None,
+        cancelled: bool,
     ) -> None:
         resolver = GatedPermissionResolver("permission")
         async with activity_turn(
@@ -89,11 +101,46 @@ class TestActivityOwnership:
                 await turn.runtime.on_event(tool_end("older", "read"))
                 assert turn.recorder.activity.detail == PERMISSION
 
-                resolver.responses["permission"].set_result(OMP_FORM_APPROVE)
+                resolver.responses["permission"].set_result(choice)
                 response = await permission
-                assert response.value == OMP_FORM_APPROVE
+                assert (response.value, response.cancelled) == (
+                    expected_value,
+                    cancelled,
+                )
                 assert turn.recorder.activity.detail == tool_call_activity("grep")
 
+                await turn.runtime.on_event(tool_end("newer", "grep"))
+                await turn.finish()
+                assert turn.recorder.activity.detail == REASONING
+            finally:
+                permission.cancel()
+                await asyncio.gather(permission, return_exceptions=True)
+
+    async def test_failed_permission_restores_the_remaining_tool(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        mock_rest_client: MagicMock,
+    ) -> None:
+        resolver = GatedPermissionResolver("permission")
+        async with activity_turn(
+            monkeypatch, tmp_path, mock_rest_client, resolve_permission=resolver
+        ) as turn:
+            await turn.runtime.on_event(tool_start("older", "read"))
+            permission = asyncio.create_task(
+                turn.runtime.on_ui(permission_request("permission"))
+            )
+            try:
+                await resolver.entered["permission"].wait()
+                await turn.runtime.on_event(tool_start("newer", "grep"))
+                await turn.runtime.on_event(tool_end("older", "read"))
+                assert turn.recorder.activity.detail == PERMISSION
+                resolver.responses["permission"].set_exception(
+                    ValueError("unavailable")
+                )
+                with pytest.raises(ValueError, match="unavailable"):
+                    await permission
+                assert turn.recorder.activity.detail == tool_call_activity("grep")
                 await turn.runtime.on_event(tool_end("newer", "grep"))
                 await turn.finish()
                 assert turn.recorder.activity.detail == REASONING
