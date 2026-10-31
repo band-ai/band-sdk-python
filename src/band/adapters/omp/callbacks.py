@@ -78,9 +78,7 @@ class OmpCallbackMixin(OmpAdapterContract):
         try:
             custom = find_custom_tool(self._custom_tools, call.toolName)
             if custom:
-                value = await execute_custom_tool(
-                    custom, call.arguments, turn=tools.turn
-                )
+                value = await execute_custom_tool(custom, call.arguments, tools=tools)
             else:
                 outcome = await tools.execute_tool_call_structured(
                     call.toolName, call.arguments

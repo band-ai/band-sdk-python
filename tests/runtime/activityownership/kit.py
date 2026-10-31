@@ -15,9 +15,9 @@ from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.toolactivity import (
-    end_tool_activity,
-    report_memory_activity,
-    report_tool_activity,
+    end_activity,
+    start_memory_activity,
+    start_tool_activity,
 )
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import SUPPORTED_VERSION
@@ -49,10 +49,11 @@ async def past_a_keep_alive() -> None:
 
 
 async def report_every_kind(tools: object) -> None:
-    await report_tool_activity(tools, "Bash")
+    await start_tool_activity(tools, "bash", "Bash")
     with permission_wait(tools):
-        await report_memory_activity(tools)
-    await end_tool_activity(tools)
+        await start_memory_activity(tools, "memory")
+        await end_activity(tools, "memory")
+    await end_activity(tools, "bash")
 
 
 # Posting, not lifecycle-only: OpenCode posts its resume record whatever the emit.

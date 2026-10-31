@@ -271,9 +271,7 @@ class OmpTurnMixin(OmpAdapterContract):
             async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
                 if turn.closed:
                     return _text_tool_result("OMP turn already closed", is_error=True)
-                with suppress_tool_activity(
-                    enabled=Emit.TOOL_CALLS in self.features.emit
-                ):
+                with suppress_tool_activity():
                     result = await self._execute_tool(call, tools)
                 if (
                     call.toolName == BandTool.NO_REPLY

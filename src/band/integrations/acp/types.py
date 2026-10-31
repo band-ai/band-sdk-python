@@ -182,16 +182,51 @@ McpInvocation = tuple[str, str, dict[str, JsonValue]]
 
 def _meta_mcp_invocation(raw_input: object, meta: object) -> McpInvocation | None:
     """Return the MCP call named in ``_meta`` (see ``_META_MCP_KEY``)."""
-    mcp = meta.get(_META_MCP_KEY) if isinstance(meta, dict) else None
+    identity = _meta_mcp_identity(meta)
     arguments = (
         raw_input.get(_META_MCP_ARGUMENTS_KEY) if isinstance(raw_input, dict) else None
     )
-    if not isinstance(mcp, dict) or not isinstance(arguments, dict):
+    if identity is None or not isinstance(arguments, dict):
+        return None
+    server, tool = identity
+    return server, tool, cast(dict[str, JsonValue], arguments)
+
+
+def _meta_mcp_identity(meta: object) -> tuple[str, str] | None:
+    mcp = meta.get(_META_MCP_KEY) if isinstance(meta, dict) else None
+    if not isinstance(mcp, dict):
         return None
     server, tool = (mcp.get(key) for key in _META_MCP_IDENTITY_KEYS)
-    if not isinstance(server, str) or not isinstance(tool, str):
-        return None
-    return server, tool, cast(dict[str, JsonValue], arguments)
+    return (server, tool) if isinstance(server, str) and isinstance(tool, str) else None
+
+
+@dataclass(frozen=True)
+class ACPToolActivity:
+    """An activity identity patch, independent of invocation arguments.
+
+    An omitted identity leaves the previous one unchanged; rejected metadata
+    explicitly replaces it with unknown.
+    """
+
+    tool_call_id: str
+    mcp_server: str | None = None
+    mcp_tool: str | None = None
+    mcp_metadata_rejected: bool = False
+
+    @classmethod
+    def from_acp(cls, update: object) -> ACPToolActivity:
+        meta = getattr(update, "field_meta", None)
+        identity = _meta_mcp_identity(meta)
+        rejected = isinstance(meta, dict) and _META_MCP_KEY in meta and identity is None
+        if identity is None and not rejected:
+            invocation = _raw_input_mcp_invocation(getattr(update, "raw_input", None))
+            identity = invocation[:2] if invocation is not None else None
+        return cls(
+            tool_call_id=str(getattr(update, "tool_call_id", "")),
+            mcp_server=identity[0] if identity is not None else None,
+            mcp_tool=identity[1] if identity is not None else None,
+            mcp_metadata_rejected=rejected,
+        )
 
 
 def _raw_input_mcp_invocation(raw_input: object) -> McpInvocation | None:
@@ -260,6 +295,7 @@ class CollectedChunk:
         tool: The normalized tool call or result for tool chunks. This is the
             authoritative lifecycle data used for room persistence; ``content``
             remains the readable narration for ACP-local consumers.
+        activity: A names-only identity patch, separate from invocation data.
     """
 
     chunk_type: str
@@ -268,6 +304,7 @@ class CollectedChunk:
     from_raw: bool = False
     echo: dict[str, Any] | None = None
     tool: ACPToolCall | ACPToolResult | None = None
+    activity: ACPToolActivity | None = None
 
 
 @dataclass

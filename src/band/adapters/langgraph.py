@@ -19,7 +19,6 @@ from band.converters.langchain import LangChainHistoryConverter, LangChainMessag
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import BatchInputAdapter
-from band.core.turn import Turn
 from band.core.types import (
     Capability,
     Emit,
@@ -238,15 +237,15 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
         """A static ``graph=`` never receives Band tools, so it cannot reply."""
         return self.graph_factory is not None
 
-    def _additional_tools_for_turn(self, turn: Turn) -> list[Any]:
+    def _additional_tools_for_room(self, tools: AgentToolsProtocol) -> list[Any]:
         """The caller's extra tools as LangChain tools for one room turn.
 
         Portable ``CustomToolDef`` tuples are converted here, per turn, so each
-        call records its effect on that room's turn; ready-made LangChain tools
-        pass through untouched.
+        call records its effect and shows its activity on that room's turn;
+        ready-made LangChain tools pass through untouched.
         """
         return [
-            langchain_tools.custom_tool_def_to_langchain(tool, turn=turn)
+            langchain_tools.custom_tool_def_to_langchain(tool, tools=tools)
             if isinstance(tool, tuple)
             else tool
             for tool in self.additional_tools
@@ -332,7 +331,7 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
             lc_tools = langchain_tools.agent_tools_to_langchain(
                 tools,
                 features=self.features,
-            ) + self._additional_tools_for_turn(tools.turn)
+            ) + self._additional_tools_for_room(tools)
 
             # Build or get graph
             if self.graph_factory:

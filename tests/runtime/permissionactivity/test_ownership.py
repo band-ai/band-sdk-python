@@ -9,7 +9,7 @@ import pytest
 from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
-from band.runtime.toolactivity import report_tool_activity
+from band.runtime.toolactivity import start_tool_activity
 from band.runtime.tools.agent import AgentTools
 from band.testing.activity import ActivityRecorder
 from tests.activitysupport import PERMISSION_BODY, REASONING_BODY, tool_body
@@ -78,7 +78,7 @@ class TestPermissionOwnership:
         assert first is not second
         with permission_wait(DedupingAgentTools(second)):
             with permission_wait(first):
-                await report_tool_activity(first, "Read")
+                await start_tool_activity(first, "read", "Read")
                 assert await permission_platform.checkpoint(ctx) == PERMISSION_BODY
             assert await permission_platform.checkpoint(ctx) == PERMISSION_BODY
         assert await permission_platform.checkpoint(ctx) == tool_body("Read")

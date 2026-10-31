@@ -13,7 +13,7 @@ from band.integrations.ompwire import (
     OmpEvent,
     OmpEventType,
 )
-from band.runtime.toolactivity import end_tool_activity, report_tool_activity
+from band.runtime.toolactivity import end_activity, start_tool_activity
 from band.runtime.tools import turn_effect
 
 
@@ -47,25 +47,19 @@ class OmpEventMixin(OmpAdapterContract):
                 name, arguments = self._project_tool_call(
                     event.toolName, args, preserve_native_semantics=True
                 )
-                turn.calls[event.toolCallId] = (name, arguments)
+                turn.calls[event.toolCallId] = name
+                await start_tool_activity(turn.tools, event.toolCallId, name)
                 if emit_tool_calls:
-                    await report_tool_activity(turn.tools, name)
                     await send_event_safe(
                         turn.tools,
                         self._encode_tool_call(name, arguments, event.toolCallId),
                         MessageType.TOOL_CALL,
                     )
             case OmpEventType.TOOL_END:
-                call = turn.calls.pop(event.toolCallId or "", None)
-                if call is None:
+                name = turn.calls.pop(event.toolCallId or "", None)
+                if name is None:
                     return
-                name, _arguments = call
-                if emit_tool_calls:
-                    if turn.calls:
-                        remaining_name = next(reversed(turn.calls.values()))[0]
-                        await report_tool_activity(turn.tools, remaining_name)
-                    else:
-                        await end_tool_activity(turn.tools)
+                await end_activity(turn.tools, event.toolCallId)
                 if not self.config.inject_band_tools and not event.isError:
                     turn.tools.turn.record(turn_effect(name))
                 if emit_tool_calls:

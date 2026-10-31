@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Hashable, Iterator
 from contextlib import contextmanager
 from typing import Any, Protocol, TypeVar
 
@@ -27,7 +27,8 @@ def shown_tool(name: str) -> dict[str, Any]:
 
 
 class ActivityRecorder:
-    """An ``ActivityObserver`` that keeps every observation in order."""
+    """An ``ActivityObserver`` that keeps, in order, each progress change a
+    turn's starts and ends make visible, as the platform would receive it."""
 
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
@@ -38,9 +39,19 @@ class ActivityRecorder:
         tools._activity_observer = self
         return tools
 
-    async def update(self, activity: AgentActivityDetail) -> None:
-        self.activity.apply(activity=activity)
-        self.events.append(activity.model_dump(exclude_none=True))
+    async def start(self, key: Hashable, activity: AgentActivityDetail) -> None:
+        before = self.activity.progress
+        self.activity.start(key, activity)
+        self._record_progress(before)
+
+    async def end(self, key: Hashable) -> None:
+        before = self.activity.progress
+        self.activity.end(key)
+        self._record_progress(before)
+
+    def _record_progress(self, before: AgentActivityDetail) -> None:
+        if self.activity.progress != before:
+            self.events.append(self.activity.progress.model_dump(exclude_none=True))
 
     @contextmanager
     def permission_wait(self) -> Iterator[None]:

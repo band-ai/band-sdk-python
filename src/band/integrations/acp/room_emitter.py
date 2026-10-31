@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Self
 
 from band_sdk_core import AgentFailure
@@ -14,12 +15,15 @@ from band.integrations.acp.types import (
     ACP_FAILURE_PROVIDER,
     REFUSAL_FAILURE_CODE,
     REFUSAL_FAILURE_MESSAGE,
+    ACPToolActivity,
     ACPToolCall,
     ACPToolResult,
     ChunkType,
     CollectedChunk,
     ToolStatus,
 )
+from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME
+from band.runtime.toolactivity import end_activity, start_tool_activity
 from band.runtime.tools import TurnEffect, turn_effect
 
 logger = logging.getLogger(__name__)
@@ -50,7 +54,8 @@ class RoomTurnEmitter:
     outside this emitter.
 
     Which narration kinds reach the room is controlled by the emit set passed
-    at construction (``None``: all kinds — the historical default).
+    at construction (``None``: all kinds — the historical default). The tool
+    calls the agent runs show as the turn's activity whatever that set is.
     """
 
     def __init__(
@@ -59,6 +64,7 @@ class RoomTurnEmitter:
         *,
         emit: frozenset[Emit] | None = None,
         records_tool_effects: bool = False,
+        activity_name: Callable[[ACPToolActivity], str] | None = None,
     ) -> None:
         """``records_tool_effects``: the turn's tools run out of process, so
         each completed call's effect is recorded on the turn from the stream.
@@ -68,6 +74,7 @@ class RoomTurnEmitter:
         the work streamed during it, which may belong to another turn.
         """
         self._tools = tools
+        self._activity_name = activity_name
         self._records_tool_effects = records_tool_effects
         # ``None``: post every kind (the historical behavior). Adapters pass
         # their resolved ``features.emit`` so a caller's ``emit=`` narrowing
@@ -116,6 +123,17 @@ class RoomTurnEmitter:
                     "Unhandled ACP chunk type %r; not posting to the room",
                     chunk.chunk_type,
                 )
+
+    async def tool_started(self, call: ACPToolActivity) -> None:
+        name = (
+            self._activity_name(call)
+            if self._activity_name
+            else UNKNOWN_ACTIVITY_TOOL_NAME
+        )
+        await start_tool_activity(self._tools, call.tool_call_id, name)
+
+    async def tool_ended(self, tool_call_id: str) -> None:
+        await end_activity(self._tools, tool_call_id)
 
     def _stage_tool_outcome(self, chunk: CollectedChunk) -> None:
         """Stage successful external effects until the prompt closes cleanly."""

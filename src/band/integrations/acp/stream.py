@@ -1,12 +1,15 @@
-"""Coalesce ACP deltas and publish completed tool lifecycles in order."""
+"""Coalesce ACP deltas, publish completed tool lifecycles in order, and report
+which tool calls are running."""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Protocol
 
 from band.integrations.acp.results import fold_result
 from band.integrations.acp.types import (
+    ACPToolActivity,
     ACPToolCall,
     ACPToolResult,
     ChunkType,
@@ -15,7 +18,27 @@ from band.integrations.acp.types import (
 )
 
 logger = logging.getLogger(__name__)
-ChunkSink = Callable[[CollectedChunk], Awaitable[None]]
+
+
+@dataclass
+class CallActivity:
+    """Retain ACP partial status and identity, independently of narration buffers."""
+
+    call: ACPToolActivity
+    status: object = ToolStatus.PENDING
+
+
+class TurnSink(Protocol):
+    """Where one session's output goes while a prompt runs."""
+
+    async def emit(self, chunk: CollectedChunk) -> None:
+        """Publish one finalized chunk."""
+
+    async def tool_started(self, call: ACPToolActivity) -> None:
+        """Show ``call`` as running; a call id already running is renamed."""
+
+    async def tool_ended(self, tool_call_id: str) -> None:
+        """Stop showing the call ``tool_call_id`` as running."""
 
 
 class ACPChunkStream:
@@ -29,10 +52,12 @@ class ACPChunkStream:
         self._tool_calls: dict[str, dict[str, ACPToolCall]] = {}
         self._emitted_results: dict[str, set[str]] = {}
         self._open_runs: dict[str, CollectedChunk] = {}
-        self._sinks: dict[str, ChunkSink] = {}
+        self._sinks: dict[str, TurnSink] = {}
+        self._activity_calls: dict[str, dict[str, CallActivity]] = {}
 
     async def ingest(self, session_id: str, chunk: CollectedChunk) -> None:
         """Coalesce text deltas and publish discrete tool lifecycle boundaries."""
+        await self._observe_activity(session_id, chunk)
         if chunk.chunk_type == ChunkType.TOOL_RESULT:
             revision, chunk.tool = chunk.tool, None
             if (
@@ -63,6 +88,29 @@ class ACPChunkStream:
                 self._open_runs[session_id] = chunk
             case _:
                 await self.finalize(session_id, chunk)
+
+    async def _observe_activity(self, session_id: str, chunk: CollectedChunk) -> None:
+        if chunk.chunk_type not in (ChunkType.TOOL_CALL, ChunkType.TOOL_RESULT):
+            return
+        call_id = str(chunk.metadata.get("tool_call_id") or "")
+        if not call_id:
+            return
+        calls = self._activity_calls.setdefault(session_id, {})
+        state = calls.setdefault(call_id, CallActivity(ACPToolActivity(call_id)))
+        if _is_terminal(state.status):
+            return
+        revision = chunk.activity
+        if revision is not None and (
+            revision.mcp_tool is not None or revision.mcp_metadata_rejected
+        ):
+            state.call = revision
+        previous = state.status
+        if (status := chunk.metadata.get("status")) is not None:
+            state.status = status
+        if state.status == ToolStatus.IN_PROGRESS:
+            await self._call_running(session_id, state.call)
+        elif previous == ToolStatus.IN_PROGRESS:
+            await self._call_ended(session_id, call_id)
 
     def _revise_held_call(self, session_id: str, revision: ACPToolCall) -> bool:
         """Apply ``revision`` to the held input-less call it names, if any."""
@@ -106,14 +154,19 @@ class ACPChunkStream:
         else:
             fold_result(canonical, chunk)
         emitted = self._emitted_results.setdefault(session_id, set())
-        terminal = canonical.metadata.get("status") in (
-            ToolStatus.COMPLETED,
-            ToolStatus.FAILED,
-        )
+        terminal = _is_terminal(canonical.metadata.get("status"))
         # Room events are append-only; later revisions stay in the buffer.
         if terminal and call_id not in emitted:
             emitted.add(call_id)
             await self.finalize(session_id, canonical)
+
+    async def _call_running(self, session_id: str, call: ACPToolActivity) -> None:
+        if sink := self._sinks.get(session_id):
+            await sink.tool_started(call)
+
+    async def _call_ended(self, session_id: str, call_id: str) -> None:
+        if sink := self._sinks.get(session_id):
+            await sink.tool_ended(call_id)
 
     async def finalize(self, session_id: str, chunk: CollectedChunk) -> None:
         """Buffer and publish a chunk; sink errors must survive ACP exception suppression."""
@@ -122,7 +175,7 @@ class ACPChunkStream:
         if sink is None:
             return
         try:
-            await sink(chunk)
+            await sink.emit(chunk)
         except Exception:
             logger.exception(
                 "Failed to post %s chunk for ACP session %s to the room; "
@@ -131,7 +184,7 @@ class ACPChunkStream:
                 session_id,
             )
 
-    def set_sink(self, session_id: str, sink: ChunkSink | None) -> None:
+    def set_sink(self, session_id: str, sink: TurnSink | None) -> None:
         if sink is None:
             self._sinks.pop(session_id, None)
         else:
@@ -175,6 +228,7 @@ class ACPChunkStream:
         self._session_chunks.pop(session_id, None)
         self._result_chunks.pop(session_id, None)
         self._tool_calls.pop(session_id, None)
+        self._activity_calls.pop(session_id, None)
         self._emitted_results.pop(session_id, None)
         self._open_runs.pop(session_id, None)
         self._sinks.pop(session_id, None)
@@ -190,3 +244,8 @@ def _awaits_input(chunk: CollectedChunk) -> bool:
 def _carries_no_result(chunk: CollectedChunk) -> bool:
     """True for a tool_call_update frame that only revised its call's identity."""
     return chunk.metadata.get("status") is None and not chunk.content
+
+
+def _is_terminal(status: object) -> bool:
+    """True once a call has finished, whether it succeeded or failed."""
+    return status in (ToolStatus.COMPLETED, ToolStatus.FAILED)

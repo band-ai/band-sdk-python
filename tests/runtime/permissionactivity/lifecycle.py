@@ -1,4 +1,5 @@
-"""Generated lifecycle model for permission owners across room generations."""
+"""Generated lifecycle model for permission owners and running tools across room
+generations."""
 
 from __future__ import annotations
 
@@ -20,24 +21,50 @@ class Step(StrEnum):
     END = auto()
     DUPLICATE_END = auto()
     REPLACE = auto()
-    PROGRESS = auto()
+    TOOL_START = auto()
+    TOOL_RESTART = auto()
+    TOOL_END = auto()
+    TOOL_DUPLICATE_END = auto()
 
 
 @dataclass
 class Generation:
     activity: TurnActivity = field(default_factory=TurnActivity)
     expected: set[int] = field(default_factory=set)
-    progress: AgentActivityDetail = REASONING
+    # Reference model: each running tool's key and name, oldest first.
+    running: list[tuple[int, str]] = field(default_factory=list)
+
+    @property
+    def expected_progress(self) -> AgentActivityDetail:
+        if not self.running:
+            return REASONING
+        _, newest = self.running[-1]
+        return tool_call_activity(newest)
+
+    def hold(self, key: int, name: str) -> None:
+        """Rename ``key`` where it stands, or add it as the newest."""
+        keys = [held for held, _ in self.running]
+        if key in keys:
+            self.running[keys.index(key)] = (key, name)
+        else:
+            self.running.append((key, name))
+
+    def drop(self, key: int) -> None:
+        self.running = [(held, name) for held, name in self.running if held != key]
 
 
-class PermissionLifecycle:
-    """Logical request owners remain attached to the room generation they began in."""
+class ActivityLifecycle:
+    """Permission owners and running tools stay attached to the room generation
+    they began in; the shown detail is a wait, else the newest running tool,
+    else reasoning."""
 
     def __init__(self) -> None:
         self.rooms = [Generation(), Generation()]
         self.generations = list(self.rooms)
         self.active: dict[tuple[int, int], tuple[Generation, object, int]] = {}
         self.ended: list[tuple[Generation, object]] = []
+        self.tools: dict[tuple[int, int], Generation] = {}
+        self.ended_tools: dict[tuple[int, int], Generation] = {}
         self.next_id = 0
 
     def apply(self, step: Step, room: int, slot: int) -> None:
@@ -60,19 +87,43 @@ class PermissionLifecycle:
             replacement = Generation()
             self.rooms[room] = replacement
             self.generations.append(replacement)
-        elif step == Step.PROGRESS:
-            current.progress = tool_call_activity(f"tool-{slot}")
-            current.activity.apply(activity=current.progress)
+        elif step == Step.TOOL_START and key not in self.tools:
+            self.tools[key] = current
+            self.start_tool(current, slot)
+        elif step == Step.TOOL_RESTART and key in self.tools:
+            self.start_tool(self.tools[key], slot)
+        elif step == Step.TOOL_END and key in self.tools:
+            generation = self.tools.pop(key)
+            generation.activity.end(slot)
+            generation.drop(slot)
+            self.ended_tools[key] = generation
+        elif (
+            step == Step.TOOL_DUPLICATE_END
+            and key not in self.tools
+            and key in self.ended_tools
+        ):
+            self.ended_tools[key].activity.end(slot)
         self.assert_consistent()
+
+    def start_tool(self, generation: Generation, slot: int) -> None:
+        name = f"tool-{self.next_id}"
+        self.next_id += 1
+        generation.activity.start(slot, tool_call_activity(name))
+        generation.hold(slot, name)
 
     def assert_consistent(self) -> None:
         for generation in self.generations:
             assert generation.activity.waiting == bool(generation.expected)
+            assert generation.activity.progress == generation.expected_progress
             assert generation.activity.detail == (
-                PERMISSION if generation.expected else generation.progress
+                PERMISSION if generation.expected else generation.expected_progress
             )
 
     def finish(self) -> None:
         for room, slot in list(self.active):
             self.apply(Step.END, room, slot)
-        assert all(not generation.activity.waiting for generation in self.generations)
+        for room, slot in list(self.tools):
+            self.apply(Step.TOOL_END, room, slot)
+        assert all(
+            generation.activity.detail == REASONING for generation in self.generations
+        )

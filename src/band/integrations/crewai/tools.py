@@ -53,7 +53,6 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     get_custom_tool_name,
 )
-from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
     EVENT_TOOL_NAMES,
     BandTool,
@@ -220,10 +219,9 @@ def _custom_tool(
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             async def execute(tools: AgentToolsProtocol) -> str:
                 await reporter.report_call(tools, tool_name, kwargs)
-                async with tool_activity(tools, tool_name):
-                    result = await execute_custom_tool(
-                        tool=definition, arguments=kwargs, turn=tools.turn
-                    )
+                result = await execute_custom_tool(
+                    tool=definition, arguments=kwargs, tools=tools
+                )
                 await reporter.report_result(tools, tool_name, result)
                 return json.dumps({"status": "success", "result": result}, default=str)
 

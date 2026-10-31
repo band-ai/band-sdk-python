@@ -17,7 +17,6 @@ from langchain_core.tools import StructuredTool
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
-from band.core.turn import Turn
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.custom_tools import (
@@ -165,7 +164,7 @@ def agent_tools_to_langchain(
 
 
 def custom_tool_def_to_langchain(
-    tool_def: CustomToolDef, *, turn: Turn | None
+    tool_def: CustomToolDef, *, tools: AgentToolsProtocol | None
 ) -> StructuredTool:
     """Convert a band ``CustomToolDef`` to a LangChain ``StructuredTool``.
 
@@ -173,9 +172,9 @@ def custom_tool_def_to_langchain(
     ``(InputModel, handler)`` — the same shape every other adapter takes, rather
     than only ready-made LangChain tools. The StructuredTool's schema is the
     ``InputModel`` and its body validates + runs the handler via
-    ``execute_custom_tool`` (which handles sync and async handlers alike),
-    recording the handler's declared effect on ``turn``: the turn of the room the
-    tool is built for, or ``None`` for a tool not bound to a room.
+    ``execute_custom_tool`` (which handles sync and async handlers alike) for
+    ``tools``: the tools of the room the tool is built for, or ``None`` for a
+    tool not bound to a room.
     """
     input_model, _ = tool_def
     name = get_custom_tool_name(input_model)
@@ -183,7 +182,7 @@ def custom_tool_def_to_langchain(
 
     async def execute_custom(**kwargs: Any) -> Any:
         try:
-            return await execute_custom_tool(tool_def, kwargs, turn=turn)
+            return await execute_custom_tool(tool_def, kwargs, tools=tools)
         except ValueError as e:
             # Bad-argument / validation errors feed back to the LLM to retry.
             return str(e)

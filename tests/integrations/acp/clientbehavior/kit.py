@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from acp.helpers import start_tool_call
+from acp.schema import ToolCallStart
+
 from band.converters.acp_client import ACP_CLIENT_RESUME_RECORD
 from band.converters.helpers import (
     HISTORY_REPLAY_HEADER,
@@ -13,10 +16,12 @@ from band.integrations.acp.client_adapter import SYSTEM_CONTEXT_HEADER
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
 )
+from band.integrations.acp.types import ToolStatus
 from band.runtime.prompts import (
     SYSTEM_UPDATE_PREFIX,
 )
 from band.runtime.tools import BAND_MCP_SERVER_NAME
+from band.testing.activity import ActivityRecorder
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     TranscriptTools,
@@ -132,6 +137,11 @@ def resume_records(tools: TranscriptTools) -> dict[str, str]:
     return ACP_CLIENT_RESUME_RECORD.candidates(tools.events_sent)
 
 
+def observed_tools(recorder: ActivityRecorder) -> TranscriptTools:
+    """A turn's tools whose activity ``recorder`` observes."""
+    return recorder.observing(TranscriptTools())
+
+
 # What an agent says when it refuses a prompt over its quota.
 QUOTA_TEXT = "You have exhausted your daily quota for this model."
 
@@ -167,3 +177,20 @@ class HeldThoughts(TranscriptTools):
         if message_type == MessageType.THOUGHT and not self.posting.received.is_set():
             await self.posting.hold()
         return await super().send_event(content, message_type, metadata)
+
+
+def band_activity_call(
+    call_id: str, tool: str, status: ToolStatus | None
+) -> ToolCallStart:
+    """Report structured Band identity independently of a private display title."""
+    return start_tool_call(
+        call_id,
+        "private invocation title",
+        status=status,
+        raw_input={"server": BAND_MCP_SERVER_NAME, "tool": tool, "arguments": {}},
+    )
+
+
+def band_activity_metadata(tool: str) -> dict[str, object]:
+    """The provider extension naming a registered Band tool without its arguments."""
+    return {"mcp": {"server": BAND_MCP_SERVER_NAME, "tool": tool}}

@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from band.integrations.acp.results import unwrap_structured_result
 from band.integrations.acp.types import (
+    ACPToolActivity,
     ACPToolCall,
     ChunkType,
     CollectedChunk,
@@ -67,18 +68,19 @@ class ACPUpdateParser:
         metadata = {
             "tool_call_id": call.tool_call_id,
             "raw_input": raw_input,
-            "status": getattr(update, "status", ToolStatus.IN_PROGRESS),
+            "status": getattr(update, "status", None) or ToolStatus.PENDING,
         }
         return CollectedChunk(
             chunk_type=ChunkType.TOOL_CALL,
             content=call.name,
             metadata=metadata,
             tool=call,
+            activity=ACPToolActivity.from_acp(update),
         )
 
     def _tool_result_chunk(self, update: object) -> CollectedChunk:
         tool_call_id = getattr(update, "tool_call_id", "")
-        status = getattr(update, "status", ToolStatus.COMPLETED)
+        status = getattr(update, "status", None)
         metadata = {
             "tool_call_id": tool_call_id,
             "status": status,
@@ -104,6 +106,7 @@ class ACPUpdateParser:
             from_raw=from_raw,
             echo=echo,
             tool=self._call_revision(update),
+            activity=ACPToolActivity.from_acp(update),
         )
 
     def _call_revision(self, update: object) -> ACPToolCall | None:

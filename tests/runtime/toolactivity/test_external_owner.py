@@ -65,20 +65,3 @@ class TestExternalActivityOwner:
 
         await tools.lookup_peers()
         recorder.assert_completed_tool(BandTool.LOOKUP_PEERS)
-
-    async def test_disabled_scope_preserves_existing_wrapped_tool_reporting(
-        self, tools: AgentTools, recorder: ActivityRecorder
-    ) -> None:
-        with suppress_tool_activity(enabled=False):
-            await tools.lookup_peers()
-        recorder.assert_completed_tool(BandTool.LOOKUP_PEERS)
-
-    async def test_disabled_inner_scope_preserves_the_outer_owner(
-        self, tools: AgentTools, recorder: ActivityRecorder
-    ) -> None:
-        with suppress_tool_activity(), suppress_tool_activity(enabled=False):
-            await tools.lookup_peers()
-        assert recorder.events == []
-
-        await tools.lookup_peers()
-        recorder.assert_completed_tool(BandTool.LOOKUP_PEERS)
