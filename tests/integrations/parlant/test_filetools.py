@@ -188,24 +188,23 @@ class TestFileTools:
         assert field in result.data
         getattr(mock_tools, method).assert_not_awaited()
 
+    async def test_send_room_file_without_caption_uses_the_default(self, plugin_server):
+        """The engine sends None for an omitted caption; the tool's default applies."""
+        tools = FakeAgentTools()
+        await bind_engine_tools(SESSION_ID, tools)
+        await plugin_server.enable(create_parlant_tools())
 
-async def test_send_room_file_without_caption_uses_the_default(plugin_server):
-    """The engine sends None for an omitted caption; the tool's default applies."""
-    tools = FakeAgentTools()
-    await bind_engine_tools(SESSION_ID, tools)
-    await plugin_server.enable(create_parlant_tools())
+        result = await plugin_server.call(
+            "band_send_room_file",
+            session_id=SESSION_ID,
+            arguments={
+                "content": "hello",
+                "filename": "notes.txt",
+                "mentions": "@alice",
+                "caption": None,
+            },
+        )
 
-    result = await plugin_server.call(
-        "band_send_room_file",
-        session_id=SESSION_ID,
-        arguments={
-            "content": "hello",
-            "filename": "notes.txt",
-            "mentions": "@alice",
-            "caption": None,
-        },
-    )
-
-    assert result.startswith("Uploaded 'notes.txt'")
-    [message] = tools.messages_sent
-    assert message["content"] == DEFAULT_FILE_CAPTION.format(filename="notes.txt")
+        assert result.startswith("Uploaded 'notes.txt'")
+        [message] = tools.messages_sent
+        assert message["content"] == DEFAULT_FILE_CAPTION.format(filename="notes.txt")

@@ -21,6 +21,56 @@ from tests.runtime.activityownership.kit import ActivityPlatform, deliver_event
 
 @pytest.mark.looptime
 class TestBackgroundOrigins:
+    @pytest.mark.parametrize(
+        ("finished", "survivor", "expected"),
+        [(0, 1, tool_body("Bash")), (1, 0, REASONING_BODY)],
+        ids=["displaced-resource-finishes", "current-resource-finishes"],
+    )
+    async def test_terminal_resource_retires_only_its_own_activity(
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
+        finished: int,
+        survivor: int,
+        expected: dict[str, object],
+    ) -> None:
+        releases = [asyncio.Event(), asyncio.Event()]
+        owners: list[TurnTask] = []
+        tools: list[AgentTools] = []
+
+        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+            original = AgentTools.from_context(ctx)
+            for release in releases:
+                owner = bind_turn_task(
+                    original,
+                    asyncio.create_task(release.wait()),
+                    role=TaskRole.RESOURCE,
+                )
+                owners.append(owner)
+                tools.append(original._for_resource(owner))
+
+        ctx = execution(handler)
+        try:
+            await deliver_event(ctx, make_message_event())
+            await activity_platform.shown(
+                start_native_tool_activity(tools[0], "older", "Read")
+            )
+            await activity_platform.shown(
+                start_native_tool_activity(tools[1], "newer", "Bash")
+            )
+            releases[finished].set()
+            await owners[finished].task
+            with pytest.raises(asyncio.CancelledError):
+                await tools[finished].send_notice("stale", mentions=["alice"])
+            await tools[survivor].send_notice("surviving", mentions=["alice"])
+            assert await activity_platform.next_body() == expected
+            assert activity_platform.room_messages == ["surviving"]
+        finally:
+            for release in releases:
+                release.set()
+            await asyncio.gather(*(owner.task for owner in owners))
+            await ctx._join_activity_completion()
+
     async def test_old_response_stops_only_its_captured_background_origin(
         self,
         execution: Callable[..., ExecutionContext],

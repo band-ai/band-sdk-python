@@ -237,8 +237,11 @@ def bind_turn_task(
 
 def resource_tools(tools: AgentToolsProtocol, owner: TurnTask) -> AgentToolsProtocol:
     """Capture a resource view when the tools declare runtime ownership support."""
-    if getattr_static(tools, "_for_resource", None) is not None:
-        return tools._for_resource(owner)
+    if getattr_static(tools, "_for_resource", None) is None:
+        return tools
+    capture = getattr(tools, "_for_resource", None)
+    if callable(capture):
+        return capture(owner)
     return tools
 
 

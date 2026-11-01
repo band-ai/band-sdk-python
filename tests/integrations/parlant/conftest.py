@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -12,6 +13,18 @@ import pytest_asyncio
 
 from band.integrations.parlant.ports import reserve_server_ports
 from band.integrations.parlant.tools import create_parlant_tools
+from band.testing import FakeAgentTools
+from tests.integrations.parlant.custommodels import (
+    AnswerInput,
+    NoteInput,
+    PaintInput,
+    Receipt,
+    TallyInput,
+    answer,
+    tally,
+)
+from tests.integrations.parlant.enginecontext import running_engine
+from tests.integrations.parlant.guardcases import RecordInput, store_upstream_record
 from tests.integrations.parlant.helpers import SESSION_ID, ToolServer
 from tests.integrations.parlant.sessions import (
     clear_session_tools,  # noqa: F401 -- autouse fixture
@@ -108,3 +121,45 @@ async def plugin_server() -> AsyncIterator[ToolServer]:
             yield ToolServer(server=server, client=client)
         finally:
             await server.shutdown()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def bound_room():
+    """Bind ``SESSION_ID`` to a room, so calls on it resolve their tools."""
+    async with running_engine(SESSION_ID, FakeAgentTools()):
+        yield
+
+
+@pytest.fixture
+def received() -> list[PaintInput]:
+    """Every validated input the paint handler ran with."""
+    return []
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def custom_server(plugin_server, received):
+    async def paint(args: PaintInput) -> dict[str, object]:
+        received.append(args)
+        return {"painted": args.wall}
+
+    async def note(args: NoteInput) -> Receipt:
+        return Receipt(note=args.text)
+
+    await plugin_server.enable(
+        create_parlant_tools(
+            custom_tools=[
+                (PaintInput, paint),
+                (AnswerInput, answer),
+                (NoteInput, note),
+                (TallyInput, tally),
+            ]
+        )
+    )
+    return plugin_server
+
+
+@pytest.fixture
+def guarded_tools() -> dict[str, Any]:
+    """The Band tools plus one custom tool, each by name as its guarded function."""
+    entries = create_parlant_tools(custom_tools=[(RecordInput, store_upstream_record)])
+    return {entry.tool.name: entry.function for entry in entries}

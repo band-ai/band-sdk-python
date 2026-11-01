@@ -79,18 +79,19 @@ class TestTaskTools:
         assert target.await_count == 1
         assert target.call_args.kwargs == args
 
+    async def test_created_task_and_board_goal_read_back_as_json(
+        self, parlant_tools: dict[str, Any], mock_context: SimpleNamespace
+    ) -> None:
+        await bind_engine_tools(mock_context.session_id, FakeAgentTools())
 
-async def test_created_task_and_board_goal_read_back_as_json(
-    parlant_tools: dict[str, Any], mock_context: SimpleNamespace
-) -> None:
-    await bind_engine_tools(mock_context.session_id, FakeAgentTools())
+        created = await parlant_tools["band_create_task"](
+            mock_context, "Paint the wall"
+        )
+        listed = await parlant_tools["band_list_tasks"](mock_context)
+        await parlant_tools["band_set_board"](mock_context, goal_title="Ship it")
+        board = await parlant_tools["band_get_board"](mock_context)
 
-    created = await parlant_tools["band_create_task"](mock_context, "Paint the wall")
-    listed = await parlant_tools["band_list_tasks"](mock_context)
-    await parlant_tools["band_set_board"](mock_context, goal_title="Ship it")
-    board = await parlant_tools["band_get_board"](mock_context)
-
-    task = json.loads(created.data)
-    assert [t["id"] for t in json.loads(listed.data)["data"]] == [task["id"]]
-    assert task["subject"] == "Paint the wall"
-    assert json.loads(board.data)["goal_title"] == "Ship it"
+        task = json.loads(created.data)
+        assert [t["id"] for t in json.loads(listed.data)["data"]] == [task["id"]]
+        assert task["subject"] == "Paint the wall"
+        assert json.loads(board.data)["goal_title"] == "Ship it"

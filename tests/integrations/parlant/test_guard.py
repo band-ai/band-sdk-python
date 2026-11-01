@@ -3,47 +3,19 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import pytest
-from pydantic import BaseModel, ValidationError
 
 from band.core.exceptions import BandToolError
-from band.integrations.parlant.tools import create_parlant_tools, set_session_tools
+from band.integrations.parlant.tools import set_session_tools
 from tests.integrations.parlant.enginecontext import bind_engine_tools
+from tests.integrations.parlant.guardcases import lines_at
 from tests.integrations.parlant.helpers import SESSION_ID
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
 
 # The guard module imports parlant, so its logger is named rather than imported.
 GUARD_LOGGER = "band.integrations.parlant.guard"
-
-
-class RecordInput(BaseModel):
-    """Store a record."""
-
-    count: int
-
-
-async def store_upstream_record(args: RecordInput) -> str:
-    """Fails validating an upstream payload: a handler bug, not a bad argument."""
-    try:
-        RecordInput.model_validate({"count": "many"})
-    except ValidationError as exc:
-        raise RuntimeError("upstream returned a malformed record") from exc
-    return "stored"
-
-
-@pytest.fixture
-def guarded_tools() -> dict[str, Any]:
-    """The Band tools plus one custom tool, each by name as its guarded function."""
-    entries = create_parlant_tools(custom_tools=[(RecordInput, store_upstream_record)])
-    return {entry.tool.name: entry.function for entry in entries}
-
-
-def lines_at(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
-    """The captured log messages logged at exactly *level*."""
-    return [record.getMessage() for record in caplog.records if record.levelno == level]
 
 
 class TestGuardFailures:
@@ -87,21 +59,14 @@ class TestGuardFailures:
     async def test_send_message_mention_hint_survives_session_teardown_race(
         self, parlant_tools, mock_tools, mock_context
     ):
-        """A room torn down between the tool body's own lookup and the
-        mention-hint failure handler's re-lookup must not crash the call.
-
-        guard_failures re-fetches session tools independently when building
-        the mention hint; if the session vanished in between, that re-fetch
-        returns None and must fall back to the plain error, not attribute
-        error out on None.participants.
-        """
+        """Keep the captured tool context when the session binding disappears."""
         await bind_engine_tools(mock_context.session_id, mock_tools)
 
-        def _fail_and_tear_down_session(*args, **kwargs):
+        def fail_and_tear_down_session(*args, **kwargs):
             set_session_tools(mock_context.session_id, None)
             raise BandToolError("Backend rejected message: 503 Service Unavailable")
 
-        mock_tools.send_message.side_effect = _fail_and_tear_down_session
+        mock_tools.send_message.side_effect = fail_and_tear_down_session
 
         send_message = parlant_tools["band_send_message"]
         # Must NOT raise AttributeError from None.participants
