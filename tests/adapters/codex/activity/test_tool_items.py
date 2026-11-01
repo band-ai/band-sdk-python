@@ -4,11 +4,11 @@ import asyncio
 from typing import Any
 
 import pytest
+from band_rest.types.agent_activity_detail import AgentActivityDetail
 
 from band.core.types import Emit
-from band.runtime.activity import tool_call_activity
+from band.runtime.activity import REASONING, tool_call_activity
 from band.testing.activity import SHOWN_REASONING, ActivityRecorder, shown_tool
-from tests.adapters.activityrecorder import EndNotifyingRecorder
 from tests.adapters.codex.activity.kit import (
     BAND_TOOL_CALL,
     DOCS_LOOKUP,
@@ -67,18 +67,17 @@ class TestCodexToolItemActivity:
                 DOCS_LOOKUP,
                 LIST_FILES,
                 DOCS_LOOKUP,
-                "mcp:docs/search",
+                tool_call_activity("mcp:docs/search"),
                 [shown_tool("exec"), shown_tool("mcp:docs/search"), SHOWN_REASONING],
             ),
             (
                 DOCS_LOOKUP,
                 DOCS_LOOKUP,
                 LIST_FILES,
-                "exec",
+                REASONING,
                 [
                     shown_tool("exec"),
                     shown_tool("mcp:docs/search"),
-                    shown_tool("exec"),
                     SHOWN_REASONING,
                 ],
             ),
@@ -86,14 +85,14 @@ class TestCodexToolItemActivity:
                 SECOND_COMMAND,
                 LIST_FILES,
                 SECOND_COMMAND,
-                "exec",
+                tool_call_activity("exec"),
                 [shown_tool("exec"), SHOWN_REASONING],
             ),
             (
                 SECOND_COMMAND,
                 SECOND_COMMAND,
                 LIST_FILES,
-                "exec",
+                REASONING,
                 [shown_tool("exec"), SHOWN_REASONING],
             ),
         ],
@@ -110,10 +109,10 @@ class TestCodexToolItemActivity:
         second: dict[str, Any],
         first_finished: dict[str, Any],
         remaining: dict[str, Any],
-        remaining_name: str,
+        remaining_name: AgentActivityDetail,
         expected: list[dict[str, Any]],
     ) -> None:
-        recorder = EndNotifyingRecorder(first_finished["id"])
+        recorder = ActivityRecorder()
         client = FakeCodexClient(
             events=[
                 item_started(LIST_FILES),
@@ -127,10 +126,9 @@ class TestCodexToolItemActivity:
             send_bootstrap(adapter, tools=recorder.observing(ToolSchemaFakeTools()))
         )
         try:
-            await recorder.ended.wait()
-            assert recorder.activity.detail == tool_call_activity(remaining_name)
+            await recorder.next_end()
+            assert recorder.activity.detail == remaining_name
         finally:
-            recorder.release.set()
             client.emit_turn(
                 "turn-1",
                 item_completed(remaining),

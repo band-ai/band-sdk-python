@@ -10,18 +10,13 @@ from band.core.types import Emit
 from band.integrations.acp.types import ToolStatus
 from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME
 from band.runtime.tools.types import BandTool
-from band.testing.activity import SHOWN_REASONING, ActivityRecorder, shown_tool
-from tests.integrations.acp.acp_toolkit import (
-    FakeACPAgent,
-    acp_adapter,
-    fake_agent_config,
-)
+from band.testing.activity import SHOWN_REASONING, shown_tool
 from tests.integrations.acp.acp_toolkit.agent import cursor_mcp_naming
 from tests.integrations.acp.clientbehavior.kit import (
     band_activity_call,
     band_activity_metadata,
-    observed_tools,
 )
+from tests.integrations.acp.clientbehavior.nativeactivity import collect_native_activity
 
 FIRST = BandTool.GET_PARTICIPANTS
 SECOND = BandTool.LOOKUP_PEERS
@@ -78,7 +73,6 @@ class TestActivityTransitions:
                     shown_tool(FIRST),
                     shown_tool(SECOND),
                     shown_tool(FIRST),
-                    shown_tool(SECOND),
                     SHOWN_REASONING,
                 ],
             ),
@@ -100,7 +94,6 @@ class TestActivityTransitions:
                 [
                     shown_tool(UNKNOWN_ACTIVITY_TOOL_NAME),
                     shown_tool(SECOND),
-                    shown_tool(FIRST),
                     SHOWN_REASONING,
                 ],
             ),
@@ -149,7 +142,6 @@ class TestActivityTransitions:
                 [
                     shown_tool(UNKNOWN_ACTIVITY_TOOL_NAME),
                     shown_tool(SECOND),
-                    shown_tool(FIRST),
                     SHOWN_REASONING,
                 ],
             ),
@@ -179,19 +171,9 @@ class TestActivityTransitions:
     )
     async def test_partial_call_lifecycle(
         self,
-        fake_agent: FakeACPAgent,
         emit: tuple[Emit, ...],
         updates: list[ToolCallStart | ToolCallProgress],
         expected: list[dict[str, str]],
     ) -> None:
-        @fake_agent.on_prompt
-        async def turn(agent: FakeACPAgent, sid: str) -> None:
-            for update in updates:
-                await agent.emit(sid, update)
-
-        recorder = ActivityRecorder()
-        async with acp_adapter(
-            fake_agent, fake_agent_config(inject_band_tools=True), emit=emit
-        ) as session:
-            await session.send("work", tools=observed_tools(recorder))
+        recorder = await collect_native_activity(updates, emit=emit)
         assert recorder.events == expected

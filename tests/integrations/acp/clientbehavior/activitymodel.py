@@ -55,8 +55,8 @@ class Frame:
 
 def expected_activity(history: list[Frame]) -> AgentActivityDetail:
     """Select the most recently begun uninterrupted run in the wire history."""
-    running: list[tuple[int, str]] = []
-    for slot, tool in enumerate(TOOLS):
+    activations: list[tuple[int, int, list[tuple[int, Frame]]]] = []
+    for slot, _tool in enumerate(TOOLS):
         frames = [
             (index, frame) for index, frame in enumerate(history) if frame.slot == slot
         ]
@@ -66,38 +66,41 @@ def expected_activity(history: list[Frame]) -> AgentActivityDetail:
                 for index, frame in frames
                 if frame.effective_status in (ToolStatus.COMPLETED, ToolStatus.FAILED)
             ),
-            None,
+            len(history),
         )
-        if terminal is not None:
-            continue
         statuses = [
             (index, frame.effective_status)
             for index, frame in frames
-            if frame.effective_status is not None
+            if index <= terminal and frame.effective_status is not None
         ]
-        if not statuses or statuses[-1][1] != ToolStatus.IN_PROGRESS:
-            continue
-        last_pending = max(
-            (index for index, status in statuses if status == ToolStatus.PENDING),
-            default=-1,
-        )
-        started = next(
+        starts = [
             index
-            for index, status in statuses
-            if index > last_pending and status == ToolStatus.IN_PROGRESS
-        )
-        identities = [
-            frame.step
-            for _, frame in frames
-            if frame.step in (Step.START, Step.IDENTITY, Step.REJECT_IDENTITY)
+            for offset, (index, status) in enumerate(statuses)
+            if status == ToolStatus.IN_PROGRESS
+            and (offset == 0 or statuses[offset - 1][1] != ToolStatus.IN_PROGRESS)
         ]
-        name = (
-            tool
-            if identities and identities[-1] != Step.REJECT_IDENTITY
-            else UNKNOWN_ACTIVITY_TOOL_NAME
-        )
-        running.append((started, name))
-    return tool_call_activity(max(running)[1]) if running else REASONING
+        activations.extend((index, slot, frames) for index in starts)
+    if not activations:
+        return REASONING
+    started, slot, frames = max(activations, key=lambda entry: entry[0])
+    if any(
+        index > started
+        and frame.effective_status
+        in (ToolStatus.PENDING, ToolStatus.COMPLETED, ToolStatus.FAILED)
+        for index, frame in frames
+    ):
+        return REASONING
+    identities = [
+        frame.step
+        for _, frame in frames
+        if frame.step in (Step.START, Step.IDENTITY, Step.REJECT_IDENTITY)
+    ]
+    name = (
+        TOOLS[slot]
+        if identities and identities[-1] != Step.REJECT_IDENTITY
+        else UNKNOWN_ACTIVITY_TOOL_NAME
+    )
+    return tool_call_activity(name)
 
 
 async def play_steps(steps: list[tuple[Step, int, int, ToolStatus | None]]) -> None:

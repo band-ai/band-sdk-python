@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 
@@ -45,14 +47,16 @@ class ToolServer:
         The engine sends every argument as a string, and ``None`` for each
         optional the model omitted.
         """
-        response = await self.client.post(
-            f"/tools/{name}/calls",
-            json={
-                "agent_id": AGENT_ID,
-                "session_id": session_id,
-                "customer_id": CUSTOMER_ID,
-                "arguments": arguments,
-            },
-        )
-        assert response.status_code == httpx.codes.OK, response.text
-        return response.json()["result"]["data"]
+        from parlant.core.services.tools.plugins import PluginClient  # noqa: PLC0415 -- optional provider dependency
+        from parlant.core.tools import ToolContext  # noqa: PLC0415 -- optional provider dependency
+
+        async with PluginClient(
+            self.server.url,
+            SimpleNamespace(create_event_emitter=AsyncMock(return_value=MagicMock())),
+            MagicMock(),
+            MagicMock(),
+        ) as client:
+            result = await client.call_tool(
+                name, ToolContext(AGENT_ID, session_id, CUSTOMER_ID), arguments
+            )
+        return result.data

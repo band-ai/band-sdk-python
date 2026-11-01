@@ -29,8 +29,10 @@ from band.core.types import (
     ids_of,
 )
 from band.integrations.langgraph import langchain_tools
+from band.integrations.langgraph.activity import LangChainToolEvent, observe_tool_event
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
+from band.runtime.toolactivity import end_activity
 from band.runtime.tools import (
     BandTool,
     image_block_placeholder,
@@ -327,6 +329,7 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
         # when usage emission is off.
         track_usage = Emit.USAGE in self.features.emit
         turn_usage = TurnUsage()
+        operations: dict[str, object] = {}
         try:
             lc_tools = langchain_tools.agent_tools_to_langchain(
                 tools,
@@ -396,6 +399,8 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
                 },
                 version="v2",
             ):
+                if isinstance(event, dict):
+                    await observe_tool_event(event, tools, operations)
                 await self._handle_stream_event(event, room_id, tools)
                 if track_usage:
                     turn_usage = turn_usage + self._usage_from_stream_event(event)
@@ -424,6 +429,8 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
             )
             raise
         finally:
+            for token in operations.values():
+                await end_activity(tools, token)
             # No-op unless Emit.USAGE is on; best-effort, never raises.
             await self.emit_usage(tools, turn_usage)
 
@@ -440,7 +447,7 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
 
         event_type = event.get("event")
 
-        if event_type == "on_tool_start":
+        if event_type == LangChainToolEvent.START:
             if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
@@ -462,13 +469,13 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning("Failed to send tool_call event: %s", e)
 
-        elif event_type in {"on_tool_end", "on_tool_error"}:
+        elif event_type in {LangChainToolEvent.END, LangChainToolEvent.ERROR}:
             if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
-            is_error = event_type == "on_tool_error" or bool(data.get("error"))
+            is_error = event_type == LangChainToolEvent.ERROR or bool(data.get("error"))
             payload = {
                 ToolEventKey.NAME: tool_name,
                 ToolEventKey.OUTPUT: _redacted_tool_end_output(tool_name, data),

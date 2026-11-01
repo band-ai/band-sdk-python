@@ -87,6 +87,10 @@ class TurnBinding:
     thoughts: set[asyncio.Task[None]] = field(default_factory=set)
     posting: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    @property
+    def current(self) -> bool:
+        return _turn_binding.get() is self
+
     def start(self, call: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         task = asyncio.ensure_future(call)
         self.in_flight.add(task)

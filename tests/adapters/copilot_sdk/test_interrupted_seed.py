@@ -96,8 +96,9 @@ class TestInterruptedSeed:
         assert client.sessions == [seeded]
         assert client.deleted == []
         assert seeded.aborted
-        assert seeded.handlers == []
         assert REPLAYED not in seeded.prompts[-1]
+        await adapter.on_cleanup("room-1")
+        assert seeded.handlers == []
 
     async def test_an_interrupt_while_dropping_a_failed_seed_still_deletes_it(self):
         client = FakeCopilotClient(prompt_errors=[RuntimeError("model unavailable")])

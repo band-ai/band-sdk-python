@@ -82,7 +82,9 @@ class TestAgentToolsSendEvent:
         ctx = ExecutionContext(
             "room-123", MagicMock(rest=mock_rest_client), AsyncMock()
         )
-        await ctx.begin_delivery()
+        scope = await ctx.begin_delivery()
+        assert scope is not None
+        scope.admit()
         tools = AgentTools.from_context(ctx)
         mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
             ForbiddenError(

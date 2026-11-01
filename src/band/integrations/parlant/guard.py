@@ -21,7 +21,7 @@ from band.integrations.parlant.sessiontools import (
     CONTEXT_PARAMETER,
     NO_SESSION_TOOLS_ERROR,
     NoSessionTools,
-    get_session_tools,
+    bound_plugin_tools,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,13 +61,11 @@ def _log_failure(exc: Exception, *, tool_name: str) -> None:
     )
 
 
-def _failure_message(exc: Exception, *, context: Any, mention_hints: bool) -> str:
+def _failure_message(exc: Exception, *, tools: Any, mention_hints: bool) -> str:
     """``exc`` as the model reads it, with the room's handles for a bad mention."""
     message = str(exc)
-    if mention_hints and isinstance(exc, (ValueError, BandToolError)):
-        session_tools = get_session_tools(context.session_id)
-        if session_tools:
-            message = with_mention_handles(message, session_tools)
+    if mention_hints and isinstance(exc, (ValueError, BandToolError)) and tools:
+        message = with_mention_handles(message, tools)
     return message
 
 
@@ -119,8 +117,10 @@ def guard_failures(
         logger.debug(
             "%s %s arguments: %s", LOG_PREFIX, func.__name__, _logged_arguments(call)
         )
+        captured = None
         try:
-            result = await func(context, *args, **kwargs)
+            with bound_plugin_tools(context) as captured:
+                result = await func(context, *args, **kwargs)
         except NoSessionTools:
             logger.error(
                 "%s %s: no tools available for session %s",
@@ -131,9 +131,7 @@ def guard_failures(
             return ToolResult(data=NO_SESSION_TOOLS_ERROR)
         except Exception as exc:  # noqa: BLE001 -- any tool failure must reach the model as a ToolResult, not crash the call
             _log_failure(exc, tool_name=func.__name__)
-            message = _failure_message(
-                exc, context=context, mention_hints=mention_hints
-            )
+            message = _failure_message(exc, tools=captured, mention_hints=mention_hints)
             return ToolResult(
                 data=f"Error {failure.format(**call.arguments)}: {message}"
             )

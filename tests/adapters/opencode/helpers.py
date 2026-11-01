@@ -73,7 +73,14 @@ def message_from(sender: tuple[str, str], content: str) -> PlatformMessage:
     )
 
 
-def event_message_updated(session_id: str, message_id: str) -> RawOpencodeEvent:
+def event_message_updated(
+    session_id: str,
+    message_id: str,
+    *,
+    parent_id: str | None = None,
+    summary: bool = False,
+    agent: str | None = None,
+) -> RawOpencodeEvent:
     return {
         "type": "message.updated",
         "properties": {
@@ -81,6 +88,9 @@ def event_message_updated(session_id: str, message_id: str) -> RawOpencodeEvent:
                 "id": message_id,
                 "sessionID": session_id,
                 "role": "assistant",
+                **({"parentID": parent_id} if parent_id is not None else {}),
+                **({"summary": True} if summary else {}),
+                **({"agent": agent} if agent is not None else {}),
             }
         },
     }
@@ -172,6 +182,7 @@ def event_tool_part(
     input_data: dict[str, Any],
     output: Any = None,
     error: str | None = None,
+    part_id: str | None = None,
 ) -> RawOpencodeEvent:
     state: dict[str, Any] = {"status": status, "input": input_data}
     if status == "running":
@@ -189,7 +200,7 @@ def event_tool_part(
         "type": "message.part.updated",
         "properties": {
             "part": {
-                "id": f"tool-{call_id}-{status}",
+                "id": part_id or f"tool-{call_id}-{status}",
                 "sessionID": session_id,
                 "messageID": message_id,
                 "type": "tool",
@@ -202,7 +213,11 @@ def event_tool_part(
 
 
 def event_permission(
-    session_id: str, request_id: str, *, permission: str = "bash"
+    session_id: str,
+    request_id: str,
+    *,
+    permission: str = "bash",
+    tool: dict[str, str] | None = None,
 ) -> RawOpencodeEvent:
     return {
         "type": "permission.asked",
@@ -211,12 +226,16 @@ def event_permission(
             "sessionID": session_id,
             "permission": permission,
             "patterns": ["rm -rf tmp"],
+            **({"tool": tool} if tool is not None else {}),
         },
     }
 
 
 def event_question(
-    session_id: str, request_id: str, *questions: str
+    session_id: str,
+    request_id: str,
+    *questions: str,
+    tool: dict[str, str] | None = None,
 ) -> RawOpencodeEvent:
     return {
         "type": "question.asked",
@@ -224,6 +243,7 @@ def event_question(
             "id": request_id,
             "sessionID": session_id,
             "questions": [{"question": question} for question in questions],
+            **({"tool": tool} if tool is not None else {}),
         },
     }
 
@@ -423,6 +443,7 @@ class FakeOpencodeClient:
         session_id: str,
         *,
         parts: list[dict[str, Any]],
+        message_id: str | None = None,
         system: str | None = None,
         model: dict[str, str] | None = None,
         agent: str | None = None,
@@ -432,6 +453,7 @@ class FakeOpencodeClient:
         self.prompt_calls.append(
             {
                 "session_id": session_id,
+                "message_id": message_id,
                 "parts": parts,
                 "system": system,
                 "model": model,

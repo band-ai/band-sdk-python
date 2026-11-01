@@ -56,14 +56,13 @@ class TestActivityOwnership:
             )
 
             await turn.runtime.on_event(tool_end("host", BandTool.LOOKUP_PEERS))
-            assert turn.recorder.activity.detail == tool_call_activity("read")
+            assert turn.recorder.activity.detail == REASONING
             await turn.runtime.on_event(tool_end("native", "read"))
             await turn.finish()
 
             assert turn.recorder.events == [
                 shown_tool("read"),
                 shown_tool(BandTool.LOOKUP_PEERS),
-                shown_tool("read"),
                 SHOWN_REASONING,
             ]
             assert turn.recorder.activity.detail == REASONING
@@ -77,7 +76,7 @@ class TestActivityOwnership:
         ],
         ids=["approve", "deny", "cancel"],
     )
-    async def test_permission_wait_overrides_tool_progress_then_restores_it(
+    async def test_permission_discards_progress_without_restoring_it(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -107,7 +106,7 @@ class TestActivityOwnership:
                     expected_value,
                     cancelled,
                 )
-                assert turn.recorder.activity.detail == tool_call_activity("grep")
+                assert turn.recorder.activity.detail == REASONING
 
                 await turn.runtime.on_event(tool_end("newer", "grep"))
                 await turn.finish()
@@ -116,7 +115,7 @@ class TestActivityOwnership:
                 permission.cancel()
                 await asyncio.gather(permission, return_exceptions=True)
 
-    async def test_failed_permission_restores_the_remaining_tool(
+    async def test_failed_permission_leaves_reasoning_until_new_progress(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -140,7 +139,7 @@ class TestActivityOwnership:
                 )
                 with pytest.raises(ValueError, match="unavailable"):
                     await permission
-                assert turn.recorder.activity.detail == tool_call_activity("grep")
+                assert turn.recorder.activity.detail == REASONING
                 await turn.runtime.on_event(tool_end("newer", "grep"))
                 await turn.finish()
                 assert turn.recorder.activity.detail == REASONING

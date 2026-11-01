@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Hashable, Iterator
 from contextlib import contextmanager
 from typing import Any, Protocol, TypeVar
@@ -33,6 +34,8 @@ class ActivityRecorder:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
         self.activity = TurnActivity()
+        self._ends: asyncio.Queue[Hashable] = asyncio.Queue()
+        self._changed = asyncio.Event()
 
     def observing(self, tools: _Tools) -> _Tools:
         """Bind this recorder as the turn observer of ``tools``."""
@@ -44,12 +47,31 @@ class ActivityRecorder:
         self.activity.start(key, activity)
         self._record_progress(before)
 
+    async def next_end(self) -> Hashable:
+        """Wait for an actual terminal observation, including a displaced token."""
+        return await self._ends.get()
+
+    async def wait_for_detail(self, detail: AgentActivityDetail) -> None:
+        """Wait for the observed display without polling or elapsed-time assumptions."""
+        while True:
+            self._changed.clear()
+            if self.activity.detail == detail:
+                return
+            await self._changed.wait()
+
+    async def rename(self, key: Hashable, activity: AgentActivityDetail) -> None:
+        before = self.activity.progress
+        self.activity.rename(key, activity)
+        self._record_progress(before)
+
     async def end(self, key: Hashable) -> None:
         before = self.activity.progress
         self.activity.end(key)
         self._record_progress(before)
+        self._ends.put_nowait(key)
 
     def _record_progress(self, before: AgentActivityDetail) -> None:
+        self._changed.set()
         if self.activity.progress != before:
             self.events.append(self.activity.progress.model_dump(exclude_none=True))
 
@@ -64,6 +86,7 @@ class ActivityRecorder:
             self._record_wait()
 
     def _record_wait(self) -> None:
+        self._changed.set()
         self.events.append({"waiting": self.waiting})
 
     @property

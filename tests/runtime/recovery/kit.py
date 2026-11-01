@@ -25,6 +25,7 @@ from band.client.streaming import DeliveryStatus
 from band.core.protocols import TURN_FAILURE_PROVIDER, AgentToolsProtocol
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import judge_detached_turn
+from band.core.turn_lifecycle import bind_turn_task
 from band.platform.event import MessageEvent
 from band.runtime.execution import ExecutionContext
 from band.runtime.messages import PlatformMessage
@@ -475,7 +476,9 @@ class ScriptedAdapter(BatchInputAdapter[Any]):
             case Ending.DETACHES:
                 tools.turn.detach()
                 self.detached.append(
-                    asyncio.create_task(self.fail_later(tools, room_id))
+                    bind_turn_task(
+                        tools, asyncio.create_task(self.fail_later(tools, room_id))
+                    ).task
                 )
 
     async def fail_later(self, tools: AgentToolsProtocol, room_id: str) -> None:

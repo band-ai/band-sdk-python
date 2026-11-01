@@ -41,7 +41,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from band_rest import AsyncRestClient
 from phoenix_channels_python_client.exceptions import PHXClientError
@@ -680,4 +680,7 @@ async def reply_capture(
 # Type of the ``reply_capture`` fixture: call with a room id, get a
 # ``ReplyCapture`` async context manager. Shared so smokes type their fixture
 # parameter without each redefining the same alias.
-CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]
+class CaptureFactory(Protocol):
+    def __call__(
+        self, room_id: str, *, deadline_s: float = ...
+    ) -> AbstractAsyncContextManager[ReplyCapture]: ...

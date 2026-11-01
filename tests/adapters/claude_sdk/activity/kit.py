@@ -10,6 +10,9 @@ from tests.adapters.claude_sdk.fakecli import MODEL, Raw
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 from tests.baseline.decisions import ModelDecision
 
+BACKGROUND_CALL = "background-call"
+BACKGROUND_TASK = "background-task"
+
 # The reply's MCP call ends before the CLI streams the Bash call, so the order
 # is fixed.
 REPLY_THEN_BASH_ACTIVITY: list[dict[str, Any]] = [
@@ -42,3 +45,17 @@ def native_tool_result(tool_use_id: str) -> Raw:
         "is_error": False,
     }
     return Raw({"type": "user", "message": {"content": [block]}})
+
+
+def native_task_started(task_id: str, call_id: str) -> Raw:
+    return Raw(
+        {
+            "type": "system",
+            "subtype": "task_started",
+            "task_id": task_id,
+            "tool_use_id": call_id,
+            "description": "private task description",
+            "uuid": "started",
+            "session_id": "session-1",
+        }
+    )

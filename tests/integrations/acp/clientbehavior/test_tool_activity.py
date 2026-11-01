@@ -21,6 +21,7 @@ from tests.integrations.acp.acp_toolkit.agent import (
     cursor_mcp_placeholder,
 )
 from tests.integrations.acp.clientbehavior.kit import band_activity_call, observed_tools
+from tests.integrations.acp.clientbehavior.nativeactivity import collect_native_activity
 
 
 class TestToolActivity:
@@ -97,7 +98,7 @@ class TestToolActivity:
         ]
 
     @pytest.mark.asyncio
-    async def test_call_named_late_is_renamed_while_it_runs(
+    async def test_registered_local_identity_waits_for_actual_wrapper_execution(
         self, fake_agent: FakeACPAgent
     ) -> None:
         """A pending Cursor placeholder starts activity once it becomes running."""
@@ -111,10 +112,7 @@ class TestToolActivity:
             reply = await session.send("contacts?", tools=observed_tools(recorder))
 
         assert reply.tool_call_names == ["band_list_contacts"]
-        assert recorder.events == [
-            shown_tool("band_list_contacts"),
-            SHOWN_REASONING,
-        ]
+        assert recorder.events == []
 
     @pytest.mark.asyncio
     async def test_call_keeps_the_name_it_was_posted_under(
@@ -168,7 +166,6 @@ class TestToolActivity:
                 [
                     shown_tool(BandTool.GET_PARTICIPANTS),
                     shown_tool(BandTool.LOOKUP_PEERS),
-                    shown_tool(BandTool.GET_PARTICIPANTS),
                     SHOWN_REASONING,
                 ],
             ),
@@ -177,35 +174,22 @@ class TestToolActivity:
     )
     async def test_overlapping_calls_show_the_newest_still_running(
         self,
-        fake_agent: FakeACPAgent,
         end_order: tuple[str, str],
         expected: list[dict[str, str]],
     ) -> None:
-        @fake_agent.on_prompt
-        async def turn(agent: FakeACPAgent, sid: str) -> None:
-            await agent.emit(
-                sid,
-                band_activity_call(
-                    "tc-first", BandTool.GET_PARTICIPANTS, ToolStatus.IN_PROGRESS
-                ),
-            )
-            await agent.emit(
-                sid,
-                band_activity_call(
-                    "tc-second", BandTool.LOOKUP_PEERS, ToolStatus.IN_PROGRESS
-                ),
-            )
-            for tool_call_id in end_order:
-                await agent.emit(
-                    sid, update_tool_call(tool_call_id, status=ToolStatus.COMPLETED)
-                )
-
-        recorder = ActivityRecorder()
-        async with acp_adapter(
-            fake_agent, fake_agent_config(inject_band_tools=True)
-        ) as session:
-            await session.send("work", tools=observed_tools(recorder))
-
+        updates = [
+            band_activity_call(
+                "tc-first", BandTool.GET_PARTICIPANTS, ToolStatus.IN_PROGRESS
+            ),
+            band_activity_call(
+                "tc-second", BandTool.LOOKUP_PEERS, ToolStatus.IN_PROGRESS
+            ),
+            *(
+                update_tool_call(call_id, status=ToolStatus.COMPLETED)
+                for call_id in end_order
+            ),
+        ]
+        recorder = await collect_native_activity(updates)
         assert recorder.events == expected
 
     @pytest.mark.asyncio

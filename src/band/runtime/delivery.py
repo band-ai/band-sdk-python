@@ -137,7 +137,9 @@ class DeliveryHost(Protocol):
         self, message_id: str | None, *, reason: InputNotAccepted
     ) -> None: ...
 
-    async def report_delivery_failure(self, *, final: bool) -> None: ...
+    async def report_delivery_failure(
+        self, *, final: bool, error: Exception | None = None
+    ) -> None: ...
 
     def finish_delivery(self, scope: TurnScope) -> None: ...
 
@@ -376,7 +378,7 @@ class DeliveryLifecycle:
             )
             if not scope.admitted:
                 return self._unadmitted_outcome()
-            return await self._fail(scope, control=control)
+            return await self._fail(scope, control=control, error=error)
         finally:
             if scope.intent is None or scope.kind is ControlMode.INTERRUPT:
                 self.discard_attempts(charged)
@@ -432,14 +434,16 @@ class DeliveryLifecycle:
         await self.settle(scope)
         return self.settled_outcome(scope)
 
-    async def _fail(self, scope: TurnScope, *, control: bool) -> TurnOutcome:
+    async def _fail(
+        self, scope: TurnScope, *, control: bool, error: Exception
+    ) -> TurnOutcome:
         """Settle an admitted attempt whose execution raised as one failure."""
         if control and scope.intent is None:
             self._charge_control_failure(scope)
         self.store_intent(scope, DeliveryStatus.FAILED)
         final = not self._will_retry(scope)
         await self.settle(scope)
-        await self.host.report_delivery_failure(final=final)
+        await self.host.report_delivery_failure(final=final, error=error)
         return self.settled_outcome(scope)
 
     def _hydrated(self, candidate: Candidate) -> Candidate:

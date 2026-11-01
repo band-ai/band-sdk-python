@@ -14,7 +14,6 @@ from tests.runtime.activity.kit import ActivityPeer, activity_context
 from tests.runtime.helpers import (
     IDLE,
     KEEP_ALIVE,
-    STOP_ECHO,
     ActivityReport,
     running_execution,
 )
@@ -56,7 +55,7 @@ class TestActivityCleanup:
                 await cleaned_up.wait()
 
             assert cleaned_up.is_set()
-            observer.assert_awaited_once()
+            observer.assert_not_awaited()
             assert peer.requested("processed") == []
             assert peer.requested("failed") == []
 
@@ -92,9 +91,9 @@ class TestActivityCleanup:
                 release.set()
                 await turn
 
-            # The final idle report follows the cleanup it reports on.
-            assert reports_at_cleanup == [KEEP_ALIVE, STOP_ECHO]
-            assert peer.activity_reports == [*reports_at_cleanup, IDLE]
+            # Revocation clears reporting while native cleanup remains owned.
+            assert reports_at_cleanup == [KEEP_ALIVE, IDLE]
+            assert peer.activity_reports == [KEEP_ALIVE, IDLE]
             observer.assert_not_awaited()
             assert peer.marked("processing") == ["trigger"]
             assert peer.requested("processed") == []

@@ -36,9 +36,10 @@ class TestDedupedToolActivity:
             call_over_mcp(cast(AgentTools, room_tools), BandTool.GET_PARTICIPANTS, {})
         )
         await entered.wait()
-        await room_tools.update_inner(
+        next_tools = room_tools.for_origin(
             next_turn.observing(AgentTools(ROOM_ID, mock_rest_client))
         )
+        assert next_tools is not room_tools
         release.set()
         await call
 
