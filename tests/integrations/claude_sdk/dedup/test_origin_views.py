@@ -43,14 +43,16 @@ class TestOriginViews:
         assert inner_a.send_message.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_new_origin_does_not_redirect_in_flight_send(self):
+    async def test_new_origin_does_not_redirect_in_flight_send(self) -> None:
         """Allow new work while the original delivery remains blocked."""
         inner_a = _make_inner()
         gate = asyncio.Event()
         entered = asyncio.Event()
         observed_inner: list[Any] = []
 
-        async def slow_send(content, mentions=None):
+        async def slow_send(
+            content: str, mentions: list[str] | None = None
+        ) -> dict[str, str]:
             observed_inner.append("a")
             entered.set()
             await gate.wait()
@@ -60,13 +62,17 @@ class TestOriginViews:
         wrapper = DedupingAgentTools(inner_a)
 
         send_task = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
-        await entered.wait()
+        try:
+            await entered.wait()
 
-        inner_b = _make_inner()
-        next_view = wrapper.for_origin(inner_b)
-        await next_view.send_message("new origin", ["alice"])
+            inner_b = _make_inner()
+            next_view = wrapper.for_origin(inner_b)
+            await next_view.send_message("new origin", ["alice"])
 
-        gate.set()
-        await send_task
-        assert observed_inner == ["a"]
-        assert inner_b.send_message.await_count == 1
+            gate.set()
+            await send_task
+            assert observed_inner == ["a"]
+            assert inner_b.send_message.await_count == 1
+        finally:
+            gate.set()
+            await asyncio.gather(send_task, return_exceptions=True)

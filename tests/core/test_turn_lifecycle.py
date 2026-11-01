@@ -9,6 +9,7 @@ import pytest
 from band.core.turn_lifecycle import (
     CYCLE_CANCEL_GRACE_SECONDS,
     TurnTask,
+    drain_turn_tasks,
     terminal_deadline,
 )
 from band.runtime.cycle import TurnScope
@@ -269,3 +270,35 @@ class TestTurnTask:
             await owner.task
         assert not owner.authoritative
         assert owner.failure is None
+
+    async def test_collection_drain_awaits_each_captured_cleanup(self) -> None:
+        entered = [asyncio.Event(), asyncio.Event()]
+        cleaning = [asyncio.Event(), asyncio.Event()]
+        release = asyncio.Event()
+
+        async def work(index: int) -> None:
+            entered[index].set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaning[index].set()
+                await release.wait()
+
+        owners = [TurnTask(asyncio.create_task(work(index))) for index in range(2)]
+        await asyncio.gather(*(event.wait() for event in entered))
+        owners[0].terminate()
+        first_deadline = owners[0].deadline
+        draining = asyncio.create_task(drain_turn_tasks(owners))
+        try:
+            await asyncio.gather(*(event.wait() for event in cleaning))
+            assert not draining.done()
+            assert not any(owner.authoritative for owner in owners)
+            assert owners[0].deadline == first_deadline
+            release.set()
+            await draining
+            assert all(owner.task.done() for owner in owners)
+        finally:
+            release.set()
+            await asyncio.gather(
+                draining, *(owner.task for owner in owners), return_exceptions=True
+            )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -106,7 +107,7 @@ class TestSendMessageDedup:
         assert inner.send_message.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_serializes_concurrent_duplicates(self):
+    async def test_serializes_concurrent_duplicates(self) -> None:
         """Two coroutines racing on the same key must POST exactly once."""
         inner = _make_inner()
         # Block the first inner call long enough for the second to enter
@@ -114,7 +115,9 @@ class TestSendMessageDedup:
         gate = asyncio.Event()
         entered = asyncio.Event()
 
-        async def slow_send(content, mentions=None):
+        async def slow_send(
+            content: str, mentions: list[str] | None = None
+        ) -> dict[str, str]:
             entered.set()
             await gate.wait()
             return {"id": "msg-1"}
@@ -124,14 +127,18 @@ class TestSendMessageDedup:
 
         t1 = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
         t2 = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
-        # Let both tasks run up to their first await point.
-        gate.set()
-        await asyncio.gather(t1, t2)
+        try:
+            await entered.wait()
+            gate.set()
+            await asyncio.gather(t1, t2)
+        finally:
+            gate.set()
+            await asyncio.gather(t1, t2, return_exceptions=True)
 
         assert inner.send_message.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_cancelled_waiter_does_not_poison_in_flight_cache(self):
+    async def test_cancelled_waiter_does_not_poison_in_flight_cache(self) -> None:
         """Caller cancellation must not leave a stale in-flight task.
 
         Claude SDK transports can cancel a request while the underlying POST is
@@ -142,8 +149,14 @@ class TestSendMessageDedup:
         inner = _make_inner()
         gate = asyncio.Event()
         entered = asyncio.Event()
+        sends: list[asyncio.Task[Any]] = []
 
-        async def slow_send(content, mentions=None):
+        async def slow_send(
+            content: str, mentions: list[str] | None = None
+        ) -> dict[str, str]:
+            task = asyncio.current_task()
+            assert task is not None
+            sends.append(task)
             entered.set()
             await gate.wait()
             return {"id": "msg-after-cancel"}
@@ -152,29 +165,37 @@ class TestSendMessageDedup:
         wrapper = DedupingAgentTools(inner)
 
         first_waiter = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
-        await entered.wait()
-        first_waiter.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await first_waiter
+        waiters = [first_waiter]
+        try:
+            await entered.wait()
+            first_waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first_waiter
 
-        second_waiter = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
-        gate.set()
-        result = await second_waiter
+            second_waiter = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
+            waiters.append(second_waiter)
+            gate.set()
+            result = await second_waiter
 
-        assert result == {"id": "msg-after-cancel"}
-        assert inner.send_message.await_count == 1
-        await wrapper.send_message("hi", ["alice"])
-        assert inner.send_message.await_count == 1
+            assert result == {"id": "msg-after-cancel"}
+            assert inner.send_message.await_count == 1
+            await wrapper.send_message("hi", ["alice"])
+            assert inner.send_message.await_count == 1
+        finally:
+            gate.set()
+            await asyncio.gather(*waiters, *sends, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_in_flight_send_expires_at_ttl(self):
+    async def test_in_flight_send_expires_at_ttl(self) -> None:
         """A stalled POST must not extend the dedup window forever."""
         inner = _make_inner()
         gate = asyncio.Event()
         entered = asyncio.Event()
         calls: list[int] = []
 
-        async def slow_first_send(content, mentions=None):
+        async def slow_first_send(
+            content: str, mentions: list[str] | None = None
+        ) -> dict[str, str]:
             calls.append(len(calls) + 1)
             if len(calls) == 1:
                 entered.set()
@@ -187,24 +208,30 @@ class TestSendMessageDedup:
         wrapper = DedupingAgentTools(inner, ttl_seconds=1.0, clock=lambda: clock["t"])
 
         first_waiter = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
-        await entered.wait()
-        clock["t"] += 1.1
+        try:
+            await entered.wait()
+            clock["t"] += 1.1
 
-        second_result = await wrapper.send_message("hi", ["alice"])
-        assert second_result == {"id": "second"}
-        assert inner.send_message.await_count == 2
+            second_result = await wrapper.send_message("hi", ["alice"])
+            assert second_result == {"id": "second"}
+            assert inner.send_message.await_count == 2
 
-        gate.set()
-        assert await first_waiter == {"id": "first"}
+            gate.set()
+            assert await first_waiter == {"id": "first"}
+        finally:
+            gate.set()
+            await asyncio.gather(first_waiter, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_distinct_concurrent_sends_do_not_block_each_other(self):
+    async def test_distinct_concurrent_sends_do_not_block_each_other(self) -> None:
         inner = _make_inner()
         slow_gate = asyncio.Event()
         entered = asyncio.Event()
         completed: list[str] = []
 
-        async def controlled_send(content, mentions=None):
+        async def controlled_send(
+            content: str, mentions: list[str] | None = None
+        ) -> dict[str, str]:
             if content == "slow":
                 entered.set()
                 await slow_gate.wait()
@@ -215,15 +242,19 @@ class TestSendMessageDedup:
         wrapper = DedupingAgentTools(inner)
 
         slow_task = asyncio.create_task(wrapper.send_message("slow", ["alice"]))
-        await entered.wait()
-        fast_result = await wrapper.send_message("fast", ["alice"])
+        try:
+            await entered.wait()
+            fast_result = await wrapper.send_message("fast", ["alice"])
 
-        assert fast_result == {"id": "fast"}
-        assert completed == ["fast"]
+            assert fast_result == {"id": "fast"}
+            assert completed == ["fast"]
 
-        slow_gate.set()
-        await slow_task
-        assert completed == ["fast", "slow"]
+            slow_gate.set()
+            await slow_task
+            assert completed == ["fast", "slow"]
+        finally:
+            slow_gate.set()
+            await asyncio.gather(slow_task, return_exceptions=True)
 
     @pytest.mark.asyncio
     async def test_cache_bounded_by_max_entries(self):

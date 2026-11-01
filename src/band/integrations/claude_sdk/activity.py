@@ -34,8 +34,8 @@ from band.core.turn_lifecycle import (
     TaskRole,
     TurnTask,
     bind_turn_task,
+    drain_turn_tasks,
     resource_tools,
-    terminal_deadline,
 )
 from band.runtime.activity import activity_observer_of
 from band.runtime.toolactivity import (
@@ -261,8 +261,7 @@ class SessionActivity:
         finally:
             if task.terminal.is_set() and self._tasks.get(task.task_id) is task:
                 del self._tasks[task.task_id]
-                if (call := self._calls.pop(task.call_id, None)) is not None:
-                    await end_activity(task.origin.tools, call.token)
+                await self._retire_task_calls(task)
 
     async def _stop_task(self, task: NativeTask) -> None:
         owner = task.owner
@@ -305,9 +304,18 @@ class SessionActivity:
         # Remove correlation before the next source-ordered start can reuse ID.
         if self._tasks.get(task.task_id) is task:
             del self._tasks[task.task_id]
-        if (call := self._calls.pop(task.call_id, None)) is not None:
-            await end_activity(task.origin.tools, call.token)
+        await self._retire_task_calls(task)
         self._diagnose(task, message.status)
+
+    async def _retire_task_calls(self, task: NativeTask) -> None:
+        for call_id, call in tuple(self._calls.items()):
+            if (
+                (call_id == task.call_id or call.origin is task.origin)
+                and self._task_origin(call_id) is None
+                and self._calls.get(call_id) is call
+            ):
+                del self._calls[call_id]
+                await end_activity(task.origin.tools, call.token)
 
     def _diagnose(self, task: NativeTask, status: str) -> None:
         logger.info(
@@ -357,17 +365,9 @@ class SessionActivity:
                 task.owner.terminate()
 
     async def drain(self) -> None:
-        deadline = terminal_deadline()
-        owners = tuple(
+        await drain_turn_tasks(
             task.owner for task in self._tasks.values() if task.owner is not None
         )
-        for owner in owners:
-            owner.terminate(deadline=deadline)
-        if owners:
-            await asyncio.wait(
-                {owner.task for owner in owners},
-                timeout=max(0, deadline - asyncio.get_running_loop().time()),
-            )
 
     async def closed(self) -> None:
         self._closed.set()

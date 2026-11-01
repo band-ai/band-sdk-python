@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -209,6 +209,19 @@ class TurnTask:
                 if self.failure is not None:
                     raise self.failure
                 raise asyncio.CancelledError
+
+
+async def drain_turn_tasks(owners: Iterable[TurnTask]) -> None:
+    """Terminate captured tasks and drain them within one shared cleanup grace."""
+    captured = tuple(owners)
+    deadline = terminal_deadline()
+    for owner in captured:
+        owner.terminate(deadline=deadline)
+    if captured:
+        await asyncio.wait(
+            {owner.task for owner in captured},
+            timeout=max(0, deadline - asyncio.get_running_loop().time()),
+        )
 
 
 def start_releasable_turn(

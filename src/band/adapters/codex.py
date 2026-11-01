@@ -82,9 +82,9 @@ from band.core.turn_lifecycle import (
     TurnSettleTimeout,
     TurnTask,
     bind_turn_task,
+    drain_turn_tasks,
     resource_tools,
     start_releasable_turn,
-    terminal_deadline,
 )
 from band.core.types import (
     ApprovalMode,
@@ -2234,18 +2234,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 command.owner.terminate()
 
     async def _drain_commands(self, room: RoomCodexClient) -> None:
-        commands = tuple(room.commands.values())
-        deadline = terminal_deadline()
-        owners = tuple(
-            command.owner for command in commands if command.owner is not None
+        await drain_turn_tasks(
+            command.owner
+            for command in room.commands.values()
+            if command.owner is not None
         )
-        for owner in owners:
-            owner.terminate(deadline=deadline)
-        if owners:
-            await asyncio.wait(
-                {owner.task for owner in owners},
-                timeout=max(0, deadline - asyncio.get_running_loop().time()),
-            )
         if room.commands and self.config.transport == "websocket":
             raise CleanupIncompleteError(
                 "Codex remote commands have not confirmed termination"
