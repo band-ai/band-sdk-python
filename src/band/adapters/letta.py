@@ -1269,12 +1269,7 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
 
     @staticmethod
     def _usage_from_statistics(statistics: Any) -> TurnUsage:
-        """Map a Letta ``LettaResponse.usage`` (a ``Usage``) onto TurnUsage.
-
-        Field names verified against letta-client: ``prompt_tokens`` /
-        ``completion_tokens`` / ``cached_input_tokens`` / ``cache_write_tokens``.
-        A missing ``usage`` yields empty usage.
-        """
+        """Map terminal stream usage statistics onto TurnUsage."""
         return TurnUsage.from_object(
             statistics,
             input="prompt_tokens",

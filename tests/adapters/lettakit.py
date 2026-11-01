@@ -388,15 +388,37 @@ class RecordingLettaClient:
         return [entry for entry in self.journal if entry.startswith("cancel ")]
 
     async def _create_agent_turn(
-        self, *, agent_id: str, messages: list[dict[str, str]]
-    ) -> MagicMock:
+        self,
+        *,
+        agent_id: str,
+        messages: list[dict[str, str]],
+        streaming: bool,
+        stream_tokens: bool,
+        include_compaction_messages: bool,
+    ) -> LettaStream:
+        assert (streaming, stream_tokens, include_compaction_messages) == (
+            True,
+            False,
+            True,
+        )
         self.journal.append(f"send agent {agent_id}")
         await self.release.wait()
-        return make_letta_response(make_assistant_message())
+        return make_mock_async_stream(make_assistant_message())
 
     async def _create_conversation_turn(
-        self, *, conversation_id: str, messages: list[dict[str, str]]
-    ) -> Any:
+        self,
+        *,
+        conversation_id: str,
+        messages: list[dict[str, str]],
+        streaming: bool,
+        stream_tokens: bool,
+        include_compaction_messages: bool,
+    ) -> LettaStream:
+        assert (streaming, stream_tokens, include_compaction_messages) == (
+            True,
+            False,
+            True,
+        )
         self.journal.append(f"send conversation {conversation_id}")
         await self.release.wait()
         return make_mock_async_stream(make_assistant_message())

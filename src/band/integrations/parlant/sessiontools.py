@@ -1,10 +1,4 @@
-"""Which Band room's tools a Parlant tool call acts on.
-
-Parlant runs tools in its own tasks, so a ``ContextVar`` set by the adapter
-never reaches them. The adapter instead binds the room's ``AgentTools`` to the
-Parlant session id for the length of a turn, and every tool resolves it from
-``context.session_id``.
-"""
+"""Capture engine origins and retain their exact tools through plugin cleanup."""
 
 from __future__ import annotations
 
@@ -121,7 +115,8 @@ def require_session_tools(context: Any) -> Any:
     engine = EntityContext.get()
     origin = getattr(engine, ENGINE_ORIGIN, None)
     if (
-        not isinstance(origin, EngineOrigin)
+        engine is None
+        or not isinstance(origin, EngineOrigin)
         or origin.task is None
         or origin.task.done()
         or origin.task.cancelling()

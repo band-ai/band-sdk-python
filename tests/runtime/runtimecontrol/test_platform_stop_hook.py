@@ -1,21 +1,21 @@
-"""A REST-observed stop reaches the adapter's hook without latching the room."""
+"""A REST-observed STOP drains captured work without widening room control."""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
 from band.client.streaming import ControlMode
+from band.core.turn_lifecycle import bind_turn_task
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
+from band.runtime.tools.agent import AgentTools
 from tests.runtime.runtimecontrol.kit import (
     never_executes,
 )
 
 
 class TestPlatformStopHook:
-    """A REST-observed stop reaches the adapter's hook without latching the room."""
-
-    async def test_rest_stop_uses_default_runtime_adapter_hook_without_latching(
+    async def test_rest_stop_drains_its_registered_worker_without_room_control(
         self,
     ) -> None:
         link = MagicMock()
@@ -34,13 +34,21 @@ class TestPlatformStopHook:
         ctx = await runtime.rooms.admit("room-1")
         assert isinstance(ctx, ExecutionContext)
         try:
-            await ctx.begin_delivery()
-            scope = ctx.current_scope
+            scope = await ctx.begin_delivery()
             assert scope is not None
+            scope.admit()
+            owner = bind_turn_task(
+                AgentTools.from_context(ctx),
+                asyncio.create_task(asyncio.Event().wait()),
+            )
             ctx.observe_platform_stop(scope)
             assert scope.observer_task is not None
             await scope.observer_task
-            assert heard == [("room-1", ControlMode.STOP)]
+            assert owner.task.cancelled()
+            assert heard == []
             assert not ctx.is_stopped
         finally:
             await ctx.stop()
+
+
+import asyncio

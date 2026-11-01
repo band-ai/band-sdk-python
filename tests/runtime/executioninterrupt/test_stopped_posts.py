@@ -136,13 +136,20 @@ class TestStoppedPosts:
     async def test_detached_stop_hook_does_not_await_its_posting_task(
         self, mock_link
     ) -> None:
-        captured: list[AgentTools] = []
-
-        async def handler(ctx: ExecutionContext, event: Any) -> None:
-            captured.append(AgentTools.from_context(ctx))
-
         provider: asyncio.Task[None] | None = None
         cleanup = asyncio.Event()
+        release = asyncio.Event()
+        workers: list[asyncio.Task[None]] = []
+
+        async def post(tools: AgentTools) -> None:
+            await release.wait()
+            await tools.send_event("late", "thought")
+
+        async def handler(ctx: ExecutionContext, event: Any) -> None:
+            if event.payload.id != "detached":
+                return
+            tools = AgentTools.from_context(ctx)
+            workers.append(bind_turn_task(tools, asyncio.create_task(post(tools))).task)
 
         async def observer(ctx: ExecutionContext, scope: TurnScope) -> None:
             assert provider is not None
@@ -158,7 +165,8 @@ class TestStoppedPosts:
         mock_link.rest.agent_api_events.create_agent_chat_event = AsyncMock(
             side_effect=RoomExecutionStoppedError(ctx.room_id)
         )
-        provider = asyncio.create_task(captured[0].send_event("late", "thought"))
+        provider = workers[0]
+        release.set()
         with pytest.raises(asyncio.CancelledError):
             await provider
         await cleanup.wait()
@@ -177,7 +185,9 @@ class TestStoppedPosts:
             ctx = ExecutionContext(
                 "room-123", mock_link, AsyncMock(), agent_id="agent-123"
             )
-            await ctx.begin_delivery()
+            scope = await ctx.begin_delivery()
+            assert scope is not None
+            scope.admit()
             tools = AgentTools.from_context(ctx)
             refused = asyncio.Event()
             refused_at: list[float] = []
