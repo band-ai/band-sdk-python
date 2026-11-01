@@ -232,23 +232,25 @@ class SessionActivity:
         task = NativeTask(
             message.task_id, message.tool_use_id or "", call.origin, run_id=run_id
         )
+        self._admit_task(task)
+        if call.name is not None and not call.name.startswith(LOCAL_MCP_PREFIX):
+            await start_native_tool_activity(task.origin.tools, call.token, call.name)
+        self._diagnose(task, "running")
+
+    def _admit_task(self, task: NativeTask) -> None:
+        origin = task.origin
         worker = asyncio.create_task(self._run_task(task))
         task.owner = bind_turn_task(
-            call.origin.tools,
+            origin.tools,
             worker,
             role=TaskRole.RESOURCE,
             request_stop=task.wake.set,
         )
-        tools = resource_tools(call.origin.tools, task.owner)
-        task.origin = Origin(
-            tools, task.owner, call.origin.audience, call.origin.release
-        )
+        tools = resource_tools(origin.tools, task.owner)
+        task.origin = Origin(tools, task.owner, origin.audience, origin.release)
         self._tasks[task.task_id] = task
         task.revision = next(self._starts)
         self._changed.set()
-        if call.name is not None and not call.name.startswith(LOCAL_MCP_PREFIX):
-            await start_native_tool_activity(task.origin.tools, call.token, call.name)
-        self._diagnose(task, "running")
 
     async def _run_task(self, task: NativeTask) -> None:
         try:

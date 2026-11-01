@@ -143,6 +143,21 @@ class TurnState:
         """The turn owns the room until its watcher has delivered the result."""
         return self.watcher is None or not self.watcher.done()
 
+    def defer_native_part(self, part: OpencodePart) -> None:
+        """Keep bounded updates awaiting attribution, preserving terminal state."""
+        if not part.id or not part.message_id:
+            return
+        previous = self.pending_native_parts.get(part.id)
+        if (
+            previous is None
+            or previous.state is None
+            or previous.state.status
+            not in (OpencodeToolStatus.COMPLETED, OpencodeToolStatus.ERROR)
+        ):
+            self.pending_native_parts[part.id] = part
+        if len(self.pending_native_parts) > MAX_PENDING_NATIVE_PARTS:
+            self.pending_native_parts.popitem(last=False)
+
 
 # Resolves to the TurnState an ApprovalPorts bundle acts on -- either pinned
 # to one specific turn (a per-turn RoomApprovals, see _begin_turn) or tracking
@@ -847,14 +862,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
 
         match event:
             case MessageUpdatedEvent():
-                self._apply_message_update(room_state, event.properties.info)
-                if room_state.turn is not None:
-                    for part_id, part in tuple(
-                        room_state.turn.pending_native_parts.items()
-                    ):
-                        if part.message_id in room_state.turn.attributed_messages:
-                            del room_state.turn.pending_native_parts[part_id]
-                            await self._observe_native_part(room_state.turn, part)
+                await self._handle_message_update(room_state, event.properties.info)
             case MessagePartUpdatedEvent():
                 if event.properties.part is not None:
                     await self._handle_part_update(room_state, event.properties.part)
@@ -927,6 +935,17 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 return None
             return self._rooms.get(room_id)
 
+    async def _handle_message_update(
+        self, room_state: RoomState, info: OpencodeMessageInfo | None
+    ) -> None:
+        self._apply_message_update(room_state, info)
+        if room_state.turn is None:
+            return
+        for part_id, part in tuple(room_state.turn.pending_native_parts.items()):
+            if part.message_id in room_state.turn.attributed_messages:
+                del room_state.turn.pending_native_parts[part_id]
+                await self._observe_native_part(room_state.turn, part)
+
     def _apply_message_update(
         self, room_state: RoomState, info: OpencodeMessageInfo | None
     ) -> None:
@@ -959,20 +978,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         self, room_state: RoomState, part: OpencodePart
     ) -> None:
         """Report native execution independently of optional narration."""
-        if (turn := room_state.turn) is not None:
-            if part.message_id in turn.attributed_messages:
-                await self._observe_native_part(turn, part)
-            elif part.id and part.message_id:
-                previous = turn.pending_native_parts.get(part.id)
-                if (
-                    previous is None
-                    or previous.state is None
-                    or previous.state.status
-                    not in (OpencodeToolStatus.COMPLETED, OpencodeToolStatus.ERROR)
-                ):
-                    turn.pending_native_parts[part.id] = part
-                if len(turn.pending_native_parts) > MAX_PENDING_NATIVE_PARTS:
-                    turn.pending_native_parts.popitem(last=False)
+        await self._track_native_part(room_state, part)
         if part.state is None or Emit.TOOL_CALLS not in self.features.emit:
             return
 
@@ -1010,6 +1016,16 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                     await self._report_tool_result(
                         room_state, tool_name, state, call_id
                     )
+
+    async def _track_native_part(
+        self, room_state: RoomState, part: OpencodePart
+    ) -> None:
+        if (turn := room_state.turn) is None:
+            return
+        if part.message_id in turn.attributed_messages:
+            await self._observe_native_part(turn, part)
+        else:
+            turn.defer_native_part(part)
 
     async def _observe_native_part(self, turn: TurnState, part: OpencodePart) -> None:
         if part.state is None or not part.id:

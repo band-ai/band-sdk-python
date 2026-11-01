@@ -570,20 +570,7 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         self, run: LettaRun, messages: list[dict[str, str]], tools: AgentToolsProtocol
     ) -> tuple[list[Any], TurnUsage]:
         """Consume live provider phases; buffer durable output outside its timeout."""
-        options = {
-            "messages": messages,
-            "streaming": True,
-            "stream_tokens": False,
-            "include_compaction_messages": True,
-        }
-        if run.conversation_id:
-            stream = await run.client.conversations.messages.create(
-                conversation_id=run.conversation_id, **options
-            )
-        else:
-            stream = await run.client.agents.messages.create(
-                agent_id=run.agent_id, **options
-            )
+        stream = await self._open_stream(run, messages)
         response_messages: list[Any] = []
         usage = TurnUsage()
         compaction: tuple[object, object, object] | None = None
@@ -621,6 +608,20 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
             finally:
                 if compaction is not None:
                     await end_activity(tools, compaction[2])
+
+    @staticmethod
+    async def _open_stream(run: LettaRun, messages: list[dict[str, str]]) -> Any:
+        options = {
+            "messages": messages,
+            "streaming": True,
+            "stream_tokens": False,
+            "include_compaction_messages": True,
+        }
+        if run.conversation_id:
+            return await run.client.conversations.messages.create(
+                conversation_id=run.conversation_id, **options
+            )
+        return await run.client.agents.messages.create(agent_id=run.agent_id, **options)
 
     @staticmethod
     async def _cancel_runs(run: LettaRun) -> None:
