@@ -29,7 +29,7 @@ from band.core.types import (
     ids_of,
 )
 from band.integrations.langgraph import langchain_tools
-from band.integrations.langgraph.activity import observe_tool_event
+from band.integrations.langgraph.activity import LangChainToolEvent, observe_tool_event
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.toolactivity import end_activity
@@ -447,7 +447,7 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
 
         event_type = event.get("event")
 
-        if event_type == "on_tool_start":
+        if event_type == LangChainToolEvent.START:
             if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
@@ -469,13 +469,13 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning("Failed to send tool_call event: %s", e)
 
-        elif event_type in {"on_tool_end", "on_tool_error"}:
+        elif event_type in {LangChainToolEvent.END, LangChainToolEvent.ERROR}:
             if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
-            is_error = event_type == "on_tool_error" or bool(data.get("error"))
+            is_error = event_type == LangChainToolEvent.ERROR or bool(data.get("error"))
             payload = {
                 ToolEventKey.NAME: tool_name,
                 ToolEventKey.OUTPUT: _redacted_tool_end_output(tool_name, data),
