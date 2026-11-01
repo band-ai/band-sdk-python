@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Hashable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from inspect import getattr_static
 from typing import Any
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
@@ -26,6 +28,8 @@ from band.runtime.tools.registry import (
 from band.runtime.tools.types import BandTool
 
 logger = logging.getLogger(__name__)
+
+WRAPPED_TOOL_ACTIVITY = "band_wrapped_tool_activity"
 
 MEMORY_SAVE_TOOLS = frozenset(
     name for name in MEMORY_TOOL_NAMES if turn_effect(name).did_work
@@ -73,25 +77,71 @@ def suppress_tool_activity() -> Iterator[None]:
         _showing_tool.reset(token)
 
 
-@asynccontextmanager
-async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
-    """Show ``name`` as running in the turn's activity until the tool ends.
+def require_activity_authority(observer: ActivityObserver | None) -> None:
+    """Recording-only observers need no owner; scoped observers must remain valid."""
+    if (
+        observer is not None
+        and getattr_static(observer, "authoritative", None) is not None
+        and not getattr(observer, "authoritative", True)
+    ):
+        raise asyncio.CancelledError
 
-    Only the outermost call reports, so a tool that calls other Band tools
-    shows as itself throughout. The observer is resolved once so the end lands
-    on the turn the tool started on, even if ``tools`` is rebound meanwhile.
-    """
+
+@asynccontextmanager
+async def execution_activity(
+    tools: object, detail: AgentActivityDetail
+) -> AsyncIterator[None]:
+    """Capture one observer and suppress duplicate nested execution wrappers."""
     observer = activity_observer_of(tools)
+    require_activity_authority(observer)
     if observer is None or _showing_tool.get():
         yield
         return
     key = object()
     try:
         with suppress_tool_activity():
-            await _start(observer, key, tool_detail(name))
+            await _start(observer, key, detail)
+            require_activity_authority(observer)
             yield
     finally:
         await _end(observer, key)
+
+
+@asynccontextmanager
+async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
+    """Report a registered Band tool, including genuine memory writes."""
+    async with execution_activity(tools, tool_detail(name)):
+        yield
+
+
+@asynccontextmanager
+async def native_tool_activity(tools: object, name: str) -> AsyncIterator[None]:
+    """Report actual native/custom execution independently of name spelling."""
+    async with execution_activity(tools, tool_call_activity(name)):
+        yield
+
+
+async def start_native_tool_activity(
+    tools: object, key: Hashable, name: str | None
+) -> None:
+    if observer := activity_observer_of(tools):
+        await _start(observer, key, tool_call_activity(name))
+
+
+async def rename_native_tool_activity(
+    tools: object, key: Hashable, name: str | None
+) -> None:
+    if observer := activity_observer_of(tools):
+        try:
+            rename = getattr(observer, "rename", None)
+            if getattr_static(observer, "rename", None) is not None and callable(
+                rename
+            ):
+                await rename(key, tool_call_activity(name))
+        except Exception:
+            logger.warning(
+                "Could not report an activity identity update", exc_info=True
+            )
 
 
 async def start_tool_activity(tools: object, key: Hashable, name: str) -> None:

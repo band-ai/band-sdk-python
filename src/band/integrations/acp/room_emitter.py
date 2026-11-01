@@ -22,8 +22,12 @@ from band.integrations.acp.types import (
     CollectedChunk,
     ToolStatus,
 )
-from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME
-from band.runtime.toolactivity import end_activity, start_tool_activity
+from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME, retain_request_permission
+from band.runtime.toolactivity import (
+    end_activity,
+    rename_native_tool_activity,
+    start_native_tool_activity,
+)
 from band.runtime.tools import TurnEffect, turn_effect
 
 logger = logging.getLogger(__name__)
@@ -64,7 +68,7 @@ class RoomTurnEmitter:
         *,
         emit: frozenset[Emit] | None = None,
         records_tool_effects: bool = False,
-        activity_name: Callable[[ACPToolActivity], str] | None = None,
+        activity_name: Callable[[ACPToolActivity], str | None] | None = None,
     ) -> None:
         """``records_tool_effects``: the turn's tools run out of process, so
         each completed call's effect is recorded on the turn from the stream.
@@ -75,6 +79,7 @@ class RoomTurnEmitter:
         """
         self._tools = tools
         self._activity_name = activity_name
+        self._local_calls: set[str] = set()
         self._records_tool_effects = records_tool_effects
         # ``None``: post every kind (the historical behavior). Adapters pass
         # their resolved ``features.emit`` so a caller's ``emit=`` narrowing
@@ -124,13 +129,28 @@ class RoomTurnEmitter:
                     chunk.chunk_type,
                 )
 
-    async def tool_started(self, call: ACPToolActivity) -> None:
+    def _native_name(self, call: ACPToolActivity) -> str | None:
+        if call.tool_call_id in self._local_calls:
+            return None
         name = (
             self._activity_name(call)
             if self._activity_name
             else UNKNOWN_ACTIVITY_TOOL_NAME
         )
-        await start_tool_activity(self._tools, call.tool_call_id, name)
+        if name is None:
+            self._local_calls.add(call.tool_call_id)
+        return name
+
+    async def tool_started(self, call: ACPToolActivity) -> None:
+        if (name := self._native_name(call)) is not None:
+            await start_native_tool_activity(self._tools, call.tool_call_id, name)
+
+    async def tool_updated(self, call: ACPToolActivity) -> None:
+        name = self._native_name(call)
+        if name is None:
+            await end_activity(self._tools, call.tool_call_id)
+        else:
+            await rename_native_tool_activity(self._tools, call.tool_call_id, name)
 
     async def tool_ended(self, tool_call_id: str) -> None:
         await end_activity(self._tools, tool_call_id)
@@ -149,6 +169,9 @@ class RoomTurnEmitter:
         if isinstance(chunk.tool, (ACPToolCall, ACPToolResult)):
             return chunk.tool.room_event().model_dump_json()
         raise RuntimeError("ACP tool chunk is missing normalized tool activity")
+
+    def retain_manual_request(self) -> None:
+        retain_request_permission(self._tools)
 
     async def open_permission(
         self,

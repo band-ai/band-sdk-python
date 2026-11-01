@@ -1,4 +1,4 @@
-"""A turn shows its newest running activity, else reasoning; a person's wait overrides both."""
+"""A current activity clears by identity; manual waits discard ordinary detail."""
 
 from __future__ import annotations
 
@@ -57,12 +57,12 @@ class TestTurnActivity:
         activity.start("bash", tool_call_activity("Bash"))
         assert activity.detail == tool_call_activity("Bash")
 
-    def test_ending_the_newest_shows_the_one_still_running(self) -> None:
+    def test_ending_the_newest_does_not_restore_displaced_work(self) -> None:
         activity = TurnActivity()
         activity.start("read", tool_call_activity("Read"))
         activity.start("bash", tool_call_activity("Bash"))
         activity.end("bash")
-        assert activity.detail == tool_call_activity("Read")
+        assert activity.detail == REASONING
 
     def test_ending_an_older_activity_keeps_the_newest(self) -> None:
         activity = TurnActivity()
@@ -75,19 +75,19 @@ class TestTurnActivity:
         activity = TurnActivity()
         activity.start("tool", tool_call_activity("pending"))
         activity.start("bash", tool_call_activity("Bash"))
-        activity.start("tool", tool_call_activity("Read"))
+        activity.rename("tool", tool_call_activity("Read"))
         shown_after_restart = activity.detail
         activity.end("bash")
         assert (shown_after_restart, activity.detail) == (
             tool_call_activity("Bash"),
-            tool_call_activity("Read"),
+            REASONING,
         )
 
-    def test_a_person_wait_overrides_progress_without_losing_it(self) -> None:
+    def test_a_person_wait_discards_progress_without_queuing_new_starts(self) -> None:
         activity = TurnActivity()
         activity.start("read", tool_call_activity("Read"))
         owner = activity.acquire_permission()
         activity.start("memory", MEMORY)
-        assert (activity.detail, activity.progress) == (PERMISSION, MEMORY)
+        assert (activity.detail, activity.progress) == (PERMISSION, REASONING)
         activity.release_permission(owner)
-        assert activity.detail == MEMORY
+        assert activity.detail == REASONING

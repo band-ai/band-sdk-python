@@ -12,12 +12,16 @@ from pydantic import BaseModel, Field, StrictInt
 
 from band.integrations.parlant.sessiontools import (
     NO_SESSION_TOOLS_ERROR,
-    set_session_tools,
 )
 from band.integrations.parlant.tools import create_parlant_tools
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools
+from tests.integrations.parlant.enginecontext import (
+    activate_engine,
+    bind_engine_tools,
+    running_engine,
+)
 from tests.integrations.parlant.helpers import SESSION_ID
 from tests.integrations.parlant.samples import MaybeTrays, Shade
 
@@ -26,10 +30,11 @@ pytest.importorskip(
 )  # real p.tool and PluginServer; dev-parlant venv only
 
 
-@pytest.fixture
-def bound_room() -> None:
+@pytest_asyncio.fixture(loop_scope="function")
+async def bound_room():
     """Bind ``SESSION_ID`` to a room, so calls on it resolve their tools."""
-    set_session_tools(SESSION_ID, FakeAgentTools())
+    async with running_engine(SESSION_ID, FakeAgentTools()):
+        yield
 
 
 class PaintInput(BaseModel):
@@ -199,8 +204,9 @@ async def test_invalid_value_is_a_model_visible_error(custom_server, received, i
 
 async def test_effect_settles_only_the_calling_rooms_turn(custom_server):
     calling, other = FakeAgentTools(), FakeAgentTools()
-    set_session_tools("session-calling", calling)
-    set_session_tools("session-other", other)
+    engine = await bind_engine_tools("session-calling", calling)
+    await bind_engine_tools("session-other", other)
+    activate_engine(engine)
 
     result = await custom_server.call(
         "answer", session_id="session-calling", arguments={"text": "yes"}

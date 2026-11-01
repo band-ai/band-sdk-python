@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from tests.integrations.parlant.enginecontext import bind_engine_tools
+
 pytest.importorskip("parlant.sdk")
 
-from band.integrations.parlant.sessiontools import set_session_tools
 from band.integrations.parlant.tools import create_parlant_tools
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
@@ -18,7 +19,7 @@ class TestParlantModelEventActivity:
     ) -> None:
         recorder = ActivityRecorder()
         tools = recorder.observing(FakeAgentTools())
-        set_session_tools("calling", tools)
+        await bind_engine_tools("calling", tools)
         await plugin_server.enable(create_parlant_tools())
 
         await plugin_server.call(

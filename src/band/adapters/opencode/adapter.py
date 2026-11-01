@@ -69,6 +69,11 @@ from band.integrations.opencode import (
     describe_error,
     parse_opencode_event,
 )
+from band.integrations.opencode.events import (
+    OpencodePermissionRequest,
+    OpencodeQuestionRequest,
+)
+from band.integrations.opencode.identity import MessageIds
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import (
     SENDER_METADATA_INSTRUCTION,
@@ -78,6 +83,7 @@ from band.runtime.formatters import (
 )
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.sessionresume import SessionSeed
+from band.runtime.toolactivity import end_activity, start_native_tool_activity
 from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
 
 logger = logging.getLogger(__name__)
@@ -94,6 +100,7 @@ _MCP_SERVER_ID_LENGTH = 8
 # OpenCode's own registration-result vocabulary; shared with the test double
 # (tests/adapters/opencode/helpers.py) so both sides name the same status.
 MCP_REGISTRATION_CONNECTED_STATUS = "connected"
+MAX_PENDING_NATIVE_PARTS = 256
 
 
 @dataclass
@@ -124,6 +131,12 @@ class TurnState:
     # Set while that watcher reports a timeout, so the stop it requested
     # aborts the session without cancelling the task that still posts the report.
     reports_timeout: bool = False
+    prompt_id: str = ""
+    attributed_messages: set[str] = field(default_factory=set)
+    pending_native_parts: OrderedDict[str, OpencodePart] = field(
+        default_factory=OrderedDict
+    )
+    native_calls: dict[str, object | None] = field(default_factory=dict)
 
     @property
     def running(self) -> bool:
@@ -320,6 +333,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         self._client_factory = client_factory or self._default_client_factory
         self._client: OpencodeClientProtocol | None = None
         self._event_task: asyncio.Task[None] | None = None
+        self._message_ids = MessageIds()
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
         self._rooms: dict[str, RoomState] = {}
         self._backend_turns = BackendTurns[TurnState](
@@ -534,6 +548,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 )
                 await client.prompt_async(
                     session_id,
+                    message_id=turn.prompt_id,
                     parts=self._build_prompt_parts(
                         messages,
                         participants_msg,
@@ -833,15 +848,28 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         match event:
             case MessageUpdatedEvent():
                 self._apply_message_update(room_state, event.properties.info)
+                if room_state.turn is not None:
+                    for part_id, part in tuple(
+                        room_state.turn.pending_native_parts.items()
+                    ):
+                        if part.message_id in room_state.turn.attributed_messages:
+                            del room_state.turn.pending_native_parts[part_id]
+                            await self._observe_native_part(room_state.turn, part)
             case MessagePartUpdatedEvent():
                 if event.properties.part is not None:
                     await self._handle_part_update(room_state, event.properties.part)
             case MessagePartDeltaEvent():
                 self._apply_part_delta(room_state, event)
             case PermissionAskedEvent():
-                await room_state.approvals.on_permission_asked(event.properties)
+                await room_state.approvals.on_permission_asked(
+                    event.properties,
+                    activity_tools=self._permission_tools(room_state, event.properties),
+                )
             case QuestionAskedEvent():
-                await room_state.approvals.on_question_asked(event.properties)
+                await room_state.approvals.on_question_asked(
+                    event.properties,
+                    activity_tools=self._permission_tools(room_state, event.properties),
+                )
             case SessionErrorEvent():
                 # The error class only: its data can carry provider text.
                 logger.info(
@@ -876,6 +904,19 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                     await room_state.turn.approvals.abandon()
                 self._finish_turn(room_state)
 
+    @staticmethod
+    def _permission_tools(
+        state: RoomState, request: OpencodePermissionRequest | OpencodeQuestionRequest
+    ) -> AgentToolsProtocol | None:
+        turn = state.turn
+        if (
+            turn is not None
+            and request.tool is not None
+            and request.tool.message_id in turn.attributed_messages
+        ):
+            return turn.tools
+        return None
+
     async def _room_state_for_session(self, session_id: str | None) -> RoomState | None:
         if not session_id:
             return None
@@ -890,6 +931,17 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         self, room_state: RoomState, info: OpencodeMessageInfo | None
     ) -> None:
         room_state.record_message(info, emit_usage=Emit.USAGE in self.features.emit)
+        turn = room_state.turn
+        if (
+            turn is not None
+            and info is not None
+            and info.id
+            and info.role == "assistant"
+            and info.parent_id == turn.prompt_id
+            and not info.summary
+            and info.agent != "compaction"
+        ):
+            turn.attributed_messages.add(info.id)
 
     async def _handle_part_update(
         self, room_state: RoomState, part: OpencodePart
@@ -906,7 +958,21 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
     async def _report_tool_part(
         self, room_state: RoomState, part: OpencodePart
     ) -> None:
-        """Report the tool's call/result."""
+        """Report native execution independently of optional narration."""
+        if (turn := room_state.turn) is not None:
+            if part.message_id in turn.attributed_messages:
+                await self._observe_native_part(turn, part)
+            elif part.id and part.message_id:
+                previous = turn.pending_native_parts.get(part.id)
+                if (
+                    previous is None
+                    or previous.state is None
+                    or previous.state.status
+                    not in (OpencodeToolStatus.COMPLETED, OpencodeToolStatus.ERROR)
+                ):
+                    turn.pending_native_parts[part.id] = part
+                if len(turn.pending_native_parts) > MAX_PENDING_NATIVE_PARTS:
+                    turn.pending_native_parts.popitem(last=False)
         if part.state is None or Emit.TOOL_CALLS not in self.features.emit:
             return
 
@@ -944,6 +1010,23 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                     await self._report_tool_result(
                         room_state, tool_name, state, call_id
                     )
+
+    async def _observe_native_part(self, turn: TurnState, part: OpencodePart) -> None:
+        if part.state is None or not part.id:
+            return
+        raw_name = part.tool or "unknown"
+        canonical = self._canonical_tool_name(raw_name)
+        if raw_name != canonical and canonical in self._own_tool_names:
+            return
+        key = part.call_id or part.id
+        match part.state.status:
+            case OpencodeToolStatus.RUNNING if key not in turn.native_calls:
+                token = turn.native_calls[key] = object()
+                await start_native_tool_activity(turn.tools, token, raw_name)
+            case OpencodeToolStatus.COMPLETED | OpencodeToolStatus.ERROR:
+                if token := turn.native_calls.get(key):
+                    await end_activity(turn.tools, token)
+                turn.native_calls[key] = None
 
     def _apply_part_delta(
         self, room_state: RoomState, event: MessagePartDeltaEvent
@@ -1087,6 +1170,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         turn = room_state.begin_turn(
             session_id=session_id, client=client, tools=tools, sender_ids=sender_ids
         )
+        turn.prompt_id = self._message_ids.next()
         room_state.approvals = self._new_approvals(room_state, lambda: turn)
         turn.approvals = room_state.approvals
         return turn
@@ -1141,6 +1225,9 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             if completed:
                 await self._record_session(room_state, turn)
         finally:
+            for token in turn.native_calls.values():
+                if token is not None:
+                    await end_activity(turn.tools, token)
             # Release the input handler waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
             # @mention, which the platform rejects) — otherwise the input handler

@@ -44,6 +44,13 @@ def _retrieve_task_error(task: asyncio.Task[None]) -> None:
         task.exception()
 
 
+def project_working(deadlines: tuple[float | None, ...], now: float) -> bool | None:
+    """Report eligible execution, pause capped execution, or clear absent authority."""
+    if not deadlines:
+        return False
+    return True if any(end is None or now < end for end in deadlines) else None
+
+
 class WorkingStateReporter:
     """Manages the working signal and its activity for one execution (agent + room)."""
 
@@ -52,7 +59,7 @@ class WorkingStateReporter:
         report: ReportFn,
         *,
         keep_alive_seconds: float = 3.0,
-        max_working_state_seconds: float | None = None,
+        project: Callable[[], bool | None] | None = None,
         enabled: bool = True,
     ) -> None:
         if keep_alive_seconds <= 0:
@@ -61,13 +68,12 @@ class WorkingStateReporter:
             )
         self._report = report
         self._keep_alive_seconds = keep_alive_seconds
-        self._max_working_state_seconds = max_working_state_seconds
+        self._project = project
         self._enabled = enabled
 
         self._active = False
-        self._started_at: float | None = None
         self._task: asyncio.Task[None] | None = None
-        self._false_send: asyncio.Future[None] | None = None
+        self._false_send: asyncio.Future[bool | None] | None = None
         self._wake = asyncio.Event()
         # Serializes every report() call (true / keep-alive / false) so they can
         # never overlap on the wire — guarantees the platform sees them in order
@@ -83,7 +89,6 @@ class WorkingStateReporter:
         await self._finish_false_send()
         self._active = True
         self._wake.clear()
-        self._started_at = asyncio.get_running_loop().time()
         await self._safe_report(True)
         # A false armed during the first report ends the cycle before it ran.
         if self._active:
@@ -173,27 +178,21 @@ class WorkingStateReporter:
             self._wake.clear()
             if not self._active:
                 return
-            if self._cap_reached():
-                # Stop lying past the cap: let the platform TTL flip the state.
-                # We do NOT cancel the cycle and do NOT send false here — stop()
-                # remains the authoritative clear when the cycle truly ends.
-                logger.info(
-                    "working-state max duration (%ss) reached; pausing keep-alive "
-                    "pings (platform TTL will clear the indicator)",
-                    self._max_working_state_seconds,
-                )
-                return
-            await self._safe_report(True)
+            if await self._safe_report(True) is None:
+                await self._wake.wait()
 
-    def _cap_reached(self) -> bool:
-        if self._max_working_state_seconds is None or self._started_at is None:
-            return False
-        elapsed = asyncio.get_running_loop().time() - self._started_at
-        return elapsed >= self._max_working_state_seconds
-
-    async def _safe_report(self, working: bool) -> None:
+    async def _safe_report(self, working: bool) -> bool | None:
         """Report under the serialization lock; never raise."""
         async with self._lock:
+            if working and not self._active:
+                return None
+            if working and self._project is not None:
+                projected = self._project()
+                if projected is None:
+                    return None
+                if not projected:
+                    self.defer_false_report()
+                    return False
             try:
                 await self._report(working)
             except asyncio.CancelledError:
@@ -202,3 +201,4 @@ class WorkingStateReporter:
                 logger.exception(
                     "working-state report failed (working=%s); swallowing", working
                 )
+            return working

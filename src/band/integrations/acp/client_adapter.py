@@ -1132,6 +1132,8 @@ class ACPClientAdapter(
                 tool_call, canonicalize=self._canonical_tool_name
             )
 
+            if self._permission_is_manual():
+                emitter.retain_manual_request()
             option_id = await self._resolve_permission_option(
                 call=call,
                 options=options,
@@ -1177,6 +1179,9 @@ class ACPClientAdapter(
             await narration
         else:
             await narrate(narration)
+
+    def _permission_is_manual(self) -> bool:
+        return self._resolve_permission is not None
 
     async def _resolve_permission_option(
         self,
@@ -1287,19 +1292,15 @@ class ACPClientAdapter(
         """
         return canonicalize_mcp_tool_name(name, self._own_tool_names)
 
-    def _activity_tool_name(self, call: ACPToolActivity) -> str:
+    def _activity_tool_name(self, call: ACPToolActivity) -> str | None:
         """Report only an identity from this adapter's Band registration."""
         if (
             self.config.inject_band_tools
             and not call.mcp_metadata_rejected
             and call.mcp_server == BAND_MCP_SERVER_NAME
-            and any(
-                definition.name == call.mcp_tool
-                for definition in self._tool_definitions
-            )
+            and call.mcp_tool in self._own_tool_names
         ):
-            assert call.mcp_tool is not None
-            return call.mcp_tool
+            return None
         return UNKNOWN_ACTIVITY_TOOL_NAME
 
     def _mcp_settings(self) -> BandMCPBackendSettings:

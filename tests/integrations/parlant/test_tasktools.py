@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.integrations.parlant.tools import set_session_tools
 from band.testing import FakeAgentTools
+from tests.integrations.parlant.enginecontext import bind_engine_tools
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
 
@@ -43,7 +43,7 @@ class TestTaskTools:
     ) -> None:
         method = name.removeprefix("band_")
         setattr(mock_tools, method, AsyncMock())
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
         result = await parlant_tools[name](mock_context, **args)
         assert f"Invalid arguments for {name}" in result.data
         assert field in result.data
@@ -73,7 +73,7 @@ class TestTaskTools:
         method = name.removeprefix("band_")
         target = AsyncMock(return_value={"id": args["id"], "subject": "task"})
         setattr(mock_tools, method, target)
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
         result = await parlant_tools[name](mock_context, **args)
         assert "task" in result.data
         assert target.await_count == 1
@@ -83,7 +83,7 @@ class TestTaskTools:
 async def test_created_task_and_board_goal_read_back_as_json(
     parlant_tools: dict[str, Any], mock_context: SimpleNamespace
 ) -> None:
-    set_session_tools(mock_context.session_id, FakeAgentTools())
+    await bind_engine_tools(mock_context.session_id, FakeAgentTools())
 
     created = await parlant_tools["band_create_task"](mock_context, "Paint the wall")
     listed = await parlant_tools["band_list_tasks"](mock_context)

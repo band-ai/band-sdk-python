@@ -53,6 +53,7 @@ from band.integrations.letta.orgscope import resolve_org_scoped_headers
 from band.integrations.letta.prompts import render_tool_enforcement
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
+from band.runtime.toolactivity import end_activity, start_memory_activity
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     iter_tool_definitions,
@@ -520,7 +521,7 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
                     room_ctx.tools = tools
                     try:
                         response_messages, turn_usage = await asyncio.wait_for(
-                            self._call_provider(run, messages),
+                            self._call_provider(run, messages, tools),
                             timeout=self.config.turn_timeout_s,
                         )
                     except TimeoutError:
@@ -566,22 +567,60 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         return room_ctx.conversation_id if self.config.mode == "shared" else None
 
     async def _call_provider(
-        self, run: LettaRun, messages: list[dict[str, str]]
+        self, run: LettaRun, messages: list[dict[str, str]], tools: AgentToolsProtocol
     ) -> tuple[list[Any], TurnUsage]:
-        """Round-trip to the Letta API -- no response processing or delivery."""
+        """Consume live provider phases; buffer durable output outside its timeout."""
+        options = {
+            "messages": messages,
+            "streaming": True,
+            "stream_tokens": False,
+            "include_compaction_messages": True,
+        }
         if run.conversation_id:
-            conversation_stream = await run.client.conversations.messages.create(
-                conversation_id=run.conversation_id,
-                messages=messages,
+            stream = await run.client.conversations.messages.create(
+                conversation_id=run.conversation_id, **options
             )
-            response_messages = [resp_msg async for resp_msg in conversation_stream]
-            return response_messages, TurnUsage()
-
-        response = await run.client.agents.messages.create(
-            agent_id=run.agent_id,
-            messages=messages,
-        )
-        return list(response.messages), self._usage_from_response(response)
+        else:
+            stream = await run.client.agents.messages.create(
+                agent_id=run.agent_id, **options
+            )
+        response_messages: list[Any] = []
+        usage = TurnUsage()
+        compaction: tuple[object, object, object] | None = None
+        try:
+            async for message in stream:
+                identity = (
+                    getattr(message, "run_id", None),
+                    getattr(message, "step_id", None),
+                )
+                match getattr(message, "message_type", None):
+                    case "error_message":
+                        raise RuntimeError("Letta stream reported a provider failure")
+                    case "event_message" if (
+                        getattr(message, "event_type", None) == "compaction"
+                    ):
+                        if getattr(message, "is_err", False):
+                            raise RuntimeError("Letta compaction failed")
+                        if compaction is None:
+                            token = object()
+                            compaction = (*identity, token)
+                            await start_memory_activity(tools, token)
+                    case "summary_message":
+                        if compaction is not None and compaction[:2] == identity:
+                            await end_activity(tools, compaction[2])
+                            compaction = None
+                    case "usage_statistics":
+                        if not run.conversation_id:
+                            usage = self._usage_from_statistics(message)
+                    case _:
+                        response_messages.append(message)
+            return response_messages, usage
+        finally:
+            try:
+                await stream.close()
+            finally:
+                if compaction is not None:
+                    await end_activity(tools, compaction[2])
 
     @staticmethod
     async def _cancel_runs(run: LettaRun) -> None:
@@ -1229,7 +1268,7 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _usage_from_response(response: Any) -> TurnUsage:
+    def _usage_from_statistics(statistics: Any) -> TurnUsage:
         """Map a Letta ``LettaResponse.usage`` (a ``Usage``) onto TurnUsage.
 
         Field names verified against letta-client: ``prompt_tokens`` /
@@ -1237,7 +1276,7 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         A missing ``usage`` yields empty usage.
         """
         return TurnUsage.from_object(
-            getattr(response, "usage", None),
+            statistics,
             input="prompt_tokens",
             output="completion_tokens",
             cache_read="cached_input_tokens",

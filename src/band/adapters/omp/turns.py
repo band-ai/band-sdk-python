@@ -45,7 +45,7 @@ from band.runtime.prompts import (
     render_system_prompt,
 )
 from band.runtime.sessionresume import fetch_transcript
-from band.runtime.toolactivity import suppress_tool_activity
+from band.runtime.toolactivity import end_activity, suppress_tool_activity
 from band.runtime.tools import BandTool
 
 logger = logging.getLogger(__name__)
@@ -298,6 +298,10 @@ class OmpTurnMixin(OmpAdapterContract):
             await self._exclusive(room_id, partial(self._finish_turn, room, turn))
         finally:
             turn.closed = True
+            if turn.compaction is not None:
+                await end_activity(turn.tools, turn.compaction)
+            for key in turn.calls:
+                await end_activity(turn.tools, key)
 
     async def _finish_turn(self, room: OmpRoom, turn: OmpTurn) -> None:
         room_id, tools = room.room_id, turn.tools

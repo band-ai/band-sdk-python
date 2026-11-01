@@ -18,7 +18,7 @@ from pydantic.json_schema import GenerateJsonSchema
 
 from band.core.exceptions import InvalidToolArgumentsError
 from band.core.protocols import AgentToolsProtocol
-from band.runtime.toolactivity import tool_activity
+from band.runtime.toolactivity import native_tool_activity
 from band.runtime.tools.registry import ALL_TOOL_NAMES
 from band.runtime.tools.schema import is_failed_tool_output
 from band.runtime.tools.types import TurnEffect
@@ -292,7 +292,7 @@ async def invoke_validated_custom_tool(
     # sync/async functions AND callable objects with an async __call__ (for which
     # asyncio.iscoroutinefunction returns False, so a bare check would leak the
     # coroutine unawaited).
-    async with tool_activity(tools, tool_name):
+    async with native_tool_activity(tools, tool_name):
         result = func(*args)
         if inspect.isawaitable(result):
             result = await result

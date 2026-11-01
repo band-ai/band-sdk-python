@@ -67,6 +67,7 @@ from band.integrations.acp.permissions import (
     select_allow_option_id,
 )
 from band.integrations.acp.session_config import SessionConfigResolver
+from band.runtime.activity import permission_wait, retain_request_permission
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.decisions import (
     DecisionEntry,
@@ -175,6 +176,7 @@ class PendingDecision:
     kind: DecisionKind
     room_id: str
     future: asyncio.Future[object]
+    tools: AgentToolsProtocol
     choices: dict[str, tuple[str, ...]] = field(default_factory=dict)
     multi_select: frozenset[str] = frozenset()
 
@@ -505,6 +507,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         self._cancel_all_decisions()
         await super().cleanup_all()
 
+    def _permission_is_manual(self) -> bool:
+        return False
+
     async def _resolve_cursor_permission(
         self, request: ACPPermissionRequest
     ) -> str | None:
@@ -657,11 +662,13 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         choices: dict[str, tuple[str, ...]] | None = None,
         multi_select: frozenset[str] = frozenset(),
     ) -> object | None:
+        retain_request_permission(turn.tools)
         future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
         pending = PendingDecision(
             kind=kind,
             room_id=turn.room.room_id,
             future=future,
+            tools=turn.tools,
             choices=choices or {},
             multi_select=multi_select,
         )
@@ -755,8 +762,13 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         elif decisions.try_claim(token) is None:
             reply = DECISION_NOT_PENDING_TEMPLATE.format(token=token)
         else:
-            pending.future.set_result(result)
-            reply = DECISION_RESOLVED_TEMPLATE.format(kind=pending.kind, token=token)
+            with permission_wait(pending.tools):
+                pending.future.set_result(result)
+                reply = DECISION_RESOLVED_TEMPLATE.format(
+                    kind=pending.kind, token=token
+                )
+                await tools.send_notice(reply, mentions=mentions)
+            return True
         await tools.send_notice(reply, mentions=mentions)
         return True
 

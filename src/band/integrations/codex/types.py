@@ -93,6 +93,7 @@ class CodexRequestMethod(StrEnum):
     THREAD_START = "thread/start"
     TURN_START = "turn/start"
     TURN_INTERRUPT = "turn/interrupt"
+    TERMINAL_TERMINATE = "thread/backgroundTerminals/terminate"
 
 
 CODEX_PROVIDER = "codex"

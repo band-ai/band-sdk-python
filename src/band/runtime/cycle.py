@@ -7,9 +7,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from band.client.streaming import ControlMode, DeliveryStatus
-from band.core.turn_lifecycle import TurnTask, terminal_deadline
+from band.core.turn_lifecycle import TaskRole, TurnTask, terminal_deadline
 from band.platform.event import MessageEvent
-from band.runtime.activity import TurnActivity
 
 
 class AttemptPhase(Enum):
@@ -46,7 +45,7 @@ class TurnScope:
     shutdown: bool = False
     terminated: asyncio.Event = field(default_factory=asyncio.Event)
     workers: set[TurnTask] = field(default_factory=set)
-    activity: TurnActivity = field(default_factory=TurnActivity)
+    reporting_deadline: float | None = None
 
     @property
     def admitted(self) -> bool:
@@ -81,12 +80,35 @@ class TurnScope:
 
     @property
     def aborted(self) -> bool:
-        # Detached workers can be stopped after the room has moved to another scope.
         return self.terminating or any(
-            owner.deadline is not None for owner in self.workers
+            owner.role is TaskRole.SCOPE and owner.deadline is not None
+            for owner in self.workers
+        )
+
+    @property
+    def authoritative(self) -> bool:
+        return (
+            self.admitted
+            and not self.aborted
+            and (
+                not self.settled
+                or any(
+                    not owner.task.done() and owner.deadline is None
+                    for owner in self.workers
+                )
+            )
+        )
+
+    def reportable(self, now: float) -> bool:
+        return (
+            self.reports_activity
+            and self.authoritative
+            and (self.reporting_deadline is None or now < self.reporting_deadline)
         )
 
     def bind(self, owner: TurnTask) -> None:
+        if self.settled and not self.authoritative:
+            owner.terminate()
         self.workers.add(owner)
         if self.terminating:
             owner.terminate(deadline=self.deadline, cooperative=self.cooperative)

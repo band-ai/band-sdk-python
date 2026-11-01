@@ -66,7 +66,11 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt, with_system_updates
-from band.runtime.toolactivity import tool_activity
+from band.runtime.toolactivity import (
+    end_activity,
+    start_native_tool_activity,
+    tool_activity,
+)
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     ToolCallOutcome,
@@ -373,11 +377,19 @@ class BandTurnHooks(HookProvider):
         *,
         emit_execution: bool,
         custom_effects: dict[str, TurnEffect],
+        native_names: frozenset[str] = frozenset(),
     ) -> None:
         self._tools = tools
         self._emit_execution = emit_execution
         self._custom_effects = custom_effects
+        self._native_names = native_names
+        self._native_calls: dict[str, object] = {}
         self._calls: list[dict[ToolEventKey, object]] = []
+
+    async def close(self) -> None:
+        for token in self._native_calls.values():
+            await end_activity(self._tools, token)
+        self._native_calls.clear()
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         del kwargs
@@ -385,6 +397,10 @@ class BandTurnHooks(HookProvider):
         registry.add_callback(AfterToolCallEvent, self._on_after_tool)
 
     async def _on_before_tool(self, event: BeforeToolCallEvent) -> None:
+        call_id, name = event.tool_use["toolUseId"], event.tool_use["name"]
+        if name in self._native_names and call_id not in self._native_calls:
+            token = self._native_calls[call_id] = object()
+            await start_native_tool_activity(self._tools, token, name)
         call: dict[ToolEventKey, object] = {
             ToolEventKey.NAME: event.tool_use["name"],
             ToolEventKey.ARGS: redact_tool_call_args(
@@ -401,6 +417,8 @@ class BandTurnHooks(HookProvider):
         )
 
     async def _on_after_tool(self, event: AfterToolCallEvent) -> None:
+        if token := self._native_calls.pop(event.tool_use["toolUseId"], None):
+            await end_activity(self._tools, token)
         name = event.tool_use["name"]
         output = _result_text(event.result)
         succeeded = event.result.get("status") == "success" and not band_tool_errored(
@@ -672,14 +690,22 @@ class StrandsAdapter(BatchInputAdapter[StrandsMessages]):
             tools,
             emit_execution=Emit.TOOL_CALLS in self.features.emit,
             custom_effects=self._custom_effects,
+            native_names=frozenset(
+                _registered_name(tool)
+                for tool in self._custom_tools
+                if not isinstance(tool, tuple)
+            ),
         )
-        await self._run_turn(
-            message=user_message,
-            room_id=room_id,
-            history=room_history,
-            tools=tools,
-            hooks=hooks,
-        )
+        try:
+            await self._run_turn(
+                message=user_message,
+                room_id=room_id,
+                history=room_history,
+                tools=tools,
+                hooks=hooks,
+            )
+        finally:
+            await hooks.close()
         logger.debug(
             "Room %s: Strands agent completed (history now has %s messages)",
             room_id,

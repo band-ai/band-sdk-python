@@ -13,7 +13,11 @@ from band.integrations.ompwire import (
     OmpEvent,
     OmpEventType,
 )
-from band.runtime.toolactivity import end_activity, start_tool_activity
+from band.runtime.toolactivity import (
+    end_activity,
+    start_memory_activity,
+    start_native_tool_activity,
+)
 from band.runtime.tools import turn_effect
 
 
@@ -21,6 +25,14 @@ class OmpEventMixin(OmpAdapterContract):
     async def _emit_event(self, event: OmpEvent, turn: OmpTurn) -> None:
         emit_tool_calls = Emit.TOOL_CALLS in self.features.emit
         match event.type:
+            case OmpEventType.AUTO_COMPACTION_START:
+                if turn.compaction is None:
+                    turn.compaction = object()
+                    await start_memory_activity(turn.tools, turn.compaction)
+            case OmpEventType.AUTO_COMPACTION_END:
+                if turn.compaction is not None:
+                    token, turn.compaction = turn.compaction, None
+                    await end_activity(turn.tools, token)
             case OmpEventType.MESSAGE_END:
                 message = event.message
                 if message is None or message.role != OMP_ASSISTANT_ROLE:
@@ -48,7 +60,7 @@ class OmpEventMixin(OmpAdapterContract):
                     event.toolName, args, preserve_native_semantics=True
                 )
                 turn.calls[event.toolCallId] = name
-                await start_tool_activity(turn.tools, event.toolCallId, name)
+                await start_native_tool_activity(turn.tools, event.toolCallId, name)
                 if emit_tool_calls:
                     await send_event_safe(
                         turn.tools,

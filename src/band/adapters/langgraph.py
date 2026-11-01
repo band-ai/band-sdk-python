@@ -29,8 +29,10 @@ from band.core.types import (
     ids_of,
 )
 from band.integrations.langgraph import langchain_tools
+from band.integrations.langgraph.activity import observe_tool_event
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
+from band.runtime.toolactivity import end_activity
 from band.runtime.tools import (
     BandTool,
     image_block_placeholder,
@@ -327,6 +329,7 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
         # when usage emission is off.
         track_usage = Emit.USAGE in self.features.emit
         turn_usage = TurnUsage()
+        operations: dict[str, object] = {}
         try:
             lc_tools = langchain_tools.agent_tools_to_langchain(
                 tools,
@@ -396,6 +399,8 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
                 },
                 version="v2",
             ):
+                if isinstance(event, dict):
+                    await observe_tool_event(event, tools, operations)
                 await self._handle_stream_event(event, room_id, tools)
                 if track_usage:
                     turn_usage = turn_usage + self._usage_from_stream_event(event)
@@ -424,6 +429,8 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
             )
             raise
         finally:
+            for token in operations.values():
+                await end_activity(tools, token)
             # No-op unless Emit.USAGE is on; best-effort, never raises.
             await self.emit_usage(tools, turn_usage)
 

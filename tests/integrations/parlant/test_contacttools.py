@@ -7,8 +7,8 @@ import json
 import pytest
 
 from band.core.types import ContactRequestAction
-from band.integrations.parlant.tools import set_session_tools
 from band.testing import FakeAgentTools
+from tests.integrations.parlant.enginecontext import bind_engine_tools
 from tests.testing.support import seeded_contact, seeded_received_request
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
@@ -25,7 +25,7 @@ pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv onl
 async def test_add_contact_reports_the_requests_status(
     parlant_tools, mock_context, contacts, reported
 ):
-    set_session_tools(mock_context.session_id, FakeAgentTools(contacts=contacts))
+    await bind_engine_tools(mock_context.session_id, FakeAgentTools(contacts=contacts))
 
     add_contact = parlant_tools["band_add_contact"]
     result = await add_contact(mock_context, "bob")
@@ -38,7 +38,7 @@ async def test_invalid_contact_action_is_refused_before_any_request(
 ):
     """FakeAgentTools rejects an unknown action with its own error, so this
     text proves the tool refused before calling it."""
-    set_session_tools(mock_context.session_id, FakeAgentTools())
+    await bind_engine_tools(mock_context.session_id, FakeAgentTools())
 
     respond = parlant_tools["band_respond_contact_request"]
     result = await respond(mock_context, "ignore", handle="bob")
@@ -54,7 +54,7 @@ async def test_invalid_contact_action_is_refused_before_any_request(
 async def test_respond_reports_the_requests_new_status(
     parlant_tools, mock_context, action, reported
 ):
-    set_session_tools(
+    await bind_engine_tools(
         mock_context.session_id,
         FakeAgentTools(
             received_contact_requests=[
@@ -70,7 +70,7 @@ async def test_respond_reports_the_requests_new_status(
 
 
 async def test_listings_read_as_json(parlant_tools, mock_context):
-    set_session_tools(
+    await bind_engine_tools(
         mock_context.session_id,
         FakeAgentTools(
             contacts=[seeded_contact("bob-id", handle="bob", name="Bob")],

@@ -13,3 +13,4 @@ class OmpTurn:
     calls: dict[str, str] = field(default_factory=dict)
     closing_text: list[str] = field(default_factory=list)
     closed: bool = False
+    compaction: object | None = None

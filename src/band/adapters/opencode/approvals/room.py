@@ -49,12 +49,14 @@ from band.adapters.opencode.approvals.wording import (
 )
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.core.delivery import automatic_mentions
+from band.core.protocols import AgentToolsProtocol
 from band.integrations.opencode import (
     ApprovalReply,
     OpencodeClientProtocol,
     OpencodePermissionRequest,
     OpencodeQuestionRequest,
 )
+from band.runtime.activity import permission_wait
 from band.runtime.decisions import DecisionEntry, DecisionRegistry
 
 logger = logging.getLogger(__name__)
@@ -114,9 +116,15 @@ class RoomApprovals:
     ) -> None:
         """Drop an answered ask, releasing the watcher once none are parked."""
         registry.forget(entry)
+        entry.payload.activity.close()
         self._release_if_idle()
 
-    async def on_permission_asked(self, request: OpencodePermissionRequest) -> None:
+    async def on_permission_asked(
+        self,
+        request: OpencodePermissionRequest,
+        *,
+        activity_tools: AgentToolsProtocol | None = None,
+    ) -> None:
         if not (request_id := request.id):
             return
 
@@ -140,6 +148,8 @@ class RoomApprovals:
             )
         ) is None:
             return
+        for removed in registration.removed:
+            removed.payload.activity.close()
         entry = registration.entry
         self._asks.known_permission_ids.add(request_id)
         logger.info(
@@ -156,6 +166,7 @@ class RoomApprovals:
             case "auto_decline":
                 await self._reply_permission(pending, "reject")
             case "manual":
+                pending.activity.enter_context(permission_wait(activity_tools))
                 await self._ask_room(entry)
 
     async def _ask_room(self, entry: DecisionEntry[PendingPermission]) -> None:
@@ -175,7 +186,12 @@ class RoomApprovals:
             pending,
         )
 
-    async def on_question_asked(self, request: OpencodeQuestionRequest) -> None:
+    async def on_question_asked(
+        self,
+        request: OpencodeQuestionRequest,
+        *,
+        activity_tools: AgentToolsProtocol | None = None,
+    ) -> None:
         if not (request_id := request.id):
             logger.warning(
                 "Ignoring malformed OpenCode question.asked with no request id "
@@ -193,6 +209,8 @@ class RoomApprovals:
             registration := self._asks.questions.register_keyed(pending, key=request_id)
         ) is None:
             return
+        for removed in registration.removed:
+            removed.payload.activity.close()
         entry = registration.entry
         self._asks.known_question_ids.add(request_id)
         logger.info(
@@ -216,6 +234,7 @@ class RoomApprovals:
             await self._reject_question(pending)
             return
 
+        pending.activity.enter_context(permission_wait(activity_tools))
         self._asks.questions.start_timeout(
             entry, self._config.question_wait_timeout_s, self._expire_question
         )
@@ -428,7 +447,7 @@ class RoomApprovals:
     ) -> bool:
         """Perform the reply I/O for an already-claimed permission."""
         try:
-            async with self._client_reply("reply to permission", entry.token) as client:
+            async with self._client_reply("reply to permission", entry) as client:
                 await client.reply_permission(
                     entry.token,
                     reply=reply,
@@ -456,7 +475,7 @@ class RoomApprovals:
     ) -> bool:
         """Perform the answer I/O for an already-claimed question."""
         try:
-            async with self._client_reply("answer question", entry.token) as client:
+            async with self._client_reply("answer question", entry) as client:
                 await client.reply_question(entry.token, answers=answers)
         except ApprovalReplyError:
             return False
@@ -484,7 +503,7 @@ class RoomApprovals:
         """
         declined = [[DECLINED_QUESTION_ANSWER] for _ in entry.payload.questions]
         try:
-            async with self._client_reply("reject question", entry.token) as client:
+            async with self._client_reply("reject question", entry) as client:
                 await client.reply_question(entry.token, answers=declined)
         except ApprovalReplyError:
             return False
@@ -527,13 +546,18 @@ class RoomApprovals:
 
     @asynccontextmanager
     async def _client_reply(
-        self, action: str, request_id: str
+        self, action: str, target: str | DecisionEntry[PendingT]
     ) -> AsyncIterator[OpencodeClientProtocol]:
-        if (client := self._ports.client()) is None:
-            await self._fail_request(action, request_id)
-            raise ApprovalReplyError
-        async with self._reply_guard(action, request_id):
-            yield client
+        request_id = target.token if isinstance(target, DecisionEntry) else target
+        try:
+            if (client := self._ports.client()) is None:
+                await self._fail_request(action, request_id)
+                raise ApprovalReplyError
+            async with self._reply_guard(action, request_id):
+                yield client
+        finally:
+            if isinstance(target, DecisionEntry):
+                target.payload.activity.close()
 
     async def _expire_permission(self, entry: DecisionEntry[PendingPermission]) -> None:
         reply = self._config.approval_timeout_reply

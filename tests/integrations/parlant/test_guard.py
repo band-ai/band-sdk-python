@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from band.core.exceptions import BandToolError
 from band.integrations.parlant.tools import create_parlant_tools, set_session_tools
+from tests.integrations.parlant.enginecontext import bind_engine_tools
 from tests.integrations.parlant.helpers import SESSION_ID
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
@@ -72,7 +73,7 @@ class TestGuardFailures:
         mock_tools.send_message.side_effect = BandToolError(
             "Backend rejected message: 503 Service Unavailable"
         )
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         send_message = parlant_tools["band_send_message"]
         # Must NOT raise — wrapper translates the exception to a tool failure
@@ -94,7 +95,7 @@ class TestGuardFailures:
         returns None and must fall back to the plain error, not attribute
         error out on None.participants.
         """
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         def _fail_and_tear_down_session(*args, **kwargs):
             set_session_tools(mock_context.session_id, None)
@@ -115,7 +116,7 @@ class TestGuardFailures:
     ):
         """Should return error message when tool raises exception."""
         mock_tools.send_message.side_effect = Exception("Connection failed")
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         send_message = parlant_tools["band_send_message"]
         result = await send_message(mock_context, "Hello", "Alice")
@@ -142,7 +143,7 @@ class TestGuardFailures:
     ):
         """Operators grep the INFO lines for a per-call outcome; the call's
         arguments and result are room content, so they appear only at DEBUG."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
         send_message = parlant_tools["band_send_message"]
 
         with caplog.at_level(logging.DEBUG, logger=GUARD_LOGGER):
@@ -188,7 +189,7 @@ class TestGuardFailures:
     ):
         """A bad argument is the model's to fix from the returned error, not an
         operator alert; any other failure is an error with its traceback."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         with caplog.at_level(logging.WARNING, logger=GUARD_LOGGER):
             result = await guarded_tools[tool](mock_context, **arguments)

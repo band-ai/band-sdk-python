@@ -12,7 +12,6 @@ from band.platform.event import PlatformEvent
 from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
-from band.runtime.tools.types import BandTool
 from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
 from tests.integrations.acp.acp_toolkit import (
@@ -52,8 +51,8 @@ class TestACPActivity:
                     "private second title",
                     status=ToolStatus.PENDING,
                     raw_input={
-                        "server": "band",
-                        "tool": BandTool.GET_PARTICIPANTS,
+                        "server": "docs",
+                        "tool": "lookup",
                         "arguments": {},
                     },
                 ),
@@ -66,7 +65,7 @@ class TestACPActivity:
                 sid, update_tool_call("pending", status=ToolStatus.IN_PROGRESS)
             )
             assert await activity_platform.body_at(3) == tool_body(
-                BandTool.GET_PARTICIPANTS
+                UNKNOWN_ACTIVITY_TOOL_NAME
             )
             await peer.emit(
                 sid, update_tool_call("pending", status=ToolStatus.COMPLETED)
@@ -86,7 +85,7 @@ class TestACPActivity:
             REASONING_BODY,
             tool_body(UNKNOWN_ACTIVITY_TOOL_NAME),
             REASONING_BODY,
-            tool_body(BandTool.GET_PARTICIPANTS),
+            tool_body(UNKNOWN_ACTIVITY_TOOL_NAME),
             REASONING_BODY,
             IDLE_BODY,
         ]

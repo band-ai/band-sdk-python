@@ -37,6 +37,9 @@ class TurnSink(Protocol):
     async def tool_started(self, call: ACPToolActivity) -> None:
         """Show ``call`` as running; a call id already running is renamed."""
 
+    async def tool_updated(self, call: ACPToolActivity) -> None:
+        """Rename only this call's still-current detail."""
+
     async def tool_ended(self, tool_call_id: str) -> None:
         """Stop showing the call ``tool_call_id`` as running."""
 
@@ -108,7 +111,9 @@ class ACPChunkStream:
         if (status := chunk.metadata.get("status")) is not None:
             state.status = status
         if state.status == ToolStatus.IN_PROGRESS:
-            await self._call_running(session_id, state.call)
+            await self._call_running(
+                session_id, state.call, update=previous == ToolStatus.IN_PROGRESS
+            )
         elif previous == ToolStatus.IN_PROGRESS:
             await self._call_ended(session_id, call_id)
 
@@ -160,9 +165,14 @@ class ACPChunkStream:
             emitted.add(call_id)
             await self.finalize(session_id, canonical)
 
-    async def _call_running(self, session_id: str, call: ACPToolActivity) -> None:
+    async def _call_running(
+        self, session_id: str, call: ACPToolActivity, *, update: bool
+    ) -> None:
         if sink := self._sinks.get(session_id):
-            await sink.tool_started(call)
+            if update:
+                await sink.tool_updated(call)
+            else:
+                await sink.tool_started(call)
 
     async def _call_ended(self, session_id: str, call_id: str) -> None:
         if sink := self._sinks.get(session_id):

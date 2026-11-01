@@ -14,6 +14,7 @@ import logging
 import re
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
+from copy import copy
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
@@ -352,6 +353,7 @@ class AgentTools(AgentToolsProtocol):
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
         self._scope: TurnScope | None = None
+        self._resource: TurnTask | None = None
         self._activity_observer: ActivityObserver | None = None
         self.turn = Turn()
 
@@ -404,6 +406,14 @@ class AgentTools(AgentToolsProtocol):
             else:
                 self._ctx.register_turn_task(self._scope, owner)
 
+    def _for_resource(self, owner: TurnTask) -> AgentTools:
+        """An immutable origin view whose effects also require this resource."""
+        view = copy(self)
+        view._resource = owner
+        if self._ctx is not None:
+            view._activity_observer = self._ctx.activity_observer(self._scope, owner)
+        return view
+
     def _abort_stopped_post(self, error: RoomExecutionStoppedError) -> None:
         if self._ctx is not None and self._scope is not None:
             self._ctx.observe_platform_stop(self._scope, cooperative=True)
@@ -411,7 +421,10 @@ class AgentTools(AgentToolsProtocol):
         raise error
 
     def _check_post_scope(self) -> None:
-        if self._scope is not None and self._scope.aborted:
+        if (self._scope is not None and not self._scope.authoritative) or (
+            self._resource is not None
+            and (self._resource.deadline is not None or self._resource.task.done())
+        ):
             raise asyncio.CancelledError
 
     # --- Tool methods ---

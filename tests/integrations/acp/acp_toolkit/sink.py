@@ -21,5 +21,8 @@ class NarrationSink:
     async def tool_started(self, call: ACPToolActivity) -> None:
         del call
 
+    async def tool_updated(self, call: ACPToolActivity) -> None:
+        del call
+
     async def tool_ended(self, tool_call_id: str) -> None:
         del tool_call_id

@@ -423,6 +423,7 @@ class FakeOpencodeClient:
         session_id: str,
         *,
         parts: list[dict[str, Any]],
+        message_id: str | None = None,
         system: str | None = None,
         model: dict[str, str] | None = None,
         agent: str | None = None,
@@ -432,6 +433,7 @@ class FakeOpencodeClient:
         self.prompt_calls.append(
             {
                 "session_id": session_id,
+                "message_id": message_id,
                 "parts": parts,
                 "system": system,
                 "model": model,

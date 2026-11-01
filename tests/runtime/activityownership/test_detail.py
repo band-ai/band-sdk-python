@@ -52,7 +52,7 @@ class TestOwnedDetail:
                 await activity_platform.shown(waits.close)
             await activity_platform.shown(start_memory_activity(tools, "memory"))
             await activity_platform.shown(end_activity(tools, "memory"))
-            await activity_platform.shown(end_activity(tools, "edit"))
+            await end_activity(tools, "edit")
             await tools.send_message("Done", mentions=["alice"])
 
         ctx = execution(handler)
@@ -63,10 +63,8 @@ class TestOwnedDetail:
             tool_body("Bash"),
             REASONING_BODY,
             PERMISSION_BODY,
-            tool_body("Edit"),
+            REASONING_BODY,
             MEMORY_BODY,
-            # Memory ending reveals the tool still running.
-            tool_body("Edit"),
             REASONING_BODY,
             # The reply is a Band tool call too; it ends back at reasoning.
             REASONING_BODY,
@@ -111,7 +109,7 @@ class TestOwnedDetail:
             tool_body("Bash"),
             PERMISSION_BODY,
             PERMISSION_BODY,
-            tool_body("Edit"),
+            REASONING_BODY,
             IDLE_BODY,
         ]
 

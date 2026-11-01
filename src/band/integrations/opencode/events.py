@@ -167,6 +167,9 @@ class OpencodeMessageInfo(OpencodeModel):
     id: str | None = None
     session_id: str | None = Field(default=None, alias="sessionID")
     role: str | None = None
+    parent_id: str | None = Field(default=None, alias="parentID")
+    summary: bool = False
+    agent: str | None = None
     tokens: OpencodeTokens | None = None
     error: OpencodeErrorInfo | None = None
 
@@ -271,6 +274,7 @@ class OpencodeQuestionRequest(OpencodeModel):
     id: str | None = None
     session_id: str | None = Field(default=None, alias="sessionID")
     questions: list[OpencodeQuestion] = Field(default_factory=list)
+    tool: OpencodePermissionToolRef | None = None
 
     _coerce_scalars = field_validator("id", "session_id", mode="before")(_coerce_str)
 
