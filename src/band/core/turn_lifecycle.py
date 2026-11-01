@@ -92,12 +92,25 @@ class TurnTask:
             self._retrieve_result(task)
         else:
             task.add_done_callback(self._retrieve_result)
+        self.failure: Exception | None = None
         self.deadline: float | None = None
         self._cancel_delivered = False
         self._grace_expired = False
         self._timer: asyncio.Timeout | None = None
         self._cleanup_timer = False
         self._on_revoked: Callable[[], None] | None = None
+
+    @property
+    def authoritative(self) -> bool:
+        """Whether this task may still perform effects for its captured origin."""
+        return self.deadline is None and not self.task.done()
+
+    def fail(self, error: Exception, *, cooperative: bool = False) -> None:
+        """Revoke for provider failure without replacing an earlier cancellation."""
+        if not self.authoritative:
+            return
+        self.failure = error
+        self.terminate(cooperative=cooperative)
 
     @staticmethod
     def _retrieve_result(task: asyncio.Task[Any]) -> None:
@@ -193,6 +206,8 @@ class TurnTask:
             self._timer = None
             self._cleanup_timer = False
             if self.deadline is not None:
+                if self.failure is not None:
+                    raise self.failure
                 raise asyncio.CancelledError
 
 

@@ -53,6 +53,7 @@ from band.core.exceptions import (
     CleanupIncompleteError,
     InputNotAccepted,
     ProviderRunError,
+    TerminalProviderFailure,
 )
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
@@ -1356,12 +1357,13 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         self._abandon_unseeded_thread(room)
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
-            except (TurnResultAlreadyReported, InputNotAccepted):
+            except (
+                TurnResultAlreadyReported,
+                TerminalProviderFailure,
+                InputNotAccepted,
+            ):
                 # A lease refused by a closing room is no failed turn: the
                 # host keeps the message.
-                raise
-            except ProviderRunError:
-                # The runtime reports a retired scope's failure through its own authority.
                 raise
             except (CodexJsonRpcError, CodexContinuityError) as e:
                 # A structured RPC error from the app-server (e.g. "model not
@@ -1496,7 +1498,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     thread_id=thread_id,
                     turn_start=turn_start,
                 )
-            except TurnResultAlreadyReported:
+            except (TurnResultAlreadyReported, TerminalProviderFailure):
                 # A nested handler (e.g. the turn-timeout branch) already
                 # reported this failure via send_failure; propagate it
                 # without emitting a friendly _emit_turn_outcome reply or
@@ -2127,26 +2129,17 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 command.wake.set()
                 await end_activity(command.tools, command.token)
             return
-        native = room.turn
-        if (
-            identity in room.commands
-            or not all(identity)
-            or native is None
-            or native.tools is None
-            or native.generation != generation
-            or not native.owns(event)
-            or native.thread_id != identity[0]
-            or not room.retained.has_authority(generation)
-        ):
+        tools = self._native_item_tools(room, generation, event, identity)
+        if identity in room.commands or tools is None:
             return
         command = CommandResource(
-            native.tools, generation, *identity, process_id=item.get("processId")
+            tools, generation, *identity, process_id=item.get("processId")
         )
         worker = asyncio.create_task(self._wait_command(room, command))
         command.owner = bind_turn_task(
-            native.tools, worker, role=TaskRole.RESOURCE, request_stop=command.wake.set
+            tools, worker, role=TaskRole.RESOURCE, request_stop=command.wake.set
         )
-        command.tools = resource_tools(native.tools, command.owner)
+        command.tools = resource_tools(tools, command.owner)
         room.commands[identity] = command
         name = self._extract_tool_item(CodexItemType.COMMAND_EXECUTION, item).name
         await start_native_tool_activity(command.tools, command.token, name)
@@ -2163,10 +2156,23 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             if (current := room.item_activity.pop(identity, None)) is not None:
                 await end_activity(current[0], current[1])
             return
+        tools = self._native_item_tools(room, generation, event, identity)
+        if identity in room.item_activity or tools is None:
+            return
+        token = object()
+        room.item_activity[identity] = (tools, token)
+        await self._show_item_started(tools, item, token)
+
+    @staticmethod
+    def _native_item_tools(
+        room: RoomCodexClient,
+        generation: int,
+        event: RpcEvent,
+        identity: tuple[str, str, str],
+    ) -> AgentToolsProtocol | None:
         native = room.turn
         if (
-            identity in room.item_activity
-            or not all(identity)
+            not all(identity)
             or native is None
             or native.tools is None
             or native.generation != generation
@@ -2174,10 +2180,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             or native.thread_id != identity[0]
             or not room.retained.has_authority(generation)
         ):
-            return
-        token = object()
-        room.item_activity[identity] = (native.tools, token)
-        await self._show_item_started(native.tools, item, token)
+            return None
+        return native.tools
 
     async def _wait_command(
         self, room: RoomCodexClient, command: CommandResource
@@ -2310,11 +2314,12 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         native = room.turn
         if native is not None and native.generation == generation:
             native.loss = cause
-            if native.owner.deadline is None:
-                native.loss = ProviderRunError.session_lost()
-                native.owner.terminate(
-                    cooperative=native.owner.task is asyncio.current_task()
-                )
+            native.owner.fail(
+                cause
+                if isinstance(cause, Exception)
+                else ProviderRunError.session_lost(),
+                cooperative=True,
+            )
             # Approvals the lost process asked for can never be answered.
             self._clear_pending_approvals_for_room(room.room_id)
             native.events.put_nowait(native.loss)
@@ -2378,8 +2383,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         try:
             yield native
         except asyncio.CancelledError:
-            if isinstance(native.loss, ProviderRunError):
-                raise native.loss from None
+            if native.owner.failure is not None:
+                raise native.owner.failure from None
             raise
         finally:
             room.turn = None

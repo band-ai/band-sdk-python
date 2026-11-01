@@ -17,7 +17,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.integrations.agno.activity import NATIVE_BODY_LIFECYCLE, NativeBodyStatus
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.timeouts import slow_turn_budget
-from tests.e2e.baseline.toolkit.activitywork import Operation
+from tests.e2e.baseline.toolkit.activitywork import LOOKUP_PATH, Operation
 from tests.e2e.baseline.toolkit.logs import sdk_logs_at
 
 WORKER_BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=9)
@@ -145,7 +145,7 @@ class AgnoWorkerWork:
                 raise ValueError("This operation already has an invocation")
             work.started.set()
         try:
-            response = self._client.get(f"{self._base_url}/users/1")
+            response = self._client.get(f"{self._base_url}{LOOKUP_PATH}")
             response.raise_for_status()
             work.result = f"{response.json()['name']}-{uuid4().hex}"
             self._loop.call_soon_threadsafe(work.entered.set)

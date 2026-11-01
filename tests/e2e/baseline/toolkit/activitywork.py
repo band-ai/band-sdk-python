@@ -15,6 +15,8 @@ from pydantic import BaseModel
 
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
+LOOKUP_PATH = "/users/1"
+
 
 class Operation(StrEnum):
     A = "A"
@@ -31,6 +33,7 @@ class ActivityLookupInput(BaseModel):
 
 @dataclass
 class Invocation:
+    started: bool = False
     entered: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
     settled: asyncio.Event = field(default_factory=asyncio.Event)
@@ -55,10 +58,11 @@ class ActivityWork:
         if request.private_note != self.note:
             raise ValueError("The operation requires its current private note")
         work = self.operations[request.key]
-        if work.entered.is_set():
+        if work.started:
             raise ValueError(f"Operation {request.key.value} already has an invocation")
+        work.started = True
         try:
-            response = await self._client.get(f"{self._base_url}/users/1")
+            response = await self._client.get(f"{self._base_url}{LOOKUP_PATH}")
             response.raise_for_status()
             work.result = f"{response.json()['name']}-{uuid4().hex}"
             work.entered.set()
@@ -86,5 +90,5 @@ class ActivityWork:
             for work in self.operations.values():
                 work.release.set()
             for key, work in self.operations.items():
-                if work.entered.is_set():
+                if work.started:
                     await self.settled(key)

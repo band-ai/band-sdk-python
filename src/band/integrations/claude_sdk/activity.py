@@ -27,6 +27,7 @@ from claude_agent_sdk.types import (
     TaskUpdatedMessage,
 )
 
+from band.core.exceptions import ProviderRunError
 from band.core.protocols import AgentToolsProtocol
 from band.core.turn_lifecycle import (
     CYCLE_CANCEL_GRACE_SECONDS,
@@ -65,7 +66,7 @@ class Origin:
     release: Callable[[], None] | None = None
 
     def require_authority(self) -> None:
-        if self.owner.deadline is not None or self.owner.task.done():
+        if not self.owner.authoritative:
             raise ValueError("Claude execution is no longer authoritative")
         require_activity_authority(activity_observer_of(self.tools))
 
@@ -350,7 +351,7 @@ class SessionActivity:
             self._foreground is not None
             and self._foreground.owner.task is not asyncio.current_task()
         ):
-            self._foreground.owner.terminate()
+            self._foreground.owner.fail(ProviderRunError.session_lost())
         for task in tuple(self._tasks.values()):
             if task.owner is not None:
                 task.owner.terminate()

@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from enum import StrEnum
 
+from band_sdk_core import AgentFailure
+
 
 class BandError(Exception):
     """Base for all SDK exceptions."""
@@ -184,3 +186,11 @@ def _closest_match(
         if best is None or distance < best[0]:
             best = (distance, candidate)
     return best[1] if best is not None else None
+
+
+class TerminalProviderFailure(BandError):
+    """Carry a room-safe terminal report to the runtime after effect revocation."""
+
+    def __init__(self, failure: AgentFailure) -> None:
+        super().__init__(failure.message)
+        self.failure = failure

@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import functools
 import inspect
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from typing import Any
 
 from agno.tools import Toolkit
@@ -35,8 +35,8 @@ def _wrap_async_generator(
             async for item in entrypoint(*args, **kwargs):
                 yield item
             return
-        body = run.begin(name)
         iterator = entrypoint(*args, **kwargs)
+        body = run.begin(name)
         try:
             while True:
                 try:
@@ -62,8 +62,8 @@ def _wrap_generator(entrypoint: Callable[..., Any], name: str) -> Callable[..., 
         if run is None:
             yield from entrypoint(*args, **kwargs)
             return
-        body = run.begin(name)
         iterator = entrypoint(*args, **kwargs)
+        body = run.begin(name)
         try:
             while True:
                 try:
@@ -127,11 +127,13 @@ def observe_tool(tool: Any) -> Any:
         return observe_function(tool)
     if isinstance(tool, Toolkit):
         owned = copy.copy(tool)
-        owned.functions = {
-            name: observe_function(function)
-            for name, function in tool.get_functions().items()
-        }
+        owned.functions = _observe_functions(tool.get_functions())
+        owned.async_functions = _observe_functions(tool.async_functions)
         return owned
     if callable(tool):
         return observe_function(Function.from_callable(tool))
     return tool
+
+
+def _observe_functions(functions: Mapping[str, Function]) -> dict[str, Function]:
+    return {name: observe_function(function) for name, function in functions.items()}

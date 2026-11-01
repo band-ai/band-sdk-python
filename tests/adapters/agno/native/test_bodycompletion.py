@@ -9,7 +9,7 @@ from agno.tools.function import Function
 
 from band.core.exceptions import CleanupIncompleteError
 from band.runtime.tools.agent import AgentTools
-from tests.adapters.agno.native.kit import SyncBody, native_call
+from tests.adapters.agno.native.kit import NATIVE_RESULT, SyncBody, native_call
 
 
 class TestActualNativeBodyCompletion:
@@ -45,6 +45,6 @@ class TestActualNativeBodyCompletion:
             await body.entered.wait()
             body.release.set()
             result = await call
-            assert result[-1].result == "native-result"
+            assert result[-1].result == NATIVE_RESULT
         assert borrowed.entrypoint is entrypoint
         assert borrowed.to_dict() == schema

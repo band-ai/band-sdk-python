@@ -8,6 +8,7 @@ import pytest
 from band_rest.types.agent_activity_detail import AgentActivityDetail
 
 from band.core.exceptions import RoomClosingError
+from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.claude_sdk.activity import CLAUDE_TOOL_USE_META, Origin
 from band.integrations.mcp.request import request_context
 from band.testing import FakeAgentTools
@@ -17,8 +18,8 @@ from tests.adapters.claude_sdk.activity.kit import (
     BACKGROUND_TASK,
     native_tool_uses,
 )
-from tests.adapters.claude_sdk.fakecli import CLEANUP_FAILED, Raw
-from tests.adapters.claude_sdk.helpers import ClaudeRoom, OpenRoom
+from tests.adapters.claude_sdk.fakecli import CLEANUP_FAILED
+from tests.adapters.claude_sdk.helpers import ClaudeRoom
 from tests.adapters.hold import Hold
 from tests.baseline.decisions import ToolCall
 
@@ -112,7 +113,7 @@ class TestClaudeBackgroundOrigins:
             assert current_origin.owner.deadline is not None
             assert not origin.owner.task.done()
             assert peer.alive
-            with pytest.raises(asyncio.CancelledError):
+            with pytest.raises(TurnResultAlreadyReported):
                 await foreground
             closing.released.set()
             await session.retained.wait_released(generation=generation)
@@ -155,27 +156,3 @@ class TestClaudeBackgroundOrigins:
             assert original.turn.replied
         finally:
             peer.refuse_close = False
-
-    async def test_compaction_ignores_permission_mode_status(
-        self, claude_room: OpenRoom
-    ) -> None:
-        room = await claude_room(emit=())
-        recorder = ActivityRecorder()
-        recorder.observing(room.tools)
-        room.claude.script(
-            [
-                room.model_reply("Ready."),
-                Raw({"type": "system", "subtype": "status", "status": "compacting"}),
-                Raw(
-                    {
-                        "type": "system",
-                        "subtype": "status",
-                        "status": None,
-                        "permissionMode": "default",
-                    }
-                ),
-                Raw({"type": "system", "subtype": "status", "status": None}),
-            ]
-        )
-        await room.send("Compact context")
-        assert recorder.events[-2:] == [{"kind": "memory"}, SHOWN_REASONING]

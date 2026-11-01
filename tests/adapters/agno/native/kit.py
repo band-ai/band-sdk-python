@@ -8,12 +8,16 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+from agno.models.message import Message
 from agno.tools.function import Function, FunctionCall
 
 from band.integrations.agno.activity import observing_run
 from band.integrations.agno.entrypoints import observe_function
 from band.runtime.tools.agent import AgentTools
 from tests.adapters.agno.helpers import CapturingModel
+
+NATIVE_RESULT = "native-result"
+NATIVE_NAME = "lookup"
 
 
 class SyncBody:
@@ -27,7 +31,7 @@ class SyncBody:
         self.loop.call_soon_threadsafe(self.entered.set)
         try:
             self.release.wait()
-            return "native-result"
+            return NATIVE_RESULT
         finally:
             self.loop.call_soon_threadsafe(self.finished.set)
 
@@ -50,3 +54,15 @@ async def native_call(
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def run_model_call(
+    tools: AgentTools, function: Function, arguments: dict[str, Any] | None = None
+) -> tuple[FunctionCall, list[Message]]:
+    """Consume released Agno execution, including its generator results."""
+    call = FunctionCall(function=function, arguments=arguments or {}, call_id="native")
+    results: list[Message] = []
+    async with observing_run(tools):
+        async for _ in CapturingModel().arun_function_calls([call], results):
+            pass
+    return call, results

@@ -69,6 +69,7 @@ class ActivityPlatform(PostingPlatform):
     def __init__(self) -> None:
         super().__init__()
         self.room_messages: list[str] = []
+        self.failures: list[dict[str, Any]] = []
         self.activity_responses: deque[httpx.Response] = deque()
         self.activity_bodies: list[dict[str, Any]] = []
         self.hold_next_activity = False
@@ -125,6 +126,10 @@ class ActivityPlatform(PostingPlatform):
             self.late_changes.append((body, waited))
 
     def answer(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/events"):
+            event = json.loads(request.content)["event"]
+            if event["message_type"] == "error":
+                self.failures.append(event["metadata"]["failure"])
         if is_message_post(request):
             self.posts.append(request.url.path.rsplit("/", 1)[-1])
             self.room_messages.append(message_content(request))

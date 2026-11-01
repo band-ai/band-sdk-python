@@ -90,13 +90,14 @@ class TurnScope:
         return (
             self.admitted
             and not self.aborted
-            and (
-                not self.settled
-                or any(
-                    not owner.task.done() and owner.deadline is None
-                    for owner in self.workers
-                )
-            )
+            and (not self.settled or any(owner.authoritative for owner in self.workers))
+        )
+
+    @property
+    def provider_failed(self) -> bool:
+        return any(
+            owner.role is TaskRole.SCOPE and owner.failure is not None
+            for owner in self.workers
         )
 
     def reportable(self, now: float) -> bool:

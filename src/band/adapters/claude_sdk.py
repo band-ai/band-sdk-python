@@ -92,6 +92,7 @@ from band.core.delivery import (
     finish_automatic_reply,
     reraise_delivery_cause,
 )
+from band.core.exceptions import TerminalProviderFailure
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -1202,7 +1203,7 @@ class ClaudeSDKAdapter(
                 owner, session, client, tools, full_message
             )
 
-        except TurnResultAlreadyReported:
+        except (TurnResultAlreadyReported, TerminalProviderFailure):
             # The failure was already reported via send_failure deeper in
             # the call stack; propagate without reporting it a second time.
             raise

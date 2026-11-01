@@ -36,7 +36,11 @@ from band.client.rest import (
 )
 from band.config.settings import RuntimeSettings
 from band.core.content import has_visible_content
-from band.core.exceptions import BandToolError, RoomExecutionStoppedError
+from band.core.exceptions import (
+    BandToolError,
+    RoomExecutionStoppedError,
+    TerminalProviderFailure,
+)
 from band.core.memory_types import (
     MemoryListScope,
     MemoryStoreScope,
@@ -422,8 +426,7 @@ class AgentTools(AgentToolsProtocol):
 
     def _check_post_scope(self) -> None:
         if (self._scope is not None and not self._scope.authoritative) or (
-            self._resource is not None
-            and (self._resource.deadline is not None or self._resource.task.done())
+            self._resource is not None and not self._resource.authoritative
         ):
             raise asyncio.CancelledError
 
@@ -574,6 +577,13 @@ class AgentTools(AgentToolsProtocol):
         except block, where raising would replace the provider failure the
         room is being told about with an unrelated reporting failure.
         """
+        if (
+            self._resource is None
+            and self._scope is not None
+            and not self._scope.authoritative
+            and self._scope.provider_failed
+        ):
+            raise TerminalProviderFailure(failure)
         content, metadata = to_failure_event(failure)
         try:
             response = await self.send_event(content, MessageType.ERROR, metadata)

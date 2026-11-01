@@ -33,6 +33,7 @@ from band.core.exceptions import (
     CleanupIncompleteError,
     InputNotAccepted,
     RoomExecutionStoppedError,
+    TerminalProviderFailure,
 )
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -223,8 +224,7 @@ class ScopeActivityObserver:
     @property
     def authoritative(self) -> bool:
         return self.scope.authoritative and (
-            self.resource is None
-            or (self.resource.deadline is None and not self.resource.task.done())
+            self.resource is None or self.resource.authoritative
         )
 
     async def start(self, key: Hashable, activity: AgentActivityDetail) -> None:
@@ -1257,10 +1257,7 @@ class ExecutionContext:
     def _reportable_owners(self) -> set[TurnScope | TurnTask]:
         scopes = self._reportable_scopes
         return scopes | {
-            owner
-            for scope in scopes
-            for owner in scope.workers
-            if owner.deadline is None and not owner.task.done()
+            owner for scope in scopes for owner in scope.workers if owner.authoritative
         }
 
     def _project_working(self) -> bool | None:
@@ -1373,9 +1370,7 @@ class ExecutionContext:
             changed = self._activity.retire(scope)
             for owner in scope.workers:
                 changed = self._activity.retire(owner) or changed
-        elif resource is not None and (
-            resource.deadline is not None or resource.task.done()
-        ):
+        elif resource is not None and not resource.authoritative:
             changed = self._activity.retire(resource)
         if scope.settled and all(owner.task.done() for owner in scope.workers):
             self._scopes.discard(scope)
@@ -1570,7 +1565,9 @@ class ExecutionContext:
         """Record that the adapter already told the room this turn failed."""
         self._turn_failure_reported = True
 
-    async def report_delivery_failure(self, *, final: bool) -> None:
+    async def report_delivery_failure(
+        self, *, final: bool, error: Exception | None = None
+    ) -> None:
         """Tell the room a turn failed, once, unless the adapter already did."""
         # Only a post that landed counts: an adapter raises
         # TurnResultAlreadyReported even when its send_failure did not post.
@@ -1587,10 +1584,14 @@ class ExecutionContext:
                 already_reported,
             )
             return
-        # Exception details stay in logs; platform writes use the generic message.
+        # Only a captured terminal outcome carries provider-curated room text.
         try:
             await AgentTools.from_context(self, bind_scope=False).send_failure(
-                AgentFailure(TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                error.failure
+                if isinstance(error, TerminalProviderFailure)
+                else AgentFailure(
+                    TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE
+                )
             )
         except RoomExecutionStoppedError:
             logger.debug(

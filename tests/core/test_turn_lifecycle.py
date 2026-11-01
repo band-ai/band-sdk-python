@@ -232,3 +232,40 @@ class TestTurnTask:
         owner.retry(deadline=terminal_deadline())
         assert await owner.drain()
         assert cancels == 2
+
+    async def test_provider_failure_revokes_effects_and_preserves_first_cause(
+        self,
+    ) -> None:
+        entered = asyncio.Event()
+
+        async def work() -> None:
+            async with owner.timed(None):
+                entered.set()
+                await asyncio.Event().wait()
+
+        owner = TurnTask(asyncio.create_task(work()))
+        await entered.wait()
+        error = ConnectionError("provider connection failed")
+        owner.fail(error)
+        owner.fail(RuntimeError("later cleanup failure"))
+        assert not owner.authoritative
+        with pytest.raises(ConnectionError) as raised:
+            await owner.task
+        assert raised.value is error
+
+    async def test_provider_failure_cannot_replace_an_explicit_stop(self) -> None:
+        entered = asyncio.Event()
+
+        async def work() -> None:
+            async with owner.timed(None):
+                entered.set()
+                await asyncio.Event().wait()
+
+        owner = TurnTask(asyncio.create_task(work()))
+        await entered.wait()
+        owner.terminate()
+        owner.fail(ConnectionError("provider closed after stop"))
+        with pytest.raises(asyncio.CancelledError):
+            await owner.task
+        assert not owner.authoritative
+        assert owner.failure is None
