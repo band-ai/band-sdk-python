@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 import httpx
 
+from band.core.protocols import AgentToolsProtocol
 from band.core.turn_lifecycle import TurnTask, bind_turn_task
 from band.platform.activity import API_VERSION_HEADER
 from band.platform.event import MessageEvent, PlatformEvent
@@ -24,6 +25,10 @@ from tests.activitysupport import SUPPORTED_VERSION
 from tests.runtime.helpers import PostingPlatform, is_message_post
 
 CONTROL_MESSAGE_ID = "approve"
+
+
+def direct_tools(tools: AgentToolsProtocol) -> AgentToolsProtocol:
+    return tools
 
 
 def recognizes_control(ctx: ExecutionContext, event: MessageEvent) -> bool:

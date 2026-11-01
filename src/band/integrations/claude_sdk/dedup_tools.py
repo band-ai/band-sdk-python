@@ -10,6 +10,7 @@ from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from band.core.turn_lifecycle import TurnTask, resource_tools
 from band.runtime.activity import ActivityObserver, activity_observer_of
 
 if TYPE_CHECKING:
@@ -149,6 +150,9 @@ class DedupingAgentTools:
 
     def for_origin(self, tools: AgentToolsProtocol) -> DedupingAgentTools:
         return DedupingAgentTools(tools, state=self._dedup)
+
+    def _for_resource(self, owner: TurnTask) -> DedupingAgentTools:
+        return self.for_origin(resource_tools(self._inner, owner))
 
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None

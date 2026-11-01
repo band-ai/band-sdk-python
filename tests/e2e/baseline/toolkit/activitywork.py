@@ -56,7 +56,7 @@ class ActivityWork:
             raise ValueError("The operation requires its current private note")
         work = self.operations[request.key]
         if work.entered.is_set():
-            raise ValueError("This operation already has an invocation")
+            raise ValueError(f"Operation {request.key.value} already has an invocation")
         try:
             response = await self._client.get(f"{self._base_url}/users/1")
             response.raise_for_status()

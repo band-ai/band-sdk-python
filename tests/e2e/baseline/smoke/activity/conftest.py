@@ -2,13 +2,44 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
+from band.workspaces import create_room_workspace_resolver
+from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.timeouts import SLOW_TURN_DEADLINE_S
 from tests.e2e.baseline.toolkit.nativetasks import NativeTasks
 from tests.e2e.baseline.toolkit.resultexchange import ResultExchange
+
+if TYPE_CHECKING:
+    from band.adapters.claude_sdk import ClaudeSDKAdapter
+
+
+@pytest.fixture
+def native_claude_adapter(
+    baseline_settings: BaselineSettings, tmp_path: Path
+) -> Callable[[str], ClaudeSDKAdapter]:
+    from band.adapters.claude_sdk import (  # noqa: PLC0415 -- optional Claude lane
+        ClaudeApprovalOptions,
+        ClaudeSDKAdapter,
+        ClaudeSDKAdapterConfig,
+    )
+
+    def build(prompt: str) -> ClaudeSDKAdapter:
+        return ClaudeSDKAdapter(
+            ClaudeSDKAdapterConfig(
+                model=baseline_settings.llm_models.anthropic_model,
+                custom_section=prompt,
+                approvals=ClaudeApprovalOptions(mode="auto_accept"),
+            ),
+            workspace_for_room=create_room_workspace_resolver(tmp_path),
+            emit=frozenset(),
+        )
+
+    return build
 
 
 @pytest.fixture

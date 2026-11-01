@@ -8,7 +8,9 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from band.core.turn_lifecycle import TaskRole, TurnTask, bind_turn_task
+from band.core.protocols import AgentToolsProtocol
+from band.core.turn_lifecycle import TaskRole, TurnTask, bind_turn_task, resource_tools
+from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.platform.event import PlatformEvent
 from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
@@ -16,7 +18,11 @@ from band.runtime.toolactivity import start_native_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform, deliver_event
+from tests.runtime.activityownership.kit import (
+    ActivityPlatform,
+    deliver_event,
+    direct_tools,
+)
 
 
 @pytest.mark.looptime
@@ -121,13 +127,17 @@ class TestBackgroundOrigins:
             )
             await ctx._join_activity_completion()
 
+    @pytest.mark.parametrize(
+        "wrap", [direct_tools, DedupingAgentTools], ids=["direct", "deduplicated"]
+    )
     async def test_killing_one_resource_preserves_sibling_effect_authority(
         self,
         execution: Callable[..., ExecutionContext],
         activity_platform: ActivityPlatform,
+        wrap: Callable[[AgentToolsProtocol], AgentToolsProtocol],
     ) -> None:
         owners: list[TurnTask] = []
-        tools: list[AgentTools] = []
+        tools: list[AgentToolsProtocol] = []
         release = asyncio.Event()
 
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
@@ -139,7 +149,7 @@ class TestBackgroundOrigins:
                     role=TaskRole.RESOURCE,
                 )
                 owners.append(owner)
-                tools.append(original._for_resource(owner))
+                tools.append(resource_tools(wrap(original), owner))
 
         ctx = execution(handler)
         try:

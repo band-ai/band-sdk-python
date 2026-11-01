@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -18,8 +18,6 @@ from band.client.streaming import AgentControlPayload, ControlMode
 from band.client.streaming.client import ControlHook
 from band.platform.link import BandLink
 from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
-
-T = TypeVar("T")
 
 
 class ActivityPush(StrEnum):
@@ -57,6 +55,9 @@ class RawActivity:
     room_id: str
     event: str
     payload: dict[str, Any]
+
+
+T = TypeVar("T")
 
 
 class StopObservation:
@@ -117,16 +118,40 @@ class ActivityCapture:
         self.controls.append(control)
         return control
 
-    async def _wait(self, select: Callable[[], T | None], phase: str) -> T:
+    async def _wait(
+        self, records: Sequence[T], matches: Callable[[T], bool], phase: str
+    ) -> T:
         try:
             async with asyncio.timeout(self.deadline_s):
                 while True:
                     self._changed.clear()
-                    if (selected := select()) is not None:
+                    if (
+                        selected := next((r for r in records if matches(r)), None)
+                    ) is not None:
                         return selected
                     await self._changed.wait()
         except TimeoutError:
-            raise TimeoutError(f"Missing activity barrier: {phase}") from None
+            raise TimeoutError(
+                f"Missing activity barrier: {phase}; observed={self.outline()}"
+            ) from None
+
+    def outline(self) -> dict[str, object]:
+        """Describe transport ordering without tool arguments or result content."""
+        return {
+            "reports": [
+                (report.sequence, report.room_id, report.working, report.activity)
+                for report in self.reports[-8:]
+            ],
+            "raw": [
+                (
+                    event.sequence,
+                    event.room_id,
+                    event.event,
+                    event.payload.get("agent_id"),
+                )
+                for event in self.raw[-32:]
+            ],
+        }
 
     async def report(
         self,
@@ -138,17 +163,13 @@ class ActivityCapture:
         since: int = 0,
     ) -> ActivityReport:
         record = await self._wait(
-            lambda: next(
-                (
-                    r
-                    for r in self.reports
-                    if r.sequence > since
-                    and r.room_id == room_id
-                    and (agent_id is None or r.agent_id == agent_id)
-                    and r.working is working
-                    and (activity is None or r.activity == activity)
-                ),
-                None,
+            self.reports,
+            lambda r: (
+                r.sequence > since
+                and r.room_id == room_id
+                and (agent_id is None or r.agent_id == agent_id)
+                and r.working is working
+                and (activity is None or r.activity == activity)
             ),
             f"report dispatched room={room_id} working={working}",
         )
@@ -161,16 +182,12 @@ class ActivityCapture:
         self, room_id: str, *, since: int, agent_id: str | None = None
     ) -> ControlExecution:
         return await self._wait(
-            lambda: next(
-                (
-                    c
-                    for c in self.controls
-                    if c.sequence > since
-                    and c.payload.room_id == room_id
-                    and (agent_id is None or c.payload.agent_id == agent_id)
-                    and c.payload.mode == ControlMode.STOP
-                ),
-                None,
+            self.controls,
+            lambda c: (
+                c.sequence > since
+                and c.payload.room_id == room_id
+                and (agent_id is None or c.payload.agent_id == agent_id)
+                and c.payload.mode == ControlMode.STOP
             ),
             f"STOP handler entry room={room_id}",
         )
@@ -204,33 +221,25 @@ class ActivityCapture:
         self, room_id: str, agent_id: str, activity: dict[str, Any], *, since: int = 0
     ) -> RawActivity:
         return await self._wait(
-            lambda: next(
-                (
-                    e
-                    for e in self.raw
-                    if e.sequence > since
-                    and e.room_id == room_id
-                    and e.payload.get("agent_id") == agent_id
-                    and e.event in (ActivityPush.STARTED, ActivityPush.CHANGED)
-                    and e.payload.get("activity") == activity
-                ),
-                None,
+            self.raw,
+            lambda e: (
+                e.sequence > since
+                and e.room_id == room_id
+                and e.payload.get("agent_id") == agent_id
+                and e.event in (ActivityPush.STARTED, ActivityPush.CHANGED)
+                and e.payload.get("activity") == activity
             ),
             f"raw detail room={room_id} activity={activity}",
         )
 
     async def stopped(self, room_id: str, agent_id: str, *, since: int) -> RawActivity:
         return await self._wait(
-            lambda: next(
-                (
-                    e
-                    for e in self.raw
-                    if e.sequence > since
-                    and e.room_id == room_id
-                    and e.payload.get("agent_id") == agent_id
-                    and e.event == ActivityPush.STOPPED
-                ),
-                None,
+            self.raw,
+            lambda e: (
+                e.sequence > since
+                and e.room_id == room_id
+                and e.payload.get("agent_id") == agent_id
+                and e.event == ActivityPush.STOPPED
             ),
             f"raw stop room={room_id}",
         )
