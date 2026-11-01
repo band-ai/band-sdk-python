@@ -300,8 +300,8 @@ class OmpTurnMixin(OmpAdapterContract):
             turn.closed = True
             if turn.compaction is not None:
                 await end_activity(turn.tools, turn.compaction)
-            for key in turn.calls:
-                await end_activity(turn.tools, key)
+            for call in turn.calls.values():
+                await end_activity(turn.tools, call.token)
 
     async def _finish_turn(self, room: OmpRoom, turn: OmpTurn) -> None:
         room_id, tools = room.room_id, turn.tools

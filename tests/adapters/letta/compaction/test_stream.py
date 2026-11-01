@@ -10,8 +10,8 @@ import pytest
 from band.adapters.letta import LettaAdapter, LettaRun
 from band.core.types import TurnUsage
 from band.testing import FakeAgentTools
-from band.testing.activity import ActivityRecorder, SHOWN_MEMORY, SHOWN_REASONING
-from tests.adapters.letta.compaction.peer import CompactionStream, RESULT
+from band.testing.activity import SHOWN_MEMORY, SHOWN_REASONING, ActivityRecorder
+from tests.adapters.letta.compaction.peer import RESULT, CompactionStream
 
 
 class TestStreamCompaction:

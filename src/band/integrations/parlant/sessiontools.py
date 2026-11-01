@@ -20,10 +20,10 @@ from typing import Any
 from band.core.exceptions import CleanupIncompleteError
 from band.core.protocols import AgentToolsProtocol
 from band.core.turn_lifecycle import (
-    resource_tools,
     TaskRole,
     TurnTask,
     bind_turn_task,
+    resource_tools,
     terminal_deadline,
 )
 from band.runtime.activity import activity_observer_of

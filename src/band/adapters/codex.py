@@ -70,7 +70,6 @@ from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import (
-    resource_tools,
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
     BackendTurns,
@@ -78,6 +77,7 @@ from band.core.turn_lifecycle import (
     TurnSettleTimeout,
     TurnTask,
     bind_turn_task,
+    resource_tools,
     start_releasable_turn,
     terminal_deadline,
 )

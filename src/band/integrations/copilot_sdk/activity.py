@@ -93,6 +93,8 @@ class SessionActivity:
 
     async def close(self) -> None:
         self._tools = None
-        self._unsubscribe()
-        self._queue.put_nowait(Observation(CompactionSignal.CLOSE, None))
-        await self._worker
+        if (unsubscribe := self._unsubscribe) is not None:
+            self._unsubscribe = None
+            unsubscribe()
+            self._queue.put_nowait(Observation(CompactionSignal.CLOSE, None))
+        await asyncio.shield(self._worker)

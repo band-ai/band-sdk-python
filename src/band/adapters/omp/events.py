@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from band.adapters.omp.contract import OmpAdapterContract
-from band.adapters.omp.turnstate import OmpTurn
+from band.adapters.omp.turnstate import OmpCall, OmpTurn
 from band.core.content import has_visible_content
 from band.core.protocols import send_event_safe
 from band.core.types import Emit, MessageType
@@ -17,6 +17,7 @@ from band.runtime.toolactivity import (
     end_activity,
     start_memory_activity,
     start_native_tool_activity,
+    start_tool_activity,
 )
 from band.runtime.tools import turn_effect
 
@@ -55,12 +56,17 @@ class OmpEventMixin(OmpAdapterContract):
             case OmpEventType.TOOL_START:
                 if not event.toolCallId or not event.toolName:
                     return
+                if event.toolCallId in turn.calls:
+                    return
                 args = event.args if isinstance(event.args, dict) else {}
                 name, arguments = self._project_tool_call(
                     event.toolName, args, preserve_native_semantics=True
                 )
-                turn.calls[event.toolCallId] = name
-                await start_native_tool_activity(turn.tools, event.toolCallId, name)
+                turn.calls[event.toolCallId] = call = OmpCall(name)
+                if event.toolName in self._band_host_names:
+                    await start_tool_activity(turn.tools, call.token, name)
+                else:
+                    await start_native_tool_activity(turn.tools, call.token, name)
                 if emit_tool_calls:
                     await send_event_safe(
                         turn.tools,
@@ -68,10 +74,11 @@ class OmpEventMixin(OmpAdapterContract):
                         MessageType.TOOL_CALL,
                     )
             case OmpEventType.TOOL_END:
-                name = turn.calls.pop(event.toolCallId or "", None)
-                if name is None:
+                call = turn.calls.pop(event.toolCallId or "", None)
+                if call is None:
                     return
-                await end_activity(turn.tools, event.toolCallId)
+                name = call.name
+                await end_activity(turn.tools, call.token)
                 if not self.config.inject_band_tools and not event.isError:
                     turn.tools.turn.record(turn_effect(name))
                 if emit_tool_calls:

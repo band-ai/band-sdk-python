@@ -8,7 +8,7 @@ import pytest
 
 from band.integrations.claude_sdk.activity import CLAUDE_TOOL_USE_META
 from band.integrations.mcp.request import request_context
-from band.testing.activity import ActivityRecorder, SHOWN_REASONING, shown_tool
+from band.testing.activity import SHOWN_REASONING, ActivityRecorder, shown_tool
 from tests.adapters.claude_sdk.activity.kit import native_tool_result, native_tool_uses
 from tests.adapters.claude_sdk.fakecli import Raw
 from tests.adapters.claude_sdk.helpers import OpenRoom
@@ -79,9 +79,11 @@ class TestClaudeBackgroundOrigins:
                 patch={"status": "killed"},
             )
             await origin.owner.task
-            with request_context({CLAUDE_TOOL_USE_META: "parent"}):
-                with pytest.raises(ValueError, match="Unknown Claude tool origin"):
-                    room.adapter._resolve_mcp_tools(room.room_id)
+            with (
+                request_context({CLAUDE_TOOL_USE_META: "parent"}),
+                pytest.raises(ValueError, match="Unknown Claude tool origin"),
+            ):
+                room.adapter._resolve_mcp_tools(room.room_id)
             assert not foreground.done()
         finally:
             hold.released.set()

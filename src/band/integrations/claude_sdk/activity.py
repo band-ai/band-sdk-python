@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import itertools
+import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -29,21 +29,21 @@ from claude_agent_sdk.types import (
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.turn_lifecycle import (
-    resource_tools,
     CYCLE_CANCEL_GRACE_SECONDS,
     TaskRole,
     TurnTask,
     bind_turn_task,
+    resource_tools,
     terminal_deadline,
 )
 from band.runtime.activity import activity_observer_of
-from band.runtime.tools.registry import MCP_TOOL_PREFIX
 from band.runtime.toolactivity import (
     end_activity,
     require_activity_authority,
     start_memory_activity,
     start_native_tool_activity,
 )
+from band.runtime.tools.registry import MCP_TOOL_PREFIX
 
 if TYPE_CHECKING:
     from band.integrations.claude_sdk.session_manager import ClaudeRoomSession

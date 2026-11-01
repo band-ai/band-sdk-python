@@ -52,9 +52,9 @@ from band.core.types import (
     TurnUsage,
 )
 from band.runtime.custom_tools import CustomToolDef
-from band.runtime.toolactivity import native_tool_activity
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt, with_system_updates
+from band.runtime.toolactivity import native_tool_activity
 from band.runtime.tools import BandTool, selected_tool_definitions
 
 logger = logging.getLogger(__name__)

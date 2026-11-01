@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from inspect import getattr_static
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from inspect import getattr_static
 from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeVar
 
 from pydantic import Field, NonNegativeFloat
@@ -238,7 +238,7 @@ def bind_turn_task(
 def resource_tools(tools: AgentToolsProtocol, owner: TurnTask) -> AgentToolsProtocol:
     """Capture a resource view when the tools declare runtime ownership support."""
     if getattr_static(tools, "_for_resource", None) is not None:
-        return getattr(tools, "_for_resource")(owner)
+        return tools._for_resource(owner)
     return tools
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from band.adapters.copilot_sdk import (
@@ -91,7 +93,12 @@ class TestSessionConfiguration:
         await run_message(adapter, tools)
 
         kwargs = client.sessions[0].kwargs
-        assert kwargs["on_user_input_request"] is ask_operator
+        handler = kwargs["on_user_input_request"]
+        assert not inspect.iscoroutinefunction(handler)
+        assert await handler({"question": "Pick"}, {"session_id": "room"}) == {
+            "answer": "beta",
+            "wasFreeform": False,
+        }
         # ask_user must be allowlisted alongside the bridged Band tools,
         # or the built-in tool stays filtered out and the handler is dead.
         assert "ask_user" in kwargs["available_tools"]

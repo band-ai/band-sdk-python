@@ -10,14 +10,13 @@ from band.core.types import Emit
 from band.integrations.acp.types import ToolStatus
 from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME
 from band.runtime.tools.types import BandTool
-from band.testing.activity import SHOWN_REASONING, ActivityRecorder, shown_tool
+from band.testing.activity import SHOWN_REASONING, shown_tool
 from tests.integrations.acp.acp_toolkit.agent import cursor_mcp_naming
-from tests.integrations.acp.clientbehavior.nativeactivity import collect_native_activity
 from tests.integrations.acp.clientbehavior.kit import (
     band_activity_call,
     band_activity_metadata,
-    observed_tools,
 )
+from tests.integrations.acp.clientbehavior.nativeactivity import collect_native_activity
 
 FIRST = BandTool.GET_PARTICIPANTS
 SECOND = BandTool.LOOKUP_PEERS

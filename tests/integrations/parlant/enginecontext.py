@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Any, cast
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from typing import Any, cast
 
 from band.integrations.parlant.sessiontools import (
     capture_engine_origin,

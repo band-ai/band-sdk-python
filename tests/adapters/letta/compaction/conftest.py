@@ -16,16 +16,16 @@ letta = pytest.importorskip("letta_client")
 @pytest.fixture
 async def streamed_client() -> AsyncIterator[tuple[Any, CompactionStream]]:
     peer = CompactionStream()
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(peer.respond)
-    ) as transport:
-        async with letta.AsyncLetta(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(peer.respond)) as transport,
+        letta.AsyncLetta(
             api_key="test",
             base_url="http://letta.test",
             max_retries=0,
             http_client=transport,
-        ) as client:
-            try:
-                yield client, peer
-            finally:
-                peer.release.set()
+        ) as client,
+    ):
+        try:
+            yield client, peer
+        finally:
+            peer.release.set()

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 
 import pytest
 from pydantic_ai import RunContext
@@ -14,12 +16,23 @@ from band.core.types import PlatformMessage
 from band.testing import FakeAgentTools
 from band.testing.activity import SHOWN_REASONING, ActivityRecorder, shown_tool
 from tests.adapters.pydanticai.kit import _run_on_message
+from tests.adapters.pydanticai.nativeactivity import NATIVE_FAILURE, fail, succeed
 
 
 class TestNativeActivity:
-    @pytest.mark.parametrize("fails", [False, True], ids=["success", "error"])
+    @pytest.mark.parametrize(
+        ("outcome", "expected"),
+        [
+            (succeed, nullcontext()),
+            (fail, pytest.raises(ValueError, match=NATIVE_FAILURE)),
+        ],
+        ids=["success", "error"],
+    )
     async def test_native_context_tool_is_shown_during_its_actual_body(
-        self, sample_message: PlatformMessage, fails: bool
+        self,
+        sample_message: PlatformMessage,
+        outcome: Callable[[], str],
+        expected: AbstractContextManager[object],
     ) -> None:
         entered, release = asyncio.Event(), asyncio.Event()
         tools = FakeAgentTools(room_id=sample_message.room_id)
@@ -30,9 +43,7 @@ class TestNativeActivity:
             assert ctx.deps is tools
             entered.set()
             await release.wait()
-            if fails:
-                raise ValueError("native failure")
-            return "opaque result"
+            return outcome()
 
         adapter = PydanticAIAdapter(
             llm=TestModel(call_tools=["native_lookup"]),
@@ -46,6 +57,6 @@ class TestNativeActivity:
         finally:
             release.set()
             await asyncio.gather(running, return_exceptions=True)
-        if not fails:
+        with expected:
             await running
         assert recorder.events == [shown_tool("native_lookup"), SHOWN_REASONING]

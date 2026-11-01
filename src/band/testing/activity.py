@@ -35,7 +35,7 @@ class ActivityRecorder:
         self.events: list[dict[str, Any]] = []
         self.activity = TurnActivity()
         self._ends: asyncio.Queue[Hashable] = asyncio.Queue()
-        self._starts: asyncio.Queue[AgentActivityDetail] = asyncio.Queue()
+        self._changed = asyncio.Event()
 
     def observing(self, tools: _Tools) -> _Tools:
         """Bind this recorder as the turn observer of ``tools``."""
@@ -46,15 +46,18 @@ class ActivityRecorder:
         before = self.activity.progress
         self.activity.start(key, activity)
         self._record_progress(before)
-        self._starts.put_nowait(activity)
-
-    async def next_start(self) -> AgentActivityDetail:
-        """Wait for an actual execution-start observation."""
-        return await self._starts.get()
 
     async def next_end(self) -> Hashable:
         """Wait for an actual terminal observation, including a displaced token."""
         return await self._ends.get()
+
+    async def wait_for_detail(self, detail: AgentActivityDetail) -> None:
+        """Wait for the observed display without polling or elapsed-time assumptions."""
+        while True:
+            self._changed.clear()
+            if self.activity.detail == detail:
+                return
+            await self._changed.wait()
 
     async def rename(self, key: Hashable, activity: AgentActivityDetail) -> None:
         before = self.activity.progress
@@ -68,6 +71,7 @@ class ActivityRecorder:
         self._ends.put_nowait(key)
 
     def _record_progress(self, before: AgentActivityDetail) -> None:
+        self._changed.set()
         if self.activity.progress != before:
             self.events.append(self.activity.progress.model_dump(exclude_none=True))
 
@@ -82,6 +86,7 @@ class ActivityRecorder:
             self._record_wait()
 
     def _record_wait(self) -> None:
+        self._changed.set()
         self.events.append({"waiting": self.waiting})
 
     @property
