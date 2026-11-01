@@ -38,6 +38,7 @@ MODEL = "claude-fake"
 # What the fake raises when its startup or its close fails.
 STARTUP_EXITED = "Claude CLI exited during startup"
 CLEANUP_FAILED = "Claude CLI cleanup failed"
+TASK_STOP_REFUSED = "Claude native task stop refused"
 MCP_DISCONNECTED = "Band MCP endpoint disconnected"
 # acceptEdits auto-approves these file-writing tools.
 EDIT_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
@@ -161,6 +162,7 @@ class FakeClaude:
         self.closing: Hold | None = None
         self.refuse_close = False
         self.stop_requests: asyncio.Queue[str] = asyncio.Queue()
+        self.refuse_task_stop = False
 
     def script(self, *turns: Turn) -> None:
         self._turns.extend(turns)
@@ -286,6 +288,18 @@ class FakeCLISession(Transport):
         request = message["request"]
         if request["subtype"] == "initialize":
             self._hooks = request.get("hooks") or {}
+        if request["subtype"] == "stop_task":
+            self.claude.stop_requests.put_nowait(request["task_id"])
+            if self.claude.refuse_task_stop:
+                self._emit(
+                    type="control_response",
+                    response={
+                        "subtype": "error",
+                        "request_id": message["request_id"],
+                        "error": TASK_STOP_REFUSED,
+                    },
+                )
+                return
         self._emit(
             type="control_response",
             response={
@@ -296,8 +310,6 @@ class FakeCLISession(Transport):
         )
         if request["subtype"] == "interrupt":
             self._interrupt()
-        elif request["subtype"] == "stop_task":
-            self.claude.stop_requests.put_nowait(request["task_id"])
 
     def _interrupt(self) -> None:
         """Stop the running turn; like the real CLI it still ends with a result

@@ -125,6 +125,11 @@ class ProviderRunError(BandError):
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
 
+    @classmethod
+    def session_lost(cls) -> ProviderRunError:
+        """Signal a provider session failure after its callbacks were revoked."""
+        return cls("session_lost")
+
 
 class RoomExecutionStoppedError(BandError):
     """The platform refused a claim, acknowledgement, or post while stopped.

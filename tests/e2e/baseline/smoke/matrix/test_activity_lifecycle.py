@@ -6,7 +6,7 @@ import pytest
 
 from band.core.types import AdapterFeatures
 from band.runtime.sessionconfig import SessionConfig
-from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.timeouts import slow_turn_budget
 from tests.e2e.baseline.toolkit.activity import ActivityCapture
@@ -19,6 +19,8 @@ from tests.example_agents.anthropic.peer import shared_api
 
 BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=12)
 PROMPT = "For each request call the requested activity tool afresh, then report its complete opaque result using band_send_message. Earlier results cannot answer a new request."
+# NOOA reports its awaited interpreter phase around nested method execution.
+NATIVE_ACTIVITY_NAMES = {Adapter.NOOA: "execute_python"}
 
 
 class TestActivityLifecycle:
@@ -42,7 +44,10 @@ class TestActivityLifecycle:
         observed = ActivityCapture(deadline_s=BUDGET.deadline_s)
         async with shared_api() as (client, base_url, _):
             work = ActivityWork(client, base_url, deadline_s=BUDGET.deadline_s)
-            detail = {"kind": "tool_call", "name": work.tool.name}
+            detail = {
+                "kind": "tool_call",
+                "name": NATIVE_ACTIVITY_NAMES.get(cell.adapter_id, work.tool.name),
+            }
             async with (
                 observed.rooms(baseline_ws, first, second),
                 reply_capture(first, deadline_s=BUDGET.deadline_s) as left,

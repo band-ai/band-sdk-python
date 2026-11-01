@@ -816,6 +816,24 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_codex_background.py::TestCodexBackground::test_session_close_terminates_a_native_child_after_its_turn[native-control]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_codex_background.py::TestCodexBackground::test_session_close_terminates_a_native_child_after_its_turn[opt-out]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_copilot_acp.py::test_acp_band_tool_call_is_narrated",
       "adapter": "suite",
       "lanes": [

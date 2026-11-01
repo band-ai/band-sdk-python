@@ -49,7 +49,11 @@ from band.core.delivery import (
     finish_automatic_reply,
     reraise_delivery_cause,
 )
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
+from band.core.exceptions import (
+    CleanupIncompleteError,
+    InputNotAccepted,
+    ProviderRunError,
+)
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -573,6 +577,7 @@ class NativeTurn:
 
     client: CodexClientProtocol
     generation: int
+    owner: TurnTask
     tools: AgentToolsProtocol | None = None
     thread_id: str | None = None
     turn_id: str | None = None
@@ -1274,10 +1279,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         )
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        owner_ready: asyncio.Future[TurnTask] = (
+            asyncio.get_running_loop().create_future()
+        )
         turn = start_releasable_turn(
             room.retained,
             partial(
                 self._run_turn,
+                owner_ready=owner_ready,
                 room=room,
                 messages=messages,
                 tools=tools,
@@ -1291,7 +1300,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             room_id=room_id,
         )
         self._turn_release[room_id] = release
-        self._turn_tasks[room_id] = bind_turn_task(tools, turn)
+        self._turn_tasks[room_id] = owner = bind_turn_task(tools, turn)
+        owner_ready.set_result(owner)
         turn.add_done_callback(lambda task: self._forget_turn(room_id, task))
         try:
             await asyncio.wait({release, turn}, return_when=asyncio.FIRST_COMPLETED)
@@ -1308,6 +1318,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     async def _run_turn(
         self,
         *,
+        owner_ready: asyncio.Future[TurnTask],
         room: RoomCodexClient,
         messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
@@ -1318,6 +1329,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         command: tuple[CodexCommand, str] | None,
     ) -> None:
         """Run one turn to completion, leasing its room's process throughout."""
+        owner = await owner_ready
         async with room.rpc_lock:
             try:
                 if command is not None and await self._run_local_command(
@@ -1332,6 +1344,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 ):
                     try:
                         await self._serve_turn(
+                            owner=owner,
                             room=room,
                             messages=messages,
                             tools=tools,
@@ -1346,6 +1359,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             except (TurnResultAlreadyReported, InputNotAccepted):
                 # A lease refused by a closing room is no failed turn: the
                 # host keeps the message.
+                raise
+            except ProviderRunError:
+                # The runtime reports a retired scope's failure through its own authority.
                 raise
             except (CodexJsonRpcError, CodexContinuityError) as e:
                 # A structured RPC error from the app-server (e.g. "model not
@@ -1400,6 +1416,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     async def _serve_turn(
         self,
         *,
+        owner: TurnTask,
         room: RoomCodexClient,
         messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
@@ -1446,7 +1463,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
         async with (
             self.backend_turns.running(room_id),
-            self._native_turn(room, tools) as native,
+            self._native_turn(room, tools, owner) as native,
         ):
             await self.backend_turns.started(
                 room_id,
@@ -2293,9 +2310,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         native = room.turn
         if native is not None and native.generation == generation:
             native.loss = cause
+            if native.owner.deadline is None:
+                native.loss = ProviderRunError.session_lost()
+                native.owner.terminate(
+                    cooperative=native.owner.task is asyncio.current_task()
+                )
             # Approvals the lost process asked for can never be answered.
             self._clear_pending_approvals_for_room(room.room_id)
-            native.events.put_nowait(cause)
+            native.events.put_nowait(native.loss)
 
     async def _refuse_unowned(
         self, room: RoomCodexClient, client: CodexClientProtocol, event: RpcEvent
@@ -2341,17 +2363,24 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
     @asynccontextmanager
     async def _native_turn(
-        self, room: RoomCodexClient, tools: AgentToolsProtocol
+        self, room: RoomCodexClient, tools: AgentToolsProtocol, owner: TurnTask
     ) -> AsyncIterator[NativeTurn]:
         """Bind the native turn this Band turn starts to it until the turn ends.
 
         Whatever is still undelivered then belongs to no Band turn.
         """
         room.turn = native = NativeTurn(
-            client=room.require_client(), generation=room.generation, tools=tools
+            client=room.require_client(),
+            generation=room.generation,
+            tools=tools,
+            owner=owner,
         )
         try:
             yield native
+        except asyncio.CancelledError:
+            if isinstance(native.loss, ProviderRunError):
+                raise native.loss from None
+            raise
         finally:
             room.turn = None
             for identity, activity in tuple(room.item_activity.items()):
