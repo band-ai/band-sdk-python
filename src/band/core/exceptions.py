@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from enum import StrEnum
 
+from band_sdk_core import AgentFailure
+
 
 class BandError(Exception):
     """Base for all SDK exceptions."""
@@ -125,6 +127,11 @@ class ProviderRunError(BandError):
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
 
+    @classmethod
+    def session_lost(cls) -> ProviderRunError:
+        """Signal a provider session failure after its callbacks were revoked."""
+        return cls("session_lost")
+
 
 class RoomExecutionStoppedError(BandError):
     """The platform refused a claim, acknowledgement, or post while stopped.
@@ -179,3 +186,11 @@ def _closest_match(
         if best is None or distance < best[0]:
             best = (distance, candidate)
     return best[1] if best is not None else None
+
+
+class TerminalProviderFailure(BandError):
+    """Carry a room-safe terminal report to the runtime after effect revocation."""
+
+    def __init__(self, failure: AgentFailure) -> None:
+        super().__init__(failure.message)
+        self.failure = failure

@@ -78,8 +78,8 @@ async def apply_control(
     INTERRUPT/STOP also notify ``on_control`` (the adapter's own
     ``on_interrupt``): the execution's own method reaches only the task still
     running the handler, not work an adapter returned from and kept running
-    detached (e.g. a turn parked on a human decision). A STOP the execution
-    already observed and reported for its current turn is not reported twice.
+    detached (e.g. a turn parked on a human decision). Activity responses
+    cancel their captured owners separately; explicit controls remain room-wide.
     """
     match mode:
         case ControlMode.INTERRUPT:
@@ -87,8 +87,7 @@ async def apply_control(
             await _notify_adapter(execution, mode, on_control)
         case ControlMode.STOP:
             _call_if_supported(execution, "stop_room")
-            if not getattr(execution, "adapter_stop_notified", False):
-                await _notify_adapter(execution, mode, on_control)
+            await _notify_adapter(execution, mode, on_control)
         case ControlMode.PLAY:
             if (resume := _supported(execution, "resume_room")) is not None:
                 await resume()

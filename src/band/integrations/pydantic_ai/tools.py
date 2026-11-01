@@ -25,7 +25,7 @@ from pydantic_core import SchemaValidator, core_schema
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import AdapterFeatures, MessageType
-from band.runtime.toolactivity import tool_activity
+from band.runtime.toolactivity import WRAPPED_TOOL_ACTIVITY, tool_activity
 from band.runtime.tools import (
     BandTool,
     ToolDefinition,
@@ -92,6 +92,7 @@ def _build_tool(definition: ToolDefinition) -> Tool[AgentToolsProtocol]:
     # schema validation. Replace it with an object-shape validator so malformed
     # non-object payloads become ordinary validation retries.
     tool.function_schema.validator = _OBJECT_SCHEMA_VALIDATOR
+    tool.metadata = {WRAPPED_TOOL_ACTIVITY: True}
     return tool
 
 

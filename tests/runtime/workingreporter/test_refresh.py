@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from band.runtime.working_state import WorkingStateReporter
-from tests.runtime.workingreporter.kit import DetailRecorder
+from tests.runtime.workingreporter.kit import DetailRecorder, Projection
 
 # Longer than any test, so every report after start is a refresh.
 NO_KEEP_ALIVE = 3600.0
@@ -54,17 +52,18 @@ class TestRefresh:
         await reporter.stop()
         assert recorder.reports == ["reasoning", "Read", "memory", None]
 
-    @pytest.mark.looptime
-    async def test_a_change_past_the_cap_is_not_reported(self) -> None:
+    async def test_a_change_after_revocation_is_cleared_without_a_true_report(
+        self,
+    ) -> None:
         recorder = DetailRecorder()
+        projection = Projection()
         reporter = WorkingStateReporter(
-            recorder, keep_alive_seconds=NO_KEEP_ALIVE, max_working_state_seconds=2
+            recorder, keep_alive_seconds=NO_KEEP_ALIVE, project=projection
         )
         await reporter.start()
-        await asyncio.sleep(2.1)
+        projection.change(False)
         recorder.detail = "Bash"
         reporter.refresh()
-        # The wake finds the cap passed and ends the keep-alive without a report.
-        await reporter._task
+        await projection.sampled.wait()
         await reporter.stop()
         assert recorder.reports == ["reasoning", None]

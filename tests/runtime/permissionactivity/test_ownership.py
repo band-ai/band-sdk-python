@@ -12,7 +12,7 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.toolactivity import start_tool_activity
 from band.runtime.tools.agent import AgentTools
 from band.testing.activity import ActivityRecorder
-from tests.activitysupport import PERMISSION_BODY, REASONING_BODY, tool_body
+from tests.activitysupport import PERMISSION_BODY, REASONING_BODY
 from tests.conftest import make_message_event
 from tests.runtime.permissionactivity.kit import (
     HeldTurn,
@@ -81,7 +81,7 @@ class TestPermissionOwnership:
                 await start_tool_activity(first, "read", "Read")
                 assert await permission_platform.checkpoint(ctx) == PERMISSION_BODY
             assert await permission_platform.checkpoint(ctx) == PERMISSION_BODY
-        assert await permission_platform.checkpoint(ctx) == tool_body("Read")
+        assert await permission_platform.checkpoint(ctx) == REASONING_BODY
 
     async def test_scope_captures_the_observer_before_tools_are_rebound(
         self,

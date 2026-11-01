@@ -49,7 +49,12 @@ from band.core.delivery import (
     finish_automatic_reply,
     reraise_delivery_cause,
 )
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import (
+    CleanupIncompleteError,
+    InputNotAccepted,
+    ProviderRunError,
+    TerminalProviderFailure,
+)
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -73,9 +78,12 @@ from band.core.turn_lifecycle import (
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
     BackendTurns,
+    TaskRole,
     TurnSettleTimeout,
     TurnTask,
     bind_turn_task,
+    drain_turn_tasks,
+    resource_tools,
     start_releasable_turn,
 )
 from band.core.types import (
@@ -94,14 +102,17 @@ from band.integrations.codex import (
     CodexStdioClient,
     RpcEvent,
 )
+from band.integrations.codex.activity import CommandResource
 from band.integrations.codex.types import (
     CODEX_APPROVAL_METHODS,
     CODEX_PROVIDER,
+    CODEX_TRANSPORT_CLOSED_FAILURE_CODE,
     DYNAMIC_TOOL_CALL_METHOD,
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
     CodexMetadataKey,
+    CodexNotificationMethod,
     CodexRequestMethod,
     CodexSessionState,
     CodexTokenUsage,
@@ -134,7 +145,7 @@ from band.runtime.sessionresume import SessionSeed, fetch_transcript
 from band.runtime.toolactivity import (
     end_activity,
     start_memory_activity,
-    start_tool_activity,
+    start_native_tool_activity,
 )
 from band.runtime.tools import (
     get_band_tool_category,
@@ -569,6 +580,8 @@ class NativeTurn:
 
     client: CodexClientProtocol
     generation: int
+    owner: TurnTask
+    tools: AgentToolsProtocol | None = None
     thread_id: str | None = None
     turn_id: str | None = None
     # An exception is the reader's own failure, which ends the turn.
@@ -685,6 +698,13 @@ class RoomCodexClient:
     client: CodexClientProtocol | None = None
     reader: asyncio.Task[None] | None = None
     turn: NativeTurn | None = None
+    commands: dict[tuple[str, str, str], CommandResource] = dataclass_field(
+        default_factory=dict
+    )
+    item_activity: dict[tuple[str, str, str], tuple[AgentToolsProtocol, object]] = (
+        dataclass_field(default_factory=dict)
+    )
+    routing_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
     selected_model: str | None = None
     reasoning_effort: str | None = None
     reasoning_summary: str | None = None
@@ -1262,10 +1282,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         )
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        owner_ready: asyncio.Future[TurnTask] = (
+            asyncio.get_running_loop().create_future()
+        )
         turn = start_releasable_turn(
             room.retained,
             partial(
                 self._run_turn,
+                owner_ready=owner_ready,
                 room=room,
                 messages=messages,
                 tools=tools,
@@ -1279,7 +1303,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             room_id=room_id,
         )
         self._turn_release[room_id] = release
-        self._turn_tasks[room_id] = bind_turn_task(tools, turn)
+        self._turn_tasks[room_id] = owner = bind_turn_task(tools, turn)
+        owner_ready.set_result(owner)
         turn.add_done_callback(lambda task: self._forget_turn(room_id, task))
         try:
             await asyncio.wait({release, turn}, return_when=asyncio.FIRST_COMPLETED)
@@ -1296,6 +1321,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     async def _run_turn(
         self,
         *,
+        owner_ready: asyncio.Future[TurnTask],
         room: RoomCodexClient,
         messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
@@ -1306,6 +1332,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         command: tuple[CodexCommand, str] | None,
     ) -> None:
         """Run one turn to completion, leasing its room's process throughout."""
+        owner = await owner_ready
         async with room.rpc_lock:
             try:
                 if command is not None and await self._run_local_command(
@@ -1320,6 +1347,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 ):
                     try:
                         await self._serve_turn(
+                            owner=owner,
                             room=room,
                             messages=messages,
                             tools=tools,
@@ -1331,7 +1359,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         self._abandon_unseeded_thread(room)
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
-            except (TurnResultAlreadyReported, InputNotAccepted):
+            except (
+                TurnResultAlreadyReported,
+                TerminalProviderFailure,
+                InputNotAccepted,
+            ):
                 # A lease refused by a closing room is no failed turn: the
                 # host keeps the message.
                 raise
@@ -1388,6 +1420,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     async def _serve_turn(
         self,
         *,
+        owner: TurnTask,
         room: RoomCodexClient,
         messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
@@ -1434,7 +1467,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
         async with (
             self.backend_turns.running(room_id),
-            self._native_turn(room) as native,
+            self._native_turn(room, tools, owner) as native,
         ):
             await self.backend_turns.started(
                 room_id,
@@ -1467,7 +1500,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     thread_id=thread_id,
                     turn_start=turn_start,
                 )
-            except TurnResultAlreadyReported:
+            except (TurnResultAlreadyReported, TerminalProviderFailure):
                 # A nested handler (e.g. the turn-timeout branch) already
                 # reported this failure via send_failure; propagate it
                 # without emitting a friendly _emit_turn_outcome reply or
@@ -1797,11 +1830,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         )
                     continue
 
-                if event.method == "item/started":
+                if event.method == CodexNotificationMethod.ITEM_STARTED:
                     item = params.get("item")
                     if not isinstance(item, dict):
                         continue
-                    await self._show_item_started(tools, item)
                     if item.get("type") == CodexItemType.AGENT_MESSAGE:
                         result.native_messages[str(item["id"])] = NativeMessage(
                             phase=item.get("phase"),
@@ -1838,11 +1870,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                             message.streamed_text += delta
                     continue
 
-                if event.method == "item/completed":
+                if event.method == CodexNotificationMethod.ITEM_COMPLETED:
                     item = params.get("item")
                     if isinstance(item, dict):
-                        if item.get("type") in _ACTIVITY_ITEM_TYPES:
-                            await end_activity(tools, _item_id(item))
                         if item.get("type") == CodexItemType.AGENT_MESSAGE:
                             message = result.native_messages.setdefault(
                                 str(item["id"]),
@@ -1871,7 +1901,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     if not failure_reported:
                         await tools.send_failure(
                             AgentFailure(
-                                CODEX_PROVIDER, result.turn_error, "transport_closed"
+                                CODEX_PROVIDER,
+                                result.turn_error,
+                                CODEX_TRANSPORT_CLOSED_FAILURE_CODE,
                             )
                         )
                     raise TurnResultAlreadyReported(result.turn_error)
@@ -2078,6 +2110,147 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
         room.restored = True
 
+    async def _observe_command(
+        self, room: RoomCodexClient, generation: int, event: RpcEvent
+    ) -> None:
+        if event.method not in {
+            CodexNotificationMethod.ITEM_STARTED,
+            CodexNotificationMethod.ITEM_COMPLETED,
+        }:
+            return
+        params = _event_params(event)
+        item = params.get("item")
+        if not isinstance(item, dict) or item.get("type") not in _ACTIVITY_ITEM_TYPES:
+            return
+        identity = (
+            _thread_id(event) or "",
+            _native_turn_id(event) or "",
+            _item_id(item),
+        )
+        if item.get("type") != CodexItemType.COMMAND_EXECUTION:
+            await self._observe_foreground_item(room, generation, event, identity, item)
+            return
+        if event.method == CodexNotificationMethod.ITEM_COMPLETED:
+            if (command := room.commands.pop(identity, None)) is not None:
+                command.terminal.set()
+                command.wake.set()
+                await end_activity(command.tools, command.token)
+            return
+        tools = self._native_item_tools(room, generation, event, identity)
+        if identity in room.commands or tools is None:
+            return
+        command = CommandResource(
+            tools, generation, *identity, process_id=item.get("processId")
+        )
+        worker = asyncio.create_task(self._wait_command(room, command))
+        command.owner = bind_turn_task(
+            tools, worker, role=TaskRole.RESOURCE, request_stop=command.wake.set
+        )
+        command.tools = resource_tools(tools, command.owner)
+        room.commands[identity] = command
+        name = self._extract_tool_item(CodexItemType.COMMAND_EXECUTION, item).name
+        await start_native_tool_activity(command.tools, command.token, name)
+
+    async def _observe_foreground_item(
+        self,
+        room: RoomCodexClient,
+        generation: int,
+        event: RpcEvent,
+        identity: tuple[str, str, str],
+        item: dict[str, Any],
+    ) -> None:
+        if event.method == CodexNotificationMethod.ITEM_COMPLETED:
+            if (current := room.item_activity.pop(identity, None)) is not None:
+                await end_activity(current[0], current[1])
+            return
+        tools = self._native_item_tools(room, generation, event, identity)
+        if identity in room.item_activity or tools is None:
+            return
+        token = object()
+        room.item_activity[identity] = (tools, token)
+        await self._show_item_started(tools, item, token)
+
+    @staticmethod
+    def _native_item_tools(
+        room: RoomCodexClient,
+        generation: int,
+        event: RpcEvent,
+        identity: tuple[str, str, str],
+    ) -> AgentToolsProtocol | None:
+        native = room.turn
+        if (
+            not all(identity)
+            or native is None
+            or native.tools is None
+            or native.generation != generation
+            or not native.owns(event)
+            or native.thread_id != identity[0]
+            or not room.retained.has_authority(generation)
+        ):
+            return None
+        return native.tools
+
+    async def _wait_command(
+        self, room: RoomCodexClient, command: CommandResource
+    ) -> None:
+        await command.wake.wait()
+        if not command.terminal.is_set():
+            await self._stop_command(room, command)
+
+    async def _stop_command(
+        self, room: RoomCodexClient, command: CommandResource
+    ) -> None:
+        if command.terminal.is_set():
+            return
+        if (
+            room.commands.get(command.identity) is command
+            and room.generation == command.generation
+        ):
+            try:
+                if not self.config.experimental_api or command.process_id is None:
+                    raise CleanupIncompleteError(
+                        "Codex command has no supported selective stop"
+                    )
+                if command.owner is None:
+                    raise CleanupIncompleteError(
+                        "Codex command admission was interrupted"
+                    )
+                async with asyncio.timeout_at(command.owner.deadline):
+                    await room.require_client().request(
+                        CodexRequestMethod.TERMINAL_TERMINATE,
+                        {
+                            "threadId": command.thread_id,
+                            "processId": command.process_id,
+                        },
+                    )
+                    await command.terminal.wait()
+                    return
+            except Exception as error:
+                logger.warning(
+                    "Room %s: native command cleanup requires recovery",
+                    room.room_id,
+                    exc_info=True,
+                )
+                self._lose_process(room, command.generation, error)
+        await command.closed.wait()
+
+    @staticmethod
+    def _revoke_commands(room: RoomCodexClient, generation: int) -> None:
+        for command in tuple(room.commands.values()):
+            if command.generation == generation and command.owner is not None:
+                command.owner.terminate()
+
+    async def _drain_commands(self, room: RoomCodexClient) -> None:
+        await drain_turn_tasks(
+            command.owner
+            for command in room.commands.values()
+            if command.owner is not None
+        )
+        if room.commands and self.config.transport == "websocket":
+            raise CleanupIncompleteError(
+                "Codex remote commands have not confirmed termination"
+            )
+
     async def _read_native_events(
         self, room: RoomCodexClient, client: CodexClientProtocol, generation: int
     ) -> None:
@@ -2107,9 +2280,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 )
                 self._lose_process(room, generation, event)
                 return
-            if (
-                unowned := self._route_native_event(room, generation, event)
-            ) is not None:
+            async with room.routing_lock:
+                await self._observe_command(room, generation, event)
+                unowned = self._route_native_event(room, generation, event)
+            if unowned is not None:
                 await self._refuse_unowned(room, client, unowned)
 
     @staticmethod
@@ -2136,12 +2310,19 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             generation=generation,
             reason=f"Codex events stopped: {_loss_reason(cause)}",
         )
+        self._revoke_commands(room, generation)
         native = room.turn
         if native is not None and native.generation == generation:
             native.loss = cause
+            native.owner.fail(
+                cause
+                if isinstance(cause, Exception)
+                else ProviderRunError.session_lost(),
+                cooperative=True,
+            )
             # Approvals the lost process asked for can never be answered.
             self._clear_pending_approvals_for_room(room.room_id)
-            native.events.put_nowait(cause)
+            native.events.put_nowait(native.loss)
 
     async def _refuse_unowned(
         self, room: RoomCodexClient, client: CodexClientProtocol, event: RpcEvent
@@ -2186,18 +2367,31 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         )
 
     @asynccontextmanager
-    async def _native_turn(self, room: RoomCodexClient) -> AsyncIterator[NativeTurn]:
+    async def _native_turn(
+        self, room: RoomCodexClient, tools: AgentToolsProtocol, owner: TurnTask
+    ) -> AsyncIterator[NativeTurn]:
         """Bind the native turn this Band turn starts to it until the turn ends.
 
         Whatever is still undelivered then belongs to no Band turn.
         """
         room.turn = native = NativeTurn(
-            client=room.require_client(), generation=room.generation
+            client=room.require_client(),
+            generation=room.generation,
+            tools=tools,
+            owner=owner,
         )
         try:
             yield native
+        except asyncio.CancelledError:
+            if native.owner.failure is not None:
+                raise native.owner.failure from None
+            raise
         finally:
             room.turn = None
+            for identity, activity in tuple(room.item_activity.items()):
+                if identity[:2] == (native.thread_id, native.turn_id):
+                    del room.item_activity[identity]
+                    await end_activity(activity[0], activity[1])
             await self._refuse_undelivered(room, native)
 
     async def _refuse_undelivered(
@@ -2237,11 +2431,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         turn_id = _result_id(started, "turn")
         if not turn_id:
             raise RuntimeError("Codex turn/start returned no turn id")
-        native.turn_id = turn_id
-        early, native.early = native.early, []
-        # Claim every early event before any await, or the reader could
-        # queue newer ones ahead of them.
-        refused = [event for event in early if not native.claim(event)]
+        async with room.routing_lock:
+            native.turn_id = turn_id
+            early, native.early = native.early, []
+            refused = []
+            for event in early:
+                await self._observe_command(room, native.generation, event)
+                if not native.claim(event):
+                    refused.append(event)
         for event in refused:
             await self._refuse_unowned(room, native.client, event)
 
@@ -2249,6 +2446,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self, room: RoomCodexClient, cause: ReleaseCause
     ) -> ReleaseOutcome:
         """Close the room's process; its thread id stays for the next process."""
+        await self._drain_commands(room)
         await room.stop_reader()
         if room.client is not None:
             timeout = self.config.client_close_timeout_s
@@ -2260,6 +2458,21 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     f"Codex process for room {room.room_id} did not close "
                     f"within {timeout}s"
                 ) from error
+        commands = tuple(room.commands.values())
+        for command in commands:
+            command.closed.set()
+            command.terminal.set()
+            command.wake.set()
+            await end_activity(command.tools, command.token)
+        if commands:
+            await asyncio.gather(
+                *(
+                    command.owner.task
+                    for command in commands
+                    if command.owner is not None
+                )
+            )
+        room.commands.clear()
         room.client = None
         room.restored = False
         return ReleaseOutcome.RELEASED
@@ -3104,14 +3317,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
 
     async def _show_item_started(
-        self, tools: AgentToolsProtocol, item: dict[str, Any]
+        self, tools: AgentToolsProtocol, item: dict[str, Any], token: object
     ) -> None:
         item_type = item.get("type", "")
         if item_type == CodexItemType.CONTEXT_COMPACTION:
-            await start_memory_activity(tools, _item_id(item))
+            await start_memory_activity(tools, token)
         elif item_type in _TOOL_ITEM_TYPES:
             name = self._extract_tool_item(item_type, item).name
-            await start_tool_activity(tools, _item_id(item), name)
+            await start_native_tool_activity(tools, token, name)
 
     async def _emit_item_event(
         self,

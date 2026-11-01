@@ -1,4 +1,4 @@
-"""One tool ending never hides another tool still running in the same turn."""
+"""Only completion of the current token clears the room detail."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ BAND_TOOL = BandTool.GET_PARTICIPANTS
 
 @pytest.mark.looptime
 class TestOverlappingToolActivity:
-    async def test_a_band_tool_ending_shows_the_native_tool_still_running(
+    async def test_a_band_tool_ending_does_not_restore_the_native_tool(
         self,
         execution: Callable[..., ExecutionContext],
         activity_platform: ActivityPlatform,
@@ -38,7 +38,7 @@ class TestOverlappingToolActivity:
                     band_tool.enter_async_context(tool_activity(tools, BAND_TOOL))
                 )
                 await activity_platform.shown(band_tool.aclose())
-            await activity_platform.shown(end_activity(tools, NATIVE_CALL_ID))
+            await end_activity(tools, NATIVE_CALL_ID)
 
         ctx = execution(handler)
         await deliver_event(ctx, make_message_event())
@@ -46,7 +46,6 @@ class TestOverlappingToolActivity:
             REASONING_BODY,
             tool_body(NATIVE_TOOL),
             tool_body(BAND_TOOL),
-            tool_body(NATIVE_TOOL),
             REASONING_BODY,
             IDLE_BODY,
         ]

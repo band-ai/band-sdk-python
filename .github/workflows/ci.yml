@@ -335,6 +335,7 @@ jobs:
           tests/integrations/parlant/test_guard.py \
           tests/integrations/parlant/activity/test_execution.py \
           tests/integrations/parlant/activity/test_send_event.py \
+          tests/integrations/parlant/activity/test_pluginownership.py \
           tests/integrations/parlant/test_preambletask.py \
           tests/integrations/parlant/test_selection.py \
           tests/integrations/parlant/test_server.py \

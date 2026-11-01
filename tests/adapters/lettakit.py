@@ -147,11 +147,8 @@ def make_parallel_tool_messages(
     )
 
 
-def make_letta_response(*messages: Any) -> MagicMock:
-    """Create a fake Letta API response."""
-    resp = MagicMock()
-    resp.messages = list(messages)
-    return resp
+def make_letta_response(*messages: Any) -> LettaStream:
+    return LettaStream(list(messages))
 
 
 def ready_letta_adapter(
@@ -328,18 +325,23 @@ def mock_org_user_provisioned(
     )
 
 
-def make_mock_async_stream(*messages: MagicMock) -> Any:
-    """Create a mock async stream yielding Letta messages."""
+class LettaStream:
+    """External message stream with the released client's explicit close contract."""
 
-    class _AsyncStream:
-        def __init__(self, stream_messages: list[MagicMock]) -> None:
-            self._messages = stream_messages
+    def __init__(self, messages: list[Any]) -> None:
+        self.messages = messages
+        self.closed = False
 
-        async def __aiter__(self) -> Any:
-            for stream_message in self._messages:
-                yield stream_message
+    async def __aiter__(self) -> Any:
+        for message in self.messages:
+            yield message
 
-    return _AsyncStream(list(messages))
+    async def close(self) -> None:
+        self.closed = True
+
+
+def make_mock_async_stream(*messages: Any) -> LettaStream:
+    return LettaStream(list(messages))
 
 
 class RecordingLettaClient:
@@ -386,15 +388,37 @@ class RecordingLettaClient:
         return [entry for entry in self.journal if entry.startswith("cancel ")]
 
     async def _create_agent_turn(
-        self, *, agent_id: str, messages: list[dict[str, str]]
-    ) -> MagicMock:
+        self,
+        *,
+        agent_id: str,
+        messages: list[dict[str, str]],
+        streaming: bool,
+        stream_tokens: bool,
+        include_compaction_messages: bool,
+    ) -> LettaStream:
+        assert (streaming, stream_tokens, include_compaction_messages) == (
+            True,
+            False,
+            True,
+        )
         self.journal.append(f"send agent {agent_id}")
         await self.release.wait()
-        return make_letta_response(make_assistant_message())
+        return make_mock_async_stream(make_assistant_message())
 
     async def _create_conversation_turn(
-        self, *, conversation_id: str, messages: list[dict[str, str]]
-    ) -> Any:
+        self,
+        *,
+        conversation_id: str,
+        messages: list[dict[str, str]],
+        streaming: bool,
+        stream_tokens: bool,
+        include_compaction_messages: bool,
+    ) -> LettaStream:
+        assert (streaming, stream_tokens, include_compaction_messages) == (
+            True,
+            False,
+            True,
+        )
         self.journal.append(f"send conversation {conversation_id}")
         await self.release.wait()
         return make_mock_async_stream(make_assistant_message())

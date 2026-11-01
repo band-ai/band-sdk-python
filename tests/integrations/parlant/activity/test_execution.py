@@ -4,12 +4,13 @@ import asyncio
 
 import pytest
 
+from tests.integrations.parlant.enginecontext import activate_engine, bind_engine_tools
+
 pytest.importorskip("parlant.sdk")
 
 from parlant.core.tools import ToolContext
 
 from band.integrations.parlant.customtools import build_custom_tool
-from band.integrations.parlant.sessiontools import set_session_tools
 from band.integrations.parlant.tools import create_parlant_tools
 from band.testing import FakeAgentTools
 from band.testing.activity import ActivityRecorder, shown_tool
@@ -25,8 +26,9 @@ class TestParlantActivity:
         recorder, quiet = ActivityRecorder(), ActivityRecorder()
         tools = recorder.observing(FakeAgentTools())
         other = quiet.observing(FakeAgentTools())
-        set_session_tools("calling", tools)
-        set_session_tools("other", other)
+        engine = await bind_engine_tools("calling", tools)
+        await bind_engine_tools("other", other)
+        activate_engine(engine)
         entered, release = asyncio.Event(), asyncio.Event()
 
         async def lookup(args: LookupInput) -> str:
@@ -62,7 +64,7 @@ class TestParlantActivity:
         # The plugin server finishes a handler whose client disconnected, so
         # only a direct call can deliver a cancellation to it.
         recorder = ActivityRecorder()
-        set_session_tools("cancelled", recorder.observing(FakeAgentTools()))
+        await bind_engine_tools("cancelled", recorder.observing(FakeAgentTools()))
         entered = asyncio.Event()
 
         async def lookup(args: LookupInput) -> str:

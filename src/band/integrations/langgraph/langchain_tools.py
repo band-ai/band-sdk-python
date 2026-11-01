@@ -24,6 +24,7 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     get_custom_tool_name,
 )
+from band.runtime.toolactivity import WRAPPED_TOOL_ACTIVITY
 from band.runtime.tools import (
     format_tool_validation_error,
     get_band_tool_category,
@@ -157,6 +158,7 @@ def agent_tools_to_langchain(
                 description=description,
                 args_schema=definition.input_model,
                 handle_validation_error=validation_error_message,
+                metadata={WRAPPED_TOOL_ACTIVITY: True},
             )
         )
 
@@ -207,4 +209,5 @@ def custom_tool_def_to_langchain(
         description=description,
         args_schema=input_model,
         handle_validation_error=on_validation_error,
+        metadata={WRAPPED_TOOL_ACTIVITY: True},
     )

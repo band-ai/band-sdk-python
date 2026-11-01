@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from band_rest import AgentActivityDetail
 
 from band.runtime.activity import REASONING, tool_call_activity
 from band.runtime.custom_tools import execute_custom_tool
@@ -15,8 +16,11 @@ from tests.integrations.activitykit import LookupInput
 
 class TestOverlappingTools:
     @pytest.mark.parametrize(
-        ("finished", "remaining"),
-        [("first", "second"), ("second", "first")],
+        ("finished", "remaining", "expected"),
+        [
+            ("first", "second", tool_call_activity("lookup")),
+            ("second", "first", REASONING),
+        ],
         ids=["older-first", "newer-first"],
     )
     async def test_one_call_finishing_does_not_end_the_other(
@@ -25,6 +29,7 @@ class TestOverlappingTools:
         recorder: ActivityRecorder,
         finished: str,
         remaining: str,
+        expected: AgentActivityDetail,
     ) -> None:
         entered = {name: asyncio.Event() for name in ("first", "second")}
         release = {name: asyncio.Event() for name in entered}
@@ -48,7 +53,7 @@ class TestOverlappingTools:
             await entered["second"].wait()
             release[finished].set()
             assert await tasks[finished] == finished
-            assert recorder.activity.detail == tool_call_activity("lookup")
+            assert recorder.activity.detail == expected
             assert not tasks[remaining].done()
             release[remaining].set()
             assert await tasks[remaining] == remaining

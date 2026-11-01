@@ -16,6 +16,7 @@ from claude_agent_sdk import (
 from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManager,
 )
+from tests.adapters.claude_sdk.helpers import query_origin
 from tests.adapters.claude_sdk.process import launch_children
 from tests.integrations.claude_sdk.sessionmanager.kit import (
     TaskRecordingPeer,
@@ -40,7 +41,7 @@ class TestSdkTaskAffinity:
         )
         try:
             async with session.using() as client:
-                with session.listening() as stream:
+                with session.listening() as stream, query_origin(session):
                     await asyncio.create_task(client.query(request))
                     [*_, result] = [message async for message in stream.until_result()]
             await asyncio.create_task(manager.cleanup_session("room-a"))

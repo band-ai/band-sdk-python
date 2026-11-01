@@ -31,26 +31,19 @@ class Step(StrEnum):
 class Generation:
     activity: TurnActivity = field(default_factory=TurnActivity)
     expected: set[int] = field(default_factory=set)
-    # Reference model: each running tool's key and name, oldest first.
-    running: list[tuple[int, str]] = field(default_factory=list)
+    selected: tuple[int, str] | None = None
 
     @property
     def expected_progress(self) -> AgentActivityDetail:
-        if not self.running:
-            return REASONING
-        _, newest = self.running[-1]
-        return tool_call_activity(newest)
+        return tool_call_activity(self.selected[1]) if self.selected else REASONING
 
     def hold(self, key: int, name: str) -> None:
-        """Rename ``key`` where it stands, or add it as the newest."""
-        keys = [held for held, _ in self.running]
-        if key in keys:
-            self.running[keys.index(key)] = (key, name)
-        else:
-            self.running.append((key, name))
+        if not self.expected:
+            self.selected = (key, name)
 
     def drop(self, key: int) -> None:
-        self.running = [(held, name) for held, name in self.running if held != key]
+        if self.selected is not None and self.selected[0] == key:
+            self.selected = None
 
 
 class ActivityLifecycle:
@@ -73,6 +66,7 @@ class ActivityLifecycle:
         if step == Step.BEGIN and key not in self.active:
             owner = current.activity.acquire_permission()
             current.expected.add(self.next_id)
+            current.selected = None
             self.active[key] = (current, owner, self.next_id)
             self.next_id += 1
         elif step == Step.END and key in self.active:

@@ -9,9 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.core.exceptions import BandToolError
-from band.integrations.parlant.tools import create_parlant_tools, set_session_tools
+from band.integrations.parlant.tools import create_parlant_tools
 from band.runtime.tools import DEFAULT_FILE_CAPTION, MISSING_MENTIONS_ERROR
 from band.testing import FakeAgentTools
+from tests.integrations.parlant.enginecontext import bind_engine_tools
 from tests.integrations.parlant.helpers import SESSION_ID
 from tests.testing.support import seeded_participant
 
@@ -26,7 +27,7 @@ class TestFileTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should return formatted list of room files."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         list_room_files = parlant_tools["band_list_room_files"]
         result = await list_room_files(mock_context, "")
@@ -40,7 +41,7 @@ class TestFileTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should forward a non-empty cursor to the underlying tool."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         list_room_files = parlant_tools["band_list_room_files"]
         await list_room_files(mock_context, "cursor-1")
@@ -53,7 +54,7 @@ class TestFileTools:
     ):
         """Should handle an empty room-file list."""
         mock_tools.list_room_files.return_value = {"data": [], "next_cursor": None}
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         list_room_files = parlant_tools["band_list_room_files"]
         result = await list_room_files(mock_context, "")
@@ -65,7 +66,7 @@ class TestFileTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should return the file's decoded text."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         read_room_file = parlant_tools["band_read_room_file"]
         result = await read_room_file(mock_context, "file-1")
@@ -81,7 +82,7 @@ class TestFileTools:
         mock_tools.read_room_file.return_value = {
             "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
         }
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         read_room_file = parlant_tools["band_read_room_file"]
         result = await read_room_file(mock_context, "file-1")
@@ -100,7 +101,7 @@ class TestFileTools:
             "bytes": 999_999,
             "description": "File not shown inline: exceeds the inline text limit.",
         }
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         read_room_file = parlant_tools["band_read_room_file"]
         result = await read_room_file(mock_context, "file-1")
@@ -113,7 +114,7 @@ class TestFileTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should call tools.send_room_file with parsed mentions."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         send_room_file = parlant_tools["band_send_room_file"]
         result = await send_room_file(
@@ -136,7 +137,7 @@ class TestFileTools:
                 seeded_participant("self", handle="self"),
             ],
         )
-        set_session_tools(mock_context.session_id, tools)
+        await bind_engine_tools(mock_context.session_id, tools)
 
         files_before = list(tools.files)
         send_room_file = parlant_tools["band_send_room_file"]
@@ -154,7 +155,7 @@ class TestFileTools:
         mock_tools.send_room_file.side_effect = BandToolError(
             "Filename must use plain printable ASCII characters"
         )
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         send_room_file = parlant_tools["band_send_room_file"]
         result = await send_room_file(mock_context, "body", "café.txt", "Alice", "")
@@ -181,30 +182,29 @@ class TestFileTools:
     ) -> None:
         method = name.removeprefix("band_")
         setattr(mock_tools, method, AsyncMock())
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
         result = await parlant_tools[name](mock_context, **args)
         assert f"Invalid arguments for {name}" in result.data
         assert field in result.data
         getattr(mock_tools, method).assert_not_awaited()
 
+    async def test_send_room_file_without_caption_uses_the_default(self, plugin_server):
+        """The engine sends None for an omitted caption; the tool's default applies."""
+        tools = FakeAgentTools()
+        await bind_engine_tools(SESSION_ID, tools)
+        await plugin_server.enable(create_parlant_tools())
 
-async def test_send_room_file_without_caption_uses_the_default(plugin_server):
-    """The engine sends None for an omitted caption; the tool's default applies."""
-    tools = FakeAgentTools()
-    set_session_tools(SESSION_ID, tools)
-    await plugin_server.enable(create_parlant_tools())
+        result = await plugin_server.call(
+            "band_send_room_file",
+            session_id=SESSION_ID,
+            arguments={
+                "content": "hello",
+                "filename": "notes.txt",
+                "mentions": "@alice",
+                "caption": None,
+            },
+        )
 
-    result = await plugin_server.call(
-        "band_send_room_file",
-        session_id=SESSION_ID,
-        arguments={
-            "content": "hello",
-            "filename": "notes.txt",
-            "mentions": "@alice",
-            "caption": None,
-        },
-    )
-
-    assert result.startswith("Uploaded 'notes.txt'")
-    [message] = tools.messages_sent
-    assert message["content"] == DEFAULT_FILE_CAPTION.format(filename="notes.txt")
+        assert result.startswith("Uploaded 'notes.txt'")
+        [message] = tools.messages_sent
+        assert message["content"] == DEFAULT_FILE_CAPTION.format(filename="notes.txt")

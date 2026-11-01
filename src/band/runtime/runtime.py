@@ -392,8 +392,9 @@ class AgentRuntime:
         )
 
     async def _on_platform_stop(self, ctx: ExecutionContext, scope: TurnScope) -> None:
-        if ctx.owns_stop_observation(scope) and self._on_control is not None:
-            await self._on_control(ctx.room_id, ControlMode.STOP)
+        if ctx.owns_stop_observation(scope):
+            for owner in tuple(scope.workers):
+                await owner.drain()
 
     async def _release_room(self, room_id: str) -> None:
         """Room-scoped cleanup once its execution has stopped."""

@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from enum import StrEnum
+from inspect import getattr_static
 from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeVar
 
 from pydantic import Field, NonNegativeFloat
@@ -68,25 +70,57 @@ def retire_provider_timeout(timer: asyncio.Timeout) -> bool:
     return False
 
 
+class TaskRole(StrEnum):
+    SCOPE = "scope"
+    RESOURCE = "resource"
+
+
 class TurnTask:
     """Own cancellation and bounded draining for one concrete turn task."""
 
-    def __init__(self, task: asyncio.Task[Any]) -> None:
+    def __init__(
+        self,
+        task: asyncio.Task[Any],
+        *,
+        role: TaskRole = TaskRole.SCOPE,
+        request_stop: Callable[[], None] | None = None,
+    ) -> None:
         self.task = task
+        self.role = role
+        self._request_stop = request_stop
         if task.done():
             self._retrieve_result(task)
         else:
             task.add_done_callback(self._retrieve_result)
+        self.failure: Exception | None = None
         self.deadline: float | None = None
         self._cancel_delivered = False
         self._grace_expired = False
         self._timer: asyncio.Timeout | None = None
         self._cleanup_timer = False
+        self._on_revoked: Callable[[], None] | None = None
+
+    @property
+    def authoritative(self) -> bool:
+        """Whether this task may still perform effects for its captured origin."""
+        return self.deadline is None and not self.task.done()
+
+    def fail(self, error: Exception, *, cooperative: bool = False) -> None:
+        """Revoke for provider failure without replacing an earlier cancellation."""
+        if not self.authoritative:
+            return
+        self.failure = error
+        self.terminate(cooperative=cooperative)
 
     @staticmethod
     def _retrieve_result(task: asyncio.Task[Any]) -> None:
         if not task.cancelled():
             task.exception()
+
+    def observe_revocation(self, callback: Callable[[], None]) -> None:
+        self._on_revoked = callback
+        if self.deadline is not None:
+            callback()
 
     def terminate(
         self, *, deadline: float | None = None, cooperative: bool = False
@@ -96,6 +130,8 @@ class TurnTask:
             return
         bound = deadline if deadline is not None else terminal_deadline()
         self.deadline = self._release_timer(bound)
+        if self._on_revoked is not None:
+            self._on_revoked()
         # The owner enforces its own deadline: a detached worker may have no drainer.
         asyncio.get_running_loop().call_at(self.deadline, self._expire)
         if not cooperative:
@@ -136,7 +172,10 @@ class TurnTask:
     def _cancel(self) -> None:
         if not self._cancel_delivered and not self.task.done():
             self._cancel_delivered = True
-            self.task.cancel()
+            if self._request_stop is None:
+                self.task.cancel()
+            else:
+                self._request_stop()
 
     async def drain(self) -> bool:
         """Wait within the original terminal grace without cancelling a waiter."""
@@ -167,7 +206,22 @@ class TurnTask:
             self._timer = None
             self._cleanup_timer = False
             if self.deadline is not None:
+                if self.failure is not None:
+                    raise self.failure
                 raise asyncio.CancelledError
+
+
+async def drain_turn_tasks(owners: Iterable[TurnTask]) -> None:
+    """Terminate captured tasks and drain them within one shared cleanup grace."""
+    captured = tuple(owners)
+    deadline = terminal_deadline()
+    for owner in captured:
+        owner.terminate(deadline=deadline)
+    if captured:
+        await asyncio.wait(
+            {owner.task for owner in captured},
+            timeout=max(0, deadline - asyncio.get_running_loop().time()),
+        )
 
 
 def start_releasable_turn(
@@ -194,13 +248,29 @@ def start_releasable_turn(
     return retained.start_owned(run)
 
 
-def bind_turn_task(tools: object, task: asyncio.Task[Any]) -> TurnTask:
+def bind_turn_task(
+    tools: object,
+    task: asyncio.Task[Any],
+    *,
+    role: TaskRole = TaskRole.SCOPE,
+    request_stop: Callable[[], None] | None = None,
+) -> TurnTask:
     """Bind SDK-owned work when tools expose a runtime scope."""
-    owner = TurnTask(task)
+    owner = TurnTask(task, role=role, request_stop=request_stop)
     register = getattr(tools, "register_turn_task", None)
     if callable(register):
         register(owner)
     return owner
+
+
+def resource_tools(tools: AgentToolsProtocol, owner: TurnTask) -> AgentToolsProtocol:
+    """Capture a resource view when the tools declare runtime ownership support."""
+    if getattr_static(tools, "_for_resource", None) is None:
+        return tools
+    capture = getattr(tools, "_for_resource", None)
+    if callable(capture):
+        return capture(owner)
+    return tools
 
 
 @dataclass(eq=False)

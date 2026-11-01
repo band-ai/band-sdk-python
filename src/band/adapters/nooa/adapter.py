@@ -8,6 +8,7 @@ JSON tool schemas.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
@@ -18,6 +19,11 @@ from nooa import Agent, Context
 from nooa.context_blocks import EventBase
 from nooa.events import LLMComplete
 from nooa.runtime.hooks import InstrumentationHooks, get_hooks, set_hooks
+from nooa.runtime.middleware import (
+    MIDDLEWARE_EXECUTE_PYTHON,
+    ExecutePythonContext,
+    ExecutePythonNext,
+)
 from typing_extensions import Unpack
 
 from band.adapters.nooa.agent import NooaRoomAgent
@@ -48,6 +54,7 @@ from band.core.types import (
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt, with_system_updates
+from band.runtime.toolactivity import native_tool_activity
 from band.runtime.tools import BandTool, selected_tool_definitions
 
 logger = logging.getLogger(__name__)
@@ -129,10 +136,12 @@ class TurnObserver:
         self,
         wrapped: InstrumentationHooks | None,
         on_reasoning: Callable[[str], None] | None = None,
+        binding: TurnBinding | None = None,
     ) -> None:
+        self._binding = binding
         self._wrapped = wrapped
         self._on_reasoning = on_reasoning
-        self._unsubscribe: dict[int, Callable[[], None]] = {}
+        self._unsubscribe: dict[int, tuple[Callable[[], None], Callable[[], None]]] = {}
         self._closed = False
         self.usage = TurnUsage()
 
@@ -141,15 +150,37 @@ class TurnObserver:
         bus = agent.event_manager
         if self._closed or id(bus) in self._unsubscribe:
             return
-        self._unsubscribe[id(bus)] = bus.on(LLMComplete.__name__, self._record)
+        unsubscribe = bus.on(LLMComplete.__name__, self._record)
+        remove_middleware = bus.intercept(
+            MIDDLEWARE_EXECUTE_PYTHON, self._execute_python
+        )
+        self._unsubscribe[id(bus)] = (unsubscribe, remove_middleware)
 
     def close(self) -> None:
         self._closed = True
-        for unsubscribe in self._unsubscribe.values():
+        for unsubscribe, remove_middleware in self._unsubscribe.values():
             unsubscribe()
+            remove_middleware()
         self._unsubscribe.clear()
 
+    async def _execute_python(
+        self, context: ExecutePythonContext, nxt: ExecutePythonNext
+    ) -> ExecutePythonContext:
+        binding = self._binding
+        if binding is None or not binding.current:
+            return await nxt(context)
+        if not binding.open:
+            raise asyncio.CancelledError
+        async with native_tool_activity(binding.tools, MIDDLEWARE_EXECUTE_PYTHON):
+            return await nxt(context)
+
     def before_agent_call(self, agent: Agent, **kwargs: Any) -> Any:
+        if (
+            self._binding is not None
+            and self._binding.current
+            and not self._binding.open
+        ):
+            raise asyncio.CancelledError
         self.observe(agent)
         if self._wrapped is None:
             return None
@@ -183,11 +214,14 @@ def ignore_hook(*args: Any, **kwargs: Any) -> None:
 
 @contextmanager
 def observing_turn(
-    agent: NooaRoomAgent, *, on_reasoning: Callable[[str], None] | None = None
+    agent: NooaRoomAgent,
+    *,
+    on_reasoning: Callable[[str], None] | None = None,
+    binding: TurnBinding | None = None,
 ) -> Iterator[TurnObserver]:
     """Observe *agent* and every agent it calls for the rest of this block."""
     previous = get_hooks()
-    observer = TurnObserver(previous, on_reasoning)
+    observer = TurnObserver(previous, on_reasoning, binding)
     observer.observe(agent)
     # NOOA calls hooks by name (getattr), so the forwarding __getattr__ covers
     # the protocol methods TurnObserver does not define itself.
@@ -369,7 +403,9 @@ class NooaAdapter(BatchInputAdapter[NooaTranscript]):
                     async with agent.room.bound_to(tools) as binding:
                         observer = observation.enter_context(
                             observing_turn(
-                                agent, on_reasoning=self._thought_poster(binding)
+                                agent,
+                                on_reasoning=self._thought_poster(binding),
+                                binding=binding,
                             )
                         )
                         handoff.consume()

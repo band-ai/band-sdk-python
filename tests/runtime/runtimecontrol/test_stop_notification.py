@@ -1,8 +1,6 @@
-"""One STOP reaches the adapter once, however it is observed."""
+"""Room control remains independent of scoped activity-response STOP."""
 
 from __future__ import annotations
-
-import asyncio
 
 from band.client.streaming import ControlMode
 from band.runtime.execution import ExecutionContext
@@ -11,7 +9,7 @@ from tests.runtime.runtimecontrol.kit import StoppingAdapter, control_payload
 
 
 class TestStopNotification:
-    async def test_native_stop_after_an_observed_stop_does_not_reach_the_adapter_again(
+    async def test_explicit_stop_reaches_adapter_after_activity_stop(
         self,
         stopping_room: tuple[AgentRuntime, ExecutionContext],
         stopping_adapter: StoppingAdapter,
@@ -20,8 +18,9 @@ class TestStopNotification:
         scope = await ctx.begin_delivery()
         assert scope is not None
         ctx.observe_platform_stop(scope)
-        while not stopping_adapter.heard:
-            await asyncio.sleep(0)
+        assert scope.observer_task is not None
+        await scope.observer_task
+        stopping_adapter.release.set()
 
         await runtime.handle_control(control_payload(ControlMode.STOP))
 
@@ -44,4 +43,4 @@ class TestStopNotification:
 
         await runtime.handle_control(control_payload(ControlMode.STOP))
 
-        assert stopping_adapter.heard == [("room-1", ControlMode.STOP)] * 2
+        assert stopping_adapter.heard == [("room-1", ControlMode.STOP)]

@@ -1,4 +1,4 @@
-"""A permission wait preserves activity from an overlapping custom tool."""
+"""Permission waits discard ordinary detail without ending overlapping work."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from tests.runtime.scheduler.driver import attempt_delivery
 
 @pytest.mark.looptime
 class TestPermissionToolOverlap:
-    async def test_finishing_native_work_during_a_wait_preserves_the_custom_tool(
+    async def test_finishing_native_work_during_a_wait_does_not_restore_the_custom_tool(
         self,
         held_room: Callable[[str], tuple[ExecutionContext, HeldTurn]],
         permission_platform: RoomActivityPlatform,
@@ -44,7 +44,8 @@ class TestPermissionToolOverlap:
                 assert await permission_platform.checkpoint(ctx) == PERMISSION_BODY
                 await end_activity(tools, "native")
                 assert await permission_platform.checkpoint(ctx) == PERMISSION_BODY
-            assert await permission_platform.checkpoint(ctx) == tool_body("lookup")
+            assert await permission_platform.checkpoint(ctx) == REASONING_BODY
+            assert not custom.done()
             release.set()
             assert await custom == "done"
             assert await permission_platform.checkpoint(ctx) == REASONING_BODY
@@ -52,7 +53,7 @@ class TestPermissionToolOverlap:
             release.set()
             await asyncio.gather(custom, return_exceptions=True)
 
-    async def test_cancelling_custom_work_during_a_wait_preserves_native_activity(
+    async def test_cancelling_custom_work_during_a_wait_does_not_restore_native_activity(
         self,
         held_room: Callable[[str], tuple[ExecutionContext, HeldTurn]],
         permission_platform: RoomActivityPlatform,
@@ -77,7 +78,7 @@ class TestPermissionToolOverlap:
                 with pytest.raises(asyncio.CancelledError):
                     await custom
                 assert await permission_platform.checkpoint(ctx) == PERMISSION_BODY
-            assert await permission_platform.checkpoint(ctx) == tool_body("Read")
+            assert await permission_platform.checkpoint(ctx) == REASONING_BODY
             await end_activity(tools, "native")
             assert await permission_platform.checkpoint(ctx) == REASONING_BODY
         finally:

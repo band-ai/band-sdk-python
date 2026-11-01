@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Coroutine
+from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -39,6 +40,11 @@ async def lookup(args: LookupInput) -> str:
 
 
 LOOKUP = (LookupInput, lookup)
+
+
+@dataclass
+class RecordingEngineHooks:
+    on_acknowledging: list[Any] = field(default_factory=list)
 
 
 def agent_event(

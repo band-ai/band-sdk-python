@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from band_rest.types.agent_activity_detail import AgentActivityDetail
 
 from band.adapters.omp.turnstate import OmpTurn
 from band.core.types import Emit
@@ -60,25 +61,28 @@ class TestOmpToolActivity:
         assert recorder.events == [shown_tool("Write")]
 
     @pytest.mark.parametrize(
-        ("first_name", "second_name"),
+        ("first_name", "second_name", "finished_id", "remaining_id", "visible"),
         [
-            ("Read", "Bash"),
-            ("Bash", "Bash"),
+            ("Read", "Bash", "call-a", "call-b", tool_call_activity("Bash")),
+            ("Bash", "Bash", "call-a", "call-b", tool_call_activity("Bash")),
+            ("Read", "Bash", "call-b", "call-a", REASONING),
+            ("Bash", "Bash", "call-b", "call-a", REASONING),
         ],
-        ids=["different-tools", "same-tool"],
+        ids=[
+            "older-first-different",
+            "older-first-same",
+            "newer-first-different",
+            "newer-first-same",
+        ],
     )
-    @pytest.mark.parametrize(
-        ("finished_id", "remaining_id"),
-        [("call-a", "call-b"), ("call-b", "call-a")],
-        ids=["older-finishes-first", "newer-finishes-first"],
-    )
-    async def test_finishing_one_tool_keeps_the_remaining_tool_visible(
+    async def test_only_the_current_tool_can_clear_its_selection(
         self,
         tmp_path: Path,
         first_name: str,
         second_name: str,
         finished_id: str,
         remaining_id: str,
+        visible: AgentActivityDetail,
     ) -> None:
         adapter = make_adapter(tmp_path, EMIT_ON)
         recorder = ActivityRecorder()
@@ -89,12 +93,12 @@ class TestOmpToolActivity:
         await adapter._emit_event(tool_start("call-a", first_name), turn)
         await adapter._emit_event(tool_start("call-b", second_name), turn)
         await adapter._emit_event(tool_end(finished_id, names[finished_id]), turn)
-        assert recorder.activity.progress == tool_call_activity(names[remaining_id])
+        assert recorder.activity.progress == visible
         await adapter._emit_event(tool_end(remaining_id, names[remaining_id]), turn)
 
         assert recorder.activity.progress == REASONING
 
-    async def test_finishing_newest_tool_restores_the_newest_remaining_call(
+    async def test_finishing_newest_tool_does_not_restore_displaced_calls(
         self, tmp_path: Path
     ) -> None:
         adapter = make_adapter(tmp_path, EMIT_ON)
@@ -113,8 +117,6 @@ class TestOmpToolActivity:
             shown_tool("Read"),
             shown_tool("Bash"),
             shown_tool("Write"),
-            shown_tool("Bash"),
-            shown_tool("Read"),
             SHOWN_REASONING,
         ]
 

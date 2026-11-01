@@ -7,10 +7,9 @@ import asyncio
 import pytest
 
 from band.core.types import Emit
-from band.runtime.activity import tool_call_activity
+from band.runtime.activity import REASONING, tool_call_activity
 from band.runtime.tools.types import BandTool
-from band.testing.activity import SHOWN_REASONING, shown_tool
-from tests.adapters.activityrecorder import EndNotifyingRecorder
+from band.testing.activity import SHOWN_REASONING, ActivityRecorder, shown_tool
 from tests.adapters.claude_sdk.activity.kit import (
     native_tool_result,
     native_tool_uses,
@@ -39,7 +38,6 @@ class TestClaudeOverlappingToolActivity:
                 [
                     shown_tool("Read"),
                     shown_tool("Bash"),
-                    shown_tool("Read"),
                     SHOWN_REASONING,
                 ],
             ),
@@ -63,7 +61,7 @@ class TestClaudeOverlappingToolActivity:
         expected: list[dict[str, str]],
     ) -> None:
         room = await claude_room(emit=emit)
-        recorder = EndNotifyingRecorder(first_finished)
+        recorder = ActivityRecorder()
         hold = Hold()
         recorder.observing(room.tools)
         room.claude.script(
@@ -79,13 +77,18 @@ class TestClaudeOverlappingToolActivity:
         sending = asyncio.create_task(room.send("Read the notes and list the files"))
         try:
             await hold.arrived()
-            await recorder.ended.wait()
+            await recorder.next_end()
+            await recorder.next_end()
             remaining_name = {"toolu_read": "Read", "toolu_bash": second_name}[
                 remaining
             ]
-            assert recorder.activity.detail == tool_call_activity(remaining_name)
+            visible = (
+                REASONING
+                if first_finished == "toolu_bash"
+                else tool_call_activity(remaining_name)
+            )
+            assert recorder.activity.detail == visible
         finally:
-            recorder.release.set()
             hold.released.set()
             await sending
 

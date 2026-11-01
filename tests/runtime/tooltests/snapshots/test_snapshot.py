@@ -67,6 +67,7 @@ class TestParticipantSnapshot:
         peer = SnapshotPeer({"data": [AGENT]})
         async with peer.context() as ctx:
             ctx.current_scope = TurnScope(0)
+            ctx.current_scope.admit()
             tools = AgentTools.from_context(ctx)
             ctx.current_scope.terminate()
             with pytest.raises(asyncio.CancelledError):
@@ -79,6 +80,7 @@ class TestParticipantSnapshot:
         peer = SnapshotPeer({"data": [AGENT]}, blocked=True)
         async with peer.context() as ctx:
             ctx.current_scope = TurnScope(0)
+            ctx.current_scope.admit()
             tools = AgentTools.from_context(ctx)
             lookup = asyncio.create_task(tools.get_participants_snapshot())
             try:

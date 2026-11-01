@@ -36,6 +36,7 @@ class OpencodeClientProtocol(Protocol):
         session_id: str,
         *,
         parts: list[dict[str, Any]],
+        message_id: str | None = None,
         system: str | None = None,
         model: dict[str, str] | None = None,
         agent: str | None = None,
@@ -139,6 +140,7 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         session_id: str,
         *,
         parts: list[dict[str, Any]],
+        message_id: str | None = None,
         system: str | None = None,
         model: dict[str, str] | None = None,
         agent: str | None = None,
@@ -146,6 +148,8 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         tools: dict[str, bool] | None = None,
     ) -> None:
         payload: dict[str, Any] = {"parts": parts}
+        if message_id is not None:
+            payload["messageID"] = message_id
         if system:
             payload["system"] = system
         if model:

@@ -43,6 +43,7 @@ from band.core.exceptions import BandToolError, MessagePostError, MessagePostKin
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import Capability, EventMessageType, MessageType
+from band.integrations.mcp.request import request_context
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -489,10 +490,14 @@ def _make_dispatch_function(
 
     async def _dispatch(**kwargs: Any) -> str:
         try:
+            metadata: dict[str, Any] = {}
             if registration.room_from_connection:
                 ctx = kwargs.pop("ctx")
                 kwargs[CHAT_ID_FIELD_NAME] = _room_id_from_context(ctx)
-            return await registration.execute(kwargs)
+                if (meta := ctx.request_context.meta) is not None:
+                    metadata = meta.model_dump()
+            with request_context(metadata):
+                return await registration.execute(kwargs)
         except (ValueError, BandToolError):
             raise
         except Exception:

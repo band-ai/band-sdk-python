@@ -41,6 +41,7 @@ class OmpAdapterContract(ABC):
     agent_name: str | None
     agent_description: str | None
     _custom_tools: list[CustomToolDef]
+    _band_host_names: frozenset[str]
     _resolve_permission: PermissionResolver | None
     _resolve_mcp_servers: McpServerResolver | None
     _workspaces: RoomWorkspaces
