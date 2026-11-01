@@ -13,6 +13,13 @@ from band_sdk_core import AgentFailure
 logger = logging.getLogger(__name__)
 
 
+class CodexNotificationMethod(StrEnum):
+    """Item lifecycle notifications shared by foreground and resource routing."""
+
+    ITEM_STARTED = "item/started"
+    ITEM_COMPLETED = "item/completed"
+
+
 class CodexItemType(StrEnum):
     """``item/completed`` "type" values — the wire vocabulary the adapter
     dispatches on for tool-like, thought-like, and message items.
@@ -97,6 +104,7 @@ class CodexRequestMethod(StrEnum):
 
 
 CODEX_PROVIDER = "codex"
+CODEX_TRANSPORT_CLOSED_FAILURE_CODE = "transport_closed"
 
 
 @dataclass

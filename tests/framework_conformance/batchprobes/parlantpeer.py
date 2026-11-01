@@ -10,6 +10,7 @@ from typing import Any, Self
 
 from parlant.core.application import Application
 from parlant.core.background_tasks import BackgroundTaskService
+from parlant.core.engines.alpha.hooks import EngineHooks
 from parlant.core.loggers import StdoutLogger
 from parlant.core.sessions import EventKind, EventSource
 from parlant.core.tracer import LocalTracer
@@ -49,6 +50,7 @@ class ParlantPeer:
         self.server: Any = SimpleNamespace(
             container={
                 Application: SimpleNamespace(sessions=self),
+                EngineHooks: EngineHooks(),
                 BackgroundTaskService: self.background_tasks,
             },
             create_customer=self.create_customer,

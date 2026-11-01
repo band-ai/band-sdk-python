@@ -24,6 +24,7 @@ import hmac
 import logging
 import random
 import socket
+import sys
 from collections.abc import Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from typing import Self
@@ -104,10 +105,14 @@ class EmbeddedUvicornServer(uvicorn.Server):
         yield
 
 
-def _new_reusable_socket() -> socket.socket:
-    """A TCP socket with ``SO_REUSEADDR`` set, not yet bound."""
+def _new_server_socket() -> socket.socket:
+    """Reserve one server's TCP address without sharing an active listener."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if sys.platform == "win32":
+        # Windows SO_REUSEADDR can deliver connections to another bound server.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     return sock
 
 
@@ -500,14 +505,14 @@ class LocalMCPServer:
     def _reserve_socket(self) -> tuple[socket.socket, int]:
         # Port 0 -> ask the OS for any free port (race-free, ideal for tests)
         if self._port_min == 0:
-            reserved_socket = _new_reusable_socket()
+            reserved_socket = _new_server_socket()
             reserved_socket.bind((self._host, 0))
             port = reserved_socket.getsockname()[1]
             return _listen(reserved_socket), port
 
         last_error: OSError | None = None
         for port in self._candidate_ports():
-            reserved_socket = _new_reusable_socket()
+            reserved_socket = _new_server_socket()
             try:
                 reserved_socket.bind((self._host, port))
             except OSError as exc:

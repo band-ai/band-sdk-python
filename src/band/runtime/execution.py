@@ -41,6 +41,7 @@ from band.core.protocols import (
 )
 from band.core.retention import task_failure
 from band.core.settlement import SettlementResult
+from band.core.turn import Turn
 from band.core.turn_lifecycle import (
     TaskRole,
     TurnTask,
@@ -1584,15 +1585,23 @@ class ExecutionContext:
                 already_reported,
             )
             return
-        # Only a captured terminal outcome carries provider-curated room text.
+        await self.report_provider_failure(
+            error.failure
+            if isinstance(error, TerminalProviderFailure)
+            else AgentFailure(TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+        )
+
+    async def report_provider_failure(
+        self, failure: AgentFailure, *, turn: Turn | None = None
+    ) -> Any:
+        """Post a captured terminal failure independently of revoked effect authority."""
+        if not self.config.report_turn_failures_to_room:
+            return None
+        tools = AgentTools.from_context(self, bind_scope=False)
+        if turn is not None:
+            tools.turn = turn
         try:
-            await AgentTools.from_context(self, bind_scope=False).send_failure(
-                error.failure
-                if isinstance(error, TerminalProviderFailure)
-                else AgentFailure(
-                    TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE
-                )
-            )
+            return await tools.send_failure(failure)
         except RoomExecutionStoppedError:
             logger.debug(
                 "ExecutionContext %s: failure reporting refused while stopped",

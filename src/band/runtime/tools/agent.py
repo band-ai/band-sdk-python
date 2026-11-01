@@ -583,6 +583,8 @@ class AgentTools(AgentToolsProtocol):
             and not self._scope.authoritative
             and self._scope.provider_failed
         ):
+            if self.turn.detached and self._ctx is not None:
+                return await self._ctx.report_provider_failure(failure, turn=self.turn)
             raise TerminalProviderFailure(failure)
         content, metadata = to_failure_event(failure)
         try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from http import HTTPStatus
 
 import httpx
@@ -11,6 +12,8 @@ from tests.e2e.baseline.toolkit.resultexchange import ExchangeOperation, ResultE
 from tests.framework_conformance.activitycapture.nativequalification.kit import (
     NativeCommands,
 )
+
+COMMAND_LINE_ENDING = os.linesep.encode("ascii")
 
 
 class TestResultExchange:
@@ -27,7 +30,7 @@ class TestResultExchange:
         produced, producer_error = await producer.communicate()
         assert (producer.returncode, produced, producer_error) == (
             0,
-            exchange.result + b"\n",
+            exchange.result + COMMAND_LINE_ENDING,
             b"",
         )
         await exchange.wait(exchange.committed, phase="producer committed")
@@ -36,7 +39,7 @@ class TestResultExchange:
         consumed, consumer_error = await consumer.communicate()
         assert (consumer.returncode, consumed, consumer_error) == (
             0,
-            exchange.result + b"\n",
+            exchange.result + COMMAND_LINE_ENDING,
             b"",
         )
 
@@ -61,7 +64,11 @@ class TestResultExchange:
         async with exchange.releasing_on_exit():
             await exchange.wait(exchange.producer.entered, phase="producer entered")
         output, error = await producer.communicate()
-        assert (producer.returncode, output, error) == (0, exchange.result + b"\n", b"")
+        assert (producer.returncode, output, error) == (
+            0,
+            exchange.result + COMMAND_LINE_ENDING,
+            b"",
+        )
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_commit_cannot_be_launched_as_a_separate_command(

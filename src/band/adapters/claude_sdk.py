@@ -513,11 +513,6 @@ TOOL_SEARCH = "ToolSearch"
 NATIVE_TOOL_MATCHER = rf"^(?!{re.escape(MCP_TOOL_PREFIX)}|{re.escape(TOOL_SEARCH)}$).+"
 
 
-def _served_by_band(sdk_tool_name: str) -> bool:
-    """Band's MCP server reports its own tools' activity as they run."""
-    return sdk_tool_name.startswith(MCP_TOOL_PREFIX)
-
-
 # Patterns that look like secrets/tokens in shell commands
 _REDACT_RE = re.compile(
     r"""(?x)

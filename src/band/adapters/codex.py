@@ -106,11 +106,13 @@ from band.integrations.codex.activity import CommandResource
 from band.integrations.codex.types import (
     CODEX_APPROVAL_METHODS,
     CODEX_PROVIDER,
+    CODEX_TRANSPORT_CLOSED_FAILURE_CODE,
     DYNAMIC_TOOL_CALL_METHOD,
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
     CodexMetadataKey,
+    CodexNotificationMethod,
     CodexRequestMethod,
     CodexSessionState,
     CodexTokenUsage,
@@ -1828,7 +1830,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         )
                     continue
 
-                if event.method == "item/started":
+                if event.method == CodexNotificationMethod.ITEM_STARTED:
                     item = params.get("item")
                     if not isinstance(item, dict):
                         continue
@@ -1868,7 +1870,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                             message.streamed_text += delta
                     continue
 
-                if event.method == "item/completed":
+                if event.method == CodexNotificationMethod.ITEM_COMPLETED:
                     item = params.get("item")
                     if isinstance(item, dict):
                         if item.get("type") == CodexItemType.AGENT_MESSAGE:
@@ -1899,7 +1901,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     if not failure_reported:
                         await tools.send_failure(
                             AgentFailure(
-                                CODEX_PROVIDER, result.turn_error, "transport_closed"
+                                CODEX_PROVIDER,
+                                result.turn_error,
+                                CODEX_TRANSPORT_CLOSED_FAILURE_CODE,
                             )
                         )
                     raise TurnResultAlreadyReported(result.turn_error)
@@ -2109,7 +2113,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     async def _observe_command(
         self, room: RoomCodexClient, generation: int, event: RpcEvent
     ) -> None:
-        if event.method not in {"item/started", "item/completed"}:
+        if event.method not in {
+            CodexNotificationMethod.ITEM_STARTED,
+            CodexNotificationMethod.ITEM_COMPLETED,
+        }:
             return
         params = _event_params(event)
         item = params.get("item")
@@ -2123,7 +2130,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if item.get("type") != CodexItemType.COMMAND_EXECUTION:
             await self._observe_foreground_item(room, generation, event, identity, item)
             return
-        if event.method == "item/completed":
+        if event.method == CodexNotificationMethod.ITEM_COMPLETED:
             if (command := room.commands.pop(identity, None)) is not None:
                 command.terminal.set()
                 command.wake.set()
@@ -2152,7 +2159,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         identity: tuple[str, str, str],
         item: dict[str, Any],
     ) -> None:
-        if event.method == "item/completed":
+        if event.method == CodexNotificationMethod.ITEM_COMPLETED:
             if (current := room.item_activity.pop(identity, None)) is not None:
                 await end_activity(current[0], current[1])
             return

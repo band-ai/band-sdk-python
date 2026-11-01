@@ -52,10 +52,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CLAUDE_TOOL_USE_META = "claudecode/toolUseId"
-LOCAL_MCP_PREFIX = MCP_TOOL_PREFIX
 TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "stopped", "killed"})
 MAX_PENDING_IDENTITIES = 256
 NATIVE_TASK_LIFECYCLE = "band_native_task"
+
+
+def served_by_band(name: str) -> bool:
+    """Band MCP tools report their own activity."""
+    return name.startswith(MCP_TOOL_PREFIX)
 
 
 @dataclass(frozen=True)
@@ -204,7 +208,7 @@ class SessionActivity:
         if call.name is not None:
             return
         call.name = block.name
-        if not block.name.startswith(LOCAL_MCP_PREFIX):
+        if not served_by_band(block.name):
             await start_native_tool_activity(call.origin.tools, call.token, block.name)
 
     async def _tool_finished(self, call_id: str) -> None:
@@ -213,7 +217,7 @@ class SessionActivity:
         if (
             (call := self._calls.pop(call_id, None)) is not None
             and call.name is not None
-            and not call.name.startswith(LOCAL_MCP_PREFIX)
+            and not served_by_band(call.name)
         ):
             await end_activity(call.origin.tools, call.token)
 
@@ -234,7 +238,7 @@ class SessionActivity:
             message.task_id, message.tool_use_id or "", call.origin, run_id=run_id
         )
         self._admit_task(task)
-        if call.name is not None and not call.name.startswith(LOCAL_MCP_PREFIX):
+        if call.name is not None and not served_by_band(call.name):
             await start_native_tool_activity(task.origin.tools, call.token, call.name)
         self._diagnose(task, "running")
 
