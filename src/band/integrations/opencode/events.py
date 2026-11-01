@@ -208,6 +208,11 @@ class OpencodeToolStatus(StrEnum):
     COMPLETED = "completed"
     ERROR = "error"
 
+    @classmethod
+    def is_terminal(cls, status: str | None) -> bool:
+        """Recognize completed calls while tolerating unknown provider states."""
+        return status in (cls.COMPLETED, cls.ERROR)
+
 
 class OpencodePart(OpencodeModel):
     """A message part (``message.part.updated``).

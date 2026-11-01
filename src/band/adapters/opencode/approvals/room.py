@@ -7,9 +7,11 @@ reaches it only through the narrow ``ApprovalPorts`` bundle.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from functools import partial
 
 from band.adapters.opencode.approvals.commands import (
     PermissionCommand,
@@ -50,6 +52,7 @@ from band.adapters.opencode.approvals.wording import (
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.core.delivery import automatic_mentions
 from band.core.protocols import AgentToolsProtocol
+from band.core.turn_lifecycle import TaskRole, bind_turn_task, resource_tools
 from band.integrations.opencode import (
     ApprovalReply,
     OpencodeClientProtocol,
@@ -119,6 +122,34 @@ class RoomApprovals:
         entry.payload.activity.close()
         self._release_if_idle()
 
+    async def _complete_claimed(
+        self,
+        entry: DecisionEntry[PendingT],
+        send: Callable[[], Awaitable[bool]],
+        confirm: Callable[[AgentToolsProtocol | None], Awaitable[None]],
+    ) -> None:
+        """Keep the claimed lease until its owned answer and notice complete."""
+        with entry.payload.activity.pop_all():
+            await asyncio.create_task(self._deliver_claimed(entry, send, confirm))
+
+    async def _deliver_claimed(
+        self,
+        entry: DecisionEntry[PendingT],
+        send: Callable[[], Awaitable[bool]],
+        confirm: Callable[[AgentToolsProtocol | None], Awaitable[None]],
+    ) -> None:
+        tools = entry.payload.activity_tools
+        if tools is not None:
+            task = asyncio.current_task()
+            if task is None:
+                raise RuntimeError("An OpenCode answer requires an execution task")
+            owner = bind_turn_task(tools, task, role=TaskRole.RESOURCE)
+            if not owner.authoritative:
+                raise asyncio.CancelledError
+            tools = resource_tools(tools, owner)
+        if await send():
+            await confirm(tools)
+
     async def on_permission_asked(
         self,
         request: OpencodePermissionRequest,
@@ -141,6 +172,7 @@ class RoomApprovals:
             request_id=request_id,
             permission=request.permission,
             patterns=request.patterns,
+            activity_tools=activity_tools,
         )
         if (
             registration := self._asks.permissions.register_keyed(
@@ -204,6 +236,7 @@ class RoomApprovals:
         pending = PendingQuestion(
             request_id=request_id,
             questions=request.questions,
+            activity_tools=activity_tools,
         )
         if (
             registration := self._asks.questions.register_keyed(pending, key=request_id)
@@ -265,13 +298,7 @@ class RoomApprovals:
             case PermissionReply(approval):
                 await self._handle_permission_reply(approval, mentions)
             case QuestionRejection(question):
-                if await self._reject_question(question):
-                    await self._notify_room(
-                        QUESTION_REJECTED_TEMPLATE.format(
-                            request_id=question.request_id
-                        ),
-                        mentions,
-                    )
+                await self._handle_question_rejection(question, mentions)
             case QuestionAnswer(question, text):
                 await self._handle_question_answer(question, text, mentions)
             case NamedQuestionGone(request_id):
@@ -308,12 +335,17 @@ class RoomApprovals:
             await self._notify_room(hint, mentions)
             return
         if pending is not None:
-            if await self._reply_permission(pending, approval.reply):
-                await self._notify_room(
-                    APPROVAL_HANDLED_TEMPLATE.format(
-                        request_id=pending.request_id, reply=approval.reply
+            if (entry := self._claim(asks.permissions, pending.request_id)) is not None:
+                await self._complete_claimed(
+                    entry,
+                    partial(self._send_permission_reply, entry, approval.reply),
+                    partial(
+                        self._notify_room,
+                        APPROVAL_HANDLED_TEMPLATE.format(
+                            request_id=pending.request_id, reply=approval.reply
+                        ),
+                        mentions,
                     ),
-                    mentions,
                 )
             return
         # A named permission id that matches nothing currently pending
@@ -343,10 +375,33 @@ class RoomApprovals:
         if answers is None:
             await self._notify_room(QUESTION_ANSWERS_NEEDED, mentions)
             return
-        if await self._reply_question(question, answers):
-            await self._notify_room(
-                QUESTION_ANSWERED_TEMPLATE.format(request_id=question.request_id),
-                mentions,
+        if (
+            entry := self._claim(self._asks.questions, question.request_id)
+        ) is not None:
+            await self._complete_claimed(
+                entry,
+                partial(self._send_question_reply, entry, answers),
+                partial(
+                    self._notify_room,
+                    QUESTION_ANSWERED_TEMPLATE.format(request_id=question.request_id),
+                    mentions,
+                ),
+            )
+
+    async def _handle_question_rejection(
+        self, question: PendingQuestion, mentions: list[dict[str, str]]
+    ) -> None:
+        if (
+            entry := self._claim(self._asks.questions, question.request_id)
+        ) is not None:
+            await self._complete_claimed(
+                entry,
+                partial(self._send_question_reject, entry),
+                partial(
+                    self._notify_room,
+                    QUESTION_REJECTED_TEMPLATE.format(request_id=question.request_id),
+                    mentions,
+                ),
             )
 
     async def _notify_originators(
@@ -391,7 +446,12 @@ class RoomApprovals:
             case PendingQuestion():
                 await self._reject_question(pending)
 
-    async def _notify_room(self, text: str, mentions: list[dict[str, str]]) -> None:
+    async def _notify_room(
+        self,
+        text: str,
+        mentions: list[dict[str, str]],
+        tools: AgentToolsProtocol | None = None,
+    ) -> None:
         """Post an adapter notice best-effort.
 
         A notice, never the turn's reply: it posts on the in-flight turn's
@@ -402,7 +462,8 @@ class RoomApprovals:
         mentions) would otherwise raise here and skip the ``release_turn_wait``
         that unblocks ``on_message``. Log and move on instead.
         """
-        if (tools := self._ports.tools()) is None:
+        tools = tools if tools is not None else self._ports.tools()
+        if tools is None:
             return
         try:
             await tools.send_notice(text, mentions=mentions)
@@ -487,12 +548,6 @@ class RoomApprovals:
         self._forget(self._asks.questions, entry)
         return True
 
-    async def _reply_question(
-        self, pending: PendingQuestion, answers: list[list[str]]
-    ) -> bool:
-        entry = self._claim(self._asks.questions, pending.request_id)
-        return entry is not None and await self._send_question_reply(entry, answers)
-
     async def _send_question_reject(
         self, entry: DecisionEntry[PendingQuestion]
     ) -> bool:
@@ -567,13 +622,14 @@ class RoomApprovals:
             entry.token,
             reply,
         )
-        if await self._send_permission_reply(entry, reply) and (
-            tools := self._ports.tools()
-        ):
-            await tools.send_event(
+        await self._complete_claimed(
+            entry,
+            partial(self._send_permission_reply, entry, reply),
+            partial(
+                self._notify_expiry,
                 APPROVAL_TIMED_OUT_TEMPLATE.format(request_id=entry.token, reply=reply),
-                "error",
-            )
+            ),
+        )
 
     async def _expire_question(self, entry: DecisionEntry[PendingQuestion]) -> None:
         logger.info(
@@ -581,8 +637,16 @@ class RoomApprovals:
             self._ports.room_id,
             entry.token,
         )
-        if await self._send_question_reject(entry) and (tools := self._ports.tools()):
-            await tools.send_event(
+        await self._complete_claimed(
+            entry,
+            partial(self._send_question_reject, entry),
+            partial(
+                self._notify_expiry,
                 QUESTION_TIMED_OUT_TEMPLATE.format(request_id=entry.token),
-                "error",
-            )
+            ),
+        )
+
+    async def _notify_expiry(self, text: str, tools: AgentToolsProtocol | None) -> None:
+        tools = tools if tools is not None else self._ports.tools()
+        if tools is not None:
+            await tools.send_event(text, "error")

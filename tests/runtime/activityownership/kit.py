@@ -106,6 +106,12 @@ class ActivityPlatform(PostingPlatform):
         """Wait for the platform to receive one more activity body."""
         return await self.body_at(len(self.activity_bodies))
 
+    async def body_matching(self, expected: dict[str, Any]) -> dict[str, Any]:
+        """Join receipt of an exact activity report at the HTTP boundary."""
+        async with self._reported:
+            await self._reported.wait_for(lambda: expected in self.activity_bodies)
+        return next(body for body in self.activity_bodies if body == expected)
+
     async def shown(self, observation: Awaitable[None] | Callable[[], None]) -> None:
         """Make a visible change and wait until the platform has received it.
 

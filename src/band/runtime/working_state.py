@@ -36,6 +36,11 @@ from contextlib import suppress
 
 logger = logging.getLogger(__name__)
 
+WORKING_CAP_PAUSED = (
+    "working-state reporting cap reached; pausing keep-alive pings "
+    "(platform TTL will clear the indicator)"
+)
+
 ReportFn = Callable[[bool], Awaitable[object]]
 
 
@@ -171,6 +176,7 @@ class WorkingStateReporter:
 
     async def _keep_alive(self) -> None:
         """Re-send ``working: true`` on cadence or wake until stopped or capped."""
+        paused = False
         while True:
             with suppress(TimeoutError):
                 async with asyncio.timeout(self._keep_alive_seconds):
@@ -179,7 +185,12 @@ class WorkingStateReporter:
             if not self._active:
                 return
             if await self._safe_report(True) is None:
+                if self._active and not paused:
+                    logger.info(WORKING_CAP_PAUSED)
+                    paused = True
                 await self._wake.wait()
+            else:
+                paused = False
 
     async def _safe_report(self, working: bool) -> bool | None:
         """Report under the serialization lock; never raise."""

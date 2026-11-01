@@ -151,8 +151,7 @@ class TurnState:
         if (
             previous is None
             or previous.state is None
-            or previous.state.status
-            not in (OpencodeToolStatus.COMPLETED, OpencodeToolStatus.ERROR)
+            or not OpencodeToolStatus.is_terminal(previous.state.status)
         ):
             self.pending_native_parts[part.id] = part
         if len(self.pending_native_parts) > MAX_PENDING_NATIVE_PARTS:
@@ -1010,12 +1009,10 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         ):
             await self._report_tool_call(room_state, tool_name, state, call_id)
 
-        match state.status:
-            case OpencodeToolStatus.COMPLETED | OpencodeToolStatus.ERROR:
-                if room_state.mark_tool_result(call_id):
-                    await self._report_tool_result(
-                        room_state, tool_name, state, call_id
-                    )
+        if OpencodeToolStatus.is_terminal(state.status) and room_state.mark_tool_result(
+            call_id
+        ):
+            await self._report_tool_result(room_state, tool_name, state, call_id)
 
     async def _track_native_part(
         self, room_state: RoomState, part: OpencodePart
@@ -1039,7 +1036,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             case OpencodeToolStatus.RUNNING if key not in turn.native_calls:
                 token = turn.native_calls[key] = object()
                 await start_native_tool_activity(turn.tools, token, raw_name)
-            case OpencodeToolStatus.COMPLETED | OpencodeToolStatus.ERROR:
+            case status if OpencodeToolStatus.is_terminal(status):
                 if token := turn.native_calls.get(key):
                     await end_activity(turn.tools, token)
                 turn.native_calls[key] = None

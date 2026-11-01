@@ -24,6 +24,17 @@ CALL = "native-call"
 NATIVE_TOOL = "bash"
 
 
+async def publish_events(client: FakeOpencodeClient, *events: ServerStep) -> None:
+    barrier = Hold()
+    try:
+        for event in events:
+            await client.push_event(event)
+        await client.push_event(barrier.wait)
+        await barrier.arrived()
+    finally:
+        barrier.released.set()
+
+
 def native_part(
     status: OpencodeToolStatus,
     *,
@@ -61,14 +72,7 @@ class ActivityRoom:
         return f"{registration}_{name}"
 
     async def publish(self, *events: ServerStep) -> None:
-        barrier = Hold()
-        try:
-            for event in events:
-                await self.client.push_event(event)
-            await self.client.push_event(barrier.wait)
-            await barrier.arrived()
-        finally:
-            barrier.released.set()
+        await publish_events(self.client, *events)
 
 
 OpenActivityRoom = Callable[..., AbstractAsyncContextManager[ActivityRoom]]

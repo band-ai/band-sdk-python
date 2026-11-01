@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TypeVar
 
 from band.adapters.opencode.approvals.commands import is_question_rejection
+from band.core.protocols import AgentToolsProtocol
 from band.integrations.opencode import OpencodeQuestion
 from band.runtime.decisions import DecisionRegistry
 
@@ -17,6 +18,7 @@ class PendingPermission:
     permission: str
     patterns: list[str]
     activity: ExitStack = field(default_factory=ExitStack)
+    activity_tools: AgentToolsProtocol | None = None
 
 
 @dataclass
@@ -24,6 +26,7 @@ class PendingQuestion:
     request_id: str
     questions: list[OpencodeQuestion]
     activity: ExitStack = field(default_factory=ExitStack)
+    activity_tools: AgentToolsProtocol | None = None
 
 
 PendingT = TypeVar("PendingT", PendingPermission, PendingQuestion)
