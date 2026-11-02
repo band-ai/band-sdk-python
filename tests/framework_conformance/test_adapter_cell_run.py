@@ -8,12 +8,13 @@ builds is real, and so are the observer and its holds.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
 
+from band.platform.link import BandLink
 from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.toolkit import provisioning
 from tests.e2e.baseline.toolkit.invocations import InvocationObserver
@@ -23,6 +24,7 @@ from tests.framework_conformance.invocationkit import (
     ROOM_ID,
     CellResources,
     DecliningAdapter,
+    StartedRun,
     original,
     turn_input,
 )
@@ -44,17 +46,17 @@ def cell() -> AdapterCell:
 
 class TestAdapterCellRun:
     async def test_the_agent_starts_under_the_requested_session_config(
-        self, adapter: DecliningAdapter, started_with: list[SessionConfig | None]
+        self, adapter: DecliningAdapter, started_with: list[StartedRun]
     ) -> None:
         batching = SessionConfig(consume_all_queued=True)
 
         async with cell().run_as(IDENTITY, session_config=batching):
             pass
 
-        assert started_with == [batching]
+        assert started_with == [StartedRun(batching)]
 
     async def test_the_turns_of_the_adapter_the_cell_built_are_observed(
-        self, adapter: DecliningAdapter, started_with: list[SessionConfig | None]
+        self, adapter: DecliningAdapter, started_with: list[StartedRun]
     ) -> None:
         observer = InvocationObserver(deadline_s=DEADLINE_S)
 
@@ -75,6 +77,8 @@ class TestAdapterCellRun:
             adapter: Any,
             settings: Any,
             session_config: SessionConfig | None = None,
+            *,
+            link_factory: Callable[..., BandLink] = BandLink,
         ) -> AsyncIterator[ProvisionedAgent]:
             try:
                 yield provisioned

@@ -7,7 +7,7 @@ import logging
 import re
 import sys
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, TypeVar
@@ -417,13 +417,14 @@ async def test_sequential_rooms_keep_their_work_after_restart(
     for path in workspaces.values():
         path.mkdir()
     markers = {room: unique_marker(f"room{index}") for index, room in enumerate(rooms)}
-    setup = _agent_setup(tmp_path.resolve(), RECOVERY_BUDGET)
+    setup = replace(
+        _agent_setup(tmp_path.resolve(), RECOVERY_BUDGET), approval="auto_accept"
+    )
 
     def adapter() -> CursorACPAdapter:
         return cursor_test_adapter(
             cell.settings,
             setup,
-            approval_mode="auto_accept",
             workspace_for_room=lambda room_id: str(workspaces[room_id]),
             custom_section="Work only in the current room workspace. Keep replies short.",
             capabilities={Capability.MEMORY},
