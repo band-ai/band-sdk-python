@@ -11,8 +11,9 @@ from crewai import Agent
 from band.adapters.crewai import CrewAIAdapter
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
+from tests.crewaiscript import ScriptedLLM
 from tests.framework_conformance.turnprobes import ROOM_ID
-from tests.integrations.crewai.completion.kit import ScriptedLLM, WorkInput
+from tests.integrations.crewai.completion.kit import WorkInput
 
 
 @pytest.fixture

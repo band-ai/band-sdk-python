@@ -22,7 +22,7 @@ from band.integrations.crewai.turn import ToolTurn
 from band.runtime.custom_tools import get_custom_tool_name
 from tests.adapters.crewaiworker.peer import resource_peer
 from tests.adapters.waiting import UNTIL_TIMEOUT_S
-from tests.crewaicalls import native_tool_call
+from tests.crewaiscript import native_tool_call
 from tests.framework_conformance.turnprobes import turn_tools
 
 

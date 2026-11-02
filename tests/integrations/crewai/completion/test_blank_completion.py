@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("crewai", reason="crewai not installed (band-sdk[crewai])")
+
 from band.adapters.crewai import CrewAIAdapter
 from band.core.protocols import TurnResultAlreadyReported
 from band.runtime.tools import BandTool
 from band.testing import MISSING_REPLY_FAILURE, failure_reports
+from tests.crewaiscript import ScriptedLLM, step
 from tests.framework_conformance.outcomeprobes import ANSWER, REPLY
 from tests.framework_conformance.turnprobes import ToolCall, turn_input, turn_tools
-from tests.integrations.crewai.completion.kit import ScriptedLLM, step, work
+from tests.integrations.crewai.completion.kit import work
 
 BLANKS = ["", None, "\n", " \t\r\n"]
 

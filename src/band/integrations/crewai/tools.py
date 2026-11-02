@@ -50,7 +50,6 @@ from band.integrations.crewai.reporting import (
 from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
     CustomToolDef,
-    custom_tool_effects,
     execute_custom_tool,
     get_custom_tool_name,
 )
@@ -159,11 +158,6 @@ def _describe_post(arguments: Mapping[str, Any]) -> str:
 
 _no_cache: Any = staticmethod(lambda *_a, **_kw: False)
 
-# A decline ends the whole turn, so its tool is CrewAI's ``result_as_answer``.
-# Otherwise CrewAI asks for another step, and a model with nothing left to say
-# repeats the decline until CrewAI's repeat guard fails the run. Within one step
-# CrewAI stops at the decline, so a call placed after it never runs.
-
 
 def _platform_tool(
     spec: ToolSpec,
@@ -186,6 +180,8 @@ def _platform_tool(
         description: str = get_tool_description(spec.name)
         args_schema: type[BaseModel] = spec.args_schema
         cache_function: Any = _no_cache
+        # Otherwise CrewAI re-asks after a decline until its repeat guard fails
+        # the run. A call placed after the decline in the same step never runs.
         result_as_answer: bool = turn_effect(spec.name).ends_turn
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -217,14 +213,12 @@ def _custom_tool(
 
     input_model, _ = definition
     tool_name = get_custom_tool_name(input_model)
-    effect = turn_effect(tool_name, custom_effects=custom_tool_effects([definition]))
 
     class CustomCrewAITool(BaseTool):
         name: str = tool_name
         description: str = input_model.__doc__ or f"Execute {tool_name}"
         args_schema: type[BaseModel] = input_model
         cache_function: Any = _no_cache
-        result_as_answer: bool = effect.ends_turn
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             async def execute(tools: AgentToolsProtocol) -> str:
