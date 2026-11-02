@@ -24,6 +24,8 @@ INVALID_IDS = (
     "id\x00",
     "é",
 )
+# The agent identity transport tests connect as.
+AGENT_ID = "agent-123"
 UUID_ID = "ABCDEF01-2345-6789-ABCD-EF0123456789"
 VALID_IDS = (UUID_ID, "fixture_1-a", "001")
 TASK_REFERENCES = (*VALID_IDS, "#1", "#001", f"#{UUID_ID}")

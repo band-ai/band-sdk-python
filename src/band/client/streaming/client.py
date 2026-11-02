@@ -2,21 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import random
+import math
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal
 from urllib.parse import urlencode
 
 from band_sdk_core import (
     AgentTopicKind,
-    DeadReason,
     Session,
     SessionOutcome,
     SessionPolicy,
-    SessionState,
-    StaleReason,
     chat_room_topic,
     room_participants_topic,
 )
@@ -24,35 +20,21 @@ from phoenix_channels_python_client.client import (
     PhoenixChannelsProtocolVersion,
     PHXChannelsClient,
 )
-from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from pydantic import Field
 
-from band.client.streaming.errors import (
-    WebSocketUpgradeError,
-    probe_upgrade_error,
+from band.client.streaming.disconnect import (
+    WebSocketDisconnectReason,
+    with_outcome,
 )
+from band.client.streaming.session_decider import SessionDecider, SupersedeVerdict
 from band.client.streaming.wire import WirePayload
 from band.core.retention.cleanup import report_owned, spawn_owned
 from band.core.types import ConflictPolicy
 from band.logging_config import core_issues, trace_context_extra
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class WebSocketDisconnectReason:
-    """Terminal WebSocket disconnect reason reported by the platform."""
-
-    reason: str
-    message: str
-    retryable: bool
-    retry_after: int | None = None
-    target_socket_id: str | None = None
-    correlation_id: str | None = None
-    dead_reason: DeadReason | None = None
-    stale_reason: StaleReason | None = None
 
 
 # WebSocket message payloads (based on actual backend messages)
@@ -279,16 +261,15 @@ class SupersedePayload(WirePayload):
     def to_disconnect_reason(
         self, outcome: SessionOutcome | None = None
     ) -> WebSocketDisconnectReason:
-        return WebSocketDisconnectReason(
+        reason = WebSocketDisconnectReason(
             reason=self.reason,
             message=self.message,
             retryable=self.retryable,
             retry_after=self.retry_after,
             target_socket_id=self.target_socket_id,
             correlation_id=self.correlation_id,
-            dead_reason=outcome.dead_reason if outcome is not None else None,
-            stale_reason=outcome.stale_reason if outcome is not None else None,
         )
+        return reason if outcome is None else with_outcome(reason, outcome)
 
 
 class WireEvent(StrEnum):
@@ -350,42 +331,30 @@ _PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
 
 KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
-# Band never stops a session with a close code: its stop signals are a
-# supersede push and an upgrade rejection, and the platform answers any
-# peer-initiated close with 1000.
-RECONNECT_POLICY = ReconnectPolicy(reconnect_on_normal_close=True)
-TERMINAL_SHUTDOWN_REASON = "terminal platform disconnect"
+# See ``WebSocketClient`` for what the bound covers.
+DEFAULT_CONNECT_TIMEOUT_S = 300.0
+
+NOT_CONNECTED = "WebSocket client is not connected"
+SUPERSEDE_REASON = "superseded by another connection"
 
 
-def _disconnect_reason_from_exception(
-    exc: Exception, outcome: SessionOutcome
-) -> WebSocketDisconnectReason:
-    """Synthesize a WebSocketDisconnectReason for an initial-connect failure
-    Session has classified as terminal. Unlike the supersede path, there is
-    no platform wire payload here -- reason/message are derived from the
-    raised exception itself, not a server-supplied constant."""
-    session_fields = {
-        "dead_reason": outcome.dead_reason,
-        "stale_reason": outcome.stale_reason,
-    }
-    if isinstance(exc, WebSocketUpgradeError):
-        return WebSocketDisconnectReason(
-            reason=exc.code or f"http_{exc.status_code}",
-            message=exc.message,
-            retryable=False,
-            retry_after=exc.retry_after,
-            correlation_id=exc.request_id,
-            **session_fields,
-        )
-    return WebSocketDisconnectReason(
-        reason="connection_failed",
-        message=str(exc),
-        retryable=False,
-        **session_fields,
-    )
+def validate_connect_timeout(connect_timeout: float | None) -> float | None:
+    """Return a bound that can expire, or ``None`` for no bound."""
+    if connect_timeout is not None and not (
+        math.isfinite(connect_timeout) and connect_timeout > 0
+    ):
+        raise ValueError("connect_timeout must be finite and > 0, or None")
+    return connect_timeout
 
 
 class WebSocketClient:
+    """Band's Phoenix Channels connection, decided by band-sdk-core's ``Session``.
+
+    Entering connects, retrying retryable refusals and failures until the
+    socket is up, a terminal verdict ends the session, or ``connect_timeout``
+    expires (``TimeoutError``; ``None`` leaves the bound to the caller).
+    """
+
     def __init__(
         self,
         ws_url: str,
@@ -395,6 +364,8 @@ class WebSocketClient:
         on_disconnect: Callable[[Exception | None], Awaitable[None]] | None = None,
         session_policy: SessionPolicy | None = None,
         conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE,
+        connect_timeout: float | None = DEFAULT_CONNECT_TIMEOUT_S,
+        on_terminal: Callable[[WebSocketDisconnectReason], None] | None = None,
     ):
         self.ws_url = ws_url
         self.api_key = api_key
@@ -403,15 +374,14 @@ class WebSocketClient:
         self.client: PHXChannelsClient | None = None
         self._on_reconnect = on_reconnect
         self._on_disconnect = on_disconnect
+        self._on_terminal = on_terminal
+        self._connect_timeout = validate_connect_timeout(connect_timeout)
         self._validation_error_count: int = 0
-        self._last_disconnect_reason: WebSocketDisconnectReason | None = None
         self._session_policy = session_policy or SessionPolicy.default()
-        self._session = Session(self._session_policy)
-        self._probed_failure_message: str | None = None
-        self._cached_connect_failure: WebSocketUpgradeError | None = None
-        # The scheduled terminal shutdown: held so it stays alive, and its
-        # presence tells run_forever the transport has been ended.
-        self._transport_shutdown: asyncio.Task[None] | None = None
+        self._decider: SessionDecider | None = None
+        # Held so it stays alive; its presence tells run_forever a supersede
+        # has ended the session.
+        self._supersede_shutdown: asyncio.Task[None] | None = None
 
     @property
     def validation_error_count(self) -> int:
@@ -420,13 +390,8 @@ class WebSocketClient:
 
     @property
     def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
-        """Most recent terminal disconnect reason reported by the platform."""
-        return self._last_disconnect_reason
-
-    @property
-    def transport_ended(self) -> bool:
-        """Whether a terminal disconnect has shut the transport down for good."""
-        return self._transport_shutdown is not None
+        """Why the current session ended for good, if it has."""
+        return self._decider.terminal if self._decider is not None else None
 
     def reset_validation_error_count(self) -> int:
         """Reset the validation error counter and return the previous value.
@@ -439,7 +404,7 @@ class WebSocketClient:
 
     def _require_client(self) -> PHXChannelsClient:
         if self.client is None:
-            raise RuntimeError("WebSocket client is not connected")
+            raise RuntimeError(NOT_CONNECTED)
         return self.client
 
     def joined_topics(self) -> frozenset[str]:
@@ -448,16 +413,13 @@ class WebSocketClient:
         `get_current_subscriptions` copies its dict on every call."""
         return frozenset(self._require_client().get_current_subscriptions())
 
-    def _build_phx_client(self) -> PHXChannelsClient:
-        """Construct a fresh PHXChannelsClient for one connection attempt --
-        a new instance is required per attempt; the vendored client has no
-        reconnect-from-here primitive."""
+    def _build_phx_client(self, decider: SessionDecider) -> PHXChannelsClient:
         client = PHXChannelsClient(
             self.ws_url,
             self.api_key,
             protocol_version=PhoenixChannelsProtocolVersion.V2,
-            auto_reconnect=False,
-            reconnect_policy=RECONNECT_POLICY,
+            auto_reconnect=True,
+            reconnect_decider=decider,
             heartbeat_interval_s=self._session_policy.heartbeat_interval_s,
             heartbeat_dead_threshold_s=self._session_policy.dead_threshold_s,
             on_reconnect=self._on_reconnect,
@@ -470,194 +432,79 @@ class WebSocketClient:
 
     @property
     def _handshake_headers(self) -> dict[str, str]:
-        """``x-api-key`` on every upgrade, the error probe included: under
-        proxy-managed custody the proxy swaps the sentinel in this header but
-        cannot touch the URL query, and the platform authenticates off it."""
+        """``x-api-key`` on every upgrade: under proxy-managed custody the
+        proxy swaps the sentinel in this header but cannot touch the URL
+        query, and the platform authenticates off it."""
         return {"x-api-key": self.api_key}
 
     @property
     def _initial_connect_query(self) -> str:
-        """Conflict policy for the initial connect only. Supersede is the
+        """Conflict policy until the first accepted socket. Supersede is the
         platform default, so it stays off the wire."""
         if self._conflict_policy is ConflictPolicy.SUPERSEDE:
             return ""
         return f"&on_conflict={self._conflict_policy}"
 
-    async def _classify_connect_failure(
-        self, exc: Exception
-    ) -> WebSocketUpgradeError | None:
-        """Classify one failed connect exception via a live-socket probe,
-        reusing the previous result only while the wrapped message is
-        unchanged and that result carries no retry_after -- a retry_after
-        (e.g. a 429's Retry-After) can differ between two occurrences of the
-        same status, and Session's backoff needs the current value, so any
-        cached classification carrying one always gets a fresh probe."""
-        client = self._require_client()
-        upgrade_error = WebSocketUpgradeError.from_exception(
-            exc, redact=client.redact_diagnostic
-        )
-        if upgrade_error is not None or not isinstance(exc, PHXConnectionError):
-            return upgrade_error
-        message = client.redact_diagnostic(str(exc))
-        cached = self._cached_connect_failure
-        cache_is_valid = message == self._probed_failure_message and (
-            cached is None or cached.retry_after is None
-        )
-        if not cache_is_valid:
-            cached = await probe_upgrade_error(
-                client.channel_socket_url,
-                self._handshake_headers,
-                logger=client.logger,
-                redact=client.redact_diagnostic,
-            )
-            self._cached_connect_failure = cached
-            self._probed_failure_message = message
-        return cached
-
-    async def _resolve_failed_connect_attempt(
-        self, exc: Exception, epoch: int
-    ) -> float:
-        """Classify one failed initial-connect attempt through Session and
-        resolve it to a retry delay, or raise if Session now considers the
-        session Dead."""
-        # Captured before the live-socket probe inside
-        # _classify_connect_failure (up to open_timeout=5s) -- charging the
-        # probe's own latency to Session's rapid-disconnect timing would
-        # understate how fast repeated failures are actually happening.
-        now = asyncio.get_running_loop().time()
-        upgrade_error = await self._classify_connect_failure(exc)
-        match upgrade_error:
-            case WebSocketUpgradeError():
-                outcome = self._session.on_upgrade_rejected(
-                    epoch,
-                    now,
-                    upgrade_error.status_code,
-                    upgrade_error.retry_after,
-                    random.random(),
-                )
-                raise_exc: Exception = upgrade_error
-            case None if isinstance(exc, PHXConnectionError):
-                outcome = self._session.on_socket_close(
-                    epoch, now, None, random.random()
-                )
-                raise_exc = exc
-            case _:
-                # Only ever called from the `except Exception as exc:` in
-                # __aenter__ while that handler is still active, so this bare
-                # raise correctly re-raises `exc` via CPython's per-thread
-                # exception state, not lexical scoping.
-                raise  # noqa: PLE0704
-
-        if outcome.state is SessionState.Dead:
-            self.record_terminal_disconnect(
-                _disconnect_reason_from_exception(raise_exc, outcome)
-            )
-            self._require_client().logger.warning(
-                "Initial WebSocket connection permanently failed (dead_reason=%s): %s",
-                outcome.dead_reason,
-                raise_exc,
-            )
-            if raise_exc is exc:
-                # Bare raise: re-raising the exception already being handled
-                # via `raise raise_exc` would add a spurious extra frame to
-                # its traceback. Same cross-frame re-raise as the `case _`
-                # above -- only valid while __aenter__'s except is active.
-                raise  # noqa: PLE0704
-            # Raw upgrade responses can retain credentials in exception chains.
-            raise raise_exc from None
-
-        # None only when Dead (handled above) or stale (unreachable here) --
-        # fail loudly rather than trust a Session contract that assert would
-        # silently drop under python -O.
-        if outcome.retry_after_s is None:
-            raise RuntimeError(
-                "Session returned a non-Dead outcome with no retry_after_s"
-            )
-        self._require_client().logger.warning(
-            "Initial WebSocket connection failed; retrying in %.2fs: %s",
-            outcome.retry_after_s,
-            raise_exc,
-        )
-        return outcome.retry_after_s
-
-    def _finalize_successful_connect(self, epoch: int) -> None:
-        """Confirm a successful connect with Session, then hand ongoing
-        reconnect timing to the vendored client's own auto_reconnect loop --
-        untouched by Session (see the out-of-scope note in the design doc)."""
-        now = asyncio.get_running_loop().time()
-        connected = self._session.on_connected(epoch, now)
-        if connected.stale_reason is not None:
-            # Session's contract allows a stale outcome here even though it
-            # can't occur on a synchronous success -- log, nothing to do
-            # (the connect already succeeded).
-            logger.warning(
-                "Session.on_connected reported a stale outcome "
-                "(stale_reason=%s) for a synchronously-successful connect; "
-                "proceeding anyway.",
-                connected.stale_reason,
-            )
-        client = self._require_client()
+    def _drop_initial_connect_query(self) -> None:
         # A reconnect may meet this client's own socket, still tracked by the
         # platform, so it must supersede it rather than be refused by it.
+        client = self._require_client()
         client.channel_socket_url = client.channel_socket_url.removesuffix(
             self._initial_connect_query
         )
-        client.auto_reconnect = True
+
+    def _redact(self, text: str) -> str:
+        return self._require_client().redact_diagnostic(text)
+
+    def _report_terminal(self, reason: WebSocketDisconnectReason) -> None:
+        if self._on_terminal is not None:
+            self._on_terminal(reason)
+
+    def _require_decider(self) -> SessionDecider:
+        if self._decider is None:
+            raise RuntimeError(NOT_CONNECTED)
+        return self._decider
 
     async def __aenter__(self):
-        """Create and enter the PHXChannelsClient context.
-
-        Backoff/retry timing for this *initial*-connect loop is driven by
-        ``self._session``: it decides, on every failure, whether to sleep and
-        retry (``Reconnecting``) or give up for good (``Dead``). Once this
-        loop returns successfully, ongoing reconnect timing passes to the
-        vendored PHXChannelsClient's own ``auto_reconnect`` loop -- untouched
-        by ``Session`` (see the out-of-scope note in the design doc).
-
-        A fresh ``Session`` is built for every entry, mirroring the fresh
-        ``PHXChannelsClient`` built below -- ``__aexit__`` ends the previous
-        one, so reusing this instance across sequential ``async with``
-        blocks (as callers were free to do before ``Session`` existed) must
-        start a new connection lifecycle, not resume a now-Dead one.
-        """
-        self._session = Session(self._session_policy)
-        self._probed_failure_message = None
-        self._cached_connect_failure = None
-        self._transport_shutdown = None
-        while True:
-            now = asyncio.get_running_loop().time()
-            epoch = self._session.begin_attempt(now)
-            if epoch is None:
-                # Unreachable given this loop's own control flow, but
-                # Session's signature allows it -- fail loudly rather than
-                # silently proceed with a None epoch, and still populate
-                # last_disconnect_reason like every other Dead path in this
-                # class so BandLink.connect() sees a terminal reason too.
-                self.record_terminal_disconnect(
-                    WebSocketDisconnectReason(
-                        reason="session_ended",
-                        message="WebSocket session is no longer connectable",
-                        retryable=False,
-                    )
-                )
-                raise RuntimeError("WebSocket session is no longer connectable")
-
-            self.client = self._build_phx_client()
-
-            try:
+        """Connect a fresh session; every entry starts a new lifecycle."""
+        self._supersede_shutdown = None
+        decider = self._decider = SessionDecider(
+            session=Session(self._session_policy),
+            redact=self._redact,
+            on_terminal=self._report_terminal,
+            on_first_connected=self._drop_initial_connect_query,
+        )
+        self.client = self._build_phx_client(decider)
+        deadline = asyncio.timeout(self._connect_timeout)
+        try:
+            async with deadline:
                 await self.client.__aenter__()
-            except Exception as exc:  # noqa: BLE001 -- normalizes an arbitrary transport/parse failure into a typed client error
-                delay = await self._resolve_failed_connect_attempt(exc, epoch)
-                await asyncio.sleep(delay)
-            else:
-                self._finalize_successful_connect(epoch)
-                return self
+        except BaseException as exc:
+            decider.end()
+            # A caller's cancel stays a cancel; the bound or a refused session
+            # raises the session's refusal verdict when it has one.
+            timed_out = isinstance(exc, TimeoutError) and deadline.expired()
+            if not (timed_out or isinstance(exc, PHXConnectionError)):
+                raise
+            if decider.terminal_refusal is not None:
+                raise decider.terminal_refusal from None
+            if timed_out:
+                raise TimeoutError(
+                    f"WebSocket did not connect within {self._connect_timeout}s"
+                ) from None
+            raise
+        return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Exit the PHXChannelsClient context"""
-        self._session.end()
+        """End the session without a verdict, then close the transport."""
+        self.end_session()
         if self.client:
             await self.client.__aexit__(exc_type, exc_val, exc_tb)
+
+    def end_session(self) -> None:
+        """End the session locally, so nothing after this reports a verdict."""
+        if self._decider is not None:
+            self._decider.end()
 
     async def _handle_events(self, message: PHXMessage, event_handlers: dict):
         """Generic async event handler that maps events to their corresponding async callbacks"""
@@ -748,41 +595,24 @@ class WebSocketClient:
                     "[WebSocket] Callback error for %s event", message.event
                 )
 
-    def record_terminal_disconnect(self, reason: WebSocketDisconnectReason) -> None:
-        """Record a terminal platform disconnect reason and end the transport."""
-        self._last_disconnect_reason = reason
-        self.end_transport()
+    async def handle_supersede(self, payload: SupersedePayload) -> None:
+        """Apply an agent_control supersede push to the session.
 
-    def end_transport(self) -> None:
-        """Shut the transport down for good, so it never reconnects.
-
-        Clearing ``auto_reconnect`` alone loses a race: the transport reads it
-        once per close, before its backoff, so a supersede handled during the
-        backoff would still reconnect. The shutdown is scheduled, not awaited,
-        because the caller runs inside a topic processor that it stops.
+        An ending supersede shuts the transport down, spawned rather than
+        awaited because the shutdown cancels the topic task running this
+        handler. A retryable one closes the socket, and the next decision
+        applies its delay.
         """
-        client = self.client
-        # auto_reconnect is False until the first connect finalizes, while
-        # __aenter__'s own Session loop owns the outcome, and after an earlier end.
-        if client is None or not client.auto_reconnect:
-            return
-        client.auto_reconnect = False
-        self._transport_shutdown = spawn_owned(
-            client.shutdown(TERMINAL_SHUTDOWN_REASON),
-            label="Terminal transport shutdown",
-        )
-
-    def handle_supersede(
-        self, retryable: bool, retry_after_s: float | None
-    ) -> SessionOutcome:
-        """Arbitrate an agent_control supersede event through Session --
-        whether it's actually current (not a stale notification about an
-        epoch this connection has already moved past) and, in principle,
-        whether a retryable supersede should keep reconnecting."""
-        now = asyncio.get_running_loop().time()
-        return self._session.on_supersede(
-            now, retryable, retry_after_s, random.random()
-        )
+        match self._require_decider().supersede(payload):
+            case SupersedeVerdict.END:
+                self._supersede_shutdown = spawn_owned(
+                    self._require_client().shutdown(SUPERSEDE_REASON),
+                    label="Supersede shutdown",
+                )
+            case SupersedeVerdict.RETRY:
+                await self._require_client().close_connection(SUPERSEDE_REASON)
+            case SupersedeVerdict.STALE | SupersedeVerdict.ALREADY_ENDED:
+                pass
 
     async def join_agent_control_channel(
         self,
@@ -1007,11 +837,11 @@ class WebSocketClient:
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
         """Block until the connection ends; see ``Agent.run_forever``.
 
-        A transport already ended by a terminal disconnect has nothing left to
-        run, so this returns once its shutdown settles.
+        A session a supersede ended has nothing left to run, so this returns
+        once that shutdown settles.
         """
         client = self._require_client()
-        if self._transport_shutdown is not None:
-            await report_owned(self._transport_shutdown, None)
+        if self._supersede_shutdown is not None:
+            await report_owned(self._supersede_shutdown, None)
             return
         await client.run_forever(install_signal_handlers=install_signal_handlers)

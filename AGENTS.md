@@ -172,7 +172,9 @@ The SDK subscribes to Phoenix Channels in
 typed, rule-free `WirePayload` projection without re-validating. The projection
 is in `src/band/platform/event.py`; shared delivery rules and lifecycle
 decisions live in `band-sdk-core`, while transport behavior is covered by
-`tests/websocket/`.
+`tests/websocket/`. `SessionDecider` is phoenix's `reconnect_decider`: it
+drives band-sdk-core's `Session` for every connect, reconnect and stop
+decision, and the SDK keeps no reconnect policy of its own.
 CI's isolated-wheel smoke (`.github/scripts/wheel-smoke.py`) finds every
 `band_sdk_core` name the installed `band` package refers to and fails if the
 pinned wheel lacks one, so a new core symbol needs no manual CI step.

@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -47,18 +47,39 @@ class JoinOutcome(StrEnum):
 
 # The platform's refusal of `on_conflict=reject` when the agent already has a
 # live connection (HTTP 409); request_id is null on a real upgrade.
+CONNECTION_CONFLICT_MESSAGE = (
+    "An active connection already exists for this agent. "
+    "Set on_conflict=supersede or omit on_conflict to take over."
+)
 _CONFLICT_BODY = json.dumps(
     {
         "error": {
             "code": CONNECTION_CONFLICT_CODE,
-            "message": (
-                "An active connection already exists for this agent. "
-                "Set on_conflict=supersede or omit on_conflict to take over."
-            ),
+            "message": CONNECTION_CONFLICT_MESSAGE,
             "request_id": None,
         }
     }
 )
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """The HTTP response a refused upgrade gets."""
+
+    status: HTTPStatus
+    body: str
+    headers: Mapping[str, str]
+
+
+@dataclass
+class HeldUpgrade:
+    """One upgrade parked before the server answers it."""
+
+    arrived: asyncio.Event = field(default_factory=asyncio.Event)
+    released: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def release(self) -> None:
+        self.released.set()
 
 
 @dataclass(frozen=True)
@@ -95,6 +116,10 @@ class PhoenixConnection:
         while topic not in self.joined_topics:
             await self.changed.wait()
 
+    async def wait_for_leave(self, topic: str) -> None:
+        while topic in self.joined_topics:
+            await self.changed.wait()
+
     async def wait_for_heartbeats(self, count: int) -> None:
         while len(self.heartbeats) < count:
             await self.changed.wait()
@@ -126,11 +151,15 @@ class FakePhoenixServer:
         self._join_outcomes = {
             topic: list(outcomes) for topic, outcomes in join_outcomes.items()
         }
-        self._refuse_upgrades = refuse_upgrades
         self.reply_heartbeats = reply_heartbeats
         self.connections: list[PhoenixConnection] = []
         self._connections_changed = asyncio.Event()
-        self._refusal: HTTPStatus | None = None
+        self._refusal: Refusal | None = (
+            Refusal(HTTPStatus.CONFLICT, _CONFLICT_BODY, {})
+            if refuse_upgrades
+            else None
+        )
+        self._held_upgrade: HeldUpgrade | None = None
         self._deferred_joins: dict[str, DeferredJoin] = {}
         self._protocol = PHXProtocolHandler(
             protocol_version=PhoenixChannelsProtocolVersion.V2
@@ -138,8 +167,7 @@ class FakePhoenixServer:
         self.url: str = ""
         self.joined_topics: set[str] = set()
         self.received: list[ChannelMessage] = []
-        # Includes refused upgrades and the client's error probe;
-        # connection_count counts accepted ones only.
+        # Includes refused upgrades; connection_count counts accepted ones only.
         self.upgrades: list[Upgrade] = []
         self.connection_count = 0
         self._connection: ServerConnection | None = None
@@ -156,16 +184,20 @@ class FakePhoenixServer:
             outcomes.pop(0)
         return outcome
 
-    def _process_request(
+    async def _process_request(
         self, connection: ServerConnection, request: Request
     ) -> Response | None:
         """Answer a refused upgrade with an HTTP response before the handshake
         completes; ``None`` lets it proceed."""
         self.upgrades.append(Upgrade.from_request(request))
-        if self._refusal is not None:
-            return connection.respond(self._refusal, "Upgrade refused")
-        if self._refuse_upgrades:
-            return connection.respond(HTTPStatus.CONFLICT, _CONFLICT_BODY)
+        held, self._held_upgrade = self._held_upgrade, None
+        if held is not None:
+            held.arrived.set()
+            await held.released.wait()
+        if (refusal := self._refusal) is not None:
+            response = connection.respond(refusal.status, refusal.body)
+            response.headers.update(refusal.headers)
+            return response
         return None
 
     def _forget_topic(self, observed: PhoenixConnection, topic: str) -> None:
@@ -175,6 +207,7 @@ class FakePhoenixServer:
         self.joined_topics.discard(topic)
         observed.joined_topics.discard(topic)
         observed.join_refs.pop(topic, None)
+        observed.notify()
 
     async def _reply(
         self,
@@ -264,14 +297,37 @@ class FakePhoenixServer:
         return self.connections[number - 1]
 
     @contextmanager
-    def refusing_upgrades(self, status: HTTPStatus) -> Iterator[None]:
-        """Temporarily refuse upgrades, including the SDK's diagnostic probe."""
+    def refusing_upgrades(
+        self,
+        status: HTTPStatus,
+        *,
+        body: str = "Upgrade refused",
+        headers: Mapping[str, str] | None = None,
+    ) -> Iterator[None]:
+        """Temporarily refuse every upgrade with this response."""
         previous = self._refusal
-        self._refusal = status
+        self._refusal = Refusal(status, body, headers or {})
         try:
             yield
         finally:
             self._refusal = previous
+
+    @contextmanager
+    def holding_upgrades(self) -> Iterator[HeldUpgrade]:
+        """Park the next upgrade until released (at the latest on exit).
+
+        Release it before the client's handshake ``open_timeout`` elapses, or
+        the attempt fails as a timed-out connect.
+        """
+        if self._held_upgrade is not None:
+            raise ValueError("An upgrade is already held")
+        held = self._held_upgrade = HeldUpgrade()
+        try:
+            yield held
+        finally:
+            if self._held_upgrade is held:
+                self._held_upgrade = None
+            held.release()
 
     @contextmanager
     def defer_join(self, topic: str) -> Iterator[DeferredJoin]:
@@ -350,8 +406,7 @@ async def fake_phoenix_server(
     ``join_outcomes`` declares the whole join scenario up front, as data: a
     topic maps to the sequence of outcomes its successive join attempts get.
     ``refuse_upgrades`` answers every upgrade with the platform's 409
-    ``connection_conflict`` -- the client re-handshakes once to read the HTTP
-    error, so a refused start sees two. Everything else about the scenario --
+    ``connection_conflict``. Everything else about the scenario --
     when the network drops, what events arrive -- is inherently a sequence of
     events in time, so it stays as explicit calls on the yielded server
     (``push``, ``close_connection``, ``abort_connection``).

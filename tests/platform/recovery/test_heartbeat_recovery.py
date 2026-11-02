@@ -23,7 +23,6 @@ from tests.websocket.client.kit import VALID_MESSAGE_CREATED_PAYLOAD
 
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
-@pytest.mark.usefixtures("millisecond_reconnects")
 class TestHeartbeatRecovery:
     async def test_timeout_rejoins_and_renews_while_reconciliation_is_held(
         self,

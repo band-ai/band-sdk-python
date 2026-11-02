@@ -17,12 +17,17 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 import pytest
+from band_sdk_core import DeadReason
 
+from band.client.streaming.disconnect import WebSocketDisconnectReason
+from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.types import ConflictPolicy
 from band.platform.link import BandLink
 from band.testing import FakePhoenixServer, JoinOutcome, fake_phoenix_server
+from band.testing.phoenix_server import CONNECTION_CONFLICT_MESSAGE
 from tests.conftest import spy_on_reconciliation_drain
+from tests.platform.linkclose.kit import drain_events
 
 
 def make_link(
@@ -261,9 +266,13 @@ async def test_refused_duplicate_raises_agent_already_running() -> None:
         with pytest.raises(AgentAlreadyRunningError, match="agent-123"):
             await link.connect()
 
-        # The refused attempt and the probe that reads its HTTP error both
-        # asked for reject: a probe without it would supersede the incumbent.
-        assert on_conflict_per_upgrade(server) == [
-            ConflictPolicy.REJECT,
-            ConflictPolicy.REJECT,
-        ]
+        # One upgrade, refused with its own HTTP error: nothing re-handshakes
+        # to read it, so nothing can supersede the incumbent.
+        assert on_conflict_per_upgrade(server) == [ConflictPolicy.REJECT]
+        assert link.last_disconnect_reason == WebSocketDisconnectReason(
+            reason=CONNECTION_CONFLICT_CODE,
+            message=CONNECTION_CONFLICT_MESSAGE,
+            retryable=False,
+            dead_reason=DeadReason.Classified,
+        )
+        assert drain_events(link) == []

@@ -14,7 +14,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
-from band_sdk_core import AgentTopicKind, SessionState
+from band_sdk_core import AgentTopicKind, SessionPolicy
 
 from band.client.rest import AsyncRestClient
 from band.client.streaming import (
@@ -22,7 +22,11 @@ from band.client.streaming import (
     WebSocketDisconnectReason,
     WebSocketUpgradeError,
 )
-from band.client.streaming.client import ControlHook
+from band.client.streaming.client import (
+    DEFAULT_CONNECT_TIMEOUT_S,
+    ControlHook,
+    validate_connect_timeout,
+)
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.settlement import SettlementResult
@@ -64,6 +68,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+DROPPED_EVENTS_LOG = "Dropped %d unread event(s) from the ended session"
+
 
 def _duplicate_connection_error(agent_id: str) -> AgentAlreadyRunningError:
     return AgentAlreadyRunningError(
@@ -103,12 +109,16 @@ class BandLink:
         ws_url: str = DEFAULT_WS_URL,
         rest_url: str = DEFAULT_REST_URL,
         conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE,
+        session_policy: SessionPolicy | None = None,
+        connect_timeout: float | None = DEFAULT_CONNECT_TIMEOUT_S,
     ):
         self.agent_id = agent_id
         self.api_key = api_key
         self.ws_url = ws_url
         self.rest_url = rest_url
         self.conflict_policy = conflict_policy
+        self._session_policy = session_policy
+        self._connect_timeout = validate_connect_timeout(connect_timeout)
 
         # REST client - exposed directly
         self.rest = AsyncRestClient(api_key=api_key, base_url=rest_url)
@@ -182,6 +192,7 @@ class BandLink:
     # --- Connection lifecycle ---
 
     async def connect(self) -> None:
+        """Connect as entering ``WebSocketClient`` does, then join agent_control."""
         if self._connecting or self._ws is not None:
             logger.warning("Already connected or connecting")
             return
@@ -199,10 +210,15 @@ class BandLink:
                 self.agent_id,
                 on_reconnect=self._on_reconnected,
                 on_disconnect=self._on_disconnected,
+                session_policy=self._session_policy,
                 conflict_policy=self.conflict_policy,
+                connect_timeout=self._connect_timeout,
+                on_terminal=self._on_terminal,
             )
+            accepted = False
             try:
                 await ws.__aenter__()
+                accepted = True
                 await self._join_agent_control_channel(ws)
             except BaseException as exc:
                 # BaseException, not Exception: a cancellation reaching one
@@ -211,12 +227,12 @@ class BandLink:
                 # leaks -- _ws itself was never assigned, so there's nothing
                 # to roll back on that side.
                 if ws.last_disconnect_reason is not None:
-                    # A Session-classified terminal initial-connect failure
-                    # (__aenter__ already called record_terminal_disconnect)
-                    # -- surface it the same way a terminal supersede does,
-                    # even though self._ws was never assigned.
                     self._last_disconnect_reason = ws.last_disconnect_reason
                 await ws.__aexit__(None, None, None)
+                # Only an accepted session can have queued events; before
+                # that, the queue holds only the caller's.
+                if accepted:
+                    self._drop_queued_events()
                 if (
                     isinstance(exc, WebSocketUpgradeError)
                     and exc.is_connection_conflict
@@ -225,8 +241,8 @@ class BandLink:
                 raise
 
             self._ws = ws
-            # A supersede handled during the join has already ended it.
-            self._is_connected = not ws.transport_ended
+            # A verdict reached during the join has already ended it.
+            self._is_connected = self._last_disconnect_reason is None
             logger.info("Connected to platform")
         finally:
             self._connecting = False
@@ -235,7 +251,8 @@ class BandLink:
         if not self._ws:
             return
 
-        if not self._ws.transport_ended:
+        self._ws.end_session()
+        if self._last_disconnect_reason is None:
             try:
                 await self._ws.leave_agent_control_channel(self.agent_id)
             except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
@@ -243,6 +260,7 @@ class BandLink:
 
         await self._cancel_control_lane()
         await self._ws.__aexit__(None, None, None)
+        self._drop_queued_events()
         self._ws = None
         self._is_connected = False
         self._subscriptions_manager.end_session()
@@ -386,42 +404,17 @@ class BandLink:
     async def _on_supersede(
         self, ws: WebSocketClient, payload: SupersedePayload
     ) -> None:
-        """Handle an agent_control supersede event before the platform closes
-        the socket. Session arbitrates whether this specific supersede is
-        actually current (not a stale notification about an epoch this
-        connection has already moved past) and, in principle, whether a
-        retryable supersede should keep the connection reconnecting --
-        though the platform hardcodes retryable=False today, so in practice
-        this still always resolves to Dead.
+        """Hand an agent_control supersede push to the client's session.
 
         ``ws`` is the client the push arrived on rather than ``_ws``, which
         ``connect()`` assigns only after the control channel is joined.
         """
-        outcome = ws.handle_supersede(payload.retryable, payload.retry_after)
-        reason = payload.to_disconnect_reason(outcome)
-        if outcome.state is not SessionState.Dead:
-            # outcome.retry_after_s is computed but intentionally not
-            # applied here: enforcing it would mean this SDK taking over
-            # firing the actual reconnect attempt, which is the phoenix
-            # client's auto_reconnect loop's job -- untouched reconnect keeps
-            # working exactly as it does for any other disconnect.
-            logger.info(
-                "Supersede reported retryable=True; Session kept the "
-                "connection reconnecting (state=%s, retry_after_s=%s), "
-                "not treating it as terminal.",
-                outcome.state,
-                outcome.retry_after_s,
-            )
-            return
-        ws.record_terminal_disconnect(reason)
+        await ws.handle_supersede(payload)
+
+    def _on_terminal(self, reason: WebSocketDisconnectReason) -> None:
+        """Report a session that ended for good: once, with its reason."""
         self._last_disconnect_reason = reason
         self._is_connected = False
-        logger.warning(
-            "WebSocket connection superseded: reason=%s retryable=%s correlation_id=%s",
-            reason.reason,
-            reason.retryable,
-            reason.correlation_id,
-        )
         self._queue_event(WebSocketDisconnectedEvent(payload=reason))
 
     async def _on_control(self, payload: AgentControlPayload) -> None:
@@ -487,7 +480,8 @@ class BandLink:
                 self.last_disconnect_reason.reason,
             )
             return
-        logger.warning("WebSocket disconnected: %s", error)
+        # The session's own decision logs each close with its code and delay.
+        logger.info("WebSocket disconnected: %s", error)
 
     def _queue_event(self, event: PlatformEvent) -> None:
         """Queue event for async iteration. Logs warning if queue is full."""
@@ -499,6 +493,14 @@ class BandLink:
                 event.type,
                 event.room_id,
             )
+
+    def _drop_queued_events(self) -> None:
+        """Forget events the session that just ended left unread."""
+        dropped = self._event_queue.qsize()
+        while not self._event_queue.empty():
+            self._event_queue.get_nowait()
+        if dropped:
+            logger.info(DROPPED_EVENTS_LOG, dropped)
 
     def queue_event(self, event: PlatformEvent) -> None:
         """Queue a synthetic event for processing (public API)."""

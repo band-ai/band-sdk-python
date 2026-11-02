@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import ANY, AsyncMock, MagicMock, create_autospec, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from band_rest.core.api_error import ApiError
 from band_rest.types.chat_message_metadata import ChatMessageMetadata
-from band_sdk_core import AgentTopicStatus, DeadReason, SessionState, chat_room_topic
-from phoenix_channels_python_client.exceptions import PHXConnectionError
+from band_sdk_core import AgentTopicStatus, chat_room_topic
 
 from band.client.streaming import (
     MessageCreatedPayload,
@@ -19,11 +18,8 @@ from band.client.streaming import (
     RoomAddedPayload,
     RoomDeletedPayload,
     RoomRemovedPayload,
-    SupersedePayload,
     WebSocketClient,
-    WebSocketDisconnectReason,
 )
-from band.core.types import ConflictPolicy
 from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
@@ -31,7 +27,6 @@ from band.platform.event import (
     RoomAddedEvent,
     RoomDeletedEvent,
     RoomRemovedEvent,
-    WebSocketDisconnectedEvent,
 )
 from band.platform.link import BandLink
 from tests.conftest import make_message_event
@@ -88,34 +83,6 @@ class TestBandLinkConnection:
     """Test connection lifecycle."""
 
     @patch("band.platform.link.WebSocketClient")
-    async def test_connect_creates_websocket(self, mock_ws_class, mock_ws_client):
-        """connect() should create WebSocketClient and enter context."""
-        mock_ws_class.return_value = mock_ws_client
-
-        link = BandLink(
-            agent_id="agent-123",
-            api_key="test-key",
-            conflict_policy=ConflictPolicy.REJECT,
-        )
-        await link.connect()
-
-        mock_ws_class.assert_called_once_with(
-            link.ws_url,
-            link.api_key,
-            link.agent_id,
-            on_reconnect=link._on_reconnected,
-            on_disconnect=link._on_disconnected,
-            conflict_policy=ConflictPolicy.REJECT,
-        )
-        mock_ws_client.__aenter__.assert_called_once()
-        mock_ws_client.join_agent_control_channel.assert_called_once_with(
-            link.agent_id,
-            on_supersede=ANY,
-            on_control=link._on_control,
-        )
-        assert link.is_connected is True
-
-    @patch("band.platform.link.WebSocketClient")
     async def test_connect_when_already_connected_logs_warning(
         self, mock_ws_class, mock_ws_client
     ):
@@ -169,39 +136,6 @@ class TestBandLinkConnection:
         await link.connect()
 
         assert link.is_connected is True
-
-    @patch("band.platform.link.WebSocketClient")
-    async def test_connect_propagates_terminal_reason_from_failed_initial_connect(
-        self, mock_ws_class, mock_ws_client
-    ):
-        """A Session-classified terminal initial-connect failure must set
-        last_disconnect_reason even though self._ws is never assigned for
-        this failure -- real WebSocketClient.__aenter__ already calls
-        record_terminal_disconnect on itself before raising, and connect()
-        must read that off the local `ws` it still holds."""
-        mock_ws_class.return_value = mock_ws_client
-        reason = WebSocketDisconnectReason(
-            reason="connection_failed",
-            message="temporary network failure",
-            retryable=False,
-            dead_reason=DeadReason.RapidDisconnect,
-        )
-
-        def fail_after_recording_terminal_disconnect():
-            mock_ws_client.last_disconnect_reason = reason
-            raise PHXConnectionError("temporary network failure")
-
-        mock_ws_client.__aenter__.side_effect = fail_after_recording_terminal_disconnect
-
-        link = BandLink(agent_id="agent-123", api_key="test-key")
-
-        with pytest.raises(PHXConnectionError):
-            await link.connect()
-
-        assert link._ws is None
-        assert link.is_connected is False
-        assert link.last_disconnect_reason == reason
-        mock_ws_client.__aexit__.assert_called_once()
 
     @patch("band.platform.link.WebSocketClient")
     async def test_disconnect_exits_websocket_context(
@@ -289,93 +223,6 @@ class TestBandLinkConnection:
 
         with pytest.raises(RuntimeError, match="Not connected"):
             await link.run_forever()
-
-    async def test_supersede_records_terminal_reason_and_queues_event(
-        self, mock_ws_client
-    ):
-        """supersede records the platform reason and disables reconnect before close."""
-        link = BandLink(agent_id="agent-123", api_key="test-key")
-        link._ws = mock_ws_client
-        link._is_connected = True
-        payload = SupersedePayload(
-            reason="session.already_connected",
-            message="This connection has been superseded by a newer session for this agent.",
-            retryable=False,
-            retry_after=15,
-            target_socket_id="agent_socket:agent-123",
-            correlation_id="evict-123",
-        )
-
-        await link._on_supersede(mock_ws_client, payload)
-
-        mock_ws_client.record_terminal_disconnect.assert_called_once_with(
-            link.last_disconnect_reason
-        )
-        assert link.is_connected is False
-        assert link.last_disconnect_reason is not None
-        assert link.last_disconnect_reason.reason == "session.already_connected"
-        event = await link.__anext__()
-        assert isinstance(event, WebSocketDisconnectedEvent)
-        assert event.payload == link.last_disconnect_reason
-
-    async def test_retryable_supersede_leaves_connection_non_terminal(
-        self, mock_ws_client
-    ):
-        """A supersede Session classifies as still-Reconnecting (not Dead)
-        must not disable reconnect, set last_disconnect_reason, or queue a
-        terminal event -- unlike every real-world supersede today, which the
-        platform always sends retryable=False (so this has no real-world
-        trigger yet, only this synthetic regression guard for if that ever
-        changes)."""
-        mock_ws_client.handle_supersede.return_value = MagicMock(
-            state=SessionState.Reconnecting,
-            dead_reason=None,
-            stale_reason=None,
-            retry_after_s=1.0,
-        )
-        link = BandLink(agent_id="agent-123", api_key="test-key")
-        link._ws = mock_ws_client
-        link._is_connected = True
-        payload = SupersedePayload(
-            reason="session.already_connected",
-            message="This connection has been superseded by a newer session for this agent.",
-            retryable=True,
-            correlation_id="evict-123",
-        )
-
-        await link._on_supersede(mock_ws_client, payload)
-
-        mock_ws_client.record_terminal_disconnect.assert_not_called()
-        assert link.is_connected is True
-        assert link.last_disconnect_reason is None
-        assert link._event_queue.empty()
-
-    async def test_disconnect_after_supersede_still_cleans_up_websocket(
-        self, mock_ws_client
-    ):
-        """disconnect() should clean up the websocket even after terminal state flips."""
-        link = BandLink(agent_id="agent-123", api_key="test-key")
-        link._ws = mock_ws_client
-        link._is_connected = True
-        await link.subscribe_room("room-1")
-        payload = SupersedePayload(
-            reason="session.already_connected",
-            message="This connection has been superseded by a newer session for this agent.",
-            retryable=False,
-            retry_after=15,
-            target_socket_id="agent_socket:agent-123",
-            correlation_id="evict-123",
-        )
-
-        await link._on_supersede(mock_ws_client, payload)
-        await link.disconnect()
-
-        mock_ws_client.__aexit__.assert_called_once_with(None, None, None)
-        assert link.is_connected is False
-        assert link._ws is None
-        assert link.is_room_subscribed("room-1") is False
-        assert link.last_disconnect_reason is not None
-        assert link.last_disconnect_reason.reason == "session.already_connected"
 
     async def test_close_without_supersede_leaves_disconnect_reason_empty(self):
         """An empty Phoenix close should not invent a terminal reason."""

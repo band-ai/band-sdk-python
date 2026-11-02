@@ -43,6 +43,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 from band_rest.core import http_client
+from band_sdk_core import DeadReason
 from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -59,8 +60,13 @@ from band.client.streaming import (
     RoomAddedPayload,
     RoomDeletedPayload,
     RoomRemovedPayload,
+    WebSocketDisconnectReason,
 )
-from band.client.streaming.client import RECONNECT_POLICY
+from band.client.streaming.disconnect import TerminalReason
+from band.client.streaming.session_decider import (
+    RAPID_DISCONNECT_MESSAGE,
+    closed_message,
+)
 from band.core.settlement import SettlementResult
 from band.platform.event import (
     ContactAddedEvent,
@@ -396,18 +402,31 @@ TERMINAL_SUPERSEDE: dict[str, Any] = {
     "correlation_id": "evict-1",
 }
 
+# The same push, were the platform to let the evicted session retry.
+RETRYABLE_SUPERSEDE: dict[str, Any] = {
+    **TERMINAL_SUPERSEDE,
+    "retryable": True,
+    "retry_after": 20,
+}
 
-@pytest.fixture(scope="class")
-def millisecond_reconnects() -> Iterator[None]:
-    """The transport's reconnect backoff shrunk to milliseconds, so a test that
-    reconnects spends its time on the scenario, not on the transport's timers.
-    Class-scoped because Hypothesis rejects function-scoped fixtures."""
-    fast = RECONNECT_POLICY.model_copy(
-        update={"base_delay_s": 0.001, "rapid_disconnect_uptime_s": 0.0}
-    )
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr("band.client.streaming.client.RECONNECT_POLICY", fast)
-        yield
+# The reason a session ended by ``TERMINAL_SUPERSEDE`` records.
+SUPERSEDED = WebSocketDisconnectReason(
+    **TERMINAL_SUPERSEDE, dead_reason=DeadReason.Classified
+)
+
+# The reasons the session records when it ends a live socket on its own.
+CLOSED_1008 = WebSocketDisconnectReason(
+    reason=TerminalReason.SOCKET_CLOSED,
+    message=closed_message(1008),
+    retryable=False,
+    dead_reason=DeadReason.Classified,
+)
+KEPT_DROPPING = WebSocketDisconnectReason(
+    reason=TerminalReason.RAPID_DISCONNECT,
+    message=RAPID_DISCONNECT_MESSAGE,
+    retryable=False,
+    dead_reason=DeadReason.RapidDisconnect,
+)
 
 
 def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:

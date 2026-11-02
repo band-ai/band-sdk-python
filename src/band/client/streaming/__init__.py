@@ -24,9 +24,9 @@ from band.client.streaming.client import (
     RoomRemovedPayload,
     SupersedePayload,
     WebSocketClient,
-    WebSocketDisconnectReason,
     WireEvent,
 )
+from band.client.streaming.disconnect import WebSocketDisconnectReason
 from band.client.streaming.errors import WebSocketUpgradeError
 
 __all__ = [
