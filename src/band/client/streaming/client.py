@@ -333,7 +333,9 @@ KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
 # See ``WebSocketClient`` for what the bound covers.
 DEFAULT_CONNECT_TIMEOUT_S = 300.0
+
 NOT_CONNECTED = "WebSocket client is not connected"
+SUPERSEDE_REASON = "superseded by another connection"
 
 
 def validate_connect_timeout(connect_timeout: float | None) -> float | None:
@@ -343,9 +345,6 @@ def validate_connect_timeout(connect_timeout: float | None) -> float | None:
     ):
         raise ValueError("connect_timeout must be finite and > 0, or None")
     return connect_timeout
-
-
-SUPERSEDE_REASON = "superseded by another connection"
 
 
 class WebSocketClient:

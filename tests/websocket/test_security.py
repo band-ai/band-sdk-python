@@ -120,7 +120,10 @@ class TestTransportDiagnosticSecurity:
             ):
                 await client.__aenter__()
 
-        assert (refused.value.status_code, refused.value.retry_after) == (status, 7)
+        assert (refused.value.status_code, refused.value.retry_after) == (
+            status,
+            HOSTILE_RETRY_AFTER_S,
+        )
         assert refused.value.__cause__ is None
         assert refused.value.__suppress_context__
         self.assert_private("".join(traceback.format_exception(refused.value)))
