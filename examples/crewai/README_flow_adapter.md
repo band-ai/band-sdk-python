@@ -274,6 +274,8 @@ The returned tools are CrewAI `BaseTool` instances bound to the active run. Visi
 
 The parent Flow should still return a final decision. Sub-Crew visible sends are for intermediate room-visible work, not for completing the parent run.
 
+`band_no_reply` ends the sub-Crew agent's run: its result becomes that agent's final answer, and CrewAI does not ask the model for another step. One limitation applies when a sub-Crew runs `Crew`/`Task` with an LLM that lacks native function calling. CrewAI keeps that answer on the `Agent` and reuses it as the output of the agent's later tasks. In that setup, build a fresh `Agent` for each sub-Crew run, or use a function-calling LLM.
+
 ## Example
 
 Run the toy router example from the repo root:

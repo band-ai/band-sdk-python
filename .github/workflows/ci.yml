@@ -189,12 +189,13 @@ jobs:
           -n 4 --dist worksteal \
           tests/adapters/test_crewai_flow_phase3.py \
           tests/adapters/crewai/test_batch_history.py \
+          tests/adapters/crewaiturnend/test_turn_ending.py \
           tests/adapters/crewaiworker/test_native_settlement.py \
           tests/adapters/crewaiworker/test_flow_admission.py \
           tests/adapters/crewaiworker/test_parallel_settlement.py \
           tests/integrations/test_crewai_flow_real_sdk.py \
           tests/integrations/test_crewai_real_tools.py \
-          tests/integrations/test_crewai_completion.py \
+          tests/integrations/crewai/completion/test_blank_completion.py \
           tests/integrations/crewai/activity/test_execution.py \
           tests/integrations/crewai/activity/test_send_event.py \
           tests/test_capability_gating_e2e.py \

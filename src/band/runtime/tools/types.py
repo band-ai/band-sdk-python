@@ -92,6 +92,11 @@ class TurnEffect(StrEnum):
     def did_work(self) -> bool:
         return self is not TurnEffect.OBSERVE
 
+    @property
+    def ends_turn(self) -> bool:
+        """Whether the call is the turn's last step: a decline leaves nothing to add."""
+        return self is TurnEffect.DECLINE
+
 
 @dataclass(frozen=True)
 class ToolDefinition:

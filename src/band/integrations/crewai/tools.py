@@ -59,6 +59,7 @@ from band.runtime.tools import (
     append_available_mention_handles,
     get_band_tool_category,
     get_tool_description,
+    turn_effect,
     withheld_tool_names,
 )
 
@@ -179,6 +180,9 @@ def _platform_tool(
         description: str = get_tool_description(spec.name)
         args_schema: type[BaseModel] = spec.args_schema
         cache_function: Any = _no_cache
+        # Otherwise CrewAI re-asks after a decline until its repeat guard fails
+        # the run. A call placed after the decline in the same step never runs.
+        result_as_answer: bool = turn_effect(spec.name).ends_turn
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             return _execute_tool(
