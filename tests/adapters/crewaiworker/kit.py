@@ -22,6 +22,7 @@ from band.integrations.crewai.turn import ToolTurn
 from band.runtime.custom_tools import get_custom_tool_name
 from tests.adapters.crewaiworker.peer import resource_peer
 from tests.adapters.waiting import UNTIL_TIMEOUT_S
+from tests.crewaicalls import native_tool_call
 from tests.framework_conformance.turnprobes import turn_tools
 
 
@@ -71,14 +72,11 @@ class NativeLLM(BaseLLM):
     def call(self, messages: Any, **kwargs: Any) -> Any:
         if not any(message.get("role") == "tool" for message in messages):
             return [
-                {
-                    "id": "resource-read",
-                    "type": "function",
-                    "function": {
-                        "name": get_custom_tool_name(ReadResource),
-                        "arguments": '{"resource_id":1}',
-                    },
-                }
+                native_tool_call(
+                    "resource-read",
+                    get_custom_tool_name(ReadResource),
+                    {"resource_id": 1},
+                )
             ]
         self.work.loop.call_soon_threadsafe(self.work.native_entered.set)
         try:

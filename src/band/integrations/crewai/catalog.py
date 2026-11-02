@@ -23,13 +23,11 @@ from band.integrations.crewai.reporting import CrewAIToolReporter
 from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
     BandTool,
-    TurnEffect,
     file_content_placeholder,
     image_block_placeholder,
     is_mcp_content_result,
     platform_args_schema,
     serialize_tool_result,
-    turn_effect,
     validate_tool_arguments,
 )
 
@@ -108,11 +106,6 @@ class ToolSpec:
     render: Renderer
     reports: bool
     normalize: ArgNormalizer | None
-
-    @property
-    def ends_turn(self) -> bool:
-        """Whether a call is the agent's last step: a decline leaves nothing to add."""
-        return turn_effect(self.name) is TurnEffect.DECLINE
 
     def arguments(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """The call's arguments: declared defaults filled in, unknown keys dropped."""
