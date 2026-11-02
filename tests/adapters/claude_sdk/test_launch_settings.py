@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import stat
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,7 @@ from band.adapters.claude_sdk import (
     ClaudeCLIOptions,
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
+    LaunchSettings,
     SettingsRejection,
 )
 from band.core.exceptions import CleanupIncompleteError
@@ -78,6 +82,21 @@ def _adapter_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
         for record in caplog.records
         if record.name == ADAPTER_LOGGER and record.levelno >= logging.WARNING
     ]
+
+
+@contextmanager
+def _file_size_limit(size: int) -> Iterator[None]:
+    """Make the kernel fail writes past ``size`` bytes, as a full disk would."""
+    import resource  # noqa: PLC0415 -- POSIX-only; the test skips on Windows
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    previous = signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+    resource.setrlimit(resource.RLIMIT_FSIZE, (size, hard))
+    try:
+        yield
+    finally:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
+        signal.signal(signal.SIGXFSZ, previous)
 
 
 def _with_host(settings: str) -> ClaudeSDKAdapterConfig:
@@ -175,7 +194,8 @@ class TestLaunchSettings:
 
         await room.adapter.cleanup_all()
 
-        assert (second, first.exists()) == (first, False)
+        assert second == first
+        assert not first.exists()
 
     async def test_a_launch_rewrites_a_launch_file_removed_under_it(
         self, claude_room: OpenRoom, caplog: pytest.LogCaptureFixture
@@ -228,21 +248,35 @@ class TestLaunchSettings:
 
         assert (kept, launch_file.exists()) == (True, False)
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file-size limit")
+    def test_a_failed_write_leaves_no_partial_launch_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        settings = LaunchSettings(HOST_SETTINGS)
+
+        with _file_size_limit(8), pytest.raises(OSError):
+            settings.for_launch()
+
+        assert list(tmp_path.iterdir()) == []
+
     @pytest.mark.parametrize(
         ("content", "reason"),
         [
             (None, SettingsRejection.UNREADABLE),
-            ("{not json", SettingsRejection.NOT_JSON),
-            ('{"cleanupPeriodDays": NaN}', SettingsRejection.NOT_JSON),
-            ('{"cleanupPeriodDays": 1e400}', SettingsRejection.NOT_JSON),
-            ("[]", SettingsRejection.NOT_OBJECT),
+            ('{"model": "caf\u00e9"}'.encode("cp1252"), SettingsRejection.NOT_UTF8),
+            (b"{not json", SettingsRejection.NOT_JSON),
+            (b'{"cleanupPeriodDays": NaN}', SettingsRejection.NOT_JSON),
+            (b'{"cleanupPeriodDays": 1e400}', SettingsRejection.NOT_JSON),
+            (b"[]", SettingsRejection.NOT_OBJECT),
             (
-                json.dumps({"env": {BAND_MCP_TOKEN_ENV: "x"}}),
+                json.dumps({"env": {BAND_MCP_TOKEN_ENV: "x"}}).encode(),
                 SettingsRejection.BAND_TOKEN,
             ),
         ],
         ids=[
             "missing",
+            "not-utf8",
             "malformed",
             "non-finite",
             "overflow",
@@ -251,11 +285,11 @@ class TestLaunchSettings:
         ],
     )
     async def test_an_unusable_settings_file_fails_the_start_before_band_mcp_opens(
-        self, tmp_path: Path, content: str | None, reason: SettingsRejection
+        self, tmp_path: Path, content: bytes | None, reason: SettingsRejection
     ) -> None:
         settings = tmp_path / "team-settings.json"
         if content is not None:
-            settings.write_text(content)
+            settings.write_bytes(content)
         adapter = ClaudeSDKAdapter(_with_host(str(settings)))
 
         try:

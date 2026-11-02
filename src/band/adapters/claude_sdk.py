@@ -284,6 +284,7 @@ class SettingsRejection(StrEnum):
     """Why host Claude settings or env are refused; messages lead with the source."""
 
     UNREADABLE = "cannot be read"
+    NOT_UTF8 = "is not UTF-8 text"
     NOT_JSON = "is not valid JSON"
     NOT_OBJECT = "must be a JSON object"
     BAND_TOKEN = (
@@ -334,6 +335,8 @@ def _read_settings_file(path: str) -> dict[str, Any]:
         raise ValueError(
             f"{source} {SettingsRejection.UNREADABLE}: {error.strerror}"
         ) from error
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{source} {SettingsRejection.NOT_UTF8}") from error
     return _settings_object(text, source)
 
 
@@ -381,9 +384,15 @@ class LaunchSettings:
         descriptor, name = tempfile.mkstemp(
             prefix="band-claude-settings-", suffix=".json"
         )
-        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-            file.write(self._json)
-        return Path(name)
+        path = Path(name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+                file.write(self._json)
+        except BaseException:
+            # A partial file holds part of the host's secrets and is untracked.
+            path.unlink(missing_ok=True)
+            raise
+        return path
 
 
 class ClaudeCLIOptions(BaseAdapterConfig):

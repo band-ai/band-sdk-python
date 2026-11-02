@@ -12,9 +12,13 @@ SECRET = "sk-rejected-secret"
 
 class TestAdapterConfigRedaction:
     @pytest.mark.parametrize("base", [BaseAdapterConfig, EnvAdapterConfig])
-    @pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested"])
+    @pytest.mark.parametrize(
+        "data",
+        [{"port": SECRET}, {"section": {"port": SECRET}}],
+        ids=["direct", "nested"],
+    )
     def test_a_rejected_value_is_not_echoed(
-        self, base: type[BaseAdapterConfig], nested: bool
+        self, base: type[BaseAdapterConfig], data: dict[str, object]
     ) -> None:
         # Pydantic takes hide_input_in_errors from the outermost model, so a
         # nested section is only redacted when every config base sets it.
@@ -24,8 +28,6 @@ class TestAdapterConfigRedaction:
         class Config(base):
             port: int = 0
             section: Section = Section()
-
-        data = {"section": {"port": SECRET}} if nested else {"port": SECRET}
 
         with pytest.raises(ValidationError) as rejected:
             Config.model_validate(data)
