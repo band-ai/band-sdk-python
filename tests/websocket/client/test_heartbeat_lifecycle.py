@@ -9,10 +9,10 @@ import pytest
 from band.client.streaming import WebSocketClient
 from band.testing import fake_phoenix_server
 from tests.platform.linkclose.kit import AGENT_ID
+from tests.sessionpolicies import session_policy
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
 from tests.websocket.client.heartbeat import ControlProbe
-from tests.websocket.conftest import fast_session_policy
 
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
@@ -23,9 +23,7 @@ class TestHeartbeatLifecycle:
         async with controlled_clock() as clock:
             before = asyncio.all_tasks()
             async with fake_phoenix_server() as server:
-                policy = fast_session_policy(
-                    heartbeat_interval_s=4, dead_threshold_s=11
-                )
+                policy = session_policy(heartbeat_interval_s=4, dead_threshold_s=11)
                 client = WebSocketClient(
                     server.url, "test-key", AGENT_ID, session_policy=policy
                 )

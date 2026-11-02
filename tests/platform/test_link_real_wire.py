@@ -18,6 +18,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.types import ConflictPolicy
 from band.platform.link import BandLink
@@ -261,9 +262,9 @@ async def test_refused_duplicate_raises_agent_already_running() -> None:
         with pytest.raises(AgentAlreadyRunningError, match="agent-123"):
             await link.connect()
 
-        # The refused attempt and the probe that reads its HTTP error both
-        # asked for reject: a probe without it would supersede the incumbent.
-        assert on_conflict_per_upgrade(server) == [
-            ConflictPolicy.REJECT,
-            ConflictPolicy.REJECT,
-        ]
+        # One upgrade, refused with its own HTTP error: nothing re-handshakes
+        # to read it, so nothing can supersede the incumbent.
+        assert on_conflict_per_upgrade(server) == [ConflictPolicy.REJECT]
+        assert link.last_disconnect_reason is not None
+        assert link.last_disconnect_reason.reason == CONNECTION_CONFLICT_CODE
+        assert link._event_queue.empty()

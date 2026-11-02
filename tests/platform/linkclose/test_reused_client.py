@@ -6,14 +6,19 @@ from __future__ import annotations
 
 import asyncio
 
-from band.client.streaming import AgentControlPayload, WebSocketClient
-from band.client.streaming.client import SupersedePayload, WireEvent
+from band.client.streaming import (
+    AgentControlPayload,
+    WebSocketClient,
+    WebSocketDisconnectReason,
+)
+from band.client.streaming.client import WireEvent
 from band.testing import fake_phoenix_server
 from tests.conftest import TERMINAL_SUPERSEDE
 from tests.platform.linkclose.kit import (
     AGENT_ID,
     CONTROL_TOPIC,
     HANG_GUARD_S,
+    SUPERSEDED,
     control_wire_payload,
 )
 
@@ -21,15 +26,14 @@ from tests.platform.linkclose.kit import (
 class TestReusedClient:
     async def test_run_forever_serves_the_connection_after_a_supersede(self) -> None:
         async with fake_phoenix_server() as server:
-            ws = WebSocketClient(server.url, "test-key", AGENT_ID)
-
-            async def end_on_supersede(payload: SupersedePayload) -> None:
-                outcome = ws.handle_supersede(payload.retryable, payload.retry_after)
-                ws.record_terminal_disconnect(payload.to_disconnect_reason(outcome))
+            verdicts: list[WebSocketDisconnectReason] = []
+            ws = WebSocketClient(
+                server.url, "test-key", AGENT_ID, on_terminal=verdicts.append
+            )
 
             async with ws:
                 await ws.join_agent_control_channel(
-                    AGENT_ID, on_supersede=end_on_supersede
+                    AGENT_ID, on_supersede=ws.handle_supersede
                 )
                 await server.push(
                     CONTROL_TOPIC, WireEvent.SUPERSEDE, TERMINAL_SUPERSEDE
@@ -37,6 +41,7 @@ class TestReusedClient:
                 await asyncio.wait_for(
                     ws.run_forever(install_signal_handlers=False), HANG_GUARD_S
                 )
+                assert verdicts == [SUPERSEDED]
 
             controlled = asyncio.Event()
 
@@ -45,7 +50,7 @@ class TestReusedClient:
 
             async with ws:
                 await ws.join_agent_control_channel(
-                    AGENT_ID, on_supersede=end_on_supersede, on_control=on_control
+                    AGENT_ID, on_supersede=ws.handle_supersede, on_control=on_control
                 )
                 run = asyncio.create_task(ws.run_forever(install_signal_handlers=False))
                 await server.push(
@@ -56,6 +61,8 @@ class TestReusedClient:
                 await asyncio.wait_for(controlled.wait(), HANG_GUARD_S)
 
                 assert not run.done()
+                assert ws.last_disconnect_reason is None
+                assert verdicts == [SUPERSEDED]
 
                 run.cancel()
                 await asyncio.wait({run})

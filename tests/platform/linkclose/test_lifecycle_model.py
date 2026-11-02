@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 from hypothesis import Phase, example, given, settings
 
 from tests.platform.linkclose.lifecycle import (
@@ -46,7 +45,6 @@ async def assert_invariants(session: LinkSession) -> None:
     assert server.connection_count == connections + 1
 
 
-@pytest.mark.usefixtures("millisecond_reconnects")
 class TestLinkLifecycleModel:
     # No shrinking: every hung step of a shrink attempt waits out its guard,
     # which turns one regression into minutes of CI.

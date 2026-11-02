@@ -9,14 +9,38 @@ from http import HTTPStatus
 from urllib.parse import quote
 
 import pytest
-from phoenix_channels_python_client.exceptions import PHXConnectionError
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.http11 import Request, Response
 
 from band.client.streaming.client import WebSocketClient
 from band.client.streaming.errors import WebSocketUpgradeError
 from band.testing import fake_phoenix_server
-from band.testing.phoenix_server import Upgrade
+
+SECRET = "synthetic/private+ credential?x=1&z=#[]"
+
+
+def credential_spellings() -> tuple[str, ...]:
+    """The credential raw, percent-encoded, mixed-case encoded and URI-encoded."""
+    encoded = quote(SECRET, safe="")
+    return (
+        SECRET,
+        encoded,
+        encoded.replace("%2F", "%2f"),
+        quote(SECRET, safe=";/?:@&=+$,#-_.!~*'()"),
+    )
+
+
+def client_log(caplog: pytest.LogCaptureFixture) -> str:
+    """What the SDK and its transport logged; the fake server's own logs are
+    the platform's side."""
+    return "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith(CLIENT_LOGGERS)
+    )
+
+
+CLIENT_LOGGERS = ("band.", "phoenix_channels_python_client")
 
 
 class TestTransportDiagnosticSecurity:
@@ -56,83 +80,79 @@ class TestTransportDiagnosticSecurity:
             for record in records
         )
 
-    @pytest.mark.parametrize("status", [400, 409, 429, 503])
-    @pytest.mark.parametrize("field", ["message", "code", "request_id"])
-    async def test_refused_upgrade_and_probe_sanitize_each_error_field(
-        self, caplog: pytest.LogCaptureFixture, status: int, field: str
-    ) -> None:
-        secret = "synthetic/private+ credential?x=1&z=#[]"
-        encoded = quote(secret, safe="")
-        mixed = encoded.replace("%2F", "%2f")
-        uri_encoded = quote(secret, safe=";/?:@&=+$,#-_.!~*'()")
-        upgrades = []
-        error = {
+    @staticmethod
+    def hostile_refusal(field: str) -> str:
+        """A refusal body whose ``field`` echoes the credential in every
+        encoding a log or traceback could leak it in."""
+        error: dict[str, object] = {
             "code": "connection_conflict",
             "message": "refused",
             "request_id": "safe-request",
             "retry_after": 7,
         }
-        error[field] = (
-            secret
-            + " "
-            + mixed
-            + " "
-            + uri_encoded
-            + " authorization: Bearer unconfigured-bearer-value"
+        error[field] = " ".join(
+            [*credential_spellings(), "authorization: Bearer unconfigured-bearer-value"]
         )
+        return json.dumps({"error": error})
 
-        def refuse(connection: ServerConnection, request: Request) -> Response:
-            upgrades.append(Upgrade.from_request(request))
-            return connection.respond(HTTPStatus(status), json.dumps({"error": error}))
+    @staticmethod
+    def assert_private(text: str) -> None:
+        for leaked in (*credential_spellings(), "unconfigured-bearer-value"):
+            assert leaked not in text
 
-        async def peer(connection: ServerConnection) -> None:
-            await connection.wait_closed()
-
-        caplog.set_level(logging.DEBUG, logger="phoenix_channels_python_client.client")
-        async with serve(peer, "127.0.0.1", 0, process_request=refuse) as server:
-            port = server.sockets[0].getsockname()[1]
-            client = WebSocketClient(
-                f"ws://127.0.0.1:{port}/socket", secret, "agent-synthetic"
-            )
-            client.client = client._build_phx_client()
-            with pytest.raises(PHXConnectionError) as initial:
-                await client.client.__aenter__()
-            classified = await client._classify_connect_failure(initial.value)
-            assert classified is not None
-            assert classified.status_code == status
-            assert classified.retry_after == 7
-            for diagnostic in (
-                classified.message,
-                classified.code,
-                classified.request_id,
-                client._cached_connect_failure,
-                client._probed_failure_message,
-                "".join(traceback.format_exception(initial.value)),
+    @pytest.mark.parametrize("status", [HTTPStatus.BAD_REQUEST, HTTPStatus.CONFLICT])
+    @pytest.mark.parametrize("field", ["message", "code", "request_id"])
+    async def test_a_terminal_refusal_reports_only_redacted_fields(
+        self, caplog: pytest.LogCaptureFixture, status: HTTPStatus, field: str
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        async with fake_phoenix_server() as server:
+            client = WebSocketClient(server.url, SECRET, "agent-synthetic")
+            with (
+                server.refusing_upgrades(status, body=self.hostile_refusal(field)),
+                pytest.raises(WebSocketUpgradeError) as refused,
             ):
-                assert secret not in str(diagnostic)
-                assert encoded not in str(diagnostic)
-                assert mixed not in str(diagnostic)
-                assert uri_encoded not in str(diagnostic)
-                assert "unconfigured-bearer-value" not in str(diagnostic)
-        assert len(upgrades) == 2
-        for upgrade in upgrades:
-            assert "api_key" not in upgrade.query
-            assert upgrade.headers["x-api-key"] == secret
-        records = [
+                await client.__aenter__()
+
+        assert (refused.value.status_code, refused.value.retry_after) == (status, 7)
+        assert refused.value.__cause__ is None
+        assert refused.value.__suppress_context__
+        self.assert_private("".join(traceback.format_exception(refused.value)))
+        self.assert_private(repr(client.last_disconnect_reason))
+        self.assert_private(client_log(caplog))
+        assert len(server.upgrades) == 1
+        assert "api_key" not in server.upgrades[0].query
+        assert server.upgrades[0].headers["x-api-key"] == SECRET
+
+    @pytest.mark.looptime
+    @pytest.mark.parametrize(
+        "status", [HTTPStatus.TOO_MANY_REQUESTS, HTTPStatus.SERVICE_UNAVAILABLE]
+    )
+    @pytest.mark.parametrize("field", ["message", "code", "request_id"])
+    async def test_a_retried_refusal_logs_only_redacted_fields(
+        self, caplog: pytest.LogCaptureFixture, status: HTTPStatus, field: str
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        async with fake_phoenix_server() as server:
+            client = WebSocketClient(
+                server.url, SECRET, "agent-synthetic", connect_timeout=1.0
+            )
+            with (
+                server.refusing_upgrades(status, body=self.hostile_refusal(field)),
+                pytest.raises(TimeoutError),
+            ):
+                await client.__aenter__()
+
+        retries = [
             record
             for record in caplog.records
-            if record.name == "phoenix_channels_python_client.client"
+            if record.name == "band.client.streaming.session_decider"
         ]
-        assert records
-        for record in records:
-            assert record.args == ()
-            assert record.exc_info is None
-            assert not hasattr(record, "websocket")
-            assert secret not in repr(record.__dict__)
-            assert encoded not in repr(record.__dict__)
-            assert mixed not in repr(record.__dict__)
-            assert uri_encoded not in repr(record.__dict__)
-            assert "unconfigured-bearer-value" not in repr(record.__dict__)
+        assert [record.levelno for record in retries] == [logging.WARNING]
+        assert f"refused ({status}:" in retries[0].getMessage()
+        self.assert_private(client_log(caplog))
+        assert client.last_disconnect_reason is None
+        assert len(server.upgrades) == 1
 
     @pytest.mark.parametrize("field", ["message", "code", "request_id"])
     async def test_terminal_error_and_consumer_traceback_are_safe(
@@ -176,7 +196,7 @@ class TestTransportDiagnosticSecurity:
                     server.url, "synthetic-header-key", identity
                 ):
                     pass
-        assert len(server.upgrades) == (2 if refuse else 1)
+        assert len(server.upgrades) == 1
         for upgrade in server.upgrades:
             assert upgrade.query == {"vsn": "2.0.0", "agent_id": identity}
             assert upgrade.headers["x-api-key"] == "synthetic-header-key"

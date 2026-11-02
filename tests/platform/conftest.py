@@ -6,10 +6,9 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, create_autospec
+from unittest.mock import AsyncMock, create_autospec
 
 import pytest
-from band_sdk_core import DeadReason, SessionState
 
 from band.client.streaming import WebSocketClient
 from band.platform.link import BandLink
@@ -65,26 +64,6 @@ def mock_ws_client():
     ws.joined_topics.return_value = AllTopicsJoined()
 
     ws.last_disconnect_reason = None
-    ws.transport_ended = False
-
-    def record_terminal_disconnect(reason):
-        ws.last_disconnect_reason = reason
-        ws.transport_ended = True
-
-    ws.record_terminal_disconnect.side_effect = record_terminal_disconnect
-
-    # Documented "every real-world supersede is terminal" default (the
-    # platform hardcodes retryable=False today) -- an unconfigured autospec
-    # call would otherwise return a bare MagicMock whose `.state` is not
-    # SessionState.Dead, silently skipping record_terminal_disconnect in
-    # _on_supersede and breaking every existing supersede test using this
-    # fixture.
-    ws.handle_supersede.return_value = MagicMock(
-        state=SessionState.Dead,
-        dead_reason=DeadReason.Classified,
-        stale_reason=None,
-        retry_after_s=None,
-    )
 
     return ws
 

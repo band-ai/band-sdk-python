@@ -11,20 +11,19 @@ from band.client.streaming.client import WireEvent
 from band.testing import fake_phoenix_server
 from tests.platform.linkclose.kit import AGENT_ID, CONTROL_TOPIC
 from tests.platform.recovery.kit import ROOM_ID, ROOM_TOPIC
+from tests.sessionpolicies import millisecond_backoff
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
 from tests.websocket.client.heartbeat import ControlProbe, socket_of
 from tests.websocket.client.kit import VALID_MESSAGE_CREATED_PAYLOAD
-from tests.websocket.conftest import fast_session_policy
 
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
-@pytest.mark.usefixtures("millisecond_reconnects")
 class TestHeartbeatRejoin:
     async def test_held_rejoin_renews_but_completion_grants_no_extra_grace(
         self,
     ) -> None:
-        policy = fast_session_policy(heartbeat_interval_s=1, dead_threshold_s=3)
+        policy = millisecond_backoff(heartbeat_interval_s=1, dead_threshold_s=3)
         probe = ControlProbe()
         messages: asyncio.Queue[MessageCreatedPayload] = asyncio.Queue()
         disconnected = asyncio.Event()

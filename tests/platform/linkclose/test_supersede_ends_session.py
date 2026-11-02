@@ -11,9 +11,9 @@ import pytest
 from websockets.frames import CloseCode
 
 from band.client.streaming.client import WireEvent
-from band.platform.event import WebSocketDisconnectedEvent
+from band.platform.event import ReconnectedEvent, WebSocketDisconnectedEvent
 from band.testing import fake_phoenix_server
-from tests.conftest import TERMINAL_SUPERSEDE
+from tests.conftest import RETRYABLE_SUPERSEDE, TERMINAL_SUPERSEDE
 from tests.platform.linkclose.kit import (
     CONTROL_TOPIC,
     HANG_GUARD_S,
@@ -22,12 +22,18 @@ from tests.platform.linkclose.kit import (
     during_connect,
     handle_supersede,
     make_link,
-    parked_backoff,
     running,
 )
+from tests.platform.recovery.kit import observe_disconnects
+from tests.sessionpolicies import (
+    BEYOND_ANY_RETRY_S,
+    session_policy,
+)
+from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.timecontrol import controlled_clock
+from tests.websocket.client.kit import observe_retries
 
 
-@pytest.mark.usefixtures("millisecond_reconnects")
 class TestSupersedeEndsSession:
     async def test_a_terminal_supersede_ends_the_session(self) -> None:
         async with (
@@ -101,25 +107,75 @@ class TestSupersedeEndsSession:
             async with connected(link):
                 assert server.connection_count == 2
 
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_a_supersede_handled_during_the_backoff_ends_the_session(
         self,
     ) -> None:
-        async with fake_phoenix_server() as server:
-            link = make_link(server.url)
-            async with (
-                connected(link),
-                parked_backoff(link) as backoff,
-                running(link) as run,
-            ):
-                await server.close_connection(code=CloseCode.GOING_AWAY)
-                await asyncio.wait_for(backoff.entered.wait(), HANG_GUARD_S)
+        loop = asyncio.get_running_loop()
+        async with controlled_clock() as clock, fake_phoenix_server() as server:
+            link = make_link(server.url, session_policy=session_policy())
+            disconnected = observe_disconnects(link)
+            async with connected(link), running(link) as run:
+                await server.abort_connection()
+                # The transport decides right after this callback and then
+                # waits out the backoff.
+                await disconnected.get()
+                superseded_at = loop.time()
 
                 await handle_supersede(link)
-                # Never released: only ending the transport can end the run.
-                await asyncio.wait_for(run, HANG_GUARD_S)
+                await run
 
+                assert loop.time() == superseded_at
+                await clock.elapse(BEYOND_ANY_RETRY_S)
                 assert link.last_disconnect_reason == SUPERSEDED
-                assert server.connection_count == 1
+                assert len(server.upgrades) == 1
+
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
+    async def test_a_supersede_handled_during_the_reconnect_handshake_ends_the_session(
+        self,
+    ) -> None:
+        async with controlled_clock() as clock, fake_phoenix_server() as server:
+            link = make_link(server.url, session_policy=session_policy())
+            with observe_retries() as retries:
+                async with connected(link), running(link) as run:
+                    await server.abort_connection()
+                    with server.holding_upgrades() as handshake:
+                        await clock.elapse(await retries.get())
+                        await handshake.arrived.wait()
+
+                        await handle_supersede(link)
+                        await run
+
+                    await clock.elapse(BEYOND_ANY_RETRY_S)
+                    assert link.last_disconnect_reason == SUPERSEDED
+                    assert len(server.upgrades) == 2
+                    assert all(
+                        not connection.joined_topics
+                        for connection in server.connections[1:]
+                    )
+
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
+    async def test_a_retryable_supersede_reconnects_after_its_retry_after(
+        self,
+    ) -> None:
+        retry_after = RETRYABLE_SUPERSEDE["retry_after"]
+        async with controlled_clock() as clock, fake_phoenix_server() as server:
+            link = make_link(server.url, session_policy=session_policy())
+            with observe_retries() as retries:
+                async with connected(link), running(link) as run:
+                    await server.push(
+                        CONTROL_TOPIC, WireEvent.SUPERSEDE, RETRYABLE_SUPERSEDE
+                    )
+                    delay = await retries.get()
+                    await clock.elapse(retry_after - 1)
+                    assert len(server.upgrades) == 1
+
+                    await clock.elapse(delay - (retry_after - 1))
+
+                    assert await anext(link) == ReconnectedEvent()
+                    assert delay >= retry_after
+                    assert link.last_disconnect_reason is None
+                    assert not run.done()
 
     async def test_a_supersede_handled_while_connecting_ends_the_session(
         self,

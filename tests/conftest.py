@@ -60,7 +60,6 @@ from band.client.streaming import (
     RoomDeletedPayload,
     RoomRemovedPayload,
 )
-from band.client.streaming.client import RECONNECT_POLICY
 from band.core.settlement import SettlementResult
 from band.platform.event import (
     ContactAddedEvent,
@@ -396,18 +395,12 @@ TERMINAL_SUPERSEDE: dict[str, Any] = {
     "correlation_id": "evict-1",
 }
 
-
-@pytest.fixture(scope="class")
-def millisecond_reconnects() -> Iterator[None]:
-    """The transport's reconnect backoff shrunk to milliseconds, so a test that
-    reconnects spends its time on the scenario, not on the transport's timers.
-    Class-scoped because Hypothesis rejects function-scoped fixtures."""
-    fast = RECONNECT_POLICY.model_copy(
-        update={"base_delay_s": 0.001, "rapid_disconnect_uptime_s": 0.0}
-    )
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr("band.client.streaming.client.RECONNECT_POLICY", fast)
-        yield
+# The same push, were the platform to let the evicted session retry.
+RETRYABLE_SUPERSEDE: dict[str, Any] = {
+    **TERMINAL_SUPERSEDE,
+    "retryable": True,
+    "retry_after": 20,
+}
 
 
 def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:

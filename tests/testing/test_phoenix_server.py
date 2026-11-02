@@ -8,14 +8,19 @@ protocol BandLink's real WebSocketClient/PHXChannelsClient stack accepts.
 from __future__ import annotations
 
 import asyncio
+from http import HTTPStatus
 
 import pytest
 from websockets.frames import CloseCode
 
+from band.client.streaming import WebSocketUpgradeError
 from band.platform.event import RoomAddedEvent
 from band.platform.link import BandLink
 from band.testing import JoinOutcome, fake_phoenix_server, live_connection
 from tests.conftest import spy_on_reconciliation_drain
+from tests.sessionpolicies import millisecond_backoff
+from tests.toolkit.tasks import background
+from tests.websocket.client.kit import upgrade_error_body
 
 
 def make_link(server_url: str) -> BandLink:
@@ -24,10 +29,10 @@ def make_link(server_url: str) -> BandLink:
         api_key="test-key",
         ws_url=server_url,
         rest_url="https://test.invalid",
+        session_policy=millisecond_backoff(),
     )
 
 
-@pytest.mark.usefixtures("millisecond_reconnects")
 class TestFakePhoenixServer:
     async def test_default_join_outcome_is_ok(self) -> None:
         """No declared policy -- every join succeeds, observed on both sides."""
@@ -124,3 +129,42 @@ class TestFakePhoenixServer:
                 CloseCode.GOING_AWAY,
                 "drain",
             )
+
+    async def test_a_refusal_carries_its_body_and_headers(self) -> None:
+        body = upgrade_error_body("forbidden", status=HTTPStatus.FORBIDDEN)
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url)
+            with (
+                server.refusing_upgrades(
+                    HTTPStatus.FORBIDDEN,
+                    body=body.decode(),
+                    headers={"Retry-After": "9"},
+                ),
+                pytest.raises(WebSocketUpgradeError) as refused,
+            ):
+                await link.connect()
+
+        assert (
+            refused.value.status_code,
+            refused.value.code,
+            refused.value.request_id,
+            refused.value.retry_after,
+        ) == (HTTPStatus.FORBIDDEN, "forbidden", "req-403", 9)
+
+    async def test_a_held_upgrade_is_answered_only_once_released(self) -> None:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url)
+            with server.holding_upgrades() as handshake:
+                async with background(link.connect()) as connecting:
+                    await handshake.arrived.wait()
+                    assert (len(server.upgrades), server.connection_count) == (1, 0)
+                    assert not connecting.done()
+
+                    handshake.release()
+                    await connecting
+
+            try:
+                assert link.is_connected
+                assert server.connection_count == 1
+            finally:
+                await link.disconnect()
