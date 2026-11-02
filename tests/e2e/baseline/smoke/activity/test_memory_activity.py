@@ -1,4 +1,4 @@
-"""Saving a memory reports memory activity, then the turn clears."""
+"""A memory save in flight shows as memory activity, then the turn clears."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import pytest
 
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.activity import MEMORY
+from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.agents import (
     Adapter,
     ExcludedAdapter,
@@ -22,6 +23,7 @@ from tests.e2e.baseline.timeouts import slow_turn_budget
 from tests.e2e.baseline.toolkit.activity import ActivityCapture
 from tests.e2e.baseline.toolkit.adapters import specs
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.heldmemory import HeldMemorySave
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
@@ -54,6 +56,7 @@ class TestMemoryActivity:
             title="e2e-activity-memory", participants=[identity.id]
         )
         observed = ActivityCapture(deadline_s=BUDGET.deadline_s)
+        held = HeldMemorySave(deadline_s=BUDGET.deadline_s)
         marker = unique_marker("memact")
         async with (
             observed.rooms(baseline_ws, room),
@@ -64,8 +67,12 @@ class TestMemoryActivity:
                 features=AdapterFeatures(
                     emit=frozenset(), capabilities={Capability.MEMORY}
                 ),
-                link_factory=observed.link,
+                link_factory=held.link(observed),
+                session_config=SessionConfig(
+                    max_working_state_seconds=None, max_cycle_seconds=None
+                ),
             ),
+            held.releasing_on_exit(),
         ):
             since = observed.cursor()
             sent = await user_ops.send_message(
@@ -74,9 +81,14 @@ class TestMemoryActivity:
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
-            saved = await observed.report(
-                room, agent_id=identity.id, working=True, activity=SAVING, since=since
+            await held.wait(held.save.entered, phase="memory save entered")
+            await observed.held(
+                room, identity.id, SAVING, since=since, entered=observed.cursor()
             )
+
+            finishing = observed.cursor()
+            held.save.release.set()
+            await held.wait(held.save.settled, phase="memory save settled")
             await capture.wait_for_processed(sent, identity.id)
-            await observed.finished(room, identity.id, since=saved.sequence)
+            await observed.finished(room, identity.id, since=finishing)
             observed.assert_private(marker)

@@ -59,13 +59,19 @@ class TestReasoningOnlyActivity:
                 link_factory=observed.link,
             ),
         ):
+            warming = observed.cursor()
             sent = await user_ops.send_message(
                 room, first, mention_id=identity.id, mention_name=identity.name
             )
             await capture.wait_for_reply(sent, identity.id)
+            # A turn this brief may never be pushed (the platform sends at most
+            # one change per second), so only accepted reports are asserted.
+            await observed.report(
+                room, agent_id=identity.id, working=False, since=warming
+            )
 
             # Only a process's first report can lack detail, so turn two is
-            # order-independent.
+            # order-independent; turn one has ended before its cursor.
             since, replies = observed.cursor(), capture.messages.snapshot()
             sent = await user_ops.send_message(
                 room,
@@ -81,5 +87,7 @@ class TestReasoningOnlyActivity:
                 since=since,
             )
             await capture.wait_for_reply(sent, identity.id, since=replies)
-            await observed.finished(room, identity.id, since=thinking.sequence)
+            await observed.report(
+                room, agent_id=identity.id, working=False, since=thinking.sequence
+            )
             observed.assert_private(marker, tool_names=frozenset(BandTool))
