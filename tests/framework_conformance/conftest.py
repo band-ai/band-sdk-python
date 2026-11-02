@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
 
+from band.platform.link import BandLink
 from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.toolkit import provisioning
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
@@ -61,6 +62,8 @@ def started_with(monkeypatch: pytest.MonkeyPatch) -> list[SessionConfig | None]:
         adapter: Any,
         settings: Any,
         session_config: SessionConfig | None = None,
+        *,
+        link_factory: Callable[..., BandLink] = BandLink,
     ) -> AsyncIterator[ProvisionedAgent]:
         configs.append(session_config)
         yield provisioned

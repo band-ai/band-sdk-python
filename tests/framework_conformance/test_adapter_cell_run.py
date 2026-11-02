@@ -8,12 +8,13 @@ builds is real, and so are the observer and its holds.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
 
+from band.platform.link import BandLink
 from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.toolkit import provisioning
 from tests.e2e.baseline.toolkit.invocations import InvocationObserver
@@ -75,6 +76,8 @@ class TestAdapterCellRun:
             adapter: Any,
             settings: Any,
             session_config: SessionConfig | None = None,
+            *,
+            link_factory: Callable[..., BandLink] = BandLink,
         ) -> AsyncIterator[ProvisionedAgent]:
             try:
                 yield provisioned

@@ -6,11 +6,12 @@ import pytest
 
 from band.core.types import AdapterFeatures
 from band.runtime.sessionconfig import SessionConfig
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, not_applicable, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.timeouts import slow_turn_budget
 from tests.e2e.baseline.toolkit.activity import ActivityCapture
 from tests.e2e.baseline.toolkit.activitywork import ActivityWork, Operation
+from tests.e2e.baseline.toolkit.adapters import specs
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -21,10 +22,12 @@ BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=12)
 PROMPT = "For each request call the requested activity tool afresh, then report its complete opaque result using band_send_message. Earlier results cannot answer a new request."
 # NOOA reports its awaited interpreter phase around nested method execution.
 NATIVE_ACTIVITY_NAMES = {Adapter.NOOA: "execute_python"}
+TOOL_LOOP = tuple(spec.id for spec in specs(runs_tool_loop=True))
+NO_TOOL_LOOP = "no LLM tool loop for a custom ToolSpec"
 
 
 class TestActivityLifecycle:
-    @per_adapter(runs_tool_loop=True)
+    @per_adapter(exclude=not_applicable(TOOL_LOOP, NO_TOOL_LOOP))
     @pytest.mark.timeout(extra=BUDGET.extra_s)
     @pytest.mark.asyncio(loop_scope="session")
     async def test_old_room_cleanup_preserves_a_fresh_followup(
@@ -72,13 +75,8 @@ class TestActivityLifecycle:
                     mention_name=identity.name,
                 )
                 await work.entered(Operation.A)
-                await observed.detail(first, identity.id, detail, since=initial)
-                await observed.report(
-                    first,
-                    agent_id=identity.id,
-                    working=True,
-                    activity=detail,
-                    since=initial,
+                await observed.held(
+                    first, identity.id, detail, since=initial, entered=observed.cursor()
                 )
 
                 b_phase = observed.cursor()
@@ -89,13 +87,12 @@ class TestActivityLifecycle:
                     mention_name=identity.name,
                 )
                 await work.entered(Operation.B)
-                await observed.detail(second, identity.id, detail, since=b_phase)
-                await observed.report(
+                await observed.held(
                     second,
-                    agent_id=identity.id,
-                    working=True,
-                    activity=detail,
+                    identity.id,
+                    detail,
                     since=b_phase,
+                    entered=observed.cursor(),
                 )
 
                 a_finishing = observed.cursor()
@@ -103,10 +100,7 @@ class TestActivityLifecycle:
                 await work.settled(Operation.A)
                 replies = await left.wait_for_reply(a, identity.id)
                 replies.assert_contains_exact(work[Operation.A].result)
-                await observed.report(
-                    first, agent_id=identity.id, working=False, since=a_finishing
-                )
-                await observed.stopped(first, identity.id, since=a_finishing)
+                await observed.finished(first, identity.id, since=a_finishing)
 
                 c_phase, reply_phase = observed.cursor(), left.messages.snapshot()
                 c = await user_ops.send_message(
@@ -116,13 +110,8 @@ class TestActivityLifecycle:
                     mention_name=identity.name,
                 )
                 await work.entered(Operation.C)
-                await observed.detail(first, identity.id, detail, since=c_phase)
-                await observed.report(
-                    first,
-                    agent_id=identity.id,
-                    working=True,
-                    activity=detail,
-                    since=c_phase,
+                await observed.held(
+                    first, identity.id, detail, since=c_phase, entered=observed.cursor()
                 )
 
                 stopping = observed.cursor()
@@ -133,10 +122,7 @@ class TestActivityLifecycle:
                 work[Operation.B].release.set()
                 await work.settled(Operation.B)
                 await observed.control_finished(control)
-                await observed.report(
-                    second, agent_id=identity.id, working=False, since=stopping
-                )
-                await observed.stopped(second, identity.id, since=stopping)
+                await observed.finished(second, identity.id, since=stopping)
 
                 survival = observed.cursor()
                 await observed.report(
@@ -154,10 +140,7 @@ class TestActivityLifecycle:
                 replies.assert_contains_none(
                     [work[Operation.A].result, work[Operation.B].result]
                 )
-                await observed.report(
-                    first, agent_id=identity.id, working=False, since=c_finishing
-                )
-                await observed.stopped(first, identity.id, since=c_finishing)
+                await observed.finished(first, identity.id, since=c_finishing)
                 assert await left.tool_calls(sender_id=identity.id) == []
                 assert await right.tool_calls(sender_id=identity.id) == []
                 observed.assert_private(

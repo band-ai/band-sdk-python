@@ -143,6 +143,17 @@ class ExcludedAdapter:
             )
 
 
+def not_applicable(
+    selected: Collection[Adapter], reason: str
+) -> tuple[ExcludedAdapter, ...]:
+    """Every live adapter outside ``selected``, N/A for ``reason``.
+
+    Passed as ``@per_adapter(exclude=...)``, it leaves exactly ``selected`` to run
+    and gives every other registered adapter, including one added later, its row.
+    """
+    return tuple(ExcludedAdapter(spec.id, reason) for spec in specs(exclude=selected))
+
+
 @dataclass(frozen=True)
 class PerAdapter(MarkerPayload):
     """Per-cell construction steering for ``@per_adapter`` (carried on its marker).

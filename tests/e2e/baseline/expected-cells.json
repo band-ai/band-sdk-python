@@ -3823,12 +3823,60 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "no LLM tool loop for a custom ToolSpec"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
       ],
       "status": "pass",
       "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "codex",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "no LLM tool loop for a custom ToolSpec"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "no LLM tool loop for a custom ToolSpec"
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
@@ -3847,6 +3895,38 @@
       ],
       "status": "pass",
       "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "crewai_flow",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "no LLM tool loop for a custom ToolSpec"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "no LLM tool loop for a custom ToolSpec"
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
@@ -3877,12 +3957,76 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "letta",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "no LLM tool loop for a custom ToolSpec"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
       "adapter": "nooa",
       "lanes": [
         "nooa"
       ],
       "status": "pass",
       "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "omp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "no LLM tool loop for a custom ToolSpec"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "no LLM tool loop for a custom ToolSpec"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "opencode",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "no LLM tool loop for a custom ToolSpec"
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",

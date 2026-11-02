@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -16,7 +16,9 @@ from phoenix_channels_python_client.phx_messages import ChannelMessage
 
 from band.client.streaming import AgentControlPayload, ControlMode
 from band.client.streaming.client import ControlHook
+from band.platform import message_lifecycle
 from band.platform.link import BandLink
+from band.runtime.activity import TOOL_CALL
 from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
 
 
@@ -58,6 +60,8 @@ class RawActivity:
 
 
 T = TypeVar("T")
+
+DETAIL_DISABLED = "activity detail disabled in this process"
 
 
 class StopObservation:
@@ -176,7 +180,32 @@ class ActivityCapture:
         async with asyncio.timeout(self.deadline_s):
             outcome = await asyncio.shield(record.outcome)
         assert outcome == ReportOutcome(accepted=True, stopped=False), (record, outcome)
+        # The record holds the detail the SDK meant to send; a latched rejection
+        # strips it from the wire while the report is still accepted.
+        assert activity is None or message_lifecycle.activity_support.supported, (
+            DETAIL_DISABLED
+        )
         return record
+
+    async def held(
+        self,
+        room_id: str,
+        agent_id: str,
+        activity: dict[str, Any],
+        *,
+        since: int,
+        entered: int,
+    ) -> ActivityReport:
+        """Detail pushed after ``since`` and re-reported after the work ``entered``."""
+        await self.detail(room_id, agent_id, activity, since=since)
+        return await self.report(
+            room_id, agent_id=agent_id, working=True, activity=activity, since=entered
+        )
+
+    async def finished(self, room_id: str, agent_id: str, *, since: int) -> RawActivity:
+        """An accepted idle report and the platform's stop, both after ``since``."""
+        await self.report(room_id, agent_id=agent_id, working=False, since=since)
+        return await self.stopped(room_id, agent_id, since=since)
 
     async def control(
         self, room_id: str, *, since: int, agent_id: str | None = None
@@ -244,16 +273,27 @@ class ActivityCapture:
             f"raw stop room={room_id}",
         )
 
-    def assert_private(self, *sentinels: str) -> None:
+    def assert_private(
+        self, *sentinels: str, tool_names: Collection[str] | None = None
+    ) -> None:
+        """No sentinel reached a push, details carry a kind and tool name only,
+        and every tool name is among ``tool_names`` when given."""
         payload = json.dumps([event.payload for event in self.raw])
         for sentinel in sentinels:
             assert sentinel and sentinel not in payload
-        for event in self.raw:
-            if (activity := event.payload.get("activity")) is not None:
-                expected = {"kind": activity["kind"]}
-                if activity["kind"] == "tool_call":
-                    expected["name"] = activity["name"]
-                assert activity == expected
+        details = [
+            activity
+            for event in self.raw
+            if (activity := event.payload.get("activity")) is not None
+        ]
+        for activity in details:
+            expected = {"kind": activity["kind"]}
+            if activity["kind"] == TOOL_CALL:
+                expected["name"] = activity["name"]
+            assert activity == expected
+        if tool_names is not None:
+            reported = {a["name"] for a in details if a["kind"] == TOOL_CALL}
+            assert reported <= set(tool_names), reported
 
 
 class ObservingBandLink(BandLink):

@@ -9,6 +9,8 @@ from typing import Any
 
 import band.adapters.opencode
 from band.core.simple_adapter import SimpleAdapter
+from band.core.types import AdapterFeatures, ApprovalMode
+from band.platform.link import BandLink
 from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.agents import Adapter
 from tests.e2e.baseline.requires import require_dep
@@ -75,10 +77,13 @@ async def approval_room(
     build: Callable[[BaselineSettings, AgentSetup], SimpleAdapter[Any]] | None = None,
     session_config: SessionConfig | None = None,
     observer: InvocationObserver | None = None,
+    link_factory: Callable[..., BandLink] = BandLink,
+    features: AdapterFeatures | None = None,
+    approval: ApprovalMode = "manual",
 ) -> AsyncIterator[tuple[ApprovalRoom, Path]]:
-    """Run the cell's agent in a fresh room and workdir: in manual approval mode,
-    or as ``build`` makes it, under ``session_config`` with its turns watched by
-    ``observer``."""
+    """Run the cell's agent in a fresh room and workdir: in ``approval`` mode
+    with ``features``, or as ``build`` makes it, under ``session_config`` over a
+    ``link_factory`` link, with its turns watched by ``observer``."""
     dialect = DIALECTS[Adapter(cell.adapter_id)]
     for dep in dialect.extra_deps:
         require_dep(dep, cell.settings)
@@ -93,7 +98,9 @@ async def approval_room(
     ):
         # Resolved: a symlinked temp root (macOS /var) reads as an outside dir.
         root = Path(workdir).resolve()
-        setup = AgentSetup(root, wait_timeout_s, approvers)
+        setup = AgentSetup(
+            root, wait_timeout_s, approvers, features=features, approval=approval
+        )
         adapter = (build or dialect.build)(cell.settings, setup)
         async with running_provisioned_agent(
             adapter,
@@ -101,6 +108,7 @@ async def approval_room(
             label=f"approval-{label}",
             session_config=session_config,
             observer=observer,
+            link_factory=link_factory,
         ) as agent:
             room_id = await cell.resources.provision_room(
                 title=f"e2e-approval-{cell.adapter_id}-{label}",

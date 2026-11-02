@@ -610,6 +610,8 @@ async def running_agent(
     adapter: SimpleAdapter[Any],
     settings: BaselineSettings,
     session_config: SessionConfig | None = None,
+    *,
+    link_factory: Callable[..., BandLink] = BandLink,
 ) -> AsyncGenerator[ProvisionedAgent, None]:
     """Run ``adapter`` as an *already-provisioned* identity for the block.
 
@@ -624,7 +626,11 @@ async def running_agent(
     exactly what a rejoin scenario asserts.
     """
     async with running_agent_with_handle(
-        provisioned, adapter, settings, session_config=session_config
+        provisioned,
+        adapter,
+        settings,
+        session_config=session_config,
+        link_factory=link_factory,
     ):
         yield provisioned
 
@@ -637,6 +643,7 @@ async def running_observed_agent(
     *,
     session_config: SessionConfig | None = None,
     observer: InvocationObserver | None = None,
+    link_factory: Callable[..., BandLink] = BandLink,
 ) -> AsyncGenerator[ProvisionedAgent, None]:
     """``running_agent`` that also has ``observer`` watch the adapter's turns.
 
@@ -646,7 +653,11 @@ async def running_observed_agent(
     if observer is not None:
         observer.watch(adapter)
     async with running_agent(
-        provisioned, adapter, settings, session_config=session_config
+        provisioned,
+        adapter,
+        settings,
+        session_config=session_config,
+        link_factory=link_factory,
     ):
         try:
             yield provisioned
@@ -663,6 +674,7 @@ async def running_provisioned_agent(
     label: str = "aut",
     session_config: SessionConfig | None = None,
     observer: InvocationObserver | None = None,
+    link_factory: Callable[..., BandLink] = BandLink,
 ) -> AsyncGenerator[ProvisionedAgent, None]:
     """Provision an agent and run ``adapter`` as it for the duration of the block.
 
@@ -674,8 +686,9 @@ async def running_provisioned_agent(
     lifecycle. (Matrix / group agents come from ``AdapterCell``, which stamps
     ``adapter_id`` itself; this bespoke primitive leaves it unset.)
 
-    ``session_config`` sets the agent's execution policy (e.g. batching) and an
-    ``observer`` watches its turns, as in :meth:`AdapterCell.run_as`.
+    ``session_config`` sets the agent's execution policy (e.g. batching), an
+    ``observer`` watches its turns and ``link_factory`` builds its platform link,
+    as in :meth:`AdapterCell.run_as`.
     """
     provisioned = await resources.provision_agent(label)
     async with running_observed_agent(
@@ -684,6 +697,7 @@ async def running_provisioned_agent(
         resources.settings,
         session_config=session_config,
         observer=observer,
+        link_factory=link_factory,
     ) as running:
         yield running
 
