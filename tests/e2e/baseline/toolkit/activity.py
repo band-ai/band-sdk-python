@@ -247,6 +247,16 @@ class ActivityCapture:
         await self.sent(room_id, agent_id=agent_id, working=False, since=since)
         return await self.stopped(room_id, agent_id, since=since)
 
+    async def cleared(
+        self, room_id: str, agent_id: str, *, since: int
+    ) -> ActivityReport:
+        """Await the SDK's idle report after ``since``, without the platform's stop.
+
+        For a run a room message reached mid-turn: the platform can then drop
+        its pushes for the rest of that run (PLT-1731).
+        """
+        return await self.sent(room_id, agent_id=agent_id, working=False, since=since)
+
     async def control(
         self, room_id: str, *, since: int, agent_id: str | None = None
     ) -> ControlExecution:

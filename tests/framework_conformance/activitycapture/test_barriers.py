@@ -183,3 +183,17 @@ class TestActivityBarriers:
             assert not await link.report_activity(ROOM, False)
             await topics.emit(ROOM, ActivityPush.STOPPED, {"agent_id": AGENT})
             await capture.finished(ROOM, AGENT, since=since)
+
+    async def test_cleared_needs_only_the_idle_report_from_its_phase(
+        self,
+        observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
+    ) -> None:
+        capture, link, _ = observed_link
+        capture.deadline_s = 1
+        await link.report_activity(ROOM, False)
+        since = capture.cursor()
+        with MISSING_REPORT:
+            await capture.cleared(ROOM, AGENT, since=since)
+        await link.report_activity(ROOM, False)
+        record = await capture.cleared(ROOM, AGENT, since=since)
+        assert record.sequence > since

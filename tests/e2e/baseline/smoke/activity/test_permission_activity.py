@@ -95,5 +95,6 @@ class TestPermissionActivity:
                     allowed_followup_commands=readback_commands(target),
                 )
                 assert written_lines(target) == [marker]
-                await observed.finished(room.room_id, agent.id, since=finishing)
+                # The approval reply reached the agent mid-run (PLT-1731).
+                await observed.cleared(room.room_id, agent.id, since=finishing)
                 observed.assert_private(marker, done)
