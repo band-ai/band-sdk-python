@@ -16,12 +16,14 @@ from tests.e2e.baseline.smoke.samples.approvals import (
     marker_command,
     written_lines,
 )
-from tests.hostshells import HOST_SHELLS, host_shell_id, shell_argv
+from tests.hostshells import (
+    HOST_SHELLS,
+    SHELL_PROCESS_TIMEOUT_SECONDS,
+    host_shell_id,
+    shell_argv,
+)
 
 logger = logging.getLogger(__name__)
-
-# This bounds the whole shell lifetime, including initialization on a fresh runner.
-SHELL_PROCESS_TIMEOUT_SECONDS = 30
 
 
 class TestHostShellCommands:

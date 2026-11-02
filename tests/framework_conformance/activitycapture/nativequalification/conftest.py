@@ -10,11 +10,14 @@ from tests.e2e.baseline.toolkit.resultexchange import ResultExchange
 from tests.framework_conformance.activitycapture.nativequalification.kit import (
     NativeCommands,
 )
+from tests.hostshells import SHELL_PROCESS_TIMEOUT_SECONDS
 
 
 @pytest.fixture
 async def exchange() -> AsyncIterator[ResultExchange]:
-    async with ResultExchange(deadline_s=10).running() as running:
+    async with ResultExchange(
+        deadline_s=SHELL_PROCESS_TIMEOUT_SECONDS
+    ).running() as running:
         yield running
 
 

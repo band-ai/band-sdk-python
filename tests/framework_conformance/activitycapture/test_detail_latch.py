@@ -73,11 +73,11 @@ class TestDetailLatch:
         sending = asyncio.create_task(
             link.report_activity(ROOM, True, activity=AgentActivityDetail(**DETAIL))
         )
+        matching = asyncio.create_task(
+            capture.report(ROOM, working=True, activity=DETAIL)
+        )
         try:
             await peer.entered.wait()
-            matching = asyncio.create_task(
-                capture.report(ROOM, working=True, activity=DETAIL)
-            )
             peer.release.set()
             assert await sending
             with pytest.raises(AssertionError, match=DETAIL_DISABLED):
@@ -85,4 +85,5 @@ class TestDetailLatch:
             assert peer.reports == [DETAIL_BODY, BOOLEAN_BODY]
         finally:
             peer.release.set()
-            await asyncio.gather(sending, return_exceptions=True)
+            matching.cancel()
+            await asyncio.gather(sending, matching, return_exceptions=True)

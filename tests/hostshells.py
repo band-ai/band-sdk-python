@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import sys
 
+# Bounds a whole shell lifetime, including initialization on a fresh runner.
+SHELL_PROCESS_TIMEOUT_SECONDS = 30
+
 HOST_SHELLS: tuple[str | None, ...] = (
     (None, "pwsh", "powershell") if sys.platform == "win32" else (None,)
 )

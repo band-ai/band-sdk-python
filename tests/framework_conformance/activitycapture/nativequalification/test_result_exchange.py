@@ -12,7 +12,11 @@ from tests.e2e.baseline.toolkit.resultexchange import ExchangeOperation, ResultE
 from tests.framework_conformance.activitycapture.nativequalification.kit import (
     NativeCommands,
 )
-from tests.hostshells import HOST_SHELLS, host_shell_id
+from tests.hostshells import (
+    HOST_SHELLS,
+    SHELL_PROCESS_TIMEOUT_SECONDS,
+    host_shell_id,
+)
 
 COMMAND_LINE_ENDING = os.linesep.encode("ascii")
 
@@ -44,6 +48,7 @@ class TestResultExchange:
             b"",
         )
 
+    @pytest.mark.timeout(3 * SHELL_PROCESS_TIMEOUT_SECONDS)
     @pytest.mark.parametrize("shell", HOST_SHELLS, ids=host_shell_id)
     @pytest.mark.asyncio(loop_scope="session")
     async def test_agent_command_line_runs_unchanged_in_each_host_shell(
