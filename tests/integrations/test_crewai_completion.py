@@ -140,12 +140,11 @@ async def test_blank_completions_exhaust_with_one_missing_reply(
             True,
             [ANSWER],
         ),
-        (BandTool.NO_REPLY, {"reason": "FYI"}, True, []),
         (BandTool.CREATE_CHATROOM, {}, True, []),
         (BandTool.GET_PARTICIPANTS, {}, False, []),
         (BandTool.SEND_MESSAGE, {"content": ANSWER, "mentions": []}, False, []),
     ],
-    ids=["reply", "decline", "action", "read-only", "failed-send"],
+    ids=["reply", "action", "read-only", "failed-send"],
 )
 async def test_tool_activity_prevents_blank_completion_retry(
     adapter: CrewAIAdapter,

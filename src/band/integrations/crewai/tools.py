@@ -179,6 +179,10 @@ def _platform_tool(
         description: str = get_tool_description(spec.name)
         args_schema: type[BaseModel] = spec.args_schema
         cache_function: Any = _no_cache
+        # An ending tool's result is CrewAI's final answer. Otherwise CrewAI asks
+        # for another step after a decline, and a model with nothing left to say
+        # repeats it until CrewAI's repeat guard fails the run.
+        result_as_answer: bool = spec.ends_turn
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             return _execute_tool(
