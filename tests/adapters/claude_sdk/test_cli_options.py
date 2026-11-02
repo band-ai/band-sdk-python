@@ -182,13 +182,12 @@ class TestCliOptions:
                     cli=ClaudeCLIOptions(settings=json.dumps(reopened))
                 )
             )
+        startup_logs = [(r.levelno, r.args) for r in caplog.records]
 
         options = await _cli_options(room)
 
         assert _cli_settings(options) == {**HOST_SETTINGS, **ISOLATION_SETTINGS}
-        assert [(r.levelno, r.args) for r in caplog.records] == [
-            (logging.WARNING, (["crossSessionInbound"],))
-        ]
+        assert startup_logs == [(logging.WARNING, (["crossSessionInbound"],))]
 
     @pytest.mark.parametrize(
         ("content", "reason"),
