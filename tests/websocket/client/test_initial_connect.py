@@ -10,8 +10,12 @@ import pytest
 from band_sdk_core import DeadReason
 
 from band.client.streaming import WebSocketClient, WebSocketUpgradeError
-from band.client.streaming.disconnect import http_refusal_reason
+from band.client.streaming.disconnect import (
+    WebSocketDisconnectReason,
+    http_refusal_reason,
+)
 from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
+from band.client.streaming.session_decider import VERDICT_LOG
 from band.client.streaming.session_decider import logger as decider_logger
 from band.core.types import ConflictPolicy
 from band.testing import fake_phoenix_server
@@ -123,16 +127,32 @@ class TestInitialConnect:
             ):
                 await client.__aenter__()
 
+        verdict = WebSocketDisconnectReason(
+            reason=reason,
+            message=refused.value.message,
+            retryable=False,
+            correlation_id=refused.value.request_id,
+            dead_reason=DeadReason.Classified,
+        )
         assert (refused.value.status_code, refused.value.code) == (status, code)
-        assert client.last_disconnect_reason is not None
-        assert client.last_disconnect_reason.reason == reason
+        assert client.last_disconnect_reason == verdict
         assert len(server.upgrades) == 1
         # The boot's verdict is logged once, and nothing was retried.
         assert [
-            record.args
+            (record.msg, record.args)
             for record in caplog.records
             if record.name == decider_logger.name
-        ] == [(reason, DeadReason.Classified, refused.value.message)]
+        ] == [
+            (
+                VERDICT_LOG,
+                (
+                    reason,
+                    DeadReason.Classified,
+                    verdict.correlation_id,
+                    verdict.message,
+                ),
+            )
+        ]
 
     async def test_the_conflict_policy_rides_every_upgrade_until_one_is_accepted(
         self,
@@ -159,16 +179,3 @@ class TestInitialConnect:
             ConflictPolicy.REJECT,
             None,
         ]
-
-    async def test_a_reused_client_enters_a_fresh_session(self) -> None:
-        async with fake_phoenix_server() as server:
-            client = WebSocketClient(server.url, "test-key", AGENT_ID)
-            with (
-                server.refusing_upgrades(HTTPStatus.FORBIDDEN),
-                pytest.raises(WebSocketUpgradeError),
-            ):
-                await client.__aenter__()
-            async with client:
-                assert client.last_disconnect_reason is None
-            async with client:
-                assert server.connection_count == 2

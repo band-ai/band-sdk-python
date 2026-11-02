@@ -18,7 +18,9 @@ from websockets.http11 import Response
 
 from band.client.streaming import WebSocketClient
 from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
+from band.client.streaming.session_decider import VERDICT_LOG
 from band.client.streaming.session_decider import logger as decider_logger
+from tests.toolkit.timecontrol import ControlledClock
 
 VALID_MESSAGE_CREATED_PAYLOAD: dict = {
     "id": "msg-123",
@@ -159,11 +161,26 @@ class RetryRecorder(logging.Handler):
         self.unexpected: list[str] = []
 
     def emit(self, record: logging.LogRecord) -> None:
+        if record.msg == VERDICT_LOG:
+            return
         match record.args:
             case (_, float(delay_s)):
                 self.delays.put_nowait(delay_s)
             case _:
                 self.unexpected.append(record.getMessage())
+
+
+def expire_after(clock: ControlledClock, deadline: float, hops: int) -> None:
+    """Move the clock to ``deadline`` ``hops`` loop iterations from now."""
+    loop = clock.loop
+
+    def hop(left: int) -> None:
+        if left:
+            loop.call_soon(hop, left - 1)
+        else:
+            clock.advance(deadline - loop.time())
+
+    hop(hops)
 
 
 @contextmanager

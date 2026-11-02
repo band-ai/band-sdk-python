@@ -117,7 +117,12 @@ class ParkedSupersede:
 
 def park_supersedes(link: BandLink) -> ParkedSupersede:
     """Hold each supersede push until ``released``. Arm before ``connect()``,
-    which binds the handler."""
+    which binds the handler.
+
+    Wraps the handler because nothing public reaches the one window this
+    holds open: phoenix has already dispatched the push but its callback task
+    has not run when ``disconnect()`` begins; after that, phoenix drops pushes.
+    """
     parked = ParkedSupersede()
     on_supersede = link._on_supersede
 

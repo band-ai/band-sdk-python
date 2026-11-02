@@ -3,12 +3,14 @@ verdict after the first accepted socket is reported."""
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import ANY
 
 import pytest
 from band_sdk_core import DeadReason
 
-from band.client.streaming.disconnect import TerminalReason
+from band.client.streaming.disconnect import TerminalReason, WebSocketDisconnectReason
+from band.client.streaming.session_decider import logger as decider_logger
 from tests.websocket.client.sessiondecider.kit import (
     REDACTED,
     SECRET,
@@ -62,13 +64,22 @@ class TestConnectFailures:
         self, probe: DeciderProbe, status: int
     ) -> None:
         probe.attempt()
+        failure = refusal(
+            status, code="no", headers={"Retry-After": str(RETRY_AFTER_S)}
+        )
 
-        decision = verdict(probe.failed(refusal(status, code="no")))
+        decision = verdict(probe.failed(failure))
 
-        terminal = probe.decider.terminal
-        assert terminal is not None
-        assert decision == (False, 0.0, terminal.message)
-        assert (terminal.reason, terminal.dead_reason) == ("no", DeadReason.Classified)
+        # The body carries the kit's "refused <code>" message and "req-<status>" id.
+        assert probe.decider.terminal == WebSocketDisconnectReason(
+            reason="no",
+            message="refused no",
+            retryable=False,
+            retry_after=RETRY_AFTER_S,
+            correlation_id=f"req-{status}",
+            dead_reason=DeadReason.Classified,
+        )
+        assert decision == (False, 0.0, "refused no")
         assert probe.decider.terminal_refusal is not None
         assert probe.decider.terminal_refusal.status_code == status
         assert probe.reported == []
@@ -108,3 +119,17 @@ class TestConnectFailures:
         assert probe.decider.terminal is not None
         assert probe.decider.terminal.reason == TerminalReason.SOCKET_CLOSED
         assert probe.decider.terminal_refusal is None
+
+    async def test_a_failed_connect_logs_its_redacted_cause(
+        self, probe: DeciderProbe, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        probe.attempt()
+
+        with caplog.at_level(logging.WARNING, logger=decider_logger.name):
+            probe.failed(OSError(f"connect to {SECRET} refused"))
+
+        [record] = caplog.records
+        assert record.args == (
+            f"WebSocket connect failed (OSError: connect to {REDACTED} refused)",
+            ANY,
+        )

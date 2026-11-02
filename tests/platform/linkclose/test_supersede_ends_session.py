@@ -12,6 +12,7 @@ from websockets.frames import CloseCode
 
 from band.client.streaming.client import WireEvent
 from band.platform.event import ReconnectedEvent, WebSocketDisconnectedEvent
+from band.platform.link import logger as link_logger
 from band.testing import fake_phoenix_server
 from tests.conftest import RETRYABLE_SUPERSEDE, SUPERSEDED, TERMINAL_SUPERSEDE
 from tests.platform.linkclose.kit import (
@@ -67,7 +68,9 @@ class TestSupersedeEndsSession:
 
             assert server.connection_count == 1
 
-    async def test_a_new_session_drops_the_ended_one_s_unread_event(self) -> None:
+    async def test_a_new_session_drops_the_ended_one_s_unread_event(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         async with fake_phoenix_server() as server:
             link = make_link(server.url)
             await link.connect()
@@ -78,9 +81,16 @@ class TestSupersedeEndsSession:
             )
             await link.disconnect()
 
-            async with connected(link):
-                assert drain_events(link) == []
-                assert link.is_connected
+            with caplog.at_level(logging.INFO, logger=link_logger.name):
+                async with connected(link):
+                    assert drain_events(link) == []
+                    assert link.is_connected
+
+            assert [
+                record.args
+                for record in caplog.records
+                if record.msg.startswith("Dropped %d unread")
+            ] == [(1,)]
 
     async def test_a_supersede_handled_during_disconnect_reports_nothing(
         self,

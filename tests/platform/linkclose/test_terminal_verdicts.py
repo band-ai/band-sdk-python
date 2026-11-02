@@ -1,18 +1,24 @@
 """A live session the platform ends for good (close 1008, rapid disconnects)
-reports exactly one disconnect event with its reason, and ``run_forever``
-raises."""
+reports exactly one disconnect event with its reason and ``run_forever``
+raises; disconnecting after any verdict sends nothing on the ending socket."""
 
 from __future__ import annotations
 
+import asyncio
+import logging
+
 import pytest
-from band_sdk_core import DeadReason
 from phoenix_channels_python_client.exceptions import PHXConnectionError
+from phoenix_channels_python_client.phx_messages import PHXEvent
 from websockets.frames import CloseCode
 
-from band.client.streaming.disconnect import TerminalReason
+from band.client.streaming.client import WireEvent
 from band.platform.event import ReconnectedEvent, WebSocketDisconnectedEvent
 from band.testing import fake_phoenix_server
+from tests.conftest import CLOSED_1008, KEPT_DROPPING, SUPERSEDED, TERMINAL_SUPERSEDE
 from tests.platform.linkclose.kit import (
+    CONTROL_TOPIC,
+    HANG_GUARD_S,
     connected,
     drain_events,
     handle_supersede,
@@ -28,6 +34,8 @@ from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
 from tests.websocket.client.kit import observe_retries
 
+ROOM_ID = "room-1"
+
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
 class TestTerminalVerdicts:
@@ -42,13 +50,9 @@ class TestTerminalVerdicts:
                 await clock.elapse(BEYOND_ANY_RETRY_S)
 
                 assert drain_events(link) == [
-                    WebSocketDisconnectedEvent(payload=link.last_disconnect_reason)
+                    WebSocketDisconnectedEvent(payload=CLOSED_1008)
                 ]
-                assert link.last_disconnect_reason is not None
-                assert (
-                    link.last_disconnect_reason.reason,
-                    link.last_disconnect_reason.dead_reason,
-                ) == (TerminalReason.SOCKET_CLOSED, DeadReason.Classified)
+                assert link.last_disconnect_reason == CLOSED_1008
                 assert not link.is_connected
                 assert len(server.upgrades) == 1
 
@@ -61,14 +65,13 @@ class TestTerminalVerdicts:
                 await server.close_connection(code=CloseCode.POLICY_VIOLATION)
                 with pytest.raises(PHXConnectionError):
                     await run
-                verdict = link.last_disconnect_reason
 
                 await handle_supersede(link)
 
                 assert drain_events(link) == [
-                    WebSocketDisconnectedEvent(payload=verdict)
+                    WebSocketDisconnectedEvent(payload=CLOSED_1008)
                 ]
-                assert link.last_disconnect_reason == verdict
+                assert link.last_disconnect_reason == CLOSED_1008
                 with pytest.raises(PHXConnectionError, match="1008"):
                     await link.run_forever(install_signal_handlers=False)
 
@@ -88,13 +91,34 @@ class TestTerminalVerdicts:
                         await run
                     await clock.elapse(BEYOND_ANY_RETRY_S)
 
-                    assert link.last_disconnect_reason is not None
                     assert drain_events(link) == [
                         *[ReconnectedEvent()] * (LOW_RAPID_THRESHOLD - 1),
-                        WebSocketDisconnectedEvent(payload=link.last_disconnect_reason),
+                        WebSocketDisconnectedEvent(payload=KEPT_DROPPING),
                     ]
-                    assert (
-                        link.last_disconnect_reason.reason,
-                        link.last_disconnect_reason.dead_reason,
-                    ) == (TerminalReason.RAPID_DISCONNECT, DeadReason.RapidDisconnect)
+                    assert link.last_disconnect_reason == KEPT_DROPPING
                     assert server.connection_count == LOW_RAPID_THRESHOLD
+
+    async def test_disconnecting_right_after_a_verdict_skips_the_control_leave(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url, session_policy=session_policy())
+            await link.connect()
+            await link.subscribe_room(ROOM_ID)
+            await server.push(CONTROL_TOPIC, WireEvent.SUPERSEDE, TERMINAL_SUPERSEDE)
+            event = await asyncio.wait_for(anext(link), HANG_GUARD_S)
+
+            # The transport is still shutting down when the host disconnects.
+            caplog.clear()
+            with caplog.at_level(logging.WARNING):
+                await asyncio.wait_for(link.disconnect(), HANG_GUARD_S)
+
+            assert event == WebSocketDisconnectedEvent(payload=SUPERSEDED)
+            assert [
+                message.topic
+                for message in server.received
+                if message.event == PHXEvent.leave
+            ] == []
+            assert caplog.records == []
+            assert not link.is_room_subscribed(ROOM_ID)
+            assert drain_events(link) == []

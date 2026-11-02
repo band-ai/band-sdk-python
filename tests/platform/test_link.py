@@ -8,8 +8,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, create_autospec, patch
 import pytest
 from band_rest.core.api_error import ApiError
 from band_rest.types.chat_message_metadata import ChatMessageMetadata
-from band_sdk_core import AgentTopicStatus, DeadReason, chat_room_topic
-from phoenix_channels_python_client.exceptions import PHXConnectionError
+from band_sdk_core import AgentTopicStatus, chat_room_topic
 
 from band.client.streaming import (
     MessageCreatedPayload,
@@ -19,11 +18,8 @@ from band.client.streaming import (
     RoomAddedPayload,
     RoomDeletedPayload,
     RoomRemovedPayload,
-    SupersedePayload,
     WebSocketClient,
-    WebSocketDisconnectReason,
 )
-from band.client.streaming.disconnect import TerminalReason
 from band.core.types import ConflictPolicy
 from band.platform.event import (
     MessageEvent,
@@ -34,7 +30,7 @@ from band.platform.event import (
     RoomRemovedEvent,
 )
 from band.platform.link import BandLink
-from tests.conftest import TERMINAL_SUPERSEDE, make_message_event
+from tests.conftest import make_message_event
 from tests.platform.conftest import (
     AllTopicsExcept,
     AllTopicsJoined,
@@ -179,37 +175,6 @@ class TestBandLinkConnection:
         assert link.is_connected is True
 
     @patch("band.platform.link.WebSocketClient")
-    async def test_connect_propagates_terminal_reason_from_failed_initial_connect(
-        self, mock_ws_class, mock_ws_client
-    ):
-        """A terminal boot verdict sets last_disconnect_reason even though
-        self._ws is never assigned: the real WebSocketClient records it on its
-        session before raising, and connect() reads it off the local `ws`."""
-        mock_ws_class.return_value = mock_ws_client
-        reason = WebSocketDisconnectReason(
-            reason=TerminalReason.CONNECTION_FAILED,
-            message="temporary network failure",
-            retryable=False,
-            dead_reason=DeadReason.RapidDisconnect,
-        )
-
-        def fail_after_recording_terminal_disconnect():
-            mock_ws_client.last_disconnect_reason = reason
-            raise PHXConnectionError("temporary network failure")
-
-        mock_ws_client.__aenter__.side_effect = fail_after_recording_terminal_disconnect
-
-        link = BandLink(agent_id="agent-123", api_key="test-key")
-
-        with pytest.raises(PHXConnectionError):
-            await link.connect()
-
-        assert link._ws is None
-        assert link.is_connected is False
-        assert link.last_disconnect_reason == reason
-        mock_ws_client.__aexit__.assert_called_once()
-
-    @patch("band.platform.link.WebSocketClient")
     async def test_disconnect_exits_websocket_context(
         self, mock_ws_class, mock_ws_client
     ):
@@ -295,28 +260,6 @@ class TestBandLinkConnection:
 
         with pytest.raises(RuntimeError, match="Not connected"):
             await link.run_forever()
-
-    async def test_disconnect_after_a_terminal_verdict_skips_the_control_leave(
-        self, mock_ws_client
-    ):
-        """After a terminal verdict the transport is stopping, so disconnect()
-        ends the session and closes the client without leaving agent_control,
-        and still tears the room state down."""
-        link = BandLink(agent_id="agent-123", api_key="test-key")
-        link._ws = mock_ws_client
-        link._is_connected = True
-        await link.subscribe_room("room-1")
-        reason = SupersedePayload(**TERMINAL_SUPERSEDE).to_disconnect_reason()
-        link._on_terminal(reason)
-
-        await link.disconnect()
-
-        mock_ws_client.leave_agent_control_channel.assert_not_awaited()
-        mock_ws_client.__aexit__.assert_called_once_with(None, None, None)
-        assert link.is_connected is False
-        assert link._ws is None
-        assert link.is_room_subscribed("room-1") is False
-        assert link.last_disconnect_reason == reason
 
     async def test_close_without_supersede_leaves_disconnect_reason_empty(self):
         """An empty Phoenix close should not invent a terminal reason."""

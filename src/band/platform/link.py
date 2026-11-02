@@ -404,12 +404,6 @@ class BandLink:
         """Report a session that ended for good: once, with its reason."""
         self._last_disconnect_reason = reason
         self._is_connected = False
-        logger.warning(
-            "WebSocket session ended: reason=%s retryable=%s correlation_id=%s",
-            reason.reason,
-            reason.retryable,
-            reason.correlation_id,
-        )
         self._queue_event(WebSocketDisconnectedEvent(payload=reason))
 
     async def _on_control(self, payload: AgentControlPayload) -> None:
@@ -490,8 +484,11 @@ class BandLink:
 
     def _drop_queued_events(self) -> None:
         """Forget events a previous connection left unread."""
+        dropped = self._event_queue.qsize()
         while not self._event_queue.empty():
             self._event_queue.get_nowait()
+        if dropped:
+            logger.info("Dropped %d unread event(s) from the previous session", dropped)
 
     def queue_event(self, event: PlatformEvent) -> None:
         """Queue a synthetic event for processing (public API)."""

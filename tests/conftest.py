@@ -62,6 +62,7 @@ from band.client.streaming import (
     RoomRemovedPayload,
     WebSocketDisconnectReason,
 )
+from band.client.streaming.disconnect import TerminalReason
 from band.core.settlement import SettlementResult
 from band.platform.event import (
     ContactAddedEvent,
@@ -407,6 +408,20 @@ RETRYABLE_SUPERSEDE: dict[str, Any] = {
 # The reason a session ended by ``TERMINAL_SUPERSEDE`` records.
 SUPERSEDED = WebSocketDisconnectReason(
     **TERMINAL_SUPERSEDE, dead_reason=DeadReason.Classified
+)
+
+# The reasons the session records when it ends a live socket on its own.
+CLOSED_1008 = WebSocketDisconnectReason(
+    reason=TerminalReason.SOCKET_CLOSED,
+    message="WebSocket closed with code 1008",
+    retryable=False,
+    dead_reason=DeadReason.Classified,
+)
+KEPT_DROPPING = WebSocketDisconnectReason(
+    reason=TerminalReason.RAPID_DISCONNECT,
+    message="WebSocket kept disconnecting right after connecting",
+    retryable=False,
+    dead_reason=DeadReason.RapidDisconnect,
 )
 
 

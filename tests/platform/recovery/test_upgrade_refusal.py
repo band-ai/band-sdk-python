@@ -6,10 +6,14 @@ from __future__ import annotations
 from http import HTTPStatus
 
 import pytest
+from band_sdk_core import DeadReason
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 
 from band.client.streaming import WebSocketUpgradeError
-from band.client.streaming.disconnect import http_refusal_reason
+from band.client.streaming.disconnect import (
+    WebSocketDisconnectReason,
+    http_refusal_reason,
+)
 from band.platform.event import WebSocketDisconnectedEvent
 from band.testing import fake_phoenix_server
 from tests.platform.linkclose.kit import connected, drain_events, make_link
@@ -20,7 +24,13 @@ from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
 from tests.websocket.client.kit import observe_retries
 
-FORBIDDEN_REASON = http_refusal_reason(HTTPStatus.FORBIDDEN)
+# A bare 403 carries no platform body, so the reason is named by its status.
+FORBIDDEN = WebSocketDisconnectReason(
+    reason=http_refusal_reason(HTTPStatus.FORBIDDEN),
+    message=f"WebSocket upgrade failed with HTTP {HTTPStatus.FORBIDDEN.value}",
+    retryable=False,
+    dead_reason=DeadReason.Classified,
+)
 
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
@@ -36,8 +46,7 @@ class TestUpgradeRefusal:
             await clock.elapse(BEYOND_ANY_RETRY_S)
 
             assert refused.value.status_code == HTTPStatus.FORBIDDEN
-            assert link.last_disconnect_reason is not None
-            assert link.last_disconnect_reason.reason == FORBIDDEN_REASON
+            assert link.last_disconnect_reason == FORBIDDEN
             assert not link.is_connected
             assert drain_events(link) == []
             assert len(server.upgrades) == 1
@@ -67,10 +76,9 @@ class TestUpgradeRefusal:
                     await link.run_forever(install_signal_handlers=False)
                 await clock.elapse(BEYOND_ANY_RETRY_S)
 
-                assert link.last_disconnect_reason is not None
-                assert link.last_disconnect_reason.reason == FORBIDDEN_REASON
+                assert link.last_disconnect_reason == FORBIDDEN
                 assert drain_events(link) == [
-                    WebSocketDisconnectedEvent(payload=link.last_disconnect_reason)
+                    WebSocketDisconnectedEvent(payload=FORBIDDEN)
                 ]
                 assert not link.is_connected
                 assert (server.connection_count, len(server.upgrades)) == (1, 2)

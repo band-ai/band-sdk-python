@@ -12,7 +12,8 @@ from band.client.streaming.errors import WebSocketUpgradeError
 
 @dataclass(frozen=True)
 class WebSocketDisconnectReason:
-    """Terminal WebSocket disconnect reason reported by the platform."""
+    """Why a WebSocket session ended for good: a platform payload's reason, or
+    a ``TerminalReason`` for a verdict the session reached on its own."""
 
     reason: str
     message: str

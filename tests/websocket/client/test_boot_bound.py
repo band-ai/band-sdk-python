@@ -11,16 +11,20 @@ from typing import Any
 
 import pytest
 
-from band.client.streaming import WebSocketClient
+from band.client.streaming import WebSocketClient, WebSocketUpgradeError
 from band.client.streaming.client import DEFAULT_CONNECT_TIMEOUT_S
 from band.platform.link import BandLink
 from band.testing import fake_phoenix_server
 from tests.platform.linkclose.kit import AGENT_ID
-from tests.sessionpolicies import BEYOND_ANY_RETRY_S, DEFAULT_POLICY_FIELDS
+from tests.sessionpolicies import (
+    BEYOND_ANY_RETRY_S,
+    DEFAULT_POLICY_FIELDS,
+    session_policy,
+)
 from tests.toolkit.clock import binary_clock_resolution
-from tests.toolkit.tasks import background
+from tests.toolkit.tasks import background, tasks_started_since
 from tests.toolkit.timecontrol import controlled_clock
-from tests.websocket.client.kit import observe_retries
+from tests.websocket.client.kit import expire_after, observe_retries
 
 Boot = Callable[
     [str, float | None],
@@ -31,7 +35,13 @@ Boot = Callable[
 def enter_client(
     url: str, connect_timeout: float | None
 ) -> tuple[WebSocketClient, Coroutine[Any, Any, object]]:
-    client = WebSocketClient(url, "test-key", AGENT_ID, connect_timeout=connect_timeout)
+    client = WebSocketClient(
+        url,
+        "test-key",
+        AGENT_ID,
+        session_policy=session_policy(),
+        connect_timeout=connect_timeout,
+    )
     return client, client.__aenter__()
 
 
@@ -43,10 +53,14 @@ def connect_link(
         api_key="test-key",
         ws_url=url,
         rest_url="https://test.invalid",
+        session_policy=session_policy(),
         connect_timeout=connect_timeout,
     )
     return link, link.connect()
 
+
+# Enough loop iterations to span a refusal's arrival through its verdict.
+RACE_HOPS = 16
 
 BOOTS = pytest.mark.parametrize(
     "boot",
@@ -92,7 +106,7 @@ class TestBootBound:
                     assert attempts > DEFAULT_POLICY_FIELDS["rapid_threshold"]
                     assert len(server.upgrades) == attempts
                     assert subject.last_disconnect_reason is None
-            assert asyncio.all_tasks() == before
+            assert tasks_started_since(before) == set()
 
     @BOOTS
     async def test_an_unbounded_boot_retries_until_the_caller_cancels(
@@ -120,25 +134,58 @@ class TestBootBound:
 
                     assert len(server.upgrades) == attempts
                     assert subject.last_disconnect_reason is None
-            assert asyncio.all_tasks() == before
+            assert tasks_started_since(before) == set()
 
     @BOOTS
     async def test_a_cancel_as_the_bound_expires_stays_a_cancellation(
         self, boot: Boot
     ) -> None:
         loop = asyncio.get_running_loop()
+        async with controlled_clock() as clock:
+            before = asyncio.all_tasks()
+            async with fake_phoenix_server() as server:
+                start = loop.time()
+                subject, entry = boot(server.url, DEFAULT_CONNECT_TIMEOUT_S)
+                with (
+                    observe_retries() as retries,
+                    server.refusing_upgrades(HTTPStatus.SERVICE_UNAVAILABLE),
+                ):
+                    async with background(entry) as entering:
+                        loop.call_at(start + DEFAULT_CONNECT_TIMEOUT_S, entering.cancel)
+                        while loop.time() - start < DEFAULT_CONNECT_TIMEOUT_S:
+                            await clock.elapse(await retries.get())
+                        with pytest.raises(asyncio.CancelledError):
+                            await entering
+                    attempts = len(server.upgrades)
+                    await clock.elapse(BEYOND_ANY_RETRY_S)
+
+                    assert len(server.upgrades) == attempts
+                    assert subject.last_disconnect_reason is None
+            assert tasks_started_since(before) == set()
+
+    # Sweeps the bound across the loop iterations in which the refusal turns
+    # into the session's verdict; whichever lands first must be what is raised.
+    @BOOTS
+    @pytest.mark.parametrize("hops", range(RACE_HOPS))
+    async def test_a_refusal_verdict_reached_as_the_bound_expires_wins(
+        self, boot: Boot, hops: int
+    ) -> None:
+        loop = asyncio.get_running_loop()
         async with controlled_clock() as clock, fake_phoenix_server() as server:
-            start = loop.time()
+            deadline = loop.time() + DEFAULT_CONNECT_TIMEOUT_S
             subject, entry = boot(server.url, DEFAULT_CONNECT_TIMEOUT_S)
             with (
-                observe_retries() as retries,
-                server.refusing_upgrades(HTTPStatus.SERVICE_UNAVAILABLE),
+                server.refusing_upgrades(HTTPStatus.FORBIDDEN),
+                server.holding_upgrades() as handshake,
             ):
                 async with background(entry) as entering:
-                    loop.call_at(start + DEFAULT_CONNECT_TIMEOUT_S, entering.cancel)
-                    while loop.time() - start < DEFAULT_CONNECT_TIMEOUT_S:
-                        await clock.elapse(await retries.get())
-                    with pytest.raises(asyncio.CancelledError):
-                        await entering
+                    await handshake.arrived.wait()
+                    handshake.release()
+                    expire_after(clock, deadline, hops)
+                    [outcome] = await asyncio.gather(entering, return_exceptions=True)
 
-            assert subject.last_disconnect_reason is None
+        verdict_reached = subject.last_disconnect_reason is not None
+        assert (type(outcome), verdict_reached) in {
+            (WebSocketUpgradeError, True),
+            (TimeoutError, False),
+        }

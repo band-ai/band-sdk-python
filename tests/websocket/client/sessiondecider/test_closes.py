@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import ANY
 
 import pytest
-from band_sdk_core import DeadReason
 
-from band.client.streaming.disconnect import TerminalReason
+from band.client.streaming.session_decider import VERDICT_LOG
+from band.client.streaming.session_decider import logger as decider_logger
+from tests.conftest import CLOSED_1008, KEPT_DROPPING
 from tests.sessionpolicies import LOW_RAPID_THRESHOLD, session_policy
 from tests.websocket.client.sessiondecider.kit import DeciderProbe, verdict
 
@@ -28,20 +30,28 @@ class TestCloses:
         assert probe.decider.terminal is None
 
     async def test_a_policy_violation_close_ends_the_session_once(
-        self, probe: DeciderProbe
+        self, probe: DeciderProbe, caplog: pytest.LogCaptureFixture
     ) -> None:
         probe.connect()
 
-        decision = verdict(probe.closed(1008))
+        with caplog.at_level(logging.WARNING, logger=decider_logger.name):
+            decision = verdict(probe.closed(1008))
+            probe.closed(1008)
 
-        [reason] = probe.reported
-        assert decision == (False, 0.0, "WebSocket closed with code 1008")
-        assert (reason.reason, reason.dead_reason, reason.retryable) == (
-            TerminalReason.SOCKET_CLOSED,
-            DeadReason.Classified,
-            False,
-        )
-        assert probe.decider.terminal == reason
+        assert decision == (False, 0.0, CLOSED_1008.message)
+        assert probe.reported == [CLOSED_1008]
+        assert probe.decider.terminal == CLOSED_1008
+        assert [(record.msg, record.args) for record in caplog.records] == [
+            (
+                VERDICT_LOG,
+                (
+                    CLOSED_1008.reason,
+                    CLOSED_1008.dead_reason,
+                    None,
+                    CLOSED_1008.message,
+                ),
+            )
+        ]
 
     async def test_sockets_that_keep_dropping_at_once_end_the_session(self) -> None:
         probe = DeciderProbe(session_policy(rapid_threshold=LOW_RAPID_THRESHOLD))
@@ -50,9 +60,5 @@ class TestCloses:
             probe.connect()
             decisions.append(probe.closed(1000).should_reconnect)
 
-        [reason] = probe.reported
         assert decisions == [True] * (LOW_RAPID_THRESHOLD - 1) + [False]
-        assert (reason.reason, reason.dead_reason) == (
-            TerminalReason.RAPID_DISCONNECT,
-            DeadReason.RapidDisconnect,
-        )
+        assert probe.reported == [KEPT_DROPPING]

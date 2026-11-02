@@ -333,7 +333,7 @@ KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
 # See ``WebSocketClient`` for what the bound covers.
 DEFAULT_CONNECT_TIMEOUT_S = 300.0
-SUPERSEDE_SHUTDOWN_REASON = "superseded by another connection"
+SUPERSEDE_REASON = "superseded by another connection"
 
 
 class WebSocketClient:
@@ -472,16 +472,16 @@ class WebSocketClient:
         try:
             async with deadline:
                 await self.client.__aenter__()
-        except PHXConnectionError:
-            decider.end()
-            refusal = decider.terminal_refusal
-            if refusal is None:
-                raise
-            raise refusal from None
         except BaseException as exc:
             decider.end()
-            # Only this bound's own timeout; a caller's cancel stays a cancel.
-            if isinstance(exc, TimeoutError) and deadline.expired():
+            # A caller's cancel stays a cancel; the bound or a refused session
+            # raises the session's refusal verdict when it has one.
+            timed_out = isinstance(exc, TimeoutError) and deadline.expired()
+            if not (timed_out or isinstance(exc, PHXConnectionError)):
+                raise
+            if decider.terminal_refusal is not None:
+                raise decider.terminal_refusal from None
+            if timed_out:
                 raise TimeoutError(
                     f"WebSocket did not connect within {self._connect_timeout}s"
                 ) from None
@@ -599,11 +599,11 @@ class WebSocketClient:
         match self._require_decider().supersede(payload):
             case SupersedeVerdict.END:
                 self._supersede_shutdown = spawn_owned(
-                    self._require_client().shutdown(SUPERSEDE_SHUTDOWN_REASON),
+                    self._require_client().shutdown(SUPERSEDE_REASON),
                     label="Supersede shutdown",
                 )
             case SupersedeVerdict.RETRY:
-                await self._require_client().close_connection(SUPERSEDE_SHUTDOWN_REASON)
+                await self._require_client().close_connection(SUPERSEDE_REASON)
             case SupersedeVerdict.STALE | SupersedeVerdict.ALREADY_ENDED:
                 pass
 

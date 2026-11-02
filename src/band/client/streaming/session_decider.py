@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 STOP = ReconnectDecision(should_reconnect=False)
 
+# The one record of each session's verdict, whoever is told of it.
+VERDICT_LOG = "WebSocket session ended: %s (%s) correlation_id=%s: %s"
+
 
 class SupersedeVerdict(StrEnum):
     """What a supersede push does to the session."""
@@ -149,7 +152,7 @@ class SessionDecider:
             error, redact=self._redact
         )
         if refusal is None:
-            return self._connect_failed(type(error).__name__)
+            return self._connect_failed(error)
         outcome = self._session.on_upgrade_rejected(
             self._live_epoch,
             _now(),
@@ -163,11 +166,12 @@ class SessionDecider:
             outcome, f"WebSocket upgrade refused ({refusal.status_code}: {refusal})"
         )
 
-    def _connect_failed(self, error_name: str) -> ReconnectDecision:
+    def _connect_failed(self, error: Exception) -> ReconnectDecision:
         outcome = self._session.on_socket_close(
             self._live_epoch, _now(), None, random.random()
         )
-        message = f"WebSocket connect failed ({error_name})"
+        cause = self._redact(str(error))
+        message = f"WebSocket connect failed ({type(error).__name__}: {cause})"
         if outcome.state is SessionState.Dead:
             return self._end(
                 session_reason(TerminalReason.CONNECTION_FAILED, message, outcome)
@@ -192,16 +196,15 @@ class SessionDecider:
 
     def _report(self, reason: WebSocketDisconnectReason) -> None:
         self.terminal = reason
-        if self._accepted:
-            self._on_terminal(reason)
-            return
-        # The caller gets only the raised error, which drops the session's reason.
         logger.warning(
-            "WebSocket session ended before connecting: %s (%s): %s",
+            VERDICT_LOG,
             reason.reason,
             reason.dead_reason,
+            reason.correlation_id,
             reason.message,
         )
+        if self._accepted:
+            self._on_terminal(reason)
 
     @property
     def _decided(self) -> bool:
