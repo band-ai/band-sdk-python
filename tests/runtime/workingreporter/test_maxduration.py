@@ -1,29 +1,45 @@
+"""The sender pauses and wakes according to canonical execution eligibility."""
+
 from __future__ import annotations
 
-import asyncio
+import logging
 
 import pytest
 
-from band.runtime.working_state import WorkingStateReporter
-from tests.runtime.workingreporter.kit import Recorder
+from band.runtime.working_state import WORKING_CAP_PAUSED, WorkingStateReporter
+from tests.runtime.workingreporter.kit import DetailRecorder, Projection
 
 
-class TestMaxDuration:
-    @pytest.mark.asyncio
-    async def test_keepalive_stops_after_max_but_stop_still_sends_false(self):
-        rec = Recorder()
+class TestReportingEligibility:
+    @pytest.mark.looptime
+    async def test_capped_work_pauses_and_fresh_work_wakes_the_same_sender(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger=WorkingStateReporter.__module__)
+        pause_log = (WorkingStateReporter.__module__, logging.INFO, WORKING_CAP_PAUSED)
+        recorder = DetailRecorder()
+        projection = Projection()
         reporter = WorkingStateReporter(
-            rec, keep_alive_seconds=0.02, max_working_state_seconds=0.05
+            recorder, project=projection, keep_alive_seconds=3600
         )
-
-        await reporter.start()
-        # Let the cap elapse and the keep-alive go quiet.
-        await asyncio.sleep(0.2)
-        count_after_cap = rec.calls.count(True)
-        await asyncio.sleep(0.1)
-        # No further true pings after the cap.
-        assert rec.calls.count(True) == count_after_cap
-
-        # stop() still sends the authoritative false.
-        await reporter.stop()
-        assert rec.calls[-1] is False
+        try:
+            await reporter.start()
+            projection.change(None)
+            reporter.refresh()
+            await projection.sampled.wait()
+            assert caplog.record_tuples == [pause_log]
+            projection.change(None)
+            reporter.refresh()
+            await projection.sampled.wait()
+            assert caplog.record_tuples == [pause_log]
+            projection.change(True)
+            recorder.detail = "fresh"
+            reporter.refresh()
+            assert await recorder.reports_reach(2) == ["reasoning", "fresh"]
+            projection.change(None)
+            reporter.refresh()
+            await projection.sampled.wait()
+            assert caplog.record_tuples == [pause_log, pause_log]
+        finally:
+            await reporter.stop()
+        assert recorder.reports == ["reasoning", "fresh", None]

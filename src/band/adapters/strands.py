@@ -48,7 +48,6 @@ from band.core.protocols import (
 )
 from band.core.redaction import redact_credentials_deep
 from band.core.simple_adapter import BatchInputAdapter
-from band.core.turn import Turn
 from band.core.types import (
     Capability,
     Emit,
@@ -67,7 +66,11 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt, with_system_updates
-from band.runtime.toolactivity import tool_activity
+from band.runtime.toolactivity import (
+    end_activity,
+    start_native_tool_activity,
+    tool_activity,
+)
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     ToolCallOutcome,
@@ -244,11 +247,11 @@ def _custom_tool_effects(
 
 
 def _bind_custom_tools(
-    custom_tools: list[StrandsCustomTool], turn: Turn
+    custom_tools: list[StrandsCustomTool], tools: AgentToolsProtocol
 ) -> list[AgentTool | Callable[..., Any]]:
     """Adapt portable custom tools to Strands for one room turn."""
     return [
-        CustomToolBridge(tool, turn) if isinstance(tool, tuple) else tool
+        CustomToolBridge(tool, tools) if isinstance(tool, tuple) else tool
         for tool in custom_tools
     ]
 
@@ -286,9 +289,9 @@ class StrandsToolBridge(AgentTool):
 class CustomToolBridge(StrandsToolBridge):
     """Expose a portable custom tool through Strands' native tool protocol."""
 
-    def __init__(self, tool_def: CustomToolDef, turn: Turn):
+    def __init__(self, tool_def: CustomToolDef, tools: AgentToolsProtocol):
         self._tool_def = tool_def
-        self._turn = turn
+        self._tools = tools
         input_model, _ = tool_def
         name = get_custom_tool_name(input_model)
         super().__init__(name, input_model, input_model.__doc__ or name)
@@ -302,7 +305,7 @@ class CustomToolBridge(StrandsToolBridge):
         del invocation_state, kwargs
         try:
             result = await execute_custom_tool(
-                self._tool_def, dict(tool_use["input"] or {}), turn=self._turn
+                self._tool_def, dict(tool_use["input"] or {}), tools=self._tools
             )
         except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             yield _tool_result(
@@ -374,11 +377,19 @@ class BandTurnHooks(HookProvider):
         *,
         emit_execution: bool,
         custom_effects: dict[str, TurnEffect],
+        native_names: frozenset[str] = frozenset(),
     ) -> None:
         self._tools = tools
         self._emit_execution = emit_execution
         self._custom_effects = custom_effects
+        self._native_names = native_names
+        self._native_calls: dict[str, object] = {}
         self._calls: list[dict[ToolEventKey, object]] = []
+
+    async def close(self) -> None:
+        for token in self._native_calls.values():
+            await end_activity(self._tools, token)
+        self._native_calls.clear()
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         del kwargs
@@ -386,6 +397,10 @@ class BandTurnHooks(HookProvider):
         registry.add_callback(AfterToolCallEvent, self._on_after_tool)
 
     async def _on_before_tool(self, event: BeforeToolCallEvent) -> None:
+        call_id, name = event.tool_use["toolUseId"], event.tool_use["name"]
+        if name in self._native_names and call_id not in self._native_calls:
+            token = self._native_calls[call_id] = object()
+            await start_native_tool_activity(self._tools, token, name)
         call: dict[ToolEventKey, object] = {
             ToolEventKey.NAME: event.tool_use["name"],
             ToolEventKey.ARGS: redact_tool_call_args(
@@ -402,6 +417,8 @@ class BandTurnHooks(HookProvider):
         )
 
     async def _on_after_tool(self, event: AfterToolCallEvent) -> None:
+        if token := self._native_calls.pop(event.tool_use["toolUseId"], None):
+            await end_activity(self._tools, token)
         name = event.tool_use["name"]
         output = _result_text(event.result)
         succeeded = event.result.get("status") == "success" and not band_tool_errored(
@@ -558,7 +575,7 @@ class StrandsAdapter(BatchInputAdapter[StrandsMessages]):
         transcript is therefore capped by the framework, not unbounded.
         """
         framework_tools = self._build_platform_tools(tools) + _bind_custom_tools(
-            self._custom_tools, tools.turn
+            self._custom_tools, tools
         )
         return Agent(
             model=self._model,
@@ -673,14 +690,22 @@ class StrandsAdapter(BatchInputAdapter[StrandsMessages]):
             tools,
             emit_execution=Emit.TOOL_CALLS in self.features.emit,
             custom_effects=self._custom_effects,
+            native_names=frozenset(
+                _registered_name(tool)
+                for tool in self._custom_tools
+                if not isinstance(tool, tuple)
+            ),
         )
-        await self._run_turn(
-            message=user_message,
-            room_id=room_id,
-            history=room_history,
-            tools=tools,
-            hooks=hooks,
-        )
+        try:
+            await self._run_turn(
+                message=user_message,
+                room_id=room_id,
+                history=room_history,
+                tools=tools,
+                hooks=hooks,
+            )
+        finally:
+            await hooks.close()
         logger.debug(
             "Room %s: Strands agent completed (history now has %s messages)",
             room_id,

@@ -48,7 +48,7 @@ class TestCursorIdentity:
         client = adapter._runtime_client_factory(room_holder(adapter), 1)
         tools = FakeAgentTools()
         async with RoomTurnEmitter(tools, records_tool_effects=True) as emitter:
-            client.set_sink("session", emitter.emit)
+            client.set_sink("session", emitter)
             await client.session_update(
                 "session",
                 ToolCallStart(

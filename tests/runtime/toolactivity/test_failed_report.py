@@ -40,7 +40,7 @@ class TestFailedActivityReport:
         unreachable.assert_completed_tool(BandTool.GET_PARTICIPANTS)
         assert [record.getMessage() for record in caplog.records] == [
             "Could not report tool_call activity",
-            "Could not report reasoning activity",
+            "Could not report the end of an activity",
         ]
 
     async def test_the_tool_keeps_its_own_failure(

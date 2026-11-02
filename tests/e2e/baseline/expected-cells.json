@@ -618,6 +618,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/activity/test_native_reporting.py::TestNativeReporting::test_background_terminal_keeps_new_foreground_reporting",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/antigravity/test_cancellation.py::TestAntigravityCancellation::test_cancelled_native_tool_settles_before_resource_closes",
       "adapter": "antigravity_acp",
       "lanes": [
@@ -771,6 +780,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_agno_activity.py::TestAgnoActivity::test_sync_body_settlement_preserves_newer_room_activity",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_claude_sdk_settings.py::TestClaudeSdkSettings::test_a_selected_settings_file_acts_while_the_room_gets_its_reply",
       "adapter": "claude_sdk",
       "lanes": [
@@ -799,6 +817,24 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/adapters/test_codex.py::test_codex_thoughts_are_not_placeholders",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_codex_background.py::TestCodexBackground::test_session_close_terminates_a_native_child_after_its_turn[native-control]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_codex_background.py::TestCodexBackground::test_session_close_terminates_a_native_child_after_its_turn[opt-out]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -3769,6 +3805,105 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "nooa",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle::test_old_room_cleanup_preserves_a_fresh_followup",
       "adapter": "strands",
       "lanes": [
         "strands"

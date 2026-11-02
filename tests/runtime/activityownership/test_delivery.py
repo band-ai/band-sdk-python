@@ -7,7 +7,7 @@ import pytest
 
 from band.platform.event import PlatformEvent
 from band.runtime.execution import ExecutionContext
-from band.runtime.toolactivity import report_tool_activity
+from band.runtime.toolactivity import start_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import tool_body
 from tests.conftest import make_message_event
@@ -29,7 +29,7 @@ class TestNonBlockingDelivery:
             loop = asyncio.get_running_loop()
             activity_platform.hold_next_activity = True
             observed_at = loop.time()
-            observing = asyncio.create_task(report_tool_activity(tools, "Bash"))
+            observing = asyncio.create_task(start_tool_activity(tools, "bash", "Bash"))
             await activity_platform.activity_entered.wait()
             seconds_until_sent.append(loop.time() - observed_at)
             observed_before_delivery.append(observing.done())

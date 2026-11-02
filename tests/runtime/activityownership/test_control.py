@@ -8,7 +8,7 @@ import pytest
 from band.core.turn_lifecycle import TurnTask, bind_turn_task
 from band.platform.event import PlatformEvent
 from band.runtime.execution import ExecutionContext
-from band.runtime.toolactivity import report_memory_activity, report_tool_activity
+from band.runtime.toolactivity import start_memory_activity, start_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
@@ -37,7 +37,7 @@ class TestControlledTurnDetail:
             except asyncio.CancelledError:
                 cleanup_entered.set()
                 await cleanup_release.wait()
-                await report_memory_activity(tools)
+                await start_memory_activity(tools, "memory")
                 raise
 
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
@@ -45,9 +45,11 @@ class TestControlledTurnDetail:
             if workers:
                 cleanup_release.set()
                 await asyncio.gather(workers[0].task, return_exceptions=True)
-                await activity_platform.shown(report_tool_activity(tools, "Read"))
+                await activity_platform.shown(
+                    start_tool_activity(tools, "read", "Read")
+                )
                 return
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(start_tool_activity(tools, "bash", "Bash"))
             workers.append(bind_turn_task(tools, asyncio.create_task(bash(tools))))
 
         ctx = execution(handler)
@@ -76,20 +78,20 @@ class TestControlledTurnDetail:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
             captured.append(tools)
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(start_tool_activity(tools, "bash", "Bash"))
             activity_platform.stopped = True
-            await report_tool_activity(tools, "Read")
+            await start_tool_activity(tools, "read", "Read")
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
-                await report_memory_activity(tools)
+                await start_memory_activity(tools, "memory")
                 cancelled.set()
                 raise
 
         ctx = execution(handler)
         await deliver_event(ctx, make_message_event())
         assert cancelled.is_set()
-        await report_tool_activity(captured[0], "Edit")
+        await start_tool_activity(captured[0], "edit", "Edit")
         await past_a_keep_alive()
         assert activity_platform.activity_bodies == [
             REASONING_BODY,
@@ -119,7 +121,7 @@ class TestControlledTurnDetail:
         await handler_started.wait()
         stopping = asyncio.create_task(ctx.stop(timeout=30))
         await idle.awaited.wait()
-        await activity_platform.shown(report_tool_activity(captured[0], "Bash"))
+        await activity_platform.shown(start_tool_activity(captured[0], "bash", "Bash"))
         release.set()
         assert await stopping
         assert activity_platform.activity_bodies == [
@@ -138,11 +140,11 @@ class TestControlledTurnDetail:
 
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(start_tool_activity(tools, "bash", "Bash"))
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
-                await report_memory_activity(tools)
+                await start_memory_activity(tools, "memory")
                 cleanup_entered.set()
                 await cleanup_release.wait()
                 raise

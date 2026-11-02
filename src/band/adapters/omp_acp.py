@@ -273,6 +273,8 @@ class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
             # through this elicitation form, not session/request_permission
             # -- declined by default, since most callers never configure a
             # custom resolver.
+            if self._permission_is_manual():
+                emitter.retain_manual_request()
             option_id = await self._resolve_permission_option(
                 call=synthetic_call,
                 options=options,

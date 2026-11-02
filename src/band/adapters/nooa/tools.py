@@ -87,6 +87,10 @@ class TurnBinding:
     thoughts: set[asyncio.Task[None]] = field(default_factory=set)
     posting: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    @property
+    def current(self) -> bool:
+        return _turn_binding.get() is self
+
     def start(self, call: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         task = asyncio.ensure_future(call)
         self.in_flight.add(task)
@@ -430,7 +434,7 @@ def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
     input_model, _ = tool_def
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
-        return await execute_custom_tool(tool_def, arguments, turn=tools.turn)
+        return await execute_custom_tool(tool_def, arguments, tools=tools)
 
     name = get_custom_tool_name(input_model)
     return RoomToolSpec(

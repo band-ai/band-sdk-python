@@ -5,14 +5,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.client.streaming import ControlMode
 from band.platform.event import PlatformEvent
 from band.runtime.execution import ExecutionContext
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.activity.kit import ActivityPeer, activity_context
-from tests.runtime.helpers import (
-    ROOM_ID,
-)
 from tests.runtime.scheduler.driver import attempt_delivery
 
 
@@ -37,6 +33,10 @@ class TestActivityOwnership:
         observer = AsyncMock()
         async with activity_context(peer, handler, observer, enabled=False) as ctx:
             scope = await ctx.begin_delivery()
+            assert scope is not None
+            scope.admit()
+            scope.reports_activity = True
+            await ctx._start_activity(scope)
             async with asyncio.TaskGroup() as tasks:
                 report = tasks.create_task(ctx._report_working_state(True))
                 await peer.entered.wait()
@@ -44,6 +44,7 @@ class TestActivityOwnership:
                     case "play":
                         await ctx.resume_room()
                     case "replacement":
+                        scope.terminate()
                         scope = await ctx.begin_delivery()
                     case "shutdown":
                         await ctx.stop()
@@ -88,10 +89,7 @@ class TestActivityOwnership:
             await asyncio.sleep(0)
             assert handler.cancelled.is_set()
             await turn
-            if play_after_stop:
-                observer.assert_not_awaited()
-            else:
-                observer.assert_awaited_once_with(ROOM_ID, ControlMode.STOP)
+            observer.assert_not_awaited()
             assert peer.marked("processing") == ["trigger"]
             assert peer.requested("processed") == []
             assert peer.requested("failed") == []

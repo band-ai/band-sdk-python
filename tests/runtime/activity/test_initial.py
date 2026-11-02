@@ -32,7 +32,7 @@ class TestActivityInitial:
 
             assert handler.invoked == []
             assert peer.activity_reports == [STOP_ECHO, IDLE]
-            observer.assert_awaited_once()
+            observer.assert_not_awaited()
             assert peer.requested("processed") == []
             assert peer.requested("failed") == []
 

@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from pydantic import JsonValue
-
 from band.core.protocols import AgentToolsProtocol
+
+
+@dataclass
+class OmpCall:
+    name: str
+    token: object = field(default_factory=object)
 
 
 @dataclass
 class OmpTurn:
     tools: AgentToolsProtocol
-    calls: dict[str, tuple[str, dict[str, JsonValue]]] = field(default_factory=dict)
+    calls: dict[str, OmpCall] = field(default_factory=dict)
     closing_text: list[str] = field(default_factory=list)
     closed: bool = False
+    compaction: object | None = None

@@ -5,19 +5,14 @@ from collections.abc import Callable
 import pytest
 
 from band.platform.event import PlatformEvent
-from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
-from band.runtime.toolactivity import (
-    end_tool_activity,
-    report_memory_activity,
-    report_tool_activity,
-)
 from band.runtime.tools.agent import AgentTools
 from tests.conftest import make_message_event
 from tests.runtime.activityownership.kit import (
     ActivityPlatform,
     deliver_event,
     past_a_keep_alive,
+    report_every_kind,
 )
 from tests.runtime.helpers import ROOM_ID
 
@@ -36,11 +31,7 @@ class TestExcludedReporting:
         settings: dict[str, object],
     ) -> None:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
-            tools = AgentTools.from_context(ctx)
-            await report_tool_activity(tools, "Bash")
-            with permission_wait(tools):
-                await report_memory_activity(tools)
-                await end_tool_activity(tools)
+            await report_every_kind(AgentTools.from_context(ctx))
 
         ctx = execution(handler, **settings)
         await deliver_event(ctx, make_message_event())

@@ -37,6 +37,8 @@ from acp.schema import (
     SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
     StopReason,
+    ToolCallProgress,
+    ToolCallStart,
     ToolCallUpdate,
 )
 from mcp.types import Tool
@@ -79,6 +81,9 @@ AGENT_EXIT_FAILURE = "agent exit failed"
 
 # The stop reason of a prompt the agent finished normally.
 END_TURN_STOP: StopReason = "end_turn"
+
+# The title Cursor opens an MCP call under before it names the call.
+CURSOR_MCP_PLACEHOLDER_TITLE = "MCP: tool"
 
 
 @dataclass
@@ -317,9 +322,15 @@ class FakeACPAgent:
         raw_input: Any = None,
         result: Any = None,
         status: str = "completed",
+        start_status: str | None = None,
     ) -> FakeACPAgent:
         async def _action(a: FakeACPAgent, sid: str) -> None:
-            await a.emit(sid, start_tool_call(tool_call_id, title, raw_input=raw_input))
+            await a.emit(
+                sid,
+                start_tool_call(
+                    tool_call_id, title, raw_input=raw_input, status=start_status
+                ),
+            )
             if result is not None:
                 await a.emit(
                     sid,
@@ -375,28 +386,12 @@ class FakeACPAgent:
         arguments: Mapping[str, Any],
         result: Any,
     ) -> FakeACPAgent:
-        """Cursor's MCP call: a pending ``MCP: tool`` placeholder with no input,
-        then a statusless update carrying the real title and ``rawInput``."""
+        """Cursor's MCP call: ``cursor_mcp_placeholder`` then
+        ``cursor_mcp_naming``, then its progress and completion."""
 
         async def _action(a: FakeACPAgent, sid: str) -> None:
-            await a.emit(
-                sid,
-                start_tool_call(
-                    tool_call_id, "MCP: tool", status="pending", raw_input={}
-                ),
-            )
-            await a.emit(
-                sid,
-                update_tool_call(
-                    tool_call_id,
-                    title=f"{server}: {tool}",
-                    raw_input={
-                        "providerIdentifier": server,
-                        "toolName": tool,
-                        "args": dict(arguments),
-                    },
-                ),
-            )
+            await a.emit(sid, cursor_mcp_placeholder(tool_call_id))
+            await a.emit(sid, cursor_mcp_naming(tool_call_id, server, tool, arguments))
             await a.emit(sid, update_tool_call(tool_call_id, status="in_progress"))
             await a.emit(
                 sid,
@@ -911,3 +906,25 @@ def cursor_todos(
     ]
     session = {} if session_id is None else {"sessionId": session_id}
     return {**session, "todos": todos, **({"merge": True} if merge else {})}
+
+
+def cursor_mcp_placeholder(tool_call_id: str) -> ToolCallStart:
+    """How Cursor opens an MCP call: pending, unnamed, and without input."""
+    return start_tool_call(
+        tool_call_id, CURSOR_MCP_PLACEHOLDER_TITLE, status="pending", raw_input={}
+    )
+
+
+def cursor_mcp_naming(
+    tool_call_id: str, server: str, tool: str, arguments: Mapping[str, Any]
+) -> ToolCallProgress:
+    """The statusless update in which Cursor names an MCP call it opened."""
+    return update_tool_call(
+        tool_call_id,
+        title=f"{server}: {tool}",
+        raw_input={
+            "providerIdentifier": server,
+            "toolName": tool,
+            "args": dict(arguments),
+        },
+    )

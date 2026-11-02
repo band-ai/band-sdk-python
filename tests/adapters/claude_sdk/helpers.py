@@ -6,7 +6,8 @@ import asyncio
 import copy
 import itertools
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -24,6 +25,7 @@ from band.adapters.claude_sdk import (
 from band.converters.claude_sdk import CLAUDE_SDK_RESUME_RECORD
 from band.core.retention import RoomRetentionConfig
 from band.core.turn import Turn
+from band.core.turn_lifecycle import TurnTask
 from band.core.types import (
     AgentInput,
     ApprovalMode,
@@ -31,6 +33,7 @@ from band.core.types import (
     MessageType,
     PlatformMessage,
 )
+from band.integrations.claude_sdk.activity import Origin
 from band.integrations.claude_sdk.session_manager import (
     ClaudeRoomSession,
     ClaudeSessionManager,
@@ -69,10 +72,20 @@ TURN_TIMEOUT_S = 2.0
 NO_SETTLE_GRACE = ClaudeSDKAdapterConfig(turn_settle_timeout_s=0)
 
 
+@contextmanager
+def query_origin(session: ClaudeRoomSession) -> Iterator[None]:
+    """Give a direct session query the actual caller's execution owner."""
+    task = asyncio.current_task()
+    assert task is not None and session.activity is not None
+    origin = Origin(FakeAgentTools(room_id=session.room_id), TurnTask(task), ())
+    with session.activity.foreground(origin):
+        yield
+
+
 async def exchange(session: ClaudeRoomSession, prompt: str) -> list[Message]:
     """One leased query through the room's single reader, up to its result."""
     async with session.using() as client:
-        with session.listening() as stream:
+        with session.listening() as stream, query_origin(session):
             await client.query(prompt)
             return [message async for message in stream.until_result()]
 

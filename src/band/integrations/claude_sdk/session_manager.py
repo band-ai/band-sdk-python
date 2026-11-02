@@ -42,10 +42,12 @@ try:
     from claude_agent_sdk._internal.transport import Transport
     from claude_agent_sdk.types import (  # type: ignore[import-not-found]
         CanUseTool,
+        HookMatcher,
         McpServerConfig,
         Message,
     )
 
+    from band.integrations.claude_sdk.activity import SessionActivity
     from band.integrations.claude_sdk.transport import create_transport
 
     _CLAUDE_SDK_AVAILABLE = True
@@ -147,6 +149,7 @@ class ClaudeRoomSession:
         self._reader: asyncio.Task[None] | None = None
         self._turn: TurnStream | None = None
         self._forget_session = False
+        self.activity: SessionActivity | None = None
         self.retained: RetainedRoom = retention.register(
             room_id, acquire=self.acquire, release=self.release, dispose=self.dispose
         )
@@ -209,6 +212,8 @@ class ClaudeRoomSession:
     def _retire(self, generation: int, reason: str, *, forget_session: bool) -> bool:
         if not self.retained.recover(generation=generation, reason=reason):
             return False
+        if self.activity is not None:
+            self.activity.revoke()
         self._forget_session = self._forget_session or forget_session
         return True
 
@@ -268,6 +273,7 @@ class ClaudeRoomSession:
         self._manager.discard(self)
 
     async def _connect(self, generation: int, *, resume: str | None) -> None:
+        self.activity = SessionActivity(self, generation)
         options = self._manager.options_for(self, generation, resume=resume)
         transport = create_transport(options)
         client = ClaudeSDKClient(options=options, transport=transport)
@@ -302,12 +308,17 @@ class ClaudeRoomSession:
         """Close the retained CLI; a failure keeps every handle for a retry."""
         if self.client is None or self.transport is None:
             return
+        if self.activity is not None:
+            await self.activity.drain()
         try:
             await self.client.disconnect()
         finally:
             await self.transport.close()
         if self._reader is not None:
             await self._reader
+        if self.activity is not None:
+            await self.activity.closed()
+            self.activity = None
         self.client = self.transport = self._reader = None
 
     async def _read(self, client: ClaudeSDKClient, generation: int) -> None:
@@ -315,6 +326,8 @@ class ClaudeRoomSession:
         error: Exception | None = None
         try:
             async for message in client.receive_messages():
+                if self.activity is not None:
+                    await self.activity.observe(message)
                 if (turn := self._listener(generation)) is not None:
                     turn.deliver(message)
                 else:
@@ -435,6 +448,13 @@ class ClaudeSessionManager:
         ``dataclasses.replace()`` shallow-copies every base field.
         """
         overrides: dict[str, Any] = {"mcp_servers": self.mcp_servers(session.room_id)}
+        if session.activity is not None:
+            hooks = dict(self.base_options.hooks or {})
+            hooks["PreToolUse"] = [
+                HookMatcher(hooks=[session.activity.correlate]),
+                *hooks.get("PreToolUse", []),
+            ]
+            overrides["hooks"] = hooks
         if self._workspaces is not None:
             overrides["cwd"] = self._workspaces.claim(session.room_id)
         if resume:

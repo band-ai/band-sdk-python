@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
 import pytest_asyncio
@@ -9,6 +9,7 @@ import pytest_asyncio
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
+from tests.integrations.activitykit import LookupInput
 from tests.runtime.helpers import AGENT_ID, rest_client_over
 from tests.runtime.permissionactivity.kit import HeldTurn, RoomActivityPlatform
 
@@ -16,6 +17,20 @@ from tests.runtime.permissionactivity.kit import HeldTurn, RoomActivityPlatform
 @pytest.fixture
 def permission_platform() -> RoomActivityPlatform:
     return RoomActivityPlatform()
+
+
+@pytest.fixture
+def gated_lookup() -> tuple[
+    Callable[[LookupInput], Awaitable[str]], asyncio.Event, asyncio.Event
+]:
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def lookup(inp: LookupInput) -> str:
+        entered.set()
+        await release.wait()
+        return inp.note
+
+    return lookup, entered, release
 
 
 @pytest_asyncio.fixture(loop_scope="function")

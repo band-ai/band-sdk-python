@@ -113,6 +113,11 @@ class OmpAdapter(
             get_category=lambda item: get_band_tool_category(item.name),
         )
         tools: list[dict[str, JsonValue]] = []
+        self._band_host_names = (
+            frozenset(item.name for item in definitions)
+            if self.config.inject_band_tools
+            else frozenset()
+        )
         if self.config.inject_band_tools:
             tools.extend(
                 _omp_host_tool(

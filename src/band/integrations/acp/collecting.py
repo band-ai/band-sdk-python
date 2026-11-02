@@ -16,7 +16,7 @@ from band.integrations.acp.permissions import (
     elicitation_session_id,
 )
 from band.integrations.acp.session_config import SessionConfigOption
-from band.integrations.acp.stream import ACPChunkStream, ChunkSink
+from band.integrations.acp.stream import ACPChunkStream, TurnSink
 from band.integrations.acp.types import ACPToolCall, CollectedChunk
 from band.integrations.acp.updates import ACPUpdateParser
 
@@ -168,7 +168,7 @@ class ACPCollectingClient(ACPUpdateParser):
         self._permission_handlers.pop(session_id, None)
         self._elicitation_handlers.pop(session_id, None)
 
-    def set_sink(self, session_id: str, sink: ChunkSink | None) -> None:
+    def set_sink(self, session_id: str, sink: TurnSink | None) -> None:
         self._stream.set_sink(session_id, sink)
 
     async def flush(self, session_id: str) -> None:

@@ -54,7 +54,7 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from band.runtime.activity import permission_wait
+from band.runtime.activity import retain_request_permission
 from band.runtime.custom_tools import execute_custom_tool, find_custom_tool
 from band.runtime.tools import (
     is_image_passthrough_result,
@@ -78,9 +78,7 @@ class OmpCallbackMixin(OmpAdapterContract):
         try:
             custom = find_custom_tool(self._custom_tools, call.toolName)
             if custom:
-                value = await execute_custom_tool(
-                    custom, call.arguments, turn=tools.turn
-                )
+                value = await execute_custom_tool(custom, call.arguments, tools=tools)
             else:
                 outcome = await tools.execute_tool_call_structured(
                     call.toolName, call.arguments
@@ -278,15 +276,15 @@ class OmpCallbackMixin(OmpAdapterContract):
         options = tuple(request.options or ())
         choice = None
         if self._resolve_permission is not None:
-            with permission_wait(tools):
-                choice = await self._resolve_permission(
-                    OmpPermissionRequest(
-                        room_id=room_id,
-                        session_id=session_id,
-                        title=request.title or "",
-                        options=options,
-                    )
+            retain_request_permission(tools)
+            choice = await self._resolve_permission(
+                OmpPermissionRequest(
+                    room_id=room_id,
+                    session_id=session_id,
+                    title=request.title or "",
+                    options=options,
                 )
+            )
         elif options == (OMP_FORM_APPROVE, OMP_FORM_DENY):
             choice = OMP_FORM_APPROVE
         response = (

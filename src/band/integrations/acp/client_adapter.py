@@ -126,6 +126,7 @@ from band.integrations.acp.types import (
     ACP_FAILURE_PROVIDER,
     CANCELLED_STOP,
     REFUSAL_STOP,
+    ACPToolActivity,
     ACPToolCall,
 )
 from band.integrations.mcp import (
@@ -134,6 +135,7 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
+from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME
 from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
@@ -925,6 +927,7 @@ class ACPClientAdapter(
                 emit=self.features.emit,
                 # Injected Band tools record their own effects in process.
                 records_tool_effects=not self.config.inject_band_tools,
+                activity_name=self._activity_tool_name,
             ) as emitter:
                 self._install_turn_handlers(
                     runtime,
@@ -941,7 +944,7 @@ class ACPClientAdapter(
                             stop_reason = await runtime.prompt_turn(
                                 session_id=session_id,
                                 prompt_text=prompt_text,
-                                on_chunk=emitter.emit,
+                                sink=emitter,
                             )
                             if stop_reason == REFUSAL_STOP:
                                 logger.warning(
@@ -1129,6 +1132,8 @@ class ACPClientAdapter(
                 tool_call, canonicalize=self._canonical_tool_name
             )
 
+            if self._permission_is_manual():
+                emitter.retain_manual_request()
             option_id = await self._resolve_permission_option(
                 call=call,
                 options=options,
@@ -1174,6 +1179,9 @@ class ACPClientAdapter(
             await narration
         else:
             await narrate(narration)
+
+    def _permission_is_manual(self) -> bool:
+        return self._resolve_permission is not None
 
     async def _resolve_permission_option(
         self,
@@ -1283,6 +1291,17 @@ class ACPClientAdapter(
         adapter registered is rewritten; anything else passes through.
         """
         return canonicalize_mcp_tool_name(name, self._own_tool_names)
+
+    def _activity_tool_name(self, call: ACPToolActivity) -> str | None:
+        """Report only an identity from this adapter's Band registration."""
+        if (
+            self.config.inject_band_tools
+            and not call.mcp_metadata_rejected
+            and call.mcp_server == BAND_MCP_SERVER_NAME
+            and call.mcp_tool in self._own_tool_names
+        ):
+            return None
+        return UNKNOWN_ACTIVITY_TOOL_NAME
 
     def _mcp_settings(self) -> BandMCPBackendSettings:
         return BandMCPBackendSettings(

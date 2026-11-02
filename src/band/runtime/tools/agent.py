@@ -14,6 +14,7 @@ import logging
 import re
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
+from copy import copy
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
@@ -35,7 +36,11 @@ from band.client.rest import (
 )
 from band.config.settings import RuntimeSettings
 from band.core.content import has_visible_content
-from band.core.exceptions import BandToolError, RoomExecutionStoppedError
+from band.core.exceptions import (
+    BandToolError,
+    RoomExecutionStoppedError,
+    TerminalProviderFailure,
+)
 from band.core.memory_types import (
     MemoryListScope,
     MemoryStoreScope,
@@ -352,6 +357,7 @@ class AgentTools(AgentToolsProtocol):
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
         self._scope: TurnScope | None = None
+        self._resource: TurnTask | None = None
         self._activity_observer: ActivityObserver | None = None
         self.turn = Turn()
 
@@ -404,6 +410,14 @@ class AgentTools(AgentToolsProtocol):
             else:
                 self._ctx.register_turn_task(self._scope, owner)
 
+    def _for_resource(self, owner: TurnTask) -> AgentTools:
+        """An immutable origin view whose effects also require this resource."""
+        view = copy(self)
+        view._resource = owner
+        if self._ctx is not None:
+            view._activity_observer = self._ctx.activity_observer(self._scope, owner)
+        return view
+
     def _abort_stopped_post(self, error: RoomExecutionStoppedError) -> None:
         if self._ctx is not None and self._scope is not None:
             self._ctx.observe_platform_stop(self._scope, cooperative=True)
@@ -411,7 +425,9 @@ class AgentTools(AgentToolsProtocol):
         raise error
 
     def _check_post_scope(self) -> None:
-        if self._scope is not None and self._scope.aborted:
+        if (self._scope is not None and not self._scope.authoritative) or (
+            self._resource is not None and not self._resource.authoritative
+        ):
             raise asyncio.CancelledError
 
     # --- Tool methods ---
@@ -561,6 +577,15 @@ class AgentTools(AgentToolsProtocol):
         except block, where raising would replace the provider failure the
         room is being told about with an unrelated reporting failure.
         """
+        if (
+            self._resource is None
+            and self._scope is not None
+            and not self._scope.authoritative
+            and self._scope.provider_failed
+        ):
+            if self.turn.detached and self._ctx is not None:
+                return await self._ctx.report_provider_failure(failure, turn=self.turn)
+            raise TerminalProviderFailure(failure)
         content, metadata = to_failure_event(failure)
         try:
             response = await self.send_event(content, MessageType.ERROR, metadata)

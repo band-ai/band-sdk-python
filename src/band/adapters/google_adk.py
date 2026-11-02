@@ -293,7 +293,7 @@ def _get_tool_bridge_class() -> type:
                 custom_tool = find_custom_tool(self._custom_tools, self.name)
                 if custom_tool:
                     result = await execute_custom_tool(
-                        custom_tool, args, turn=self._tools.turn
+                        custom_tool, args, tools=self._tools
                     )
                 else:
                     result = await self._tools.execute_tool_call(self.name, args)

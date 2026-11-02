@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from collections.abc import Awaitable, Callable, Hashable, Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -33,6 +33,7 @@ from band.core.exceptions import (
     CleanupIncompleteError,
     InputNotAccepted,
     RoomExecutionStoppedError,
+    TerminalProviderFailure,
 )
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -40,7 +41,9 @@ from band.core.protocols import (
 )
 from band.core.retention import task_failure
 from band.core.settlement import SettlementResult
+from band.core.turn import Turn
 from band.core.turn_lifecycle import (
+    TaskRole,
     TurnTask,
     finished_within_grace,
     terminal_deadline,
@@ -56,7 +59,7 @@ from band.platform.event import (
     PlatformEvent,
     ReconnectedEvent,
 )
-from band.runtime.activity import ActivityObserver
+from band.runtime.activity import ActivityObserver, TurnActivity
 from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.context import ConversationContext
 from band.runtime.context_serialization import context_item_to_dict
@@ -73,7 +76,7 @@ from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.scheduler import ResyncRequest, Scheduler
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
-from band.runtime.working_state import WorkingStateReporter
+from band.runtime.working_state import WorkingStateReporter, project_working
 
 if TYPE_CHECKING:
     from band.platform.link import BandLink
@@ -217,12 +220,35 @@ def require_batch_execution_handler(
 class ScopeActivityObserver:
     context: ExecutionContext
     scope: TurnScope
+    resource: TurnTask | None = None
 
-    async def update(self, activity: AgentActivityDetail) -> None:
-        await self.context.observe_activity(self.scope, activity=activity)
+    @property
+    def authoritative(self) -> bool:
+        return self.scope.authoritative and (
+            self.resource is None or self.resource.authoritative
+        )
+
+    async def start(self, key: Hashable, activity: AgentActivityDetail) -> None:
+        if self.authoritative:
+            self.context.start_activity(
+                self.scope, key, activity, resource=self.resource
+            )
+
+    async def end(self, key: Hashable) -> None:
+        self.context.end_activity(self.scope, key, resource=self.resource)
+
+    async def rename(self, key: Hashable, activity: AgentActivityDetail) -> None:
+        if self.authoritative:
+            self.context.rename_activity(
+                self.scope, key, activity, resource=self.resource
+            )
 
     def permission_wait(self) -> AbstractContextManager[None]:
-        return self.context.permission_wait(self.scope)
+        return (
+            self.context.permission_wait(self.scope, resource=self.resource)
+            if self.authoritative
+            else nullcontext()
+        )
 
 
 class ExecutionContext:
@@ -306,7 +332,7 @@ class ExecutionContext:
         self._working_reporter = WorkingStateReporter(
             self._report_working_state,
             keep_alive_seconds=self.config.working_keep_alive_seconds,
-            max_working_state_seconds=self.config.max_working_state_seconds,
+            project=self._project_working,
             enabled=(
                 self.config.enable_working_state and self.room_id != self.hub_room_id
             ),
@@ -358,8 +384,8 @@ class ExecutionContext:
         self._pending_system_messages: list[str] = []
         self._detached_cycle_tasks: dict[asyncio.Task[None], TurnTask] = {}
         self.current_scope: TurnScope | None = None
-        self._activity_owner: TurnScope | None = None
-        self._activity_stop_scope: TurnScope | None = None
+        self._scopes: set[TurnScope] = set()
+        self._activity = TurnActivity()
         self._activity_completion: asyncio.Task[None] | None = None
         self._control_revision = 0
         self._on_platform_stop = on_platform_stop
@@ -397,14 +423,6 @@ class ExecutionContext:
     def is_stopped(self) -> bool:
         """Whether a received STOP control has paused this room."""
         return self._stopped
-
-    @property
-    def adapter_stop_notified(self) -> bool:
-        """Whether an observed STOP already notified the adapter for this turn."""
-        return any(
-            scope is not None and scope.observer_task is not None
-            for scope in (self.current_scope, self._activity_stop_scope)
-        )
 
     def _set_state(self, new_state: ExecutionState) -> None:
         """
@@ -521,7 +539,6 @@ class ExecutionContext:
             loop_owner.terminate()
             await self._drain_or_retain(loop_owner)
             self._process_loop_task = None
-        self._activity_owner = None
         await self._join_activity_completion()
         await self._stop_retained_tasks(retry_owners)
         await self._working_reporter.stop()
@@ -618,14 +635,14 @@ class ExecutionContext:
         return scope.handler.task
 
     def _cancel_cycle(self, kind: ControlMode) -> bool:
-        scope = self._running_scope
-        activity = self._activity_owner
-        if activity is not None and activity is not scope:
-            activity.terminate(kind)
-            self._finish_activity(activity, aborted=True)
-        if scope is not None:
+        targets = self._authoritative_scopes
+        current = self._running_scope
+        if current is not None:
+            targets.add(current)
+        for scope in targets:
             scope.terminate(kind)
-        return scope is not None or activity is not None
+            self._finish_activity(scope)
+        return bool(targets)
 
     def stop_room(self) -> None:
         """Pause triggers and abort the cycle, leaving it actionable for PLAY."""
@@ -644,11 +661,7 @@ class ExecutionContext:
         self.scheduler.reset_interval()
 
     def owns_stop_observation(self, scope: TurnScope) -> bool:
-        return (
-            scope
-            in (self.current_scope, self._activity_owner, self._activity_stop_scope)
-            and scope.stop_revision == self._control_revision
-        )
+        return scope.stop_revision == self._control_revision
 
     def _owns_control_revision(self, scope: TurnScope, revision: int | None) -> bool:
         return self.current_scope is scope and revision == self._control_revision
@@ -665,10 +678,7 @@ class ExecutionContext:
                 scope.control_revision if control_revision is None else control_revision
             )
         scope.terminate(ControlMode.STOP, cooperative=cooperative, observed=True)
-        if scope is self._activity_owner:
-            self._activity_stop_scope = scope
-            if scope.settled:
-                self._finish_activity(scope, aborted=True)
+        self._finish_activity(scope)
         if (
             not self._closing
             and self.owns_stop_observation(scope)
@@ -1163,6 +1173,8 @@ class ExecutionContext:
 
     async def _report_working_state(self, working: bool) -> bool:
         """Report working state and visible activity (wired into the reporter)."""
+        if working and self._project_working() is not True:
+            return False
         return await self.link.report_activity(
             self.room_id,
             working,
@@ -1170,27 +1182,19 @@ class ExecutionContext:
             timeout_seconds=self.config.working_request_timeout_seconds,
             on_stopped=partial(
                 self._observe_activity_stop,
-                self._activity_owner or self.current_scope,
+                tuple(self._reportable_scopes),
                 self._control_revision,
             ),
         )
 
-    def _observe_activity_stop(self, scope: TurnScope | None, revision: int) -> None:
-        if (
-            scope is None
-            or not (
-                scope in (self._activity_owner, self.current_scope)
-                and revision == self._control_revision
-            )
-            or scope.stop_observed
-            or self._closing
-            or scope.kind is not None
-        ):
+    def _observe_activity_stop(
+        self, scopes: tuple[TurnScope, ...], revision: int
+    ) -> None:
+        if revision != self._control_revision or self._closing:
             return
-        logger.info(
-            "Activity report observed stopped execution for room %s", self.room_id
-        )
-        self.observe_platform_stop(scope, control_revision=revision)
+        for scope in scopes:
+            if scope.authoritative and not scope.stop_observed:
+                self.observe_platform_stop(scope, control_revision=revision)
 
     async def _execute_message_cycle(
         self, event: PlatformEvent, message_id: str | None
@@ -1218,59 +1222,118 @@ class ExecutionContext:
                 self._activity_completion = None
 
     async def _acquire_activity(self, scope: TurnScope) -> None:
-        await self._join_activity_completion()
+        if self._activity_completion is not asyncio.current_task():
+            await self._join_activity_completion()
         await self._start_activity(scope)
 
     async def _start_activity(self, scope: TurnScope) -> None:
-        previous = self._activity_owner
-        if previous is not None and previous is not scope:
-            if not previous.aborted and any(
-                not worker.task.done() for worker in previous.workers
-            ):
-                return
-            self._finish_activity(previous, aborted=True)
-            await self._join_activity_completion()
         if scope.aborted or self._closing:
             return
-        if self._activity_owner is not scope:
-            self._activity_stop_scope = None
-        self._activity_owner = scope
+        if scope not in self._scopes:
+            if any(
+                owner.role is TaskRole.SCOPE and not owner.task.done()
+                for origin in self._authoritative_scopes
+                for owner in origin.workers
+            ):
+                return
+            cap = self.config.max_working_state_seconds
+            scope.reporting_deadline = (
+                asyncio.get_running_loop().time() + cap if cap is not None else None
+            )
+            self._scopes.add(scope)
+        if len(self._scopes) > 1:
+            self._working_reporter.refresh()
         await self._working_reporter.start()
 
-    def activity_observer(self, scope: TurnScope | None) -> ActivityObserver | None:
-        return ScopeActivityObserver(self, scope) if scope is not None else None
+    @property
+    def _authoritative_scopes(self) -> set[TurnScope]:
+        return {scope for scope in self._scopes if scope.authoritative}
+
+    @property
+    def _reportable_scopes(self) -> set[TurnScope]:
+        now = asyncio.get_running_loop().time()
+        return {scope for scope in self._scopes if scope.reportable(now)}
+
+    @property
+    def _reportable_owners(self) -> set[TurnScope | TurnTask]:
+        scopes = self._reportable_scopes
+        return scopes | {
+            owner for scope in scopes for owner in scope.workers if owner.authoritative
+        }
+
+    def _project_working(self) -> bool | None:
+        return project_working(
+            tuple(scope.reporting_deadline for scope in self._authoritative_scopes),
+            asyncio.get_running_loop().time(),
+        )
+
+    def activity_observer(
+        self, scope: TurnScope | None, resource: TurnTask | None = None
+    ) -> ActivityObserver | None:
+        return (
+            ScopeActivityObserver(self, scope, resource) if scope is not None else None
+        )
 
     @property
     def _visible_activity(self) -> AgentActivityDetail | None:
-        """The owner's detail, or none for an aborted owner so its stale work is
-        never sent (the platform shows a report without detail as reasoning)."""
-        owner = self._activity_owner
-        if owner is None or owner.aborted:
-            return None
-        return owner.activity.detail
+        eligible = self._reportable_owners
+        return self._activity.detail_for(eligible) if eligible else None
 
-    async def observe_activity(
+    def start_activity(
         self,
         scope: TurnScope,
+        key: Hashable,
+        activity: AgentActivityDetail,
         *,
-        activity: AgentActivityDetail | None = None,
+        resource: TurnTask | None = None,
     ) -> None:
-        """Record a turn's activity; never starts reporting or waits on it."""
+        eligible = self._reportable_owners
+        origin = resource or scope
+        if origin not in eligible:
+            return
         before = self._visible_activity
-        scope.activity.apply(activity=activity)
+        self._activity.start((origin, key), activity, origin=origin, eligible=eligible)
+        self._refresh_activity(before)
+
+    def rename_activity(
+        self,
+        scope: TurnScope,
+        key: Hashable,
+        activity: AgentActivityDetail,
+        *,
+        resource: TurnTask | None = None,
+    ) -> None:
+        origin = resource or scope
+        if origin not in self._reportable_owners:
+            return
+        before = self._visible_activity
+        self._activity.rename((origin, key), activity)
+        self._refresh_activity(before)
+
+    def end_activity(
+        self, scope: TurnScope, key: Hashable, *, resource: TurnTask | None = None
+    ) -> None:
+        before = self._visible_activity
+        self._activity.end((resource or scope, key))
         self._refresh_activity(before)
 
     @contextmanager
-    def permission_wait(self, scope: TurnScope) -> Iterator[None]:
-        """Observe a wait without acquiring execution or reporting ownership."""
+    def permission_wait(
+        self, scope: TurnScope, *, resource: TurnTask | None = None
+    ) -> Iterator[None]:
+        """A lease ends with its actual request, even after authority is revoked."""
+        origin = resource or scope
+        if origin not in self._reportable_owners:
+            yield
+            return
         before = self._visible_activity
-        owner = scope.activity.acquire_permission()
+        owner = self._activity.acquire_permission(origin)
         try:
             self._refresh_activity(before)
             yield
         finally:
             before = self._visible_activity
-            scope.activity.release_permission(owner)
+            self._activity.release_permission(owner)
             self._refresh_activity(before)
 
     def _refresh_activity(self, before: AgentActivityDetail | None) -> None:
@@ -1278,23 +1341,16 @@ class ExecutionContext:
             self._working_reporter.refresh()
 
     def register_turn_task(self, scope: TurnScope, owner: TurnTask) -> None:
-        """Bind completion to the same owner that delivers worker cancellation."""
+        """The origin retains actual resources through delivery settlement."""
         scope.bind(owner)
-        owner.task.add_done_callback(lambda _: self._finish_activity(scope))
-        if (
-            scope.reports_activity
-            and scope is self.current_scope
-            and self._activity_owner is None
-        ):
-            previous = self._activity_completion
-
-            async def acquire() -> None:
-                if previous is not None:
-                    await asyncio.shield(previous)
-                if scope is self.current_scope:
-                    await self._start_activity(scope)
-
-            self._retain_activity_completion(asyncio.create_task(acquire()))
+        owner.observe_revocation(partial(self._finish_activity, scope, resource=owner))
+        owner.task.add_done_callback(
+            lambda _: self._finish_activity(scope, resource=owner)
+        )
+        if scope.reports_activity and scope not in self._scopes and not scope.aborted:
+            self._retain_activity_completion(
+                asyncio.create_task(self._acquire_activity(scope))
+            )
 
     def _retain_activity_completion(self, task: asyncio.Task[None]) -> None:
         self._activity_completion = task
@@ -1304,17 +1360,25 @@ class ExecutionContext:
         task_failure(task)
         if self._activity_completion is task:
             self._activity_completion = None
-            if self._activity_owner is not None:
-                self._finish_activity(self._activity_owner)
 
-    def _finish_activity(self, scope: TurnScope, *, aborted: bool = False) -> None:
-        if self._activity_owner is not scope:
+    def _finish_activity(
+        self, scope: TurnScope, *, resource: TurnTask | None = None
+    ) -> None:
+        if scope not in self._scopes:
             return
-        if not aborted and (
-            not scope.settled or any(not owner.task.done() for owner in scope.workers)
-        ):
+        changed = False
+        if not scope.authoritative:
+            changed = self._activity.retire(scope)
+            for owner in scope.workers:
+                changed = self._activity.retire(owner) or changed
+        elif resource is not None and not resource.authoritative:
+            changed = self._activity.retire(resource)
+        if scope.settled and all(owner.task.done() for owner in scope.workers):
+            self._scopes.discard(scope)
+        if self._authoritative_scopes:
+            if changed or self._project_working() is not True:
+                self._working_reporter.refresh()
             return
-        self._activity_owner = None
         self._working_reporter.defer_false_report()
         if self._activity_completion is None:
             self._retain_activity_completion(
@@ -1419,7 +1483,7 @@ class ExecutionContext:
             await asyncio.gather(wake, return_exceptions=True)
             scope.settle()
             if isinstance(event, MessageEvent) and not control:
-                self._finish_activity(scope, aborted=scope.terminating)
+                self._finish_activity(scope)
                 if not self._closing:
                     await self._join_activity_completion()
         if scope.shutdown:
@@ -1502,7 +1566,9 @@ class ExecutionContext:
         """Record that the adapter already told the room this turn failed."""
         self._turn_failure_reported = True
 
-    async def report_delivery_failure(self, *, final: bool) -> None:
+    async def report_delivery_failure(
+        self, *, final: bool, error: Exception | None = None
+    ) -> None:
         """Tell the room a turn failed, once, unless the adapter already did."""
         # Only a post that landed counts: an adapter raises
         # TurnResultAlreadyReported even when its send_failure did not post.
@@ -1519,11 +1585,23 @@ class ExecutionContext:
                 already_reported,
             )
             return
-        # Exception details stay in logs; platform writes use the generic message.
+        await self.report_provider_failure(
+            error.failure
+            if isinstance(error, TerminalProviderFailure)
+            else AgentFailure(TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+        )
+
+    async def report_provider_failure(
+        self, failure: AgentFailure, *, turn: Turn | None = None
+    ) -> Any:
+        """Post a captured terminal failure independently of revoked effect authority."""
+        if not self.config.report_turn_failures_to_room:
+            return None
+        tools = AgentTools.from_context(self, bind_scope=False)
+        if turn is not None:
+            tools.turn = turn
         try:
-            await AgentTools.from_context(self, bind_scope=False).send_failure(
-                AgentFailure(TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-            )
+            return await tools.send_failure(failure)
         except RoomExecutionStoppedError:
             logger.debug(
                 "ExecutionContext %s: failure reporting refused while stopped",

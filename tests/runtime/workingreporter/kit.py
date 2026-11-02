@@ -63,3 +63,19 @@ class DetailRecorder:
         async with self._changed:
             await self._changed.wait_for(lambda: len(self.reports) >= count)
         return self.reports
+
+
+class Projection:
+    """An execution owner's projection with an observable dispatch boundary."""
+
+    def __init__(self) -> None:
+        self.value: bool | None = True
+        self.sampled = asyncio.Event()
+
+    def __call__(self) -> bool | None:
+        self.sampled.set()
+        return self.value
+
+    def change(self, value: bool | None) -> None:
+        self.value = value
+        self.sampled.clear()

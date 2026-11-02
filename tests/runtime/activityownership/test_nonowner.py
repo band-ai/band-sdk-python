@@ -9,7 +9,7 @@ from band.core.turn_lifecycle import TurnTask, bind_turn_task
 from band.platform.event import PlatformEvent
 from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
-from band.runtime.toolactivity import report_tool_activity
+from band.runtime.toolactivity import start_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
@@ -33,10 +33,10 @@ class TestNonOwnerObservations:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
             if workers:
-                await report_tool_activity(tools, "unrelated")
+                await start_tool_activity(tools, "unrelated", "unrelated")
                 with permission_wait(tools):
                     return
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(start_tool_activity(tools, "bash", "Bash"))
             workers.append(bind_turn_task(tools, asyncio.create_task(release.wait())))
 
         ctx = execution(handler)
@@ -67,7 +67,7 @@ class TestNonOwnerObservations:
         await deliver_event(ctx, make_message_event())
         await ctx._join_activity_completion()
         before = list(activity_platform.activity_bodies)
-        await report_tool_activity(captured[0], "Bash")
+        await start_tool_activity(captured[0], "bash", "Bash")
         await past_a_keep_alive()
         assert before[-1] == IDLE_BODY
         assert activity_platform.activity_bodies == before
@@ -104,7 +104,7 @@ class TestNonOwnerObservations:
         await workers[0].task
         await ctx._join_activity_completion()
         before = list(activity_platform.activity_bodies)
-        await report_tool_activity(waiting_tools[0], "Bash")
+        await start_tool_activity(waiting_tools[0], "bash", "Bash")
         await past_a_keep_alive()
         assert before[-1] == IDLE_BODY
         assert activity_platform.activity_bodies == before

@@ -8,7 +8,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import AgentInput, Emit, HistoryProvider, PlatformMessage
 from band.runtime.execution import ExecutionContext
-from band.runtime.toolactivity import report_memory_activity, report_tool_activity
+from band.runtime.toolactivity import start_memory_activity, start_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import IDLE_BODY, MEMORY_BODY, REASONING_BODY, tool_body
 from tests.runtime.activityownership.kit import ActivityPlatform
@@ -44,9 +44,9 @@ class ActivityToolAdapter(BatchInputAdapter[HistoryProvider]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        await self._activity_platform.shown(report_memory_activity(tools))
+        await self._activity_platform.shown(start_memory_activity(tools, "memory"))
         await self._activity_platform.shown(
-            report_tool_activity(tools, ACTIVITY_TOOL_NAME)
+            start_tool_activity(tools, "tool", ACTIVITY_TOOL_NAME)
         )
         tools.turn.settle()
 

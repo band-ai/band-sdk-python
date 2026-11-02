@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Hashable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from inspect import getattr_static
 from typing import Any
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
 
 from band.runtime.activity import (
     MEMORY,
-    REASONING,
     ActivityObserver,
     activity_observer_of,
     tool_call_activity,
@@ -27,6 +28,8 @@ from band.runtime.tools.registry import (
 from band.runtime.tools.types import BandTool
 
 logger = logging.getLogger(__name__)
+
+WRAPPED_TOOL_ACTIVITY = "band_wrapped_tool_activity"
 
 MEMORY_SAVE_TOOLS = frozenset(
     name for name in MEMORY_TOOL_NAMES if turn_effect(name).did_work
@@ -47,20 +50,26 @@ def method_reports_activity(name: str) -> bool:
     return name != BandTool.SEND_EVENT
 
 
-async def _show(observer: ActivityObserver, detail: AgentActivityDetail) -> None:
+async def _start(
+    observer: ActivityObserver, key: Hashable, detail: AgentActivityDetail
+) -> None:
     """Activity is best-effort: a failed report never changes the tool's outcome."""
     try:
-        await observer.update(detail)
+        await observer.start(key, detail)
     except Exception:
         logger.warning("Could not report %s activity", detail.kind, exc_info=True)
 
 
+async def _end(observer: ActivityObserver, key: Hashable) -> None:
+    try:
+        await observer.end(key)
+    except Exception:
+        logger.warning("Could not report the end of an activity", exc_info=True)
+
+
 @contextmanager
-def suppress_tool_activity(*, enabled: bool = True) -> Iterator[None]:
+def suppress_tool_activity() -> Iterator[None]:
     """Leave activity reporting to the enclosing owner or native events."""
-    if not enabled:
-        yield
-        return
     token = _showing_tool.set(True)
     try:
         yield
@@ -68,42 +77,89 @@ def suppress_tool_activity(*, enabled: bool = True) -> Iterator[None]:
         _showing_tool.reset(token)
 
 
-@asynccontextmanager
-async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
-    """Show ``name`` as the turn's activity until the tool ends.
+def require_activity_authority(observer: ActivityObserver | None) -> None:
+    """Recording-only observers need no owner; scoped observers must remain valid."""
+    if (
+        observer is not None
+        and getattr_static(observer, "authoritative", None) is not None
+        and not getattr(observer, "authoritative", True)
+    ):
+        raise asyncio.CancelledError
 
-    Only the outermost call reports, so a tool that calls other Band tools
-    shows as itself throughout. The observer is resolved once so the end lands
-    on the turn the tool started on, even if ``tools`` is rebound meanwhile.
-    """
+
+@asynccontextmanager
+async def execution_activity(
+    tools: object, detail: AgentActivityDetail
+) -> AsyncIterator[None]:
+    """Capture one observer and suppress duplicate nested execution wrappers."""
     observer = activity_observer_of(tools)
+    require_activity_authority(observer)
     if observer is None or _showing_tool.get():
         yield
         return
+    key = object()
     try:
         with suppress_tool_activity():
-            await _show(observer, tool_detail(name))
+            await _start(observer, key, detail)
+            require_activity_authority(observer)
             yield
     finally:
-        await _show(observer, REASONING)
+        await _end(observer, key)
 
 
-async def _show_on(tools: object, detail: AgentActivityDetail) -> None:
+@asynccontextmanager
+async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
+    """Report a registered Band tool, including genuine memory writes."""
+    async with execution_activity(tools, tool_detail(name)):
+        yield
+
+
+@asynccontextmanager
+async def native_tool_activity(tools: object, name: str) -> AsyncIterator[None]:
+    """Report actual native/custom execution independently of name spelling."""
+    async with execution_activity(tools, tool_call_activity(name)):
+        yield
+
+
+async def start_native_tool_activity(
+    tools: object, key: Hashable, name: str | None
+) -> None:
     if observer := activity_observer_of(tools):
-        await _show(observer, detail)
+        await _start(observer, key, tool_call_activity(name))
 
 
-async def report_tool_activity(tools: object, name: str) -> None:
-    """Show ``name`` for a tool whose start and end arrive as separate events."""
-    await _show_on(tools, tool_detail(name))
+async def rename_native_tool_activity(
+    tools: object, key: Hashable, name: str | None
+) -> None:
+    if observer := activity_observer_of(tools):
+        try:
+            rename = getattr(observer, "rename", None)
+            if getattr_static(observer, "rename", None) is not None and callable(
+                rename
+            ):
+                await rename(key, tool_call_activity(name))
+        except Exception:
+            logger.warning(
+                "Could not report an activity identity update", exc_info=True
+            )
 
 
-async def end_tool_activity(tools: object) -> None:
-    await _show_on(tools, REASONING)
+async def start_tool_activity(tools: object, key: Hashable, name: str) -> None:
+    """Show ``name`` as running under ``key``, for a tool whose start and end
+    arrive as separate events; starting a running key again renames it."""
+    if observer := activity_observer_of(tools):
+        await _start(observer, key, tool_detail(name))
 
 
-async def report_memory_activity(tools: object) -> None:
-    await _show_on(tools, MEMORY)
+async def start_memory_activity(tools: object, key: Hashable) -> None:
+    if observer := activity_observer_of(tools):
+        await _start(observer, key, MEMORY)
+
+
+async def end_activity(tools: object, key: Hashable) -> None:
+    """End what ``key`` shows; an unknown or already ended key changes nothing."""
+    if observer := activity_observer_of(tools):
+        await _end(observer, key)
 
 
 def _observing(

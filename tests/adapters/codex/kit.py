@@ -25,6 +25,7 @@ from band.client.streaming import ControlMode
 from band.converters.codex import CODEX_RESUME_RECORD
 from band.converters.helpers import HISTORY_REPLAY_HEADING
 from band.core.exceptions import InputNotAccepted
+from band.core.protocols import AgentToolsProtocol
 from band.core.retention import Residency, RetainedRoom
 from band.core.types import (
     AgentInput,
@@ -97,7 +98,7 @@ def make_platform_message(
 
 def agent_input(
     content: str,
-    tools: FakeAgentTools,
+    tools: AgentToolsProtocol,
     *,
     raw_history: list[dict[str, Any]] | None = None,
     room_id: str = ROOM_ID,

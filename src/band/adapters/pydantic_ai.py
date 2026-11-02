@@ -30,7 +30,12 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.capabilities import Hooks, ProcessHistory
-from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
+from pydantic_ai.capabilities.abstract import (
+    AgentNode,
+    NodeResult,
+    ValidatedToolArgs,
+    WrapToolExecuteHandler,
+)
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import (
     BinaryContent,
@@ -40,6 +45,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
     ThinkingPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -48,6 +54,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
 )
 from pydantic_ai.result import FinalResult
+from pydantic_ai.tools import ToolDefinition
 from pydantic_graph import End
 from typing_extensions import Unpack
 
@@ -79,6 +86,11 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
+from band.runtime.toolactivity import (
+    WRAPPED_TOOL_ACTIVITY,
+    native_tool_activity,
+    tool_activity,
+)
 from band.runtime.tools import (
     BandTool,
     image_block_placeholder,
@@ -279,20 +291,39 @@ def _drop_blank_text(
     return response
 
 
+async def report_tool_execution(
+    ctx: RunContext[AgentToolsProtocol],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+    handler: WrapToolExecuteHandler,
+) -> Any:
+    """Validation and deferral precede this actual execution boundary."""
+    activity = (
+        tool_activity(ctx.deps, call.tool_name)
+        if (tool_def.metadata or {}).get(WRAPPED_TOOL_ACTIVITY)
+        else native_tool_activity(ctx.deps, call.tool_name)
+    )
+    async with activity:
+        return await handler(args)
+
+
 def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     """Adapt a portable ``CustomToolDef`` to a native pydantic-ai tool callable.
 
     The wrapper takes ``RunContext`` (whose deps are the room's tools), then
     ``args: InputModel``, which pydantic-ai flattens into the tool's arguments
     and validates. ``invoke_validated_custom_tool`` runs the handler exactly as
-    every other adapter does and records its declared effect on the room's turn.
+    every other adapter does, records its declared effect on the room's turn,
+    and shows it as the turn's activity while it runs.
     The validated instance is passed through as is, since a dump/re-validate
     round-trip would break aliased fields.
     """
     input_model, _ = tool_def
 
     async def native(ctx: RunContext[AgentToolsProtocol], args: Any) -> Any:
-        return await invoke_validated_custom_tool(tool_def, args, turn=ctx.deps.turn)
+        return await invoke_validated_custom_tool(tool_def, args, tools=ctx.deps)
 
     native.__name__ = get_custom_tool_name(input_model)
     native.__doc__ = input_model.__doc__ or native.__name__
@@ -486,6 +517,7 @@ class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
             retries={"tools": 3, "output": 0},
             capabilities=[
                 Hooks(
+                    tool_execute=report_tool_execution,
                     before_model_request=_finish_explicit_decline,
                     after_node_run=_finish_explicit_decline_after_tools,
                 ),

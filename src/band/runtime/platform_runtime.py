@@ -55,6 +55,8 @@ class PlatformRuntime:
         contact_config: ContactEventConfig | None = None,
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
+        *,
+        link_factory: Callable[..., BandLink] | None = None,
     ):
         self._agent_id = agent_id
         self._api_key = api_key
@@ -66,6 +68,7 @@ class PlatformRuntime:
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
 
+        self._link_factory = link_factory
         self._link: BandLink | None = None
         # Held from creation until its stop() completes, so a restart can never
         # replace a runtime whose rooms may still be serving or cleaning up.
@@ -166,7 +169,8 @@ class PlatformRuntime:
         if self._link:
             return self._link
 
-        self._link = BandLink(
+        factory = self._link_factory or BandLink
+        self._link = factory(
             agent_id=self._agent_id,
             api_key=self._api_key,
             ws_url=self._ws_url,

@@ -8,7 +8,7 @@ import pytest
 from band.platform.event import PlatformEvent
 from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
-from band.runtime.toolactivity import report_tool_activity
+from band.runtime.toolactivity import start_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
@@ -28,10 +28,10 @@ class TestDetailCap:
     ) -> None:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
-            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(start_tool_activity(tools, "bash", "Bash"))
             await asyncio.sleep(LONG_TOOL_SECONDS)
             with permission_wait(tools):
-                await report_tool_activity(tools, "Edit")
+                await start_tool_activity(tools, "edit", "Edit")
 
         ctx = execution(handler, max_working_state_seconds=CAP_SECONDS)
         await deliver_event(ctx, make_message_event())

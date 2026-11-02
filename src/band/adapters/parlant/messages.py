@@ -14,6 +14,7 @@ from band.runtime.prompts import SYSTEM_UPDATE_PREFIX
 
 if TYPE_CHECKING:
     from parlant.core.application import Application
+    from parlant.core.background_tasks import BackgroundTaskService
     from parlant.core.sessions import SessionId
 
 # A mention token is ``@`` plus a whitespace-free label. ``.``, ``/``, and ``-``
@@ -116,6 +117,13 @@ async def await_stopped_task(task: asyncio.Task[Any]) -> None:
     await asyncio.wait({task})
     if not task.cancelled():
         task.exception()
+
+
+def processing_task(
+    service: BackgroundTaskService, session_id: SessionId
+) -> asyncio.Task[Any] | None:
+    """Find the released provider's actual process-session task."""
+    return service._tasks.get(process_session_tag(session_id))
 
 
 async def post_user_message(

@@ -672,7 +672,7 @@ wheels = [
 
 [[package]]
 name = "band-mcp"
-version = "2.2.9"
+version = "2.2.11"
 source = { editable = "packages/band-mcp" }
 dependencies = [
     { name = "band-client-rest" },
@@ -695,7 +695,7 @@ requires-dist = [
 
 [[package]]
 name = "band-sdk"
-version = "7.1.0"
+version = "8.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "async-lru" },
@@ -1069,8 +1069,8 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "langgraph", marker = "extra == 'dev-strands-nooa'", specifier = ">=1.0.0" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=1.0.0" },
-    { name = "letta-client", marker = "extra == 'dev'", specifier = ">=1.7.1" },
-    { name = "letta-client", marker = "extra == 'letta'", specifier = ">=1.7.1" },
+    { name = "letta-client", marker = "extra == 'dev'", specifier = ">=1.12.1" },
+    { name = "letta-client", marker = "extra == 'letta'", specifier = ">=1.12.1" },
     { name = "looptime", marker = "extra == 'dev'", specifier = ">=0.7" },
     { name = "looptime", marker = "extra == 'dev-crewai'", specifier = ">=0.7" },
     { name = "looptime", marker = "extra == 'dev-parlant'", specifier = ">=0.7" },

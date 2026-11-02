@@ -163,6 +163,9 @@ class AntigravityACPAdapter(ACPClientAdapter[AntigravityACPAdapterConfig]):
             **features,
         )
 
+    def _permission_is_manual(self) -> bool:
+        return self._resolve_permission != self._resolve_antigravity_permission
+
     def _credential_env(self) -> dict[str, str]:
         key = self.config.gemini_api_key
         return {GEMINI_API_KEY_ENV: key} if key else {}

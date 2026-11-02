@@ -87,6 +87,8 @@ class OmpEventType(StrEnum):
     TOOL_UPDATE = "tool_execution_update"
     TOOL_STREAM = "tool_stream_update"
     TOOL_END = "tool_execution_end"
+    AUTO_COMPACTION_START = "auto_compaction_start"
+    AUTO_COMPACTION_END = "auto_compaction_end"
 
 
 class OmpWireModel(BaseModel):

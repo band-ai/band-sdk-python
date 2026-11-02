@@ -43,6 +43,7 @@ from band.core.exceptions import BandToolError, MessagePostError, MessagePostKin
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import Capability, EventMessageType, MessageType
+from band.integrations.mcp.request import request_context
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -489,10 +490,14 @@ def _make_dispatch_function(
 
     async def _dispatch(**kwargs: Any) -> str:
         try:
+            metadata: dict[str, Any] = {}
             if registration.room_from_connection:
                 ctx = kwargs.pop("ctx")
                 kwargs[CHAT_ID_FIELD_NAME] = _room_id_from_context(ctx)
-            return await registration.execute(kwargs)
+                if (meta := ctx.request_context.meta) is not None:
+                    metadata = meta.model_dump()
+            with request_context(metadata):
+                return await registration.execute(kwargs)
         except (ValueError, BandToolError):
             raise
         except Exception:
@@ -591,10 +596,11 @@ def build_custom_tool_registration(
     Embedded-door only (divergence-matrix row 12: not exposed on the CLI).
     Dispatches straight through ``execute_custom_tool`` -- there is no
     ``AgentTools``/``HumanTools`` method behind a custom tool. With
-    ``get_tools`` the tool is room-bound and its declared effect is recorded
-    on that room's turn; the room comes from a ``chat_id`` argument, or with
-    ``room_from_connection`` from the endpoint path. Either way it is dropped
-    before the handler runs, since a custom tool never acts in a room.
+    ``get_tools`` the tool is room-bound: that room's turn records its declared
+    effect and shows it as running until it returns. The room comes from a
+    ``chat_id`` argument, or with ``room_from_connection`` from the endpoint
+    path. Either way the ``chat_id`` is dropped before the handler runs, since
+    a custom tool never acts in a room.
     """
     tool_def: CustomToolDef = (
         (spec.input_model, spec.handler) if isinstance(spec, CustomToolSpec) else spec
@@ -609,11 +615,9 @@ def build_custom_tool_registration(
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
         chat_id = kwargs.pop(CHAT_ID_FIELD_NAME, None)
-        tools = room_tools(get_tools, chat_id)
-        async with tool_activity(tools, tool_name):
-            result = await execute_custom_tool(
-                tool_def, kwargs, turn=tools.turn if tools is not None else None
-            )
+        result = await execute_custom_tool(
+            tool_def, kwargs, tools=room_tools(get_tools, chat_id)
+        )
         return tool_result_text(result)
 
     return MCPToolRegistration(

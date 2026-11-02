@@ -209,6 +209,10 @@ class FakeCodexClient(RecordedRequests):
         self._released.extend(events)
         self._emitted.set()
 
+    def emit_turn(self, turn_id: str, *events: RpcEvent) -> None:
+        """Send events belonging to an already-started turn."""
+        self.emit(*(_attributed(event, turn_id) for event in events))
+
     async def read_by_adapter(self) -> None:
         """Wait until the adapter's reader has taken every event sent so far.
 

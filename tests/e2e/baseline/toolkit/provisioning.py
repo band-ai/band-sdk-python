@@ -15,7 +15,7 @@ import asyncio
 import hashlib
 import logging
 import uuid
-from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterator, Mapping, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
@@ -36,7 +36,9 @@ from band_rest import (
 
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
+from band.platform.link import BandLink
 from band.runtime.agentconfig import AgentConfig
+from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.sessionconfig import SessionConfig
 from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
@@ -578,6 +580,8 @@ async def running_agent_with_handle(
     settings: BaselineSettings,
     config: AgentConfig | None = None,
     session_config: SessionConfig | None = None,
+    *,
+    link_factory: Callable[..., BandLink] = BandLink,
 ) -> AsyncGenerator[Agent, None]:
     """Like ``running_agent``, but yields the live ``Agent`` itself.
 
@@ -586,15 +590,16 @@ async def running_agent_with_handle(
     transport via ``agent.runtime.link`` (both already-public properties).
     """
     endpoints = settings.endpoints
-    agent = Agent.create(
-        adapter=adapter,
+    runtime = PlatformRuntime(
         agent_id=provisioned.id,
         api_key=provisioned.api_key,
         ws_url=endpoints.ws_url,
         rest_url=endpoints.rest_url,
         config=config,
         session_config=session_config,
+        link_factory=link_factory,
     )
+    agent = Agent(runtime=runtime, adapter=adapter)
     async with agent:
         yield agent
 
@@ -816,6 +821,8 @@ class AdapterCell:
         prompt: str | None = None,
         features: AdapterFeatures | None = None,
         tools: list[ToolSpec] | None = None,
+        session_config: SessionConfig | None = None,
+        link_factory: Callable[..., BandLink] = BandLink,
         **builder_kwargs: Any,
     ) -> AsyncGenerator[Agent, None]:
         """Like :meth:`run_as`, but yields the live ``Agent`` itself.
@@ -829,7 +836,11 @@ class AdapterCell:
         )
         with self.resources.track_running(identity.id):
             async with running_agent_with_handle(
-                identity, adapter, self.settings
+                identity,
+                adapter,
+                self.settings,
+                session_config=session_config,
+                link_factory=link_factory,
             ) as agent:
                 yield agent
 

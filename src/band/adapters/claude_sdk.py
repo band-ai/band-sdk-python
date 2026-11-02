@@ -57,6 +57,8 @@ try:
         ToolPermissionContext,
     )
 
+    from band.integrations.claude_sdk.activity import CLAUDE_TOOL_USE_META, Origin
+
     _CLAUDE_SDK_AVAILABLE = True
 except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
@@ -90,6 +92,7 @@ from band.core.delivery import (
     finish_automatic_reply,
     reraise_delivery_cause,
 )
+from band.core.exceptions import TerminalProviderFailure
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -140,7 +143,8 @@ from band.integrations.mcp import (
     SharedBandMCPBackend,
 )
 from band.integrations.mcp.local_server import local_mcp_auth_headers
-from band.runtime.activity import permission_wait
+from band.integrations.mcp.request import request_metadata
+from band.runtime.activity import retain_request_permission
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_effects,
@@ -158,7 +162,6 @@ from band.runtime.formatters import (
 )
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX
 from band.runtime.sessionresume import fetch_transcript
-from band.runtime.toolactivity import end_tool_activity, report_tool_activity
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BAND_MCP_SERVER_NAME,
@@ -522,11 +525,6 @@ TOOL_SEARCH = "ToolSearch"
 NATIVE_TOOL_MATCHER = rf"^(?!{re.escape(MCP_TOOL_PREFIX)}|{re.escape(TOOL_SEARCH)}$).+"
 
 
-def _served_by_band(sdk_tool_name: str) -> bool:
-    """Band's MCP server reports its own tools' activity as they run."""
-    return sdk_tool_name.startswith(MCP_TOOL_PREFIX)
-
-
 # Patterns that look like secrets/tokens in shell commands
 _REDACT_RE = re.compile(
     r"""(?x)
@@ -876,10 +874,23 @@ class ClaudeSDKAdapter(
             tool_definitions=list(
                 iter_tool_definitions(capabilities=self.features.capabilities)
             ),
-            get_tools=self._mcp_room_tools.get,
+            get_tools=self._resolve_mcp_tools,
             additional_tools=self._custom_tools,
             room_bound=True,
         )
+
+    def _resolve_mcp_tools(self, room_id: str) -> AgentToolsProtocol:
+        session = (
+            self._session_manager.session(room_id) if self._session_manager else None
+        )
+        call_id = request_metadata().get(CLAUDE_TOOL_USE_META)
+        if session is None or session.activity is None or not isinstance(call_id, str):
+            raise ValueError("Claude MCP request has no proven execution origin")
+        tools = session.activity.resolve(call_id).tools
+        shared = self._mcp_room_tools.get(room_id)
+        if isinstance(shared, DedupingAgentTools):
+            return cast(AgentToolsProtocol, shared.for_origin(tools))
+        return tools
 
     def _room_mcp_servers(self, room_id: str) -> dict[str, McpServerConfig]:
         """A room session's MCP servers: the Band endpoint bound to that room,
@@ -1199,7 +1210,7 @@ class ClaudeSDKAdapter(
                 owner, session, client, tools, full_message
             )
 
-        except TurnResultAlreadyReported:
+        except (TurnResultAlreadyReported, TerminalProviderFailure):
             # The failure was already reported via send_failure deeper in
             # the call stack; propagate without reporting it a second time.
             raise
@@ -1266,7 +1277,17 @@ class ClaudeSDKAdapter(
         propagates as an ordinary turn failure.
         """
         deadline: asyncio.Timeout | None = None
-        with session.listening() as stream:
+        if session.activity is None:
+            raise RuntimeError("Claude session has no activity owner")
+        origin = Origin(
+            tools,
+            owner,
+            self._turn_audience.get(session.room_id, ()),
+            partial(
+                self._release_turn, session.room_id, self._turn_release[session.room_id]
+            ),
+        )
+        with session.activity.foreground(origin), session.listening() as stream:
             try:
                 async with owner.timed(self.config.turn_timeout_s) as deadline:
                     await client.query(full_message)
@@ -1329,20 +1350,15 @@ class ClaudeSDKAdapter(
         return f"Claude turn timed out after {self.config.turn_timeout_s}s"
 
     async def _bind_mcp_tools(self, room_id: str, tools: AgentToolsProtocol) -> None:
-        """Point the room's MCP tool calls at ``tools``, deduping replies.
-
-        Under CLI load one band_send_message can be re-issued (see
-        DedupingAgentTools). Retries resolve the room by id only, so the
-        wrapper lives per room and swaps its inner tools rather than resetting
-        its cache. The adapter's own notices never pass through it.
-        """
+        """Create a captured origin view over the room's existing send cache."""
         if self.config.send_message_dedup_ttl_seconds <= 0:
             self._mcp_room_tools[room_id] = tools
             return
         existing = self._mcp_room_tools.get(room_id)
         if isinstance(existing, DedupingAgentTools):
-            if existing._inner is not tools:
-                await existing.update_inner(tools)
+            self._mcp_room_tools[room_id] = cast(
+                AgentToolsProtocol, existing.for_origin(tools)
+            )
             return
         # pyrefly can't see DedupingAgentTools' __getattr__ forwarding.
         self._mcp_room_tools[room_id] = cast(
@@ -1529,8 +1545,6 @@ class ClaudeSDKAdapter(
         # namespaces our tools mcp__band__*; see _semantic_tool_name).
         tool_name = self._semantic_tool_name(block.name)
         pending_tool_names[block.id] = block.name
-        if not _served_by_band(block.name):
-            await report_tool_activity(tools, tool_name)
         await self._narrate_tool_call(block, tool_name, room_id, tools)
 
     async def _narrate_tool_call(
@@ -1692,8 +1706,6 @@ class ClaudeSDKAdapter(
         (the protocol shape) and assistant messages (accepted defensively).
         """
         sdk_tool_name = pending_tool_names.pop(block.tool_use_id, None)
-        if sdk_tool_name is not None and not _served_by_band(sdk_tool_name):
-            await end_tool_activity(tools)
         result_tool_name = (
             None if sdk_tool_name is None else self._semantic_tool_name(sdk_tool_name)
         )
@@ -1838,11 +1850,21 @@ class ClaudeSDKAdapter(
         ) -> PermissionResultAllow | PermissionResultDeny:
             # Checked again after deciding: the residency may retire meanwhile.
             if session.speaks_for(generation):
+                try:
+                    if session.activity is None or context.tool_use_id is None:
+                        raise ValueError("Claude session has no activity owner")
+                    origin = session.activity.resolve(context.tool_use_id)
+                except (ValueError, asyncio.CancelledError):
+                    return PermissionResultDeny(message=RETIRED_SESSION_DENIAL)
                 decision = await self._resolve_tool_permission(
-                    session.room_id, tool_name, tool_input, context
+                    session.room_id, tool_name, tool_input, context, origin=origin
                 )
                 if session.speaks_for(generation):
-                    return decision
+                    try:
+                        origin.require_authority()
+                        return decision
+                    except (ValueError, asyncio.CancelledError):
+                        return PermissionResultDeny(message=RETIRED_SESSION_DENIAL)
                 why = "decided after its Claude session retired"
             else:
                 why = "requested by a retired Claude session"
@@ -1857,13 +1879,15 @@ class ClaudeSDKAdapter(
         tool_name: str,
         tool_input: dict[str, Any],
         context: ToolPermissionContext,
+        *,
+        origin: Origin,
     ) -> PermissionResultAllow | PermissionResultDeny:
         """Decide allow/deny for one tool call under the room's approval mode."""
         # The SDK passes the MCP-namespaced name; use the bare name everywhere
         # this approval surfaces to the user (summary, notifications, logs).
         tool_name = self._semantic_tool_name(tool_name)
         summary = self._approval_summary(tool_name, tool_input)
-        mentions = list(self._turn_audience.get(room_id, ()))
+        mentions = list(origin.audience)
         # Always a real string for a can_use_tool callback (see
         # ToolPermissionContext.tool_use_id); matched against this same call's
         # entry in ResultMessage.permission_denials at turn end.
@@ -1879,7 +1903,7 @@ class ClaudeSDKAdapter(
         if self._approvals.mode == "auto_accept":
             if self._approvals.text_notifications:
                 await self._notify_auto_decision(
-                    room_id, summary, "accept", mentions=mentions
+                    room_id, summary, "accept", mentions=mentions, tools=origin.tools
                 )
             return PermissionResultAllow()
 
@@ -1887,7 +1911,7 @@ class ClaudeSDKAdapter(
             notified = False
             if self._approvals.text_notifications:
                 notified = await self._notify_auto_decision(
-                    room_id, summary, "decline", mentions=mentions
+                    room_id, summary, "decline", mentions=mentions, tools=origin.tools
                 )
             if notified and tool_use_id:
                 self._record_notified_decline(room_id, tool_use_id)
@@ -1897,7 +1921,14 @@ class ClaudeSDKAdapter(
 
         # --- manual mode ---------------------------------------------------
         return await self._resolve_manual_approval(
-            room_id, tool_name, tool_input, summary, tool_use_id, mentions=mentions
+            room_id,
+            tool_name,
+            tool_input,
+            summary,
+            tool_use_id,
+            mentions=mentions,
+            tools=origin.tools,
+            release=origin.release,
         )
 
     async def _send_best_effort(
@@ -1929,6 +1960,7 @@ class ClaudeSDKAdapter(
         decision: ApprovalDecision,
         *,
         mentions: list[str],
+        tools: AgentToolsProtocol,
     ) -> bool:
         """Best-effort chat notification for auto-approve / auto-decline.
 
@@ -1937,9 +1969,6 @@ class ClaudeSDKAdapter(
         the missing-reply guard at turn end — only a delivered notice already
         explains the turn's silence.
         """
-        tools = self._room_tools.get(room_id)
-        if not tools:
-            return False
         return await self._send_automatic_notice(
             tools,
             APPROVAL_POLICY_DECISION_TEMPLATE.format(
@@ -1968,11 +1997,7 @@ class ClaudeSDKAdapter(
         generation = session.generation
         try:
             mentions = await automatic_mentions(tools, sender_ids)
-            if (
-                self._room_tools.get(room_id) is not tools
-                or not session.speaks_for(generation)
-                or not mentions
-            ):
+            if not session.speaks_for(generation) or not mentions:
                 return False
             return await self._send_best_effort(
                 tools,
@@ -1995,6 +2020,8 @@ class ClaudeSDKAdapter(
         tool_use_id: str | None,
         *,
         mentions: list[str],
+        tools: AgentToolsProtocol,
+        release: Callable[[], None] | None,
     ) -> PermissionResultAllow | PermissionResultDeny:
         """Block until a user approves / declines via ``/approve`` or ``/decline``."""
         loop = asyncio.get_running_loop()
@@ -2028,66 +2055,65 @@ class ClaudeSDKAdapter(
 
         # Notify user — if we can't deliver the prompt, decline immediately
         # so the caller isn't left waiting for a timeout nobody will see.
-        tools = self._room_tools.get(room_id)
         session = (
             self._session_manager.session(room_id) if self._session_manager else None
         )
         generation = session.generation if session else None
-        with permission_wait(tools):
-            try:
-                if tools:
-                    notified = False
-                    try:
-                        recipients = await automatic_mentions(tools, mentions)
-                        if (
-                            self._room_tools.get(room_id) is tools
-                            and session is not None
-                            and generation is not None
-                            and session.speaks_for(generation)
-                            and recipients
-                            and entry in registry.unclaimed()
-                        ):
-                            await tools.send_notice(
-                                APPROVAL_REQUESTED_TEMPLATE.format(
-                                    summary=summary, token=token
-                                ),
-                                mentions=recipients,
-                            )
-                            notified = True
-                    except Exception:
-                        logger.warning(
-                            "Room %s: Failed to send approval notification",
-                            room_id,
-                            exc_info=True,
+        retain_request_permission(tools)
+        try:
+            if tools:
+                notified = False
+                try:
+                    recipients = await automatic_mentions(tools, mentions)
+                    if (
+                        session is not None
+                        and generation is not None
+                        and session.speaks_for(generation)
+                        and recipients
+                        and entry in registry.unclaimed()
+                    ):
+                        await tools.send_notice(
+                            APPROVAL_REQUESTED_TEMPLATE.format(
+                                summary=summary, token=token
+                            ),
+                            mentions=recipients,
                         )
-                    # A reply that claimed it meanwhile owns the answer.
-                    if not notified and registry.withdraw(entry):
-                        return PermissionResultDeny(
-                            message="Could not deliver approval prompt, tool use declined"
+                        notified = True
+                except Exception:
+                    logger.warning(
+                        "Room %s: Failed to send approval notification",
+                        room_id,
+                        exc_info=True,
+                    )
+                # A reply that claimed it meanwhile owns the answer.
+                if not notified and registry.withdraw(entry):
+                    return PermissionResultDeny(
+                        message="Could not deliver approval prompt, tool use declined"
+                    )
+
+            # Release the input handler so the room can dispatch a reply;
+            # the detached turn is judged at its actual completion.
+            if tools:
+                tools.turn.detach()
+            if release is not None:
+                release()
+
+            async with registry.answering(
+                entry, pending.future, timeout_s=self._approvals.wait_timeout_s
+            ) as decision:
+                match decision:
+                    case Timeout.TIMED_OUT:
+                        return await self._apply_approval_timeout(
+                            tools, room_id, token, mentions, tool_use_id
                         )
-
-                # Release the input handler so the room can dispatch a reply;
-                # the detached turn is judged at its actual completion.
-                if tools:
-                    tools.turn.detach()
-                self._release_turn(room_id)
-
-                async with registry.answering(
-                    entry, pending.future, timeout_s=self._approvals.wait_timeout_s
-                ) as decision:
-                    match decision:
-                        case Timeout.TIMED_OUT:
-                            return await self._apply_approval_timeout(
-                                tools, room_id, token, mentions, tool_use_id
-                            )
-                        case ApprovalReply():
-                            return await self._apply_approval_reply(
-                                tools, room_id, token, decision, tool_use_id
-                            )
-                    # Forced by eviction or room teardown: no notice names this call.
-                    return PermissionResultDeny(message="User declined tool use")
-            finally:
-                self._clear_pending_approval(room_id, entry)
+                    case ApprovalReply():
+                        return await self._apply_approval_reply(
+                            tools, room_id, token, decision, tool_use_id
+                        )
+                # Forced by eviction or room teardown: no notice names this call.
+                return PermissionResultDeny(message="User declined tool use")
+        finally:
+            self._clear_pending_approval(room_id, entry)
 
     async def _apply_approval_reply(
         self,

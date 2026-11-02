@@ -118,7 +118,7 @@ class ToolSpec:
         construct = ", ".join(f"{f}={f}" for f in self.model.model_fields)
         src = (
             f"async def {self.name}({', '.join(params)}):\n"
-            f"    return await _invoke(_tool, _model({construct}), turn=None)\n"
+            f"    return await _invoke(_tool, _model({construct}), tools=None)\n"
         )
         exec(src, ns)  # noqa: S102 - synthesize a real signature the frameworks introspect
         tool: Callable[..., Awaitable[str]] = ns[self.name]

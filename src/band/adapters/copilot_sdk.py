@@ -58,6 +58,7 @@ from band.integrations.copilot_sdk.room_ask_user import (
     render_room_question,
     room_inactive_answer,
 )
+from band.runtime.activity import retain_request_permission
 from band.runtime.custom_tools import (
     custom_tools_to_schemas,
     execute_custom_tool,
@@ -92,6 +93,8 @@ try:
         SessionWarningData,
         ToolExecutionCompleteData,
     )
+
+    from band.integrations.copilot_sdk.activity import SessionActivity
 
     _COPILOT_SDK_AVAILABLE = True
 except ImportError:
@@ -177,6 +180,7 @@ class RoomSession:
     seed: SessionSeed = field(default_factory=SessionSeed)
     resumable: str | None = None
     recorded: str | None = None
+    activity: SessionActivity | None = None
 
     @property
     def unseeded(self) -> str | None:
@@ -447,6 +451,10 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         await self.backend_turns.settled(room_id)
         if self._session_manager:
             await self._session_manager.cleanup_session(room_id)
+        if (
+            room := self._sessions.get(room_id)
+        ) is not None and room.activity is not None:
+            await room.activity.close()
         self._room_tools.pop(room_id, None)
         self._sessions.pop(room_id, None)
         self._turn_state.pop(room_id, None)
@@ -456,6 +464,9 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         await self.backend_turns.drain()
         if self._session_manager:
             await self._session_manager.stop()
+        for room in self._sessions.values():
+            if room.activity is not None:
+                await room.activity.close()
         self._room_tools.clear()
         self._sessions.clear()
         self._turn_state.clear()
@@ -508,6 +519,15 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                     raise
                 live = SessionTurn(room_id, session, self._room(room_id))
                 self.backend_turns.bind(room_id, live)
+                if (
+                    live.room.activity is None
+                    or live.room.activity.session is not session
+                ):
+                    if live.room.activity is not None:
+                        await live.room.activity.close()
+                    live.room.activity = SessionActivity(session)
+                activity = live.room.activity
+                activity.bind(tools)
                 prompt = self._compose_prompt(
                     messages,
                     participants_msg,
@@ -531,6 +551,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 else:
                     live.room.confirm_seed()
                 finally:
+                    activity.retire(tools)
                     self._turn_state.pop(room_id, None)
                     # No-op unless Emit.USAGE is on / usage is non-empty; best-effort,
                     # never raises. In the finally so a turn that errors or times out
@@ -579,6 +600,9 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             await self._session_manager.discard_session(room_id, unseeded)
         else:
             await self._session_manager.evict_session(room_id)
+        if room.activity is not None:
+            await room.activity.close()
+            room.activity = None
 
     def _session_prefix(self) -> str:
         """Return the per-room session-id prefix.
@@ -735,11 +759,22 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             # allowing it does not weaken the approve_all stance above.
             available_tools.append("ask_user")
             kwargs["on_user_input_request"] = (
-                self._ask_user
+                self._manual_user_input_handler(room_id, self._ask_user)
                 if callable(self._ask_user)
                 else self._make_room_ask_user_handler(room_id)
             )
         return kwargs
+
+    def _manual_user_input_handler(
+        self, room_id: str, handler: UserInputHandler
+    ) -> UserInputHandler:
+        def handle(request: UserInputRequest, context: dict[str, str]) -> Any:
+            tools = self._room_tools.get(room_id)
+            if tools is not None:
+                retain_request_permission(tools)
+            return handler(request, context)
+
+        return handle
 
     def _make_room_ask_user_handler(self, room_id: str) -> UserInputHandler:
         """Bind the room id for the session's ask_user → room bridge."""
@@ -869,7 +904,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             custom_tool = find_custom_tool(self._custom_tools, tool_name)
             if custom_tool:
                 result = await execute_custom_tool(
-                    custom_tool, arguments, turn=room_tools.turn
+                    custom_tool, arguments, tools=room_tools
                 )
             else:
                 # Structured variant: a base tool (e.g. band_send_message) can fail
