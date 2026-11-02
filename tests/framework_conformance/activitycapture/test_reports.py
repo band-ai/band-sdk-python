@@ -18,7 +18,7 @@ from tests.framework_conformance.activitycapture.kit import HeldActivityPeer
 
 class TestReportCapture:
     @pytest.mark.looptime
-    async def test_http_failure_is_not_an_accepted_report_or_stop(
+    async def test_http_failure_is_sent_but_not_an_accepted_report_or_stop(
         self,
         observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
     ) -> None:
@@ -34,7 +34,8 @@ class TestReportCapture:
             accepted=False, stopped=False
         )
         assert stops == []
-        with pytest.raises(TimeoutError, match="accepted report"):
+        assert await capture.sent("room", working=True) is capture.reports[0]
+        with pytest.raises(TimeoutError, match="report room="):
             await capture.report("room", working=True)
 
     async def test_a_failed_request_waits_for_the_next_accepted_keep_alive(

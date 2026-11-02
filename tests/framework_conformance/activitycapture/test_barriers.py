@@ -5,10 +5,11 @@ from __future__ import annotations
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
+import httpx
 import pytest
 from band_rest import AgentActivityDetail
 
-from tests.activitysupport import install_activity_support, tool_body
+from tests.activitysupport import tool_body
 from tests.e2e.baseline.toolkit.activity import (
     ActivityCapture,
     ActivityPush,
@@ -26,7 +27,7 @@ DETAIL = tool_body("Read")["activity"]
 OTHER_DETAIL = tool_body("Write")["activity"]
 DETAIL_REPORT = AgentActivityDetail(**DETAIL)
 MISSING_PUSH = pytest.raises(TimeoutError, match="raw detail")
-MISSING_REPORT = pytest.raises(TimeoutError, match="accepted report")
+MISSING_REPORT = pytest.raises(TimeoutError, match="report room=")
 MISSING_STOP = pytest.raises(TimeoutError, match="raw stop")
 
 
@@ -66,7 +67,6 @@ class TestActivityBarriers:
     )
     async def test_held_detail_needs_a_push_and_a_report_after_entry(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
         raw_peer: tuple[TrackingWebSocketClient, TopicPeer],
         pushed_before_since: list[dict[str, Any]],
@@ -74,7 +74,6 @@ class TestActivityBarriers:
         reported_after_entry: list[AgentActivityDetail | None],
         expectation: AbstractContextManager[object],
     ) -> None:
-        install_activity_support(monkeypatch, learned=True)
         capture, link, _ = observed_link
         ws, peer = raw_peer
         capture.deadline_s = 1
@@ -134,7 +133,6 @@ class TestActivityBarriers:
     )
     async def test_finished_needs_an_idle_report_and_a_stop(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
         raw_peer: tuple[TrackingWebSocketClient, TopicPeer],
         working_before_since: list[bool],
@@ -142,7 +140,6 @@ class TestActivityBarriers:
         pushes: list[ActivityPush],
         expectation: AbstractContextManager[object],
     ) -> None:
-        install_activity_support(monkeypatch, learned=True)
         capture, link, _ = observed_link
         ws, peer = raw_peer
         capture.deadline_s = 1
@@ -159,11 +156,9 @@ class TestActivityBarriers:
 
     async def test_finished_rejects_a_stop_pushed_before_its_phase(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
         raw_peer: tuple[TrackingWebSocketClient, TopicPeer],
     ) -> None:
-        install_activity_support(monkeypatch, learned=True)
         capture, link, _ = observed_link
         ws, peer = raw_peer
         capture.deadline_s = 1
@@ -173,3 +168,32 @@ class TestActivityBarriers:
             await link.report_activity(ROOM, False)
             with MISSING_STOP:
                 await capture.finished(ROOM, AGENT, since=since)
+
+    async def test_finished_accepts_a_failed_idle_report_once_the_platform_stops(
+        self,
+        observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
+        raw_peer: tuple[TrackingWebSocketClient, TopicPeer],
+    ) -> None:
+        capture, link, peer = observed_link
+        ws, topics = raw_peer
+        capture.deadline_s = 1
+        peer.responses.append(httpx.Response(503, json={"error": "Unavailable"}))
+        async with capture.rooms(ws, ROOM):
+            since = capture.cursor()
+            assert not await link.report_activity(ROOM, False)
+            await topics.emit(ROOM, ActivityPush.STOPPED, {"agent_id": AGENT})
+            await capture.finished(ROOM, AGENT, since=since)
+
+    async def test_cleared_needs_only_the_idle_report_from_its_phase(
+        self,
+        observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
+    ) -> None:
+        capture, link, _ = observed_link
+        capture.deadline_s = 1
+        await link.report_activity(ROOM, False)
+        since = capture.cursor()
+        with MISSING_REPORT:
+            await capture.cleared(ROOM, AGENT, since=since)
+        await link.report_activity(ROOM, False)
+        record = await capture.cleared(ROOM, AGENT, since=since)
+        assert record.sequence > since
