@@ -10,14 +10,11 @@ from phoenix_channels_python_client import (
     Disconnected,
     ReconnectDecision,
 )
+from phoenix_channels_python_client.client_types import PROCEED
 from websockets.exceptions import InvalidStatus
 
 from band.client.streaming import SupersedePayload, WebSocketDisconnectReason
-from band.client.streaming.session_decider import (
-    PROCEED,
-    SessionDecider,
-    SupersedeVerdict,
-)
+from band.client.streaming.session_decider import SessionDecider, SupersedeVerdict
 from tests.conftest import RETRYABLE_SUPERSEDE, TERMINAL_SUPERSEDE
 from tests.websocket.client.kit import upgrade_error_body, upgrade_exception
 
