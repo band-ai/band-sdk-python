@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
 
+from band.platform.link import BandLink
 from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.toolkit import provisioning
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.framework_configs.adapters import ADAPTER_CONFIGS
 from tests.framework_configs.converters import CONVERTER_CONFIGS
+from tests.framework_conformance.invocationkit import StartedRun
 
 
 @pytest.fixture
@@ -51,9 +53,9 @@ def output(converter_config):
 
 
 @pytest.fixture
-def started_with(monkeypatch: pytest.MonkeyPatch) -> list[SessionConfig | None]:
-    """The session config of each agent started."""
-    configs: list[SessionConfig | None] = []
+def started_with(monkeypatch: pytest.MonkeyPatch) -> list[StartedRun]:
+    """What each agent run was started with."""
+    runs: list[StartedRun] = []
 
     @asynccontextmanager
     async def running_agent(
@@ -61,9 +63,11 @@ def started_with(monkeypatch: pytest.MonkeyPatch) -> list[SessionConfig | None]:
         adapter: Any,
         settings: Any,
         session_config: SessionConfig | None = None,
+        *,
+        link_factory: Callable[..., BandLink] = BandLink,
     ) -> AsyncIterator[ProvisionedAgent]:
-        configs.append(session_config)
+        runs.append(StartedRun(session_config, link_factory))
         yield provisioned
 
     monkeypatch.setattr(provisioning, "running_agent", running_agent)
-    return configs
+    return runs

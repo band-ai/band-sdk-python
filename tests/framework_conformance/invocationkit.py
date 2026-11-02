@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -11,11 +12,21 @@ from band.core.exceptions import InputNotAccepted
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.platform.link import BandLink
+from band.runtime.sessionconfig import SessionConfig
 from band.testing.fake_tools import FakeAgentTools
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 
 ROOM_ID = "room-1"
 IDENTITY = ProvisionedAgent(id="agent-1", api_key="key", name="agent")
+
+
+@dataclass(frozen=True)
+class StartedRun:
+    """What one agent run was started with."""
+
+    session_config: SessionConfig | None = None
+    link_factory: Callable[..., BandLink] = BandLink
 
 
 def original(message_id: str) -> PlatformMessage:
