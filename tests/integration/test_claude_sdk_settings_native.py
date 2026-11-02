@@ -114,9 +114,7 @@ def signed_in_claude(claude_binary: str) -> Iterator[str]:
 
 
 def _hook_settings(tmp_dir: Path) -> tuple[Path, Path]:
-    """A settings file whose SessionStart hook touches a marker, plus the path. Hook
-    semantics were confirmed against the installed CLI before these tests relied on
-    them (the same shape the band-agent plan's smoke protocol prescribed)."""
+    """Write a settings file whose SessionStart hook creates a marker; return both paths."""
     marker = tmp_dir / "session-start-marker"
     settings = tmp_dir / "settings.json"
     settings.write_text(
