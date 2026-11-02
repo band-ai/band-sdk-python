@@ -44,3 +44,15 @@ class TestDetailLatch:
         with pytest.raises(AssertionError, match=DETAIL_DISABLED):
             await capture.report(ROOM, working=True, activity=DETAIL)
         assert peer.reports == [{"working": True}]
+
+    async def test_boolean_report_is_still_matched_once_detail_is_latched_off(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
+    ) -> None:
+        support = install_activity_support(monkeypatch, learned=True)
+        support.disable(room_id=ROOM)
+        capture, link, _ = observed_link
+        await link.report_activity(ROOM, True)
+        record = await capture.report(ROOM, working=True)
+        assert (record.working, record.activity) == (True, None)

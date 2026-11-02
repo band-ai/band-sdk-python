@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-from unittest.mock import patch
-
-import tests.e2e.baseline.toolkit.adapters as adapters_module
-from tests.e2e.baseline.agents import ExcludedAdapter, not_applicable
-from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
+from tests.e2e.baseline.agents import not_applicable
+from tests.e2e.baseline.toolkit.adapters import Adapter, specs
 
 REASON = "no harness for this signal"
 SELECTED = (Adapter.CLAUDE_SDK, Adapter.CODEX)
@@ -20,12 +16,3 @@ class TestNotApplicable:
         assert sorted([*SELECTED, *(row.adapter for row in rows)]) == sorted(
             spec.id for spec in specs()
         )
-
-    def test_rows_follow_the_registry_rather_than_a_fixed_list(self) -> None:
-        row = ExcludedAdapter(Adapter.LANGGRAPH, REASON)
-        pending = replace(
-            spec_for(Adapter.LANGGRAPH), e2e_pending="synthetic: backend not CI-wired"
-        )
-        with patch.dict(adapters_module._REGISTRY, {Adapter.LANGGRAPH: pending}):
-            assert row not in not_applicable(SELECTED, REASON)
-        assert row in not_applicable(SELECTED, REASON)

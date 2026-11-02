@@ -1,4 +1,4 @@
-"""How ``running_provisioned_agent`` hands a bespoke run its execution policy and its turn observer.
+"""How ``running_provisioned_agent`` hands a bespoke run its execution policy, link and turn observer.
 
 The platform connection is the un-runnable boundary here, so ``running_agent`` is
 replaced by a stand-in that records what it was started with; the adapter is real,
@@ -7,6 +7,9 @@ and so are the observer and its turns.
 
 from __future__ import annotations
 
+from typing import Any
+
+from band.platform.link import BandLink
 from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.toolkit.invocations import InvocationObserver
 from tests.e2e.baseline.toolkit.provisioning import running_provisioned_agent
@@ -14,6 +17,7 @@ from tests.framework_conformance.invocationkit import (
     ROOM_ID,
     DecliningAdapter,
     ProvisionedResources,
+    StartedRun,
     original,
     turn_input,
 )
@@ -23,7 +27,7 @@ DEADLINE_S = 5.0
 
 class TestProvisionedAgentRun:
     async def test_the_agent_starts_under_the_requested_session_config(
-        self, started_with: list[SessionConfig | None]
+        self, started_with: list[StartedRun]
     ) -> None:
         batching = SessionConfig(consume_all_queued=True)
 
@@ -32,10 +36,23 @@ class TestProvisionedAgentRun:
         ):
             pass
 
-        assert started_with == [batching]
+        assert started_with == [StartedRun(batching)]
+
+    async def test_the_agent_runs_over_the_requested_link(
+        self, started_with: list[StartedRun]
+    ) -> None:
+        def observing_link(**kwargs: Any) -> BandLink:
+            return BandLink(**kwargs)
+
+        async with running_provisioned_agent(
+            DecliningAdapter(), ProvisionedResources(), link_factory=observing_link
+        ):
+            pass
+
+        assert started_with == [StartedRun(link_factory=observing_link)]
 
     async def test_the_turns_of_the_adapter_are_observed(
-        self, started_with: list[SessionConfig | None]
+        self, started_with: list[StartedRun]
     ) -> None:
         adapter, observer = (
             DecliningAdapter(),

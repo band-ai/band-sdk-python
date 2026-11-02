@@ -24,6 +24,7 @@ from tests.framework_conformance.invocationkit import (
     ROOM_ID,
     CellResources,
     DecliningAdapter,
+    StartedRun,
     original,
     turn_input,
 )
@@ -45,17 +46,17 @@ def cell() -> AdapterCell:
 
 class TestAdapterCellRun:
     async def test_the_agent_starts_under_the_requested_session_config(
-        self, adapter: DecliningAdapter, started_with: list[SessionConfig | None]
+        self, adapter: DecliningAdapter, started_with: list[StartedRun]
     ) -> None:
         batching = SessionConfig(consume_all_queued=True)
 
         async with cell().run_as(IDENTITY, session_config=batching):
             pass
 
-        assert started_with == [batching]
+        assert started_with == [StartedRun(batching)]
 
     async def test_the_turns_of_the_adapter_the_cell_built_are_observed(
-        self, adapter: DecliningAdapter, started_with: list[SessionConfig | None]
+        self, adapter: DecliningAdapter, started_with: list[StartedRun]
     ) -> None:
         observer = InvocationObserver(deadline_s=DEADLINE_S)
 

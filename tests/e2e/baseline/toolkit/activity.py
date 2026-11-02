@@ -62,6 +62,8 @@ class RawActivity:
 T = TypeVar("T")
 
 DETAIL_DISABLED = "activity detail disabled in this process"
+UNLISTED_TOOL = "activity named a tool outside the allowed names"
+EXTRA_DETAIL = "activity detail carries more than a kind and tool name"
 
 
 class StopObservation:
@@ -183,7 +185,8 @@ class ActivityCapture:
         # The record holds the detail the SDK meant to send; a latched rejection
         # strips it from the wire while the report is still accepted.
         assert activity is None or message_lifecycle.activity_support.supported, (
-            DETAIL_DISABLED
+            DETAIL_DISABLED,
+            record,
         )
         return record
 
@@ -290,10 +293,10 @@ class ActivityCapture:
             expected = {"kind": activity["kind"]}
             if activity["kind"] == TOOL_CALL:
                 expected["name"] = activity["name"]
-            assert activity == expected
+            assert activity == expected, (EXTRA_DETAIL, activity)
         if tool_names is not None:
             reported = {a["name"] for a in details if a["kind"] == TOOL_CALL}
-            assert reported <= set(tool_names), reported
+            assert reported <= set(tool_names), (UNLISTED_TOOL, reported)
 
 
 class ObservingBandLink(BandLink):
