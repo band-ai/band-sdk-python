@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -276,6 +277,7 @@ ISOLATION_SETTINGS: Mapping[str, object] = MappingProxyType(
 ISOLATION_OVERRIDE_WARNING = (
     "Claude settings keys %s are enforced by the adapter; the host's values are ignored"
 )
+LAUNCH_FILE_MISSING_WARNING = "Claude launch settings file %s was removed; rewriting it"
 
 
 class SettingsRejection(StrEnum):
@@ -295,8 +297,13 @@ def _reject_band_mcp_token(env: Mapping[str, object], where: str) -> None:
         raise ValueError(f"{where} {SettingsRejection.BAND_TOKEN}")
 
 
-def _reject_non_finite(constant: str) -> NoReturn:
-    raise ValueError(f"non-finite number {constant}")
+def _finite_number(text: str) -> float:
+    """Parse a JSON number that writes back as JSON; ``1e400`` overflows to
+    ``inf``, which ``json.dumps`` writes as the non-JSON ``Infinity``."""
+    number = float(text)
+    if not math.isfinite(number):
+        raise ValueError(f"non-finite number {text}")
+    return number
 
 
 def _is_inline_json(settings: str) -> bool:
@@ -307,7 +314,9 @@ def _settings_object(text: str, source: str) -> dict[str, Any]:
     """Parse ``text`` as the JSON object Claude settings must be, rejecting
     what the CLI's own parser rejects."""
     try:
-        value = json.loads(text, parse_constant=_reject_non_finite)
+        value = json.loads(
+            text, parse_constant=_finite_number, parse_float=_finite_number
+        )
     except ValueError as error:
         raise ValueError(f"{source} {SettingsRejection.NOT_JSON}: {error}") from error
     if not isinstance(value, dict):
@@ -356,7 +365,10 @@ class LaunchSettings:
     def for_launch(self) -> str:
         if not self._private:
             return self._json
-        if self._file is None or not self._file.exists():
+        if self._file is not None and not self._file.exists():
+            logger.warning(LAUNCH_FILE_MISSING_WARNING, self._file)
+            self._file = None
+        if self._file is None:
             self._file = self._write()
         return str(self._file)
 
@@ -394,8 +406,12 @@ class ClaudeCLIOptions(BaseAdapterConfig):
             ``ISOLATION_SETTINGS``, whose keys always win, into the CLI's
             single ``--settings`` value (see ``LaunchSettings``). A file is
             read when the adapter starts, so edits apply on the next start,
-            and a missing or malformed file fails that start. Like ``env``, their ``env`` may
-            not set ``BAND_MCP_TOKEN``. Selecting settings does not open user
+            and a missing or malformed file fails that start. Like ``env``,
+            their ``env`` may not set ``BAND_MCP_TOKEN``. They must also
+            satisfy Claude Code's settings schema, which this SDK does not
+            check: the CLI skips a ``--settings`` value it cannot load as a
+            whole, isolation keys included, and under the SDK it reports
+            nothing. Selecting settings does not open user
             or project setting sources. The contents are trusted operator
             configuration: permission rules, hooks and plugins inside keep
             Claude Code's own precedence, which this SDK does not validate.

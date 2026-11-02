@@ -27,7 +27,7 @@ from band.integrations.claude_sdk.transport import create_transport
 from tests.adapters.claude_sdk.helpers import (
     SEND_MESSAGE_MCP_NAME,
     OpenRoom,
-    first_launch_options,
+    launch_options,
     sdk_cli_argv,
 )
 from tests.paths import host_absolute_path
@@ -69,7 +69,7 @@ class TestCliOptions:
         )
         room = await claude_room(ClaudeSDKAdapterConfig(cli=cli))
 
-        options = await first_launch_options(room)
+        options = await launch_options(room)
 
         assert options.plugins == [{"type": "local", "path": str(tmp_path / "plugin")}]
         assert options.cli_path == cli.cli_path
@@ -87,7 +87,7 @@ class TestCliOptions:
             ClaudeSDKAdapterConfig(cli=ClaudeCLIOptions(plugin_dirs=(str(tmp_path),)))
         )
 
-        options = await first_launch_options(room)
+        options = await launch_options(room)
 
         assert list(options.mcp_servers) == ["band"]
         assert SEND_MESSAGE_MCP_NAME in options.allowed_tools
@@ -110,7 +110,7 @@ class TestCliOptions:
             )
         )
 
-        options = await first_launch_options(room, session_id="sess-1")
+        options = await launch_options(room, session_id="sess-1")
 
         assert _emitted_flags(options) == SDK_OWNED_CLI_FLAGS
 
@@ -126,7 +126,7 @@ class TestCliOptions:
             ClaudeSDKAdapterConfig(max_thinking_tokens=1024), emit=emit
         )
 
-        options = await first_launch_options(room)
+        options = await launch_options(room)
 
         assert options.thinking is not None
         assert options.thinking.get("display") == display

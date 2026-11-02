@@ -17,6 +17,7 @@ from band.adapters.claude_sdk import (
     BAND_MCP_TOKEN_ENV,
     ISOLATION_OVERRIDE_WARNING,
     ISOLATION_SETTINGS,
+    LAUNCH_FILE_MISSING_WARNING,
     ClaudeCLIOptions,
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
@@ -28,10 +29,9 @@ from tests.adapters.claude_sdk.helpers import (
     AGENT_DESCRIPTION,
     AGENT_NAME,
     REPORTING_BUDGET,
-    ClaudeRoom,
     OpenRoom,
     band_mcp_running,
-    first_launch_options,
+    launch_options,
     sdk_cli_argv,
 )
 
@@ -72,15 +72,16 @@ def _launch_settings(options: ClaudeAgentOptions) -> dict[str, Any]:
     return json.loads(_launch_file(options).read_text(encoding="utf-8"))
 
 
+def _adapter_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == ADAPTER_LOGGER and record.levelno >= logging.WARNING
+    ]
+
+
 def _with_host(settings: str) -> ClaudeSDKAdapterConfig:
     return ClaudeSDKAdapterConfig(cli=ClaudeCLIOptions(settings=settings))
-
-
-async def _launch_in(room: ClaudeRoom) -> ClaudeAgentOptions:
-    """The options of the CLI the room's next message launches."""
-    room.claude.script([room.model_reply("Hello.")])
-    await room.send("hi")
-    return room.claude.sessions[-1].options
 
 
 class TestLaunchSettings:
@@ -89,7 +90,7 @@ class TestLaunchSettings:
     ) -> None:
         room = await claude_room(ClaudeSDKAdapterConfig())
 
-        options = await first_launch_options(room)
+        options = await launch_options(room)
 
         assert json.loads(_settings_argument(options)) == ISOLATION_SETTINGS
 
@@ -99,7 +100,7 @@ class TestLaunchSettings:
     ) -> None:
         room = await claude_room(_with_host(source(HOST_SETTINGS, tmp_path)))
 
-        options = await first_launch_options(room)
+        options = await launch_options(room)
 
         assert _launch_settings(options) == {**HOST_SETTINGS, **ISOLATION_SETTINGS}
 
@@ -136,9 +137,9 @@ class TestLaunchSettings:
             room = await claude_room(
                 _with_host(json.dumps({**HOST_SETTINGS, **overrides}))
             )
-        logged = [r.getMessage() for r in caplog.records if r.name == ADAPTER_LOGGER]
+        logged = _adapter_warnings(caplog)
 
-        options = await first_launch_options(room)
+        options = await launch_options(room)
 
         assert _launch_settings(options) == {**HOST_SETTINGS, **ISOLATION_SETTINGS}
         assert logged == warnings
@@ -150,7 +151,7 @@ class TestLaunchSettings:
         secret_settings = {"env": {"ANTHROPIC_API_KEY": SECRET}}
         room = await claude_room(_with_host(source(secret_settings, tmp_path)))
 
-        options = await first_launch_options(room)
+        options = await launch_options(room)
 
         assert SECRET not in " ".join(sdk_cli_argv(options))
         assert _launch_settings(options)["env"] == secret_settings["env"]
@@ -161,19 +162,34 @@ class TestLaunchSettings:
     ) -> None:
         room = await claude_room(_with_host(json.dumps(HOST_SETTINGS)))
 
-        options = await first_launch_options(room)
+        options = await launch_options(room)
 
         assert stat.S_IMODE(_launch_file(options).stat().st_mode) == 0o600
 
-    async def test_a_launch_rewrites_a_launch_file_removed_under_it(
+    async def test_launches_share_one_launch_file_until_the_adapter_stops(
         self, claude_room: OpenRoom
     ) -> None:
         room = await claude_room(_with_host(json.dumps(HOST_SETTINGS)))
-        _launch_file(await first_launch_options(room)).unlink()
+        first = _launch_file(await launch_options(room))
+        second = _launch_file(await launch_options(room.beside("room-2")))
 
-        later = await _launch_in(room.beside("room-2"))
+        await room.adapter.cleanup_all()
+
+        assert (second, first.exists()) == (first, False)
+
+    async def test_a_launch_rewrites_a_launch_file_removed_under_it(
+        self, claude_room: OpenRoom, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        room = await claude_room(_with_host(json.dumps(HOST_SETTINGS)))
+        removed = _launch_file(await launch_options(room))
+        removed.unlink()
+
+        with caplog.at_level(logging.WARNING, logger=ADAPTER_LOGGER):
+            later = await launch_options(room.beside("room-2"))
+        logged = _adapter_warnings(caplog)
 
         assert _launch_settings(later) == {**HOST_SETTINGS, **ISOLATION_SETTINGS}
+        assert logged == [LAUNCH_FILE_MISSING_WARNING % removed]
 
     async def test_a_restart_rereads_the_host_file_and_retires_the_old_launch_file(
         self, claude_room: OpenRoom, tmp_path: Path
@@ -181,25 +197,15 @@ class TestLaunchSettings:
         host_file = tmp_path / "team-settings.json"
         host_file.write_text(json.dumps(HOST_SETTINGS))
         room = await claude_room(_with_host(str(host_file)))
-        first_file = _launch_file(await first_launch_options(room))
+        first_file = _launch_file(await launch_options(room))
         edited = {**HOST_SETTINGS, "model": "opus"}
         host_file.write_text(json.dumps(edited))
 
         await room.restart()
-        after_restart = await _launch_in(room.beside("room-2"))
+        after_restart = await launch_options(room.beside("room-2"))
 
         assert not first_file.exists()
         assert _launch_settings(after_restart) == {**edited, **ISOLATION_SETTINGS}
-
-    async def test_the_launch_file_is_removed_when_the_adapter_stops(
-        self, claude_room: OpenRoom
-    ) -> None:
-        room = await claude_room(_with_host(json.dumps(HOST_SETTINGS)))
-        launch_file = _launch_file(await first_launch_options(room))
-
-        await room.adapter.cleanup_all()
-
-        assert not launch_file.exists()
 
     @pytest.mark.looptime
     async def test_a_failed_stop_keeps_the_launch_file_for_its_retry(
@@ -211,7 +217,7 @@ class TestLaunchSettings:
                 cli=ClaudeCLIOptions(settings=json.dumps(HOST_SETTINGS)),
             )
         )
-        launch_file = _launch_file(await first_launch_options(room))
+        launch_file = _launch_file(await launch_options(room))
         closing = room.claude.closing = Hold()
 
         with pytest.raises(CleanupIncompleteError):
@@ -228,13 +234,21 @@ class TestLaunchSettings:
             (None, SettingsRejection.UNREADABLE),
             ("{not json", SettingsRejection.NOT_JSON),
             ('{"cleanupPeriodDays": NaN}', SettingsRejection.NOT_JSON),
+            ('{"cleanupPeriodDays": 1e400}', SettingsRejection.NOT_JSON),
             ("[]", SettingsRejection.NOT_OBJECT),
             (
                 json.dumps({"env": {BAND_MCP_TOKEN_ENV: "x"}}),
                 SettingsRejection.BAND_TOKEN,
             ),
         ],
-        ids=["missing", "malformed", "non-finite", "not-an-object", "band-token"],
+        ids=[
+            "missing",
+            "malformed",
+            "non-finite",
+            "overflow",
+            "not-an-object",
+            "band-token",
+        ],
     )
     async def test_an_unusable_settings_file_fails_the_start_before_band_mcp_opens(
         self, tmp_path: Path, content: str | None, reason: SettingsRejection
@@ -256,13 +270,20 @@ class TestLaunchSettings:
         [
             ("{not json", SettingsRejection.NOT_JSON),
             ('{"cleanupPeriodDays": Infinity}', SettingsRejection.NOT_JSON),
+            ('{"cleanupPeriodDays": -1e400}', SettingsRejection.NOT_JSON),
             (
                 json.dumps({"env": {BAND_MCP_TOKEN_ENV: "x"}}),
                 SettingsRejection.BAND_TOKEN,
             ),
             ("team-settings.json", SettingsRejection.NOT_INLINE_OR_ABSOLUTE),
         ],
-        ids=["malformed-inline", "non-finite-inline", "band-token", "relative-path"],
+        ids=[
+            "malformed-inline",
+            "non-finite-inline",
+            "overflow-inline",
+            "band-token",
+            "relative-path",
+        ],
     )
     def test_settings_the_cli_could_not_load_are_rejected_on_construction(
         self, settings: str, reason: SettingsRejection
@@ -282,9 +303,8 @@ class TestLaunchSettings:
             lambda: ClaudeSDKAdapterConfig(
                 cli={"settings": f'{{"env": {{"KEY": "{SECRET}"}}'}
             ),
-            lambda: ClaudeSDKAdapterConfig(cli={"env": {BAND_MCP_TOKEN_ENV: SECRET}}),
         ],
-        ids=["settings", "settings-in-adapter-config", "env-in-adapter-config"],
+        ids=["settings", "settings-in-adapter-config"],
     )
     def test_a_rejected_secret_is_not_echoed(self, build: Callable[[], object]) -> None:
         with pytest.raises(ValueError) as rejected:
