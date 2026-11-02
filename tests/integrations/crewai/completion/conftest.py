@@ -6,8 +6,6 @@ import pytest
 
 pytest.importorskip("crewai", reason="crewai not installed (band-sdk[crewai])")
 
-from crewai import Agent
-
 from band.adapters.crewai import CrewAIAdapter
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
@@ -38,14 +36,11 @@ async def adapter(
         return "done"
 
     adapter = CrewAIAdapter(additional_tools=[(WorkInput, perform_work)])
-    adapter._crewai_agent = Agent(
-        role="Tester",
-        goal="Validate turns",
-        backstory="Use Band tools.",
-        llm=model,
-        tools=adapter.create_crewai_tools(),
-    )
     try:
+        await adapter.on_started("Tester", "Validates turns")
+        assert adapter._crewai_agent is not None
+        # Swap only the model boundary; no credentialed LLM is reached.
+        adapter._crewai_agent.llm = model
         yield adapter
     finally:
         await adapter.on_cleanup(ROOM_ID)
