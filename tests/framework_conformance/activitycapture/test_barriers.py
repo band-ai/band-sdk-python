@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
+import httpx
 import pytest
 from band_rest import AgentActivityDetail
 
@@ -26,7 +27,7 @@ DETAIL = tool_body("Read")["activity"]
 OTHER_DETAIL = tool_body("Write")["activity"]
 DETAIL_REPORT = AgentActivityDetail(**DETAIL)
 MISSING_PUSH = pytest.raises(TimeoutError, match="raw detail")
-MISSING_REPORT = pytest.raises(TimeoutError, match="accepted report")
+MISSING_REPORT = pytest.raises(TimeoutError, match="report room=")
 MISSING_STOP = pytest.raises(TimeoutError, match="raw stop")
 
 
@@ -173,3 +174,20 @@ class TestActivityBarriers:
             await link.report_activity(ROOM, False)
             with MISSING_STOP:
                 await capture.finished(ROOM, AGENT, since=since)
+
+    async def test_finished_accepts_a_failed_idle_report_once_the_platform_stops(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
+        raw_peer: tuple[TrackingWebSocketClient, TopicPeer],
+    ) -> None:
+        install_activity_support(monkeypatch, learned=True)
+        capture, link, peer = observed_link
+        ws, topics = raw_peer
+        capture.deadline_s = 1
+        peer.responses.append(httpx.Response(503, json={"error": "Unavailable"}))
+        async with capture.rooms(ws, ROOM):
+            since = capture.cursor()
+            assert not await link.report_activity(ROOM, False)
+            await topics.emit(ROOM, ActivityPush.STOPPED, {"agent_id": AGENT})
+            await capture.finished(ROOM, AGENT, since=since)
