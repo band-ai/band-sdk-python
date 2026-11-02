@@ -2,8 +2,8 @@
 
 The matrix builders run every coding agent headless (auto-accept, or Codex's
 ``approvalPolicy="never"``) and their ``prompt``/``features``/``tools`` contract can't
-express an approval mode, so the approval and native-activity smokes build each adapter
-here instead, in the mode ``AgentSetup.approval`` names.
+express an approval mode, so the approval smokes build each adapter here instead, in
+the mode ``AgentSetup.approval`` names.
 Every room-visible line -- the request a token is read from, the reply, the notice that
 proves the reply was recognized -- comes from the adapter's own template or command
 enum, so a reworded prompt fails the smoke instead of silently drifting from it.

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+
+import httpx
 import pytest
 from band_rest import AgentActivityDetail
 
@@ -57,3 +60,29 @@ class TestDetailLatch:
         await link.report_activity(ROOM, True)
         record = await capture.report(ROOM, working=True)
         assert (record.working, record.activity) == (True, None)
+
+    async def test_detail_rejected_in_flight_fails_the_report_that_carried_it(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
+    ) -> None:
+        install_activity_support(monkeypatch, learned=True)
+        capture, link, peer = observed_link
+        peer.responses.append(httpx.Response(422, json={"error": "Unknown activity"}))
+        peer.hold = True
+        sending = asyncio.create_task(
+            link.report_activity(ROOM, True, activity=AgentActivityDetail(**DETAIL))
+        )
+        try:
+            await peer.entered.wait()
+            matching = asyncio.create_task(
+                capture.report(ROOM, working=True, activity=DETAIL)
+            )
+            peer.release.set()
+            assert await sending
+            with pytest.raises(AssertionError, match=DETAIL_DISABLED):
+                await matching
+            assert peer.reports == [DETAIL_BODY, BOOLEAN_BODY]
+        finally:
+            peer.release.set()
+            await asyncio.gather(sending, return_exceptions=True)
