@@ -70,14 +70,13 @@ BOOTS = pytest.mark.parametrize(
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
 class TestBootBound:
+    @BOOTS
     @pytest.mark.parametrize("connect_timeout", [0, -1, math.nan, math.inf])
     def test_a_bound_that_never_or_always_expires_is_rejected(
-        self, connect_timeout: float
+        self, boot: Boot, connect_timeout: float
     ) -> None:
         with pytest.raises(ValueError, match="connect_timeout"):
-            WebSocketClient(
-                "ws://test.invalid", "test-key", connect_timeout=connect_timeout
-            )
+            boot("ws://test.invalid", connect_timeout)
 
     @BOOTS
     async def test_a_boot_that_never_connects_times_out_at_connect_timeout(

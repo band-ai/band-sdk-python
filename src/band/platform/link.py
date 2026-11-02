@@ -22,7 +22,11 @@ from band.client.streaming import (
     WebSocketDisconnectReason,
     WebSocketUpgradeError,
 )
-from band.client.streaming.client import DEFAULT_CONNECT_TIMEOUT_S, ControlHook
+from band.client.streaming.client import (
+    DEFAULT_CONNECT_TIMEOUT_S,
+    ControlHook,
+    validate_connect_timeout,
+)
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.settlement import SettlementResult
@@ -114,7 +118,7 @@ class BandLink:
         self.rest_url = rest_url
         self.conflict_policy = conflict_policy
         self._session_policy = session_policy
-        self._connect_timeout = connect_timeout
+        self._connect_timeout = validate_connect_timeout(connect_timeout)
 
         # REST client - exposed directly
         self.rest = AsyncRestClient(api_key=api_key, base_url=rest_url)
@@ -471,7 +475,8 @@ class BandLink:
                 self.last_disconnect_reason.reason,
             )
             return
-        logger.warning("WebSocket disconnected: %s", error)
+        # The session's own decision logs each close with its code and delay.
+        logger.info("WebSocket disconnected: %s", error)
 
     def _queue_event(self, event: PlatformEvent) -> None:
         """Queue event for async iteration. Logs warning if queue is full."""

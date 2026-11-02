@@ -47,14 +47,15 @@ class JoinOutcome(StrEnum):
 
 # The platform's refusal of `on_conflict=reject` when the agent already has a
 # live connection (HTTP 409); request_id is null on a real upgrade.
+CONNECTION_CONFLICT_MESSAGE = (
+    "An active connection already exists for this agent. "
+    "Set on_conflict=supersede or omit on_conflict to take over."
+)
 _CONFLICT_BODY = json.dumps(
     {
         "error": {
             "code": CONNECTION_CONFLICT_CODE,
-            "message": (
-                "An active connection already exists for this agent. "
-                "Set on_conflict=supersede or omit on_conflict to take over."
-            ),
+            "message": CONNECTION_CONFLICT_MESSAGE,
             "request_id": None,
         }
     }
@@ -150,11 +151,14 @@ class FakePhoenixServer:
         self._join_outcomes = {
             topic: list(outcomes) for topic, outcomes in join_outcomes.items()
         }
-        self._refuse_upgrades = refuse_upgrades
         self.reply_heartbeats = reply_heartbeats
         self.connections: list[PhoenixConnection] = []
         self._connections_changed = asyncio.Event()
-        self._refusal: Refusal | None = None
+        self._refusal: Refusal | None = (
+            Refusal(HTTPStatus.CONFLICT, _CONFLICT_BODY, {})
+            if refuse_upgrades
+            else None
+        )
         self._held_upgrade: HeldUpgrade | None = None
         self._deferred_joins: dict[str, DeferredJoin] = {}
         self._protocol = PHXProtocolHandler(
@@ -194,8 +198,6 @@ class FakePhoenixServer:
             response = connection.respond(refusal.status, refusal.body)
             response.headers.update(refusal.headers)
             return response
-        if self._refuse_upgrades:
-            return connection.respond(HTTPStatus.CONFLICT, _CONFLICT_BODY)
         return None
 
     def _forget_topic(self, observed: PhoenixConnection, topic: str) -> None:

@@ -13,6 +13,7 @@ from band.client.streaming.disconnect import WebSocketDisconnectReason
 from band.client.streaming.session_decider import connect_failed_message
 from band.client.streaming.session_decider import logger as decider_logger
 from tests.conftest import CLOSED_1008
+from tests.websocket.client.kit import upgrade_error_body, upgrade_exception
 from tests.websocket.client.sessiondecider.kit import (
     REDACTED,
     SECRET,
@@ -50,14 +51,13 @@ class TestConnectFailures:
         assert decision.delay_s > 0
         assert (probe.decider.terminal, probe.decider.terminal_refusal) == (None, None)
 
-    async def test_a_retry_after_hint_floors_the_delay(
+    async def test_a_body_retry_after_hint_floors_the_delay(
         self, probe: DeciderProbe
     ) -> None:
         probe.attempt()
+        body = upgrade_error_body("busy", status=429, retry_after=RETRY_AFTER_S)
 
-        decision = probe.failed(
-            refusal(429, headers={"Retry-After": str(RETRY_AFTER_S)})
-        )
+        decision = probe.failed(upgrade_exception(429, body, None))
 
         assert decision.delay_s >= RETRY_AFTER_S
 

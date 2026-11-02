@@ -83,20 +83,31 @@ class TestInitialConnect:
                 await client.__aexit__(None, None, None)
 
     @pytest.mark.parametrize(
-        ("status", "body", "code", "reason"),
+        ("status", "body", "code", "verdict"),
         [
             pytest.param(
                 HTTPStatus.BAD_REQUEST,
                 upgrade_error_body(INVALID_ON_CONFLICT, status=HTTPStatus.BAD_REQUEST),
                 INVALID_ON_CONFLICT,
-                INVALID_ON_CONFLICT,
+                WebSocketDisconnectReason(
+                    reason=INVALID_ON_CONFLICT,
+                    message=f"refused {INVALID_ON_CONFLICT}",
+                    retryable=False,
+                    correlation_id="req-400",
+                    dead_reason=DeadReason.Classified,
+                ),
                 id="400",
             ),
             pytest.param(
                 HTTPStatus.FORBIDDEN,
                 b"Forbidden",
                 None,
-                http_refusal_reason(HTTPStatus.FORBIDDEN),
+                WebSocketDisconnectReason(
+                    reason=http_refusal_reason(HTTPStatus.FORBIDDEN),
+                    message="WebSocket upgrade failed with HTTP 403",
+                    retryable=False,
+                    dead_reason=DeadReason.Classified,
+                ),
                 id="403",
             ),
             pytest.param(
@@ -105,7 +116,13 @@ class TestInitialConnect:
                     CONNECTION_CONFLICT_CODE, status=HTTPStatus.CONFLICT
                 ),
                 CONNECTION_CONFLICT_CODE,
-                CONNECTION_CONFLICT_CODE,
+                WebSocketDisconnectReason(
+                    reason=CONNECTION_CONFLICT_CODE,
+                    message=f"refused {CONNECTION_CONFLICT_CODE}",
+                    retryable=False,
+                    correlation_id="req-409",
+                    dead_reason=DeadReason.Classified,
+                ),
                 id="409",
             ),
         ],
@@ -115,7 +132,7 @@ class TestInitialConnect:
         status: HTTPStatus,
         body: bytes,
         code: str | None,
-        reason: str,
+        verdict: WebSocketDisconnectReason,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         async with fake_phoenix_server() as server:
@@ -127,13 +144,6 @@ class TestInitialConnect:
             ):
                 await client.__aenter__()
 
-        verdict = WebSocketDisconnectReason(
-            reason=reason,
-            message=refused.value.message,
-            retryable=False,
-            correlation_id=refused.value.request_id,
-            dead_reason=DeadReason.Classified,
-        )
         assert (refused.value.status_code, refused.value.code) == (status, code)
         assert client.last_disconnect_reason == verdict
         assert len(server.upgrades) == 1
@@ -146,8 +156,8 @@ class TestInitialConnect:
             (
                 VERDICT_LOG,
                 (
-                    reason,
-                    DeadReason.Classified,
+                    verdict.reason,
+                    verdict.dead_reason,
                     verdict.correlation_id,
                     verdict.message,
                 ),

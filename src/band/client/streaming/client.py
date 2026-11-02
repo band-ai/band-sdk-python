@@ -333,6 +333,18 @@ KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
 # See ``WebSocketClient`` for what the bound covers.
 DEFAULT_CONNECT_TIMEOUT_S = 300.0
+NOT_CONNECTED = "WebSocket client is not connected"
+
+
+def validate_connect_timeout(connect_timeout: float | None) -> float | None:
+    """Return a bound that can expire, or ``None`` for no bound."""
+    if connect_timeout is not None and not (
+        math.isfinite(connect_timeout) and connect_timeout > 0
+    ):
+        raise ValueError("connect_timeout must be finite and > 0, or None")
+    return connect_timeout
+
+
 SUPERSEDE_REASON = "superseded by another connection"
 
 
@@ -356,10 +368,6 @@ class WebSocketClient:
         connect_timeout: float | None = DEFAULT_CONNECT_TIMEOUT_S,
         on_terminal: Callable[[WebSocketDisconnectReason], None] | None = None,
     ):
-        if connect_timeout is not None and not (
-            math.isfinite(connect_timeout) and connect_timeout > 0
-        ):
-            raise ValueError("connect_timeout must be finite and > 0, or None")
         self.ws_url = ws_url
         self.api_key = api_key
         self.agent_id = agent_id
@@ -368,7 +376,7 @@ class WebSocketClient:
         self._on_reconnect = on_reconnect
         self._on_disconnect = on_disconnect
         self._on_terminal = on_terminal
-        self._connect_timeout = connect_timeout
+        self._connect_timeout = validate_connect_timeout(connect_timeout)
         self._validation_error_count: int = 0
         self._session_policy = session_policy or SessionPolicy.default()
         self._decider: SessionDecider | None = None
@@ -397,7 +405,7 @@ class WebSocketClient:
 
     def _require_client(self) -> PHXChannelsClient:
         if self.client is None:
-            raise RuntimeError("WebSocket client is not connected")
+            raise RuntimeError(NOT_CONNECTED)
         return self.client
 
     def joined_topics(self) -> frozenset[str]:
@@ -455,7 +463,7 @@ class WebSocketClient:
 
     def _require_decider(self) -> SessionDecider:
         if self._decider is None:
-            raise RuntimeError("WebSocket client is not connected")
+            raise RuntimeError(NOT_CONNECTED)
         return self._decider
 
     async def __aenter__(self):

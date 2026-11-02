@@ -72,6 +72,7 @@ class TestSupersedeEndsSession:
     async def test_a_new_session_drops_the_ended_one_s_unread_event(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
+        caplog.set_level(logging.INFO, logger=link_logger.name)
         async with fake_phoenix_server() as server:
             link = make_link(server.url)
             await link.connect()
@@ -82,16 +83,14 @@ class TestSupersedeEndsSession:
             )
             await link.disconnect()
 
-            with caplog.at_level(logging.INFO, logger=link_logger.name):
-                async with connected(link):
-                    assert drain_events(link) == []
-                    assert link.is_connected
+            async with connected(link):
+                assert drain_events(link) == []
+                assert link.is_connected
 
-            assert [
-                record.args
-                for record in caplog.records
-                if record.msg == DROPPED_EVENTS_LOG
-            ] == [(1,)]
+        # The first connect found nothing to drop; only the second one logs.
+        assert [
+            record.args for record in caplog.records if record.msg == DROPPED_EVENTS_LOG
+        ] == [(1,)]
 
     async def test_a_supersede_handled_during_disconnect_reports_nothing(
         self,
@@ -246,5 +245,6 @@ class TestSupersedeEndsSession:
                 await asyncio.wait_for(run, HANG_GUARD_S)
 
                 assert link.last_disconnect_reason == SUPERSEDED
+                assert drain_events(link) == []
                 assert not link.is_connected
                 assert server.connection_count == 1

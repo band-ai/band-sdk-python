@@ -19,6 +19,11 @@ from band.testing import fake_phoenix_server
 
 SECRET = "synthetic/private+ credential?x=1&z=#[]"
 
+# The hostile refusal hints a retry this far out; the boot's bound expires
+# before it, so exactly one upgrade is attempted.
+HOSTILE_RETRY_AFTER_S = 7
+BEFORE_THE_HINTED_RETRY_S = 1.0
+
 
 def credential_spellings() -> tuple[str, ...]:
     """The credential raw, percent-encoded, mixed-case encoded and URI-encoded."""
@@ -89,7 +94,7 @@ class TestTransportDiagnosticSecurity:
             "code": "connection_conflict",
             "message": "refused",
             "request_id": "safe-request",
-            "retry_after": 7,
+            "retry_after": HOSTILE_RETRY_AFTER_S,
         }
         error[field] = " ".join(
             [*credential_spellings(), "authorization: Bearer unconfigured-bearer-value"]
@@ -136,7 +141,10 @@ class TestTransportDiagnosticSecurity:
         caplog.set_level(logging.DEBUG)
         async with fake_phoenix_server() as server:
             client = WebSocketClient(
-                server.url, SECRET, "agent-synthetic", connect_timeout=1.0
+                server.url,
+                SECRET,
+                "agent-synthetic",
+                connect_timeout=BEFORE_THE_HINTED_RETRY_S,
             )
             with (
                 server.refusing_upgrades(status, body=self.hostile_refusal(field)),

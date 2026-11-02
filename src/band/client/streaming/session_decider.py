@@ -246,13 +246,7 @@ def _closed_reason(
     close_code: int | None, outcome: SessionOutcome
 ) -> WebSocketDisconnectReason:
     if outcome.dead_reason is DeadReason.RapidDisconnect:
-        return session_reason(
-            TerminalReason.RAPID_DISCONNECT,
-            RAPID_DISCONNECT_MESSAGE,
-            outcome,
-        )
-    return session_reason(
-        TerminalReason.SOCKET_CLOSED,
-        closed_message(close_code),
-        outcome,
-    )
+        reason, message = TerminalReason.RAPID_DISCONNECT, RAPID_DISCONNECT_MESSAGE
+    else:
+        reason, message = TerminalReason.SOCKET_CLOSED, closed_message(close_code)
+    return session_reason(reason, message, outcome)

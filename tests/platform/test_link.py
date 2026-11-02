@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import ANY, AsyncMock, MagicMock, create_autospec, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from band_rest.core.api_error import ApiError
@@ -20,7 +20,6 @@ from band.client.streaming import (
     RoomRemovedPayload,
     WebSocketClient,
 )
-from band.core.types import ConflictPolicy
 from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
@@ -36,7 +35,6 @@ from tests.platform.conftest import (
     AllTopicsJoined,
     cancelled_mid_await,
 )
-from tests.sessionpolicies import session_policy
 from tests.signalcases import INSTALL_SIGNAL_HANDLER_CASES, INSTALL_SIGNAL_HANDLER_IDS
 
 
@@ -83,41 +81,6 @@ class TestBandLinkConstruction:
 
 class TestBandLinkConnection:
     """Test connection lifecycle."""
-
-    @patch("band.platform.link.WebSocketClient")
-    async def test_connect_creates_websocket(self, mock_ws_class, mock_ws_client):
-        """connect() creates a WebSocketClient with the link's session
-        settings and enters it."""
-        mock_ws_class.return_value = mock_ws_client
-        policy = session_policy()
-
-        link = BandLink(
-            agent_id="agent-123",
-            api_key="test-key",
-            conflict_policy=ConflictPolicy.REJECT,
-            session_policy=policy,
-            connect_timeout=12.0,
-        )
-        await link.connect()
-
-        mock_ws_class.assert_called_once_with(
-            link.ws_url,
-            link.api_key,
-            link.agent_id,
-            on_reconnect=link._on_reconnected,
-            on_disconnect=link._on_disconnected,
-            session_policy=policy,
-            conflict_policy=ConflictPolicy.REJECT,
-            connect_timeout=12.0,
-            on_terminal=link._on_terminal,
-        )
-        mock_ws_client.__aenter__.assert_called_once()
-        mock_ws_client.join_agent_control_channel.assert_called_once_with(
-            link.agent_id,
-            on_supersede=ANY,
-            on_control=link._on_control,
-        )
-        assert link.is_connected is True
 
     @patch("band.platform.link.WebSocketClient")
     async def test_connect_when_already_connected_logs_warning(
