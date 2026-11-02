@@ -1,4 +1,4 @@
-"""Raw activity pushes carry only a kind and, when a cell allows names, only those."""
+"""Activity carries only a kind and, when a cell allows names, only those."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from band.runtime.activity import REASONING
+from band.runtime.activity import REASONING, tool_call_activity
 from band.runtime.tools.types import BandTool
 from tests.activitysupport import tool_body
 from tests.e2e.baseline.toolkit.activity import (
@@ -57,3 +57,18 @@ class TestPrivateToolNames:
             )
         with expectation:
             capture.assert_private(tool_names=tool_names)
+
+    @pytest.mark.parametrize(
+        ("detail", "expectation"),
+        [
+            pytest.param(BandTool.SEND_MESSAGE, nullcontext(), id="allowed-name"),
+            pytest.param("Bash", UNLISTED, id="unlisted-name"),
+        ],
+    )
+    async def test_dispatched_reports_carry_only_allowed_names(
+        self, detail: str, expectation: AbstractContextManager[object]
+    ) -> None:
+        capture = ActivityCapture()
+        capture.dispatched(ROOM, "agent", True, tool_call_activity(detail))
+        with expectation:
+            capture.assert_private(tool_names=ALLOWED)

@@ -327,7 +327,10 @@ class ActivityCapture:
         self, *sentinels: str, tool_names: Collection[str] | None = None
     ) -> None:
         """Assert no sentinel reached a push and details carry only a kind and
-        a tool name, one of ``tool_names`` when given."""
+        a tool name, one of ``tool_names`` when given.
+
+        Pushes coalesce brief details, so names are also checked in every
+        dispatched report."""
         payload = json.dumps([event.payload for event in self.raw])
         for sentinel in sentinels:
             assert sentinel and sentinel not in payload
@@ -342,7 +345,10 @@ class ActivityCapture:
                 expected["name"] = activity["name"]
             assert activity == expected, (EXTRA_DETAIL, activity)
         if tool_names is not None:
-            reported = {a["name"] for a in details if a["kind"] == TOOL_CALL}
+            dispatched = [r.activity for r in self.reports if r.activity is not None]
+            reported = {
+                a["name"] for a in (*details, *dispatched) if a["kind"] == TOOL_CALL
+            }
             assert reported <= set(tool_names), (UNLISTED_TOOL, reported)
 
 
