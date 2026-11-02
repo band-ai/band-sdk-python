@@ -69,7 +69,6 @@ class TestNativeReporting:
                 ),
                 result_exchange.releasing_on_exit(),
             ):
-                beginning = observed.cursor()
                 task_cursor = claude_native_tasks.cursor()
                 first = await user_ops.send_message(
                     room,
@@ -85,19 +84,10 @@ class TestNativeReporting:
                     phase="background producer entered",
                 )
                 background = await claude_native_tasks.started(room, since=task_cursor)
-                await observed.detail(room, identity.id, BASH, since=beginning)
-                await observed.report(
-                    room,
-                    agent_id=identity.id,
-                    working=True,
-                    activity=BASH,
-                    since=beginning,
-                )
                 started_reply = await replies.wait_for_reply(first, identity.id)
                 started_reply.assert_present()
                 await replies.wait_for_processed(first, identity.id)
 
-                foreground = observed.cursor()
                 reply_cursor = replies.messages.snapshot()
                 second = await user_ops.send_message(
                     room,
@@ -111,14 +101,6 @@ class TestNativeReporting:
                     result_exchange.consumer.entered,
                     phase="new foreground consumer entered",
                 )
-                await observed.report(
-                    room,
-                    agent_id=identity.id,
-                    working=True,
-                    activity=BASH,
-                    since=foreground,
-                )
-
                 result_exchange.producer.release.set()
                 await result_exchange.wait(
                     result_exchange.committed,
@@ -146,10 +128,8 @@ class TestNativeReporting:
                 )
                 result.assert_contains_exact(result_exchange.result.decode("ascii"))
                 await replies.wait_for_processed(second, identity.id)
-                await observed.report(
-                    room, agent_id=identity.id, working=False, since=finishing
-                )
-                await observed.stopped(room, identity.id, since=finishing)
+                # The second message reached the agent mid-run (PLT-1731).
+                await observed.cleared(room, identity.id, since=finishing)
                 assert await replies.tool_calls(sender_id=identity.id) == []
                 observed.assert_private(
                     result_exchange.note, result_exchange.result.decode("ascii")

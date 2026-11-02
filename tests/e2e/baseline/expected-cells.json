@@ -618,6 +618,214 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "codex",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "registers no Band memory capability"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "crewai_flow",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "registers no Band memory capability"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "letta",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "registers no Band memory capability"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "nooa",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "saves memory from inside execute_python, which the room sees instead"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "opencode",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_memory_activity.py::TestMemoryActivity::test_storing_a_memory_reports_memory_and_clears",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/activity/test_native_reporting.py::TestNativeReporting::test_background_terminal_keeps_new_foreground_reporting",
       "adapter": "claude_sdk",
       "lanes": [
@@ -1216,6 +1424,312 @@
       ],
       "status": "na",
       "reason": "no E2E room-approval dialect"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "agno",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "anthropic",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "antigravity_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "codex",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "crewai",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "crewai_flow",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "gemini",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "google_adk",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "langgraph",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "letta",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "nooa",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "omp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "opencode",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_reasoning_only_activity.py::TestReasoningOnlyActivity::test_second_turn_reports_reasoning_and_clears",
+      "adapter": "strands",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "reports observable tool activity"
     },
     {
       "test": "tests/e2e/baseline/smoke/adapters/antigravity/test_cancellation.py::TestAntigravityCancellation::test_cancelled_native_tool_settles_before_resource_closes",

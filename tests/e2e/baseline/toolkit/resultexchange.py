@@ -20,6 +20,8 @@ from starlette.routing import Route
 
 from band.integrations.uvicorn_server import ManagedUvicornServer
 
+BARRIER = "native exchange barrier"
+
 
 class ExchangeOperation(StrEnum):
     PRODUCE = "produce"
@@ -32,6 +34,30 @@ class ExchangeWork:
     entered: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
     settled: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+async def wait_for(event: asyncio.Event, *, deadline_s: float, barrier: str) -> None:
+    """Await ``event``; the deadline only guards a hang."""
+    try:
+        async with asyncio.timeout(deadline_s):
+            await event.wait()
+    except TimeoutError:
+        raise TimeoutError(f"Missing {barrier}") from None
+
+
+async def release_all(
+    works: tuple[ExchangeWork, ...], *, deadline_s: float, barrier: str
+) -> None:
+    """Release every hold and await each entered one's settle."""
+    for work in works:
+        work.release.set()
+    for work in works:
+        if work.entered.is_set():
+            await wait_for(
+                work.settled,
+                deadline_s=deadline_s,
+                barrier=f"{barrier}: released work settled",
+            )
 
 
 class ResultExchange:
@@ -86,11 +112,7 @@ class ResultExchange:
             self.consumer.settled.set()
 
     async def wait(self, event: asyncio.Event, *, phase: str) -> None:
-        try:
-            async with asyncio.timeout(self.deadline_s):
-                await event.wait()
-        except TimeoutError:
-            raise TimeoutError(f"Missing native exchange barrier: {phase}") from None
+        await wait_for(event, deadline_s=self.deadline_s, barrier=f"{BARRIER}: {phase}")
 
     def url(self, operation: ExchangeOperation) -> str:
         if self._url is None:
@@ -135,11 +157,11 @@ class ResultExchange:
         try:
             yield
         finally:
-            self.producer.release.set()
-            self.consumer.release.set()
-            for work in (self.producer, self.consumer):
-                if work.entered.is_set():
-                    await self.wait(work.settled, phase="released HTTP work settled")
+            await release_all(
+                (self.producer, self.consumer),
+                deadline_s=self.deadline_s,
+                barrier=BARRIER,
+            )
 
     @asynccontextmanager
     async def running(self) -> AsyncIterator[ResultExchange]:
