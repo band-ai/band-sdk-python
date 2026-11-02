@@ -17,7 +17,6 @@ from band.client.streaming.disconnect import (
 from band.platform.event import WebSocketDisconnectedEvent
 from band.testing import fake_phoenix_server
 from tests.platform.linkclose.kit import connected, drain_events, make_link
-from tests.platform.recovery.kit import observe_disconnects
 from tests.sessionpolicies import BEYOND_ANY_RETRY_S
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.tasks import background
@@ -56,7 +55,6 @@ class TestUpgradeRefusal:
     ) -> None:
         async with controlled_clock() as clock, fake_phoenix_server() as server:
             link = make_link(server.url)
-            disconnected = observe_disconnects(link)
             async with (
                 connected(link),
                 background(link.run_forever(install_signal_handlers=False)) as run,
@@ -66,7 +64,6 @@ class TestUpgradeRefusal:
                     server.refusing_upgrades(HTTPStatus.FORBIDDEN),
                 ):
                     await server.abort_connection()
-                    await disconnected.get()
                     await clock.elapse(await retries.get())
                     with pytest.raises(PHXConnectionError, match="403") as failure:
                         await run

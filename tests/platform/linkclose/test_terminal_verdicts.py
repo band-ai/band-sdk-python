@@ -31,6 +31,7 @@ from tests.sessionpolicies import (
     session_policy,
 )
 from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
 from tests.websocket.client.kit import observe_retries
 
@@ -55,6 +56,26 @@ class TestTerminalVerdicts:
                 assert link.last_disconnect_reason == CLOSED_1008
                 assert not link.is_connected
                 assert len(server.upgrades) == 1
+
+    async def test_a_verdict_during_the_control_join_fails_the_connect(
+        self,
+    ) -> None:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url, session_policy=session_policy())
+            with server.defer_join(CONTROL_TOPIC) as deferred:
+                async with background(link.connect()) as connecting:
+                    await deferred.ready.wait()
+                    await server.close_connection(code=CloseCode.POLICY_VIOLATION)
+
+                    with pytest.raises(PHXConnectionError):
+                        await connecting
+
+            assert link.last_disconnect_reason == CLOSED_1008
+            assert not link.is_connected
+            # The ended session's event is not left for the next one.
+            assert drain_events(link) == []
+            async with connected(link):
+                assert link.is_connected
 
     async def test_a_supersede_queued_behind_a_verdict_reports_nothing_more(
         self,

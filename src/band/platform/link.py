@@ -68,7 +68,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DROPPED_EVENTS_LOG = "Dropped %d unread event(s) from the previous session"
+DROPPED_EVENTS_LOG = "Dropped %d unread event(s) from the ended session"
 
 
 def _duplicate_connection_error(agent_id: str) -> AgentAlreadyRunningError:
@@ -134,9 +134,6 @@ class BandLink:
         # True for the span of connect() before _ws is assigned, so a second
         # concurrent connect() sees it even mid-handshake (see connect()).
         self._connecting = False
-        # Once a session has opened, the queue may hold events it left unread;
-        # anything queued before that is the caller's.
-        self._session_opened = False
 
         # Room/agent-topic subscription tracking and reconnect reconciliation --
         # lives in its own class since it needs the live WebSocketClient, unlike
@@ -207,8 +204,6 @@ class BandLink:
         self._connecting = True
         try:
             self._last_disconnect_reason = None
-            if self._session_opened:
-                self._drop_queued_events()
             ws = WebSocketClient(
                 self.ws_url,
                 self.api_key,
@@ -220,9 +215,10 @@ class BandLink:
                 connect_timeout=self._connect_timeout,
                 on_terminal=self._on_terminal,
             )
+            accepted = False
             try:
                 await ws.__aenter__()
-                self._session_opened = True
+                accepted = True
                 await self._join_agent_control_channel(ws)
             except BaseException as exc:
                 # BaseException, not Exception: a cancellation reaching one
@@ -231,10 +227,12 @@ class BandLink:
                 # leaks -- _ws itself was never assigned, so there's nothing
                 # to roll back on that side.
                 if ws.last_disconnect_reason is not None:
-                    # A refused boot reports only this reason; a verdict
-                    # during the join has also queued its event.
                     self._last_disconnect_reason = ws.last_disconnect_reason
                 await ws.__aexit__(None, None, None)
+                # Only an accepted session can have queued events; before
+                # that, the queue holds only the caller's.
+                if accepted:
+                    self._drop_queued_events()
                 if (
                     isinstance(exc, WebSocketUpgradeError)
                     and exc.is_connection_conflict
@@ -262,6 +260,7 @@ class BandLink:
 
         await self._cancel_control_lane()
         await self._ws.__aexit__(None, None, None)
+        self._drop_queued_events()
         self._ws = None
         self._is_connected = False
         self._subscriptions_manager.end_session()
@@ -496,7 +495,7 @@ class BandLink:
             )
 
     def _drop_queued_events(self) -> None:
-        """Forget events a previous connection left unread."""
+        """Forget events the session that just ended left unread."""
         dropped = self._event_queue.qsize()
         while not self._event_queue.empty():
             self._event_queue.get_nowait()
