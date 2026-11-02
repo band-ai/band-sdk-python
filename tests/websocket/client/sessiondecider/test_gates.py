@@ -5,8 +5,11 @@ from __future__ import annotations
 import pytest
 from band_sdk_core import StaleReason
 
-from band.client.streaming.disconnect import TerminalReason
-from band.client.streaming.session_decider import SupersedeVerdict
+from band.client.streaming.disconnect import TerminalReason, WebSocketDisconnectReason
+from band.client.streaming.session_decider import (
+    STALE_CONNECTION_MESSAGE,
+    SupersedeVerdict,
+)
 from tests.conftest import SUPERSEDED
 from tests.websocket.client.sessiondecider.kit import (
     PROCEEDS,
@@ -68,9 +71,11 @@ class TestGates:
 
         decision = verdict(probe.connected())
 
-        [reason] = probe.reported
-        assert decision == (False, 0.0, reason.message)
-        assert (reason.reason, reason.stale_reason) == (
-            TerminalReason.STALE_CONNECTION,
-            StaleReason.WrongEpoch,
+        stale = WebSocketDisconnectReason(
+            reason=TerminalReason.STALE_CONNECTION,
+            message=STALE_CONNECTION_MESSAGE,
+            retryable=False,
+            stale_reason=StaleReason.WrongEpoch,
         )
+        assert decision == (False, 0.0, STALE_CONNECTION_MESSAGE)
+        assert probe.reported == [stale]

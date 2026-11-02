@@ -3,12 +3,17 @@ most one verdict per session."""
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
-from band.client.streaming.session_decider import SupersedeVerdict
+from band.client.streaming.session_decider import VERDICT_LOG, SupersedeVerdict
+from band.client.streaming.session_decider import logger as decider_logger
 from tests.conftest import SUPERSEDED
 from tests.websocket.client.sessiondecider.kit import (
+    REDACTED,
     RETRYABLE,
+    SECRET,
     STOPS,
     TERMINAL,
     DeciderProbe,
@@ -65,3 +70,16 @@ class TestSupersede:
         assert probe.supersede(TERMINAL) is SupersedeVerdict.ALREADY_ENDED
         assert probe.reported == [verdict_reason]
         assert probe.decider.terminal == verdict_reason
+
+    async def test_a_supersede_verdict_logs_only_redacted_text(
+        self, probe: DeciderProbe, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        probe.connect()
+        payload = TERMINAL.model_copy(update={"message": f"evicted by {SECRET}"})
+
+        with caplog.at_level(logging.WARNING, logger=decider_logger.name):
+            probe.supersede(payload)
+
+        [record] = caplog.records
+        assert record.msg == VERDICT_LOG
+        assert record.args[-1] == f"evicted by {REDACTED}"

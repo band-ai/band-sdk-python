@@ -137,7 +137,11 @@ def park_supersedes(link: BandLink) -> ParkedSupersede:
 
 
 def drain_events(link: BandLink) -> list[PlatformEvent]:
-    """Every event the link has queued that the host has not read yet."""
+    """Every event the link has queued that the host has not read yet.
+
+    Reads the queue directly as the observation seam: the public stream only
+    awaits, and cancelling a zero-wait read would race the next event.
+    """
     events: list[PlatformEvent] = []
     while not link._event_queue.empty():
         events.append(link._event_queue.get_nowait())

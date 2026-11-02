@@ -25,6 +25,7 @@ from tests.platform.linkclose.kit import (
     handle_supersede,
     make_link,
 )
+from tests.websocket.client.kit import observe_retries
 
 # A healthy step takes milliseconds; a hung one fails its example within this.
 STEP_GUARD_S = 2.0
@@ -35,6 +36,7 @@ class Step(StrEnum):
     SERVER_GOING_AWAY = "server closes 1001"
     SERVER_POLICY_VIOLATION = "server closes 1008"
     REFUSED_RECONNECT = "network drops and the reconnect is refused 403"
+    RETRIED_REFUSAL = "network drops and a 503 refusal is retried until accepted"
     CLIENT_NORMAL_CLOSE = "client closes normally"
     NETWORK_DROP = "network drops"
     CONTROL = "platform sends a control signal"
@@ -132,11 +134,13 @@ class LinkSession:
                 )
             case Step.SERVER_POLICY_VIOLATION:
                 await self.server.close_connection(code=CloseCode.POLICY_VIOLATION)
-                await self.end()
+                await self.end(raises=True)
             case Step.REFUSED_RECONNECT:
                 with self.server.refusing_upgrades(HTTPStatus.FORBIDDEN):
                     await self.server.abort_connection()
-                    await self.end()
+                    await self.end(raises=True)
+            case Step.RETRIED_REFUSAL:
+                await self.reconnect_after(self.refused_then_accepted())
             case Step.CLIENT_NORMAL_CLOSE:
                 await self.reconnect_after(close_transport(self.link))
             case Step.NETWORK_DROP:
@@ -153,6 +157,18 @@ class LinkSession:
                 # A live session's run never returns, so the host can only
                 # give up on it.
                 await self.host_cancels_run()
+
+    async def refused_then_accepted(self) -> None:
+        """Drop the socket and refuse the reconnect with a 503 until the
+        session has decided to retry that refusal."""
+        with (
+            observe_retries() as retries,
+            self.server.refusing_upgrades(HTTPStatus.SERVICE_UNAVAILABLE),
+        ):
+            await self.server.abort_connection()
+            # The drop's retry, then the refused attempt's.
+            for _ in range(2):
+                await asyncio.wait_for(retries.get(), STEP_GUARD_S)
 
     async def reconnect_after(self, close: Awaitable[None]) -> None:
         reconnected = spy_on_reconciliation_drain(self.link)
@@ -188,22 +204,27 @@ class LinkSession:
 
     async def supersede(self) -> None:
         await self.server.push(CONTROL_TOPIC, WireEvent.SUPERSEDE, TERMINAL_SUPERSEDE)
-        await self.end()
+        await self.end(raises=False)
 
-    async def end(self) -> None:
-        """Wait for the verdict to stop the transport, which ends the host's run."""
+    async def end(self, *, raises: bool) -> None:
+        """Wait for the verdict to stop the transport, which ends the host's
+        run: raising for a close or refusal verdict, returning for a supersede."""
         await asyncio.wait_for(asyncio.wait({self.run}), STEP_GUARD_S)
+        assert isinstance(self.run.exception(), PHXConnectionError) is raises
         self.ended = True
         self.connections_at_end = self.server.connection_count
         self.upgrades_at_end = len(self.server.upgrades)
 
     async def host_runs_again(self) -> None:
         await asyncio.wait_for(asyncio.wait({self.run}), STEP_GUARD_S)
-        # A refusal or close verdict stays observable to every later run.
-        with suppress(PHXConnectionError):
-            await asyncio.wait_for(
+        [again] = await asyncio.gather(
+            asyncio.wait_for(
                 self.link.run_forever(install_signal_handlers=False), STEP_GUARD_S
-            )
+            ),
+            return_exceptions=True,
+        )
+        # Every later run ends as the first did.
+        assert type(again) is type(self.run.exception())
 
     async def host_cancels_run(self) -> None:
         with suppress(TimeoutError):

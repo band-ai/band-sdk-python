@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeGuard
 
 CONNECTION_CONFLICT_CODE = "connection_conflict"
 
@@ -39,7 +39,7 @@ class WebSocketUpgradeError(Exception):
         status_code = getattr(response, "status_code", None)
         if status_code is None:
             status_code = getattr(exc, "status_code", None)
-        if not isinstance(status_code, int) or isinstance(status_code, bool):
+        if not _is_int(status_code):
             return None
 
         headers = getattr(response, "headers", None) or getattr(exc, "headers", None)
@@ -77,16 +77,19 @@ def _decode_upgrade_error_body(body: Any) -> dict[str, Any]:
     return decoded if isinstance(decoded, dict) else {}
 
 
+def _is_int(value: object) -> TypeGuard[int]:
+    """An integer, but not a ``bool`` (which Python counts as one)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _parse_retry_after(value: Any) -> int | None:
     """Read a whole-second retry hint; anything else, negatives included, is no hint."""
-    if isinstance(value, bool):
-        return None
     if isinstance(value, str):
         try:
             value = int(value)
         except ValueError:
             return None
-    if isinstance(value, int) and value >= 0:
+    if _is_int(value) and value >= 0:
         return value
     return None
 

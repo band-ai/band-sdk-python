@@ -43,6 +43,18 @@ STOP = ReconnectDecision(should_reconnect=False)
 
 # The one record of each session's verdict, whoever is told of it.
 VERDICT_LOG = "WebSocket session ended: %s (%s) correlation_id=%s: %s"
+STALE_CONNECTION_MESSAGE = "WebSocket connected after its session moved on"
+RAPID_DISCONNECT_MESSAGE = "WebSocket kept disconnecting right after connecting"
+
+
+def closed_message(close_code: int | None) -> str:
+    """Describe a socket close, for its retry and for its verdict alike."""
+    return f"WebSocket closed with code {close_code}"
+
+
+def connect_failed_message(error_name: str, cause: str) -> str:
+    """Describe a connect that failed before any HTTP response."""
+    return f"WebSocket connect failed ({error_name}: {cause})"
 
 
 class SupersedeVerdict(StrEnum):
@@ -145,7 +157,7 @@ class SessionDecider:
         )
         if outcome.state is SessionState.Dead:
             return self._end(_closed_reason(close_code, outcome))
-        return self._retry(outcome, f"WebSocket closed (code={close_code})")
+        return self._retry(outcome, closed_message(close_code))
 
     def _failed(self, error: Exception) -> ReconnectDecision:
         refusal = self._refusal = WebSocketUpgradeError.from_exception(
@@ -170,8 +182,7 @@ class SessionDecider:
         outcome = self._session.on_socket_close(
             self._live_epoch, _now(), None, random.random()
         )
-        cause = self._redact(str(error))
-        message = f"WebSocket connect failed ({type(error).__name__}: {cause})"
+        message = connect_failed_message(type(error).__name__, self._redact(str(error)))
         if outcome.state is SessionState.Dead:
             return self._end(
                 session_reason(TerminalReason.CONNECTION_FAILED, message, outcome)
@@ -201,7 +212,8 @@ class SessionDecider:
             reason.reason,
             reason.dead_reason,
             reason.correlation_id,
-            reason.message,
+            # A supersede's message is the platform's own text.
+            self._redact(reason.message),
         )
         if self._accepted:
             self._on_terminal(reason)
@@ -225,7 +237,7 @@ def _now() -> float:
 def _stale_connection_reason(outcome: SessionOutcome) -> WebSocketDisconnectReason:
     return session_reason(
         TerminalReason.STALE_CONNECTION,
-        "WebSocket connected after its session moved on",
+        STALE_CONNECTION_MESSAGE,
         outcome,
     )
 
@@ -236,11 +248,11 @@ def _closed_reason(
     if outcome.dead_reason is DeadReason.RapidDisconnect:
         return session_reason(
             TerminalReason.RAPID_DISCONNECT,
-            "WebSocket kept disconnecting right after connecting",
+            RAPID_DISCONNECT_MESSAGE,
             outcome,
         )
     return session_reason(
         TerminalReason.SOCKET_CLOSED,
-        f"WebSocket closed with code {close_code}",
+        closed_message(close_code),
         outcome,
     )

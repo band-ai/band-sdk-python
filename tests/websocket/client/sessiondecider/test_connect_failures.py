@@ -9,8 +9,10 @@ from unittest.mock import ANY
 import pytest
 from band_sdk_core import DeadReason
 
-from band.client.streaming.disconnect import TerminalReason, WebSocketDisconnectReason
+from band.client.streaming.disconnect import WebSocketDisconnectReason
+from band.client.streaming.session_decider import connect_failed_message
 from band.client.streaming.session_decider import logger as decider_logger
+from tests.conftest import CLOSED_1008
 from tests.websocket.client.sessiondecider.kit import (
     REDACTED,
     SECRET,
@@ -93,8 +95,16 @@ class TestConnectFailures:
 
         probe.failed(refusal(403, code="forbidden"))
 
-        assert probe.reported == [probe.decider.terminal]
-        assert probe.reported[0].reason == "forbidden"
+        # The body carries the kit's "refused <code>" message and "req-<status>" id.
+        expected = WebSocketDisconnectReason(
+            reason="forbidden",
+            message="refused forbidden",
+            retryable=False,
+            correlation_id="req-403",
+            dead_reason=DeadReason.Classified,
+        )
+        assert probe.reported == [expected]
+        assert probe.decider.terminal == expected
 
     async def test_a_refusal_reports_only_redacted_text(
         self, probe: DeciderProbe
@@ -116,8 +126,7 @@ class TestConnectFailures:
 
         probe.closed(1008)
 
-        assert probe.decider.terminal is not None
-        assert probe.decider.terminal.reason == TerminalReason.SOCKET_CLOSED
+        assert probe.decider.terminal == CLOSED_1008
         assert probe.decider.terminal_refusal is None
 
     async def test_a_failed_connect_logs_its_redacted_cause(
@@ -130,6 +139,6 @@ class TestConnectFailures:
 
         [record] = caplog.records
         assert record.args == (
-            f"WebSocket connect failed (OSError: connect to {REDACTED} refused)",
+            connect_failed_message("OSError", f"connect to {REDACTED} refused"),
             ANY,
         )

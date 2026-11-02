@@ -74,6 +74,7 @@ class TestLinkLifecycleModel:
     @example(steps=[Step.HELD_CONTROL, Step.CONTROL, Step.RELEASE_HELD_CONTROL])
     @example(steps=[Step.SERVER_POLICY_VIOLATION, Step.SUPERSEDE])
     @example(steps=[Step.REFUSED_RECONNECT, Step.SUPERSEDE, Step.HOST_RUNS_AGAIN])
+    @example(steps=[Step.RETRIED_REFUSAL, Step.SUPERSEDE, Step.HOST_RUNS_AGAIN])
     def test_every_sequence_keeps_the_session_invariants(
         self, steps: list[Step]
     ) -> None:

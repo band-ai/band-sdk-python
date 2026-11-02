@@ -64,6 +64,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+DROPPED_EVENTS_LOG = "Dropped %d unread event(s) from the previous session"
+
 
 def _duplicate_connection_error(agent_id: str) -> AgentAlreadyRunningError:
     return AgentAlreadyRunningError(
@@ -488,7 +490,7 @@ class BandLink:
         while not self._event_queue.empty():
             self._event_queue.get_nowait()
         if dropped:
-            logger.info("Dropped %d unread event(s) from the previous session", dropped)
+            logger.info(DROPPED_EVENTS_LOG, dropped)
 
     def queue_event(self, event: PlatformEvent) -> None:
         """Queue a synthetic event for processing (public API)."""

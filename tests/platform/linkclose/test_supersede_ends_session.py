@@ -12,6 +12,7 @@ from websockets.frames import CloseCode
 
 from band.client.streaming.client import WireEvent
 from band.platform.event import ReconnectedEvent, WebSocketDisconnectedEvent
+from band.platform.link import DROPPED_EVENTS_LOG
 from band.platform.link import logger as link_logger
 from band.testing import fake_phoenix_server
 from tests.conftest import RETRYABLE_SUPERSEDE, SUPERSEDED, TERMINAL_SUPERSEDE
@@ -89,7 +90,7 @@ class TestSupersedeEndsSession:
             assert [
                 record.args
                 for record in caplog.records
-                if record.msg.startswith("Dropped %d unread")
+                if record.msg == DROPPED_EVENTS_LOG
             ] == [(1,)]
 
     async def test_a_supersede_handled_during_disconnect_reports_nothing(
