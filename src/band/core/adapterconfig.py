@@ -31,9 +31,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class BaseAdapterConfig(BaseModel):
     """Base for every adapter config: immutable once built, and an unknown
     field fails construction instead of silently vanishing, since configs are
-    typically built from many explicit keyword arguments."""
+    typically built from many explicit keyword arguments. A rejected value is
+    never echoed, because configs carry keys, tokens and environment; Pydantic
+    takes this from the outermost model, so it belongs on the base."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
 
 class EnvAdapterConfig(BaseAdapterConfig, BaseSettings):

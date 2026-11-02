@@ -100,6 +100,20 @@ def sdk_cli_argv(options: ClaudeAgentOptions) -> list[str]:
     return transport._build_command()
 
 
+async def launch_options(
+    room: ClaudeRoom, session_id: str | None = None
+) -> ClaudeAgentOptions:
+    """The options of the CLI process the room's next message launches."""
+    room.claude.script([room.model_reply("Hello.")])
+    await room.send("hi", session_id=session_id)
+    return room.claude.sessions[-1].options
+
+
+def band_mcp_running(adapter: ClaudeSDKAdapter) -> bool:
+    """Whether the adapter's shared Band MCP server is open."""
+    return adapter._mcp.current is not None
+
+
 def with_approvals(
     mode: ApprovalMode = "manual", **options: Any
 ) -> ClaudeSDKAdapterConfig:

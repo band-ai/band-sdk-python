@@ -16,6 +16,7 @@ from claude_agent_sdk.types import (
 
 from band.adapters.claude_sdk import (
     BAND_MCP_TOKEN_ENV,
+    RESERVED_CLI_FLAGS,
     SDK_OWNED_CLI_FLAGS,
     ClaudeApprovalOptions,
     ClaudeCLIOptions,
@@ -25,21 +26,11 @@ from band.core.types import Emit
 from band.integrations.claude_sdk.transport import create_transport
 from tests.adapters.claude_sdk.helpers import (
     SEND_MESSAGE_MCP_NAME,
-    ClaudeRoom,
     OpenRoom,
+    launch_options,
     sdk_cli_argv,
 )
 from tests.paths import host_absolute_path
-
-
-async def _cli_options(
-    room: ClaudeRoom, session_id: str | None = None
-) -> ClaudeAgentOptions:
-    """The options the room's CLI process was started with."""
-    room.claude.script([room.model_reply("Hello.")])
-    await room.send("hi", session_id=session_id)
-    [session] = room.claude.sessions
-    return session.options
 
 
 def _emitted_flags(options: ClaudeAgentOptions) -> set[str]:
@@ -78,7 +69,7 @@ class TestCliOptions:
         )
         room = await claude_room(ClaudeSDKAdapterConfig(cli=cli))
 
-        options = await _cli_options(room)
+        options = await launch_options(room)
 
         assert options.plugins == [{"type": "local", "path": str(tmp_path / "plugin")}]
         assert options.cli_path == cli.cli_path
@@ -96,7 +87,7 @@ class TestCliOptions:
             ClaudeSDKAdapterConfig(cli=ClaudeCLIOptions(plugin_dirs=(str(tmp_path),)))
         )
 
-        options = await _cli_options(room)
+        options = await launch_options(room)
 
         assert list(options.mcp_servers) == ["band"]
         assert SEND_MESSAGE_MCP_NAME in options.allowed_tools
@@ -119,7 +110,7 @@ class TestCliOptions:
             )
         )
 
-        options = await _cli_options(room, session_id="sess-1")
+        options = await launch_options(room, session_id="sess-1")
 
         assert _emitted_flags(options) == SDK_OWNED_CLI_FLAGS
 
@@ -135,14 +126,12 @@ class TestCliOptions:
             ClaudeSDKAdapterConfig(max_thinking_tokens=1024), emit=emit
         )
 
-        options = await _cli_options(room)
+        options = await launch_options(room)
 
         assert options.thinking is not None
         assert options.thinking.get("display") == display
 
-    @pytest.mark.parametrize(
-        "flag", ["mcp-config", "effort", "settings", "dangerously-skip-permissions"]
-    )
+    @pytest.mark.parametrize("flag", sorted(RESERVED_CLI_FLAGS))
     def test_extra_args_cannot_replace_adapter_owned_flags(self, flag: str) -> None:
         with pytest.raises(ValueError, match="adapter-owned CLI flags"):
             ClaudeCLIOptions(extra_args={flag: "x"})
