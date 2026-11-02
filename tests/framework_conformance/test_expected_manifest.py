@@ -96,6 +96,9 @@ class TestExpectedManifest:
             {"na": [{"reason": "why", "adapters": ["no-such-adapter"]}]},
             {"pass": [SUITE_ADAPTER]},
             {"lane": ALL_LANES, "pass": [_ADAPTER_A]},
+            {},
+            {"lane": _HOME_A},
+            {"na": [{"reason": "why", "adapters": []}]},
         ],
         ids=[
             "unknown-key",
@@ -104,11 +107,31 @@ class TestExpectedManifest:
             "unknown-na-adapter",
             "suite-pass",
             "pin-all",
+            "no-cells",
+            "pin-only",
+            "empty-na-group",
         ],
     )
     def test_load_rejects_an_invalid_entry(self, tmp_path: Path, spec: object) -> None:
         path = _write(tmp_path, {_OWNER: {"test_x": spec}})
         with pytest.raises(ValidationError):
+            load_manifest(path)
+
+    @pytest.mark.parametrize(
+        "manifest",
+        [{}, {_OWNER: {}}],
+        ids=["no-files", "file-without-tests"],
+    )
+    def test_load_rejects_an_empty_group(
+        self, tmp_path: Path, manifest: object
+    ) -> None:
+        with pytest.raises(ValidationError):
+            load_manifest(_write(tmp_path, manifest))
+
+    def test_load_rejects_a_repeated_test(self, tmp_path: Path) -> None:
+        path = tmp_path / "manifest.yaml"
+        path.write_text(f"{_OWNER}:\n  test_x: {ALL_LANES}\n  test_x: {_HOME_A}\n")
+        with pytest.raises(ValueError, match="test_x"):
             load_manifest(path)
 
     @pytest.mark.parametrize(
