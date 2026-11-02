@@ -73,7 +73,6 @@ except ImportError:
 
 from band_sdk_core import AgentFailure, is_authorized_sender
 from pydantic import (
-    ConfigDict,
     DirectoryPath,
     Field,
     NonNegativeFloat,
@@ -279,12 +278,21 @@ ISOLATION_OVERRIDE_WARNING = (
 )
 
 
+class SettingsRejection(StrEnum):
+    """Why host Claude settings or env are refused; messages lead with the source."""
+
+    UNREADABLE = "cannot be read"
+    NOT_JSON = "is not valid JSON"
+    NOT_OBJECT = "must be a JSON object"
+    BAND_TOKEN = (
+        f"may not set {BAND_MCP_TOKEN_ENV}, which carries the Band MCP server's token"
+    )
+    NOT_INLINE_OR_ABSOLUTE = "must be inline JSON or an absolute file path"
+
+
 def _reject_band_mcp_token(env: Mapping[str, object], where: str) -> None:
     if BAND_MCP_TOKEN_ENV in env:
-        raise ValueError(
-            f"{where} may not set {BAND_MCP_TOKEN_ENV}, which carries the Band "
-            "MCP server's token"
-        )
+        raise ValueError(f"{where} {SettingsRejection.BAND_TOKEN}")
 
 
 def _reject_non_finite(constant: str) -> NoReturn:
@@ -301,22 +309,23 @@ def _settings_object(text: str, source: str) -> dict[str, Any]:
     try:
         value = json.loads(text, parse_constant=_reject_non_finite)
     except ValueError as error:
-        raise ValueError(f"{source} is not valid JSON: {error}") from error
+        raise ValueError(f"{source} {SettingsRejection.NOT_JSON}: {error}") from error
     if not isinstance(value, dict):
-        raise ValueError(f"{source} must be a JSON object")
+        raise ValueError(f"{source} {SettingsRejection.NOT_OBJECT}")
     if isinstance(env := value.get("env"), dict):
         _reject_band_mcp_token(env, f"{source} env")
     return value
 
 
 def _read_settings_file(path: str) -> dict[str, Any]:
+    source = f"Claude settings file {path}"
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as error:
         raise ValueError(
-            f"cannot read the Claude settings file {path}: {error.strerror}"
+            f"{source} {SettingsRejection.UNREADABLE}: {error.strerror}"
         ) from error
-    return _settings_object(text, f"Claude settings file {path}")
+    return _settings_object(text, source)
 
 
 def _flag_settings(host: Mapping[str, Any]) -> str:
@@ -330,13 +339,39 @@ def _flag_settings(host: Mapping[str, Any]) -> str:
     return json.dumps({**host, **ISOLATION_SETTINGS})
 
 
-def _write_private_settings(flag_settings: str) -> Path:
-    """Write the flag settings to a file only this user can read; inline JSON
-    would put the host's secrets on every CLI's argv, readable through ``ps``."""
-    descriptor, name = tempfile.mkstemp(prefix="band-claude-settings-", suffix=".json")
-    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-        file.write(flag_settings)
-    return Path(name)
+class LaunchSettings:
+    """The ``--settings`` value every CLI launch of one adapter start reads.
+
+    Isolation alone holds no secrets and travels inline. Host settings may, so
+    they go to a file only this user can read, kept off argv where ``ps``
+    shows it. A launch rewrites the file if it is gone, because a temp-dir
+    cleaner can remove it under a long-running agent.
+    """
+
+    def __init__(self, host: Mapping[str, Any]) -> None:
+        self._json = _flag_settings(host)
+        self._private = bool(host)
+        self._file: Path | None = None
+
+    def for_launch(self) -> str:
+        if not self._private:
+            return self._json
+        if self._file is None or not self._file.exists():
+            self._file = self._write()
+        return str(self._file)
+
+    def remove(self) -> None:
+        if self._file is not None:
+            self._file.unlink(missing_ok=True)
+            self._file = None
+
+    def _write(self) -> Path:
+        descriptor, name = tempfile.mkstemp(
+            prefix="band-claude-settings-", suffix=".json"
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            file.write(self._json)
+        return Path(name)
 
 
 class ClaudeCLIOptions(BaseAdapterConfig):
@@ -357,17 +392,14 @@ class ClaudeCLIOptions(BaseAdapterConfig):
         settings: Host Claude settings, as inline JSON or an absolute
             settings file path. The adapter layers them under
             ``ISOLATION_SETTINGS``, whose keys always win, into the CLI's
-            single ``--settings`` file. A file is read when the adapter
-            starts, so edits apply on the next start, and a missing or
-            malformed file fails that start. Like ``env``, their ``env`` may
+            single ``--settings`` value (see ``LaunchSettings``). A file is
+            read when the adapter starts, so edits apply on the next start,
+            and a missing or malformed file fails that start. Like ``env``, their ``env`` may
             not set ``BAND_MCP_TOKEN``. Selecting settings does not open user
             or project setting sources. The contents are trusted operator
             configuration: permission rules, hooks and plugins inside keep
             Claude Code's own precedence, which this SDK does not validate.
     """
-
-    # Settings and env carry secrets; keep them out of validation errors.
-    model_config = ConfigDict(hide_input_in_errors=True)
 
     cli_path: str | None = None
     plugin_dirs: tuple[str, ...] = ()
@@ -404,9 +436,7 @@ class ClaudeCLIOptions(BaseAdapterConfig):
                     inline, "inline Claude settings"
                 )
             case str(path) if not is_host_absolute(path):
-                raise ValueError(
-                    "settings must be inline JSON or an absolute file path"
-                )
+                raise ValueError(f"settings {SettingsRejection.NOT_INLINE_OR_ABSOLUTE}")
         return self
 
     def host_settings(self) -> dict[str, Any]:
@@ -798,7 +828,7 @@ class ClaudeSDKAdapter(
 
         # Created in on_started.
         self._session_manager: ClaudeSessionManager | None = None
-        self._settings_file: Path | None = None
+        self._launch_settings: LaunchSettings | None = None
 
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
 
@@ -882,7 +912,7 @@ class ClaudeSDKAdapter(
 
         # Read before opening the Band MCP server: a bad settings file then
         # fails the start with nothing to clean up.
-        flag_settings = _flag_settings(self.config.cli.host_settings())
+        launch_settings = LaunchSettings(self.config.cli.host_settings())
         await self._mcp.reopen()
         mcp_backend = await self._mcp.ensure()
 
@@ -898,7 +928,6 @@ class ClaudeSDKAdapter(
         # `thinking.type.enabled` shape under API-key auth, which current
         # models reject, so the run errors with no output.
         resolved_model = self.config.model or ANTHROPIC_MODEL
-        self._settings_file = _write_private_settings(flag_settings)
         sdk_options = ClaudeAgentOptions(
             model=resolved_model,
             fallback_model=self.config.fallback_model,
@@ -919,7 +948,6 @@ class ClaudeSDKAdapter(
             # ToolSearch does not engage and the Band tools stay directly in context.
             # Configurable via the config for callers who want their host config.
             setting_sources=list(self.config.setting_sources),
-            settings=str(self._settings_file),
             **self.config.cli.sdk_fields(),
         )
 
@@ -951,10 +979,12 @@ class ClaudeSDKAdapter(
         can_use_tool_factory = (
             self._make_can_use_tool if self.config.approvals is not None else None
         )
+        self._launch_settings = launch_settings
         self._session_manager = ClaudeSessionManager(
             sdk_options,
             can_use_tool_factory=can_use_tool_factory,
             mcp_servers_factory=self._room_mcp_servers,
+            settings_factory=launch_settings.for_launch,
             workspaces=self._workspaces,
             retention=self.config.retention,
             settle_grace_s=self.config.turn_settle_timeout_s,
@@ -1921,14 +1951,9 @@ class ClaudeSDKAdapter(
         await self._mcp.close_after(
             self._stop_sessions(), retention=self.config.retention
         )
-        self._remove_settings_file()
+        if self._launch_settings is not None:
+            self._launch_settings.remove()
         await self.backend_turns.drain()
-
-    def _remove_settings_file(self) -> None:
-        """Delete this start's flag settings once no CLI can launch from them."""
-        if self._settings_file is not None:
-            self._settings_file.unlink(missing_ok=True)
-            self._settings_file = None
 
     # ------------------------------------------------------------------
     # Chat-based approval flow
