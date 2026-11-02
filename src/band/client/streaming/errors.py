@@ -78,7 +78,7 @@ def _decode_upgrade_error_body(body: Any) -> dict[str, Any]:
 
 
 def _is_int(value: object) -> TypeGuard[int]:
-    """An integer, but not a ``bool`` (which Python counts as one)."""
+    """Return whether ``value`` is an int other than a ``bool``."""
     return isinstance(value, int) and not isinstance(value, bool)
 
 

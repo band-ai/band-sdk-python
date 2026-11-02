@@ -82,4 +82,9 @@ class TestSupersede:
 
         [record] = caplog.records
         assert record.msg == VERDICT_LOG
-        assert record.args[-1] == f"evicted by {REDACTED}"
+        assert record.args == (
+            SUPERSEDED.reason,
+            SUPERSEDED.dead_reason,
+            SUPERSEDED.correlation_id,
+            f"evicted by {REDACTED}",
+        )

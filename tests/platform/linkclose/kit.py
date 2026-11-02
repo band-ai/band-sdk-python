@@ -20,9 +20,9 @@ from band.client.streaming import (
 from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
 from tests.conftest import TERMINAL_SUPERSEDE
+from tests.identifiers import AGENT_ID
 from tests.sessionpolicies import millisecond_backoff
 
-AGENT_ID = "agent-123"
 CONTROL_TOPIC = AgentTopicKind.Control.topic(AGENT_ID)
 HANG_GUARD_S = 5.0
 

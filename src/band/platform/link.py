@@ -134,6 +134,9 @@ class BandLink:
         # True for the span of connect() before _ws is assigned, so a second
         # concurrent connect() sees it even mid-handshake (see connect()).
         self._connecting = False
+        # Once a session has opened, the queue may hold events it left unread;
+        # anything queued before that is the caller's.
+        self._session_opened = False
 
         # Room/agent-topic subscription tracking and reconnect reconciliation --
         # lives in its own class since it needs the live WebSocketClient, unlike
@@ -204,7 +207,8 @@ class BandLink:
         self._connecting = True
         try:
             self._last_disconnect_reason = None
-            self._drop_queued_events()
+            if self._session_opened:
+                self._drop_queued_events()
             ws = WebSocketClient(
                 self.ws_url,
                 self.api_key,
@@ -218,6 +222,7 @@ class BandLink:
             )
             try:
                 await ws.__aenter__()
+                self._session_opened = True
                 await self._join_agent_control_channel(ws)
             except BaseException as exc:
                 # BaseException, not Exception: a cancellation reaching one
@@ -226,7 +231,8 @@ class BandLink:
                 # leaks -- _ws itself was never assigned, so there's nothing
                 # to roll back on that side.
                 if ws.last_disconnect_reason is not None:
-                    # A refused boot reports no event, only the reason.
+                    # A refused boot reports only this reason; a verdict
+                    # during the join has also queued its event.
                     self._last_disconnect_reason = ws.last_disconnect_reason
                 await ws.__aexit__(None, None, None)
                 if (

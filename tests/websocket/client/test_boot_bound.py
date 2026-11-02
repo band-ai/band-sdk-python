@@ -15,7 +15,7 @@ from band.client.streaming import WebSocketClient, WebSocketUpgradeError
 from band.client.streaming.client import DEFAULT_CONNECT_TIMEOUT_S
 from band.platform.link import BandLink
 from band.testing import fake_phoenix_server
-from tests.platform.linkclose.kit import AGENT_ID
+from tests.identifiers import AGENT_ID
 from tests.sessionpolicies import (
     BEYOND_ANY_RETRY_S,
     DEFAULT_POLICY_FIELDS,

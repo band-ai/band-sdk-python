@@ -19,7 +19,7 @@ from band.client.streaming.session_decider import VERDICT_LOG
 from band.client.streaming.session_decider import logger as decider_logger
 from band.core.types import ConflictPolicy
 from band.testing import fake_phoenix_server
-from tests.platform.linkclose.kit import AGENT_ID
+from tests.identifiers import AGENT_ID
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
