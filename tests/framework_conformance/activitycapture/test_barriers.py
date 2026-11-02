@@ -9,7 +9,7 @@ import httpx
 import pytest
 from band_rest import AgentActivityDetail
 
-from tests.activitysupport import install_activity_support, tool_body
+from tests.activitysupport import tool_body
 from tests.e2e.baseline.toolkit.activity import (
     ActivityCapture,
     ActivityPush,
@@ -67,7 +67,6 @@ class TestActivityBarriers:
     )
     async def test_held_detail_needs_a_push_and_a_report_after_entry(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
         raw_peer: tuple[TrackingWebSocketClient, TopicPeer],
         pushed_before_since: list[dict[str, Any]],
@@ -75,7 +74,6 @@ class TestActivityBarriers:
         reported_after_entry: list[AgentActivityDetail | None],
         expectation: AbstractContextManager[object],
     ) -> None:
-        install_activity_support(monkeypatch, learned=True)
         capture, link, _ = observed_link
         ws, peer = raw_peer
         capture.deadline_s = 1
@@ -135,7 +133,6 @@ class TestActivityBarriers:
     )
     async def test_finished_needs_an_idle_report_and_a_stop(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
         raw_peer: tuple[TrackingWebSocketClient, TopicPeer],
         working_before_since: list[bool],
@@ -143,7 +140,6 @@ class TestActivityBarriers:
         pushes: list[ActivityPush],
         expectation: AbstractContextManager[object],
     ) -> None:
-        install_activity_support(monkeypatch, learned=True)
         capture, link, _ = observed_link
         ws, peer = raw_peer
         capture.deadline_s = 1
@@ -160,11 +156,9 @@ class TestActivityBarriers:
 
     async def test_finished_rejects_a_stop_pushed_before_its_phase(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
         raw_peer: tuple[TrackingWebSocketClient, TopicPeer],
     ) -> None:
-        install_activity_support(monkeypatch, learned=True)
         capture, link, _ = observed_link
         ws, peer = raw_peer
         capture.deadline_s = 1
@@ -177,11 +171,9 @@ class TestActivityBarriers:
 
     async def test_finished_accepts_a_failed_idle_report_once_the_platform_stops(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
         raw_peer: tuple[TrackingWebSocketClient, TopicPeer],
     ) -> None:
-        install_activity_support(monkeypatch, learned=True)
         capture, link, peer = observed_link
         ws, topics = raw_peer
         capture.deadline_s = 1
