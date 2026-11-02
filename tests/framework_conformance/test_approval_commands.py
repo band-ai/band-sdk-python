@@ -37,6 +37,7 @@ from tests.e2e.baseline.smoke.samples.approvals import (
 )
 from tests.e2e.baseline.toolkit.adapters import Adapter
 from tests.e2e.baseline.toolkit.observations.tool_calls import ToolCall, ToolCalls
+from tests.hostshells import HOST_SHELLS, host_shell_id, shell_argv
 
 logger = logging.getLogger(__name__)
 
@@ -203,11 +204,7 @@ def test_shell_redirect_readback_handles_host_encodings(
 
 
 @pytest.mark.timeout(3 * SHELL_PROCESS_TIMEOUT_SECONDS)
-@pytest.mark.parametrize(
-    "shell",
-    [None, "pwsh", "powershell"] if sys.platform == "win32" else [None],
-    ids=lambda shell: shell or "host",
-)
+@pytest.mark.parametrize("shell", HOST_SHELLS, ids=host_shell_id)
 def test_approval_commands_write_and_append_with_host_shell(
     tmp_path: Path, shell: str | None, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -228,11 +225,7 @@ def test_approval_commands_write_and_append_with_host_shell(
         (appending_command, [marker, marker]),
     ):
         text = command(marker, target)
-        args = (
-            text
-            if shell is None
-            else [shell, "-NoProfile", "-NonInteractive", "-Command", text]
-        )
+        args = text if shell is None else shell_argv(shell, text)
         logger.info("Starting shell command: %s", args)
         started = time.monotonic()
         try:
