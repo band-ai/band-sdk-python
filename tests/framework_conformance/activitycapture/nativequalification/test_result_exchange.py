@@ -12,6 +12,7 @@ from tests.e2e.baseline.toolkit.resultexchange import ExchangeOperation, ResultE
 from tests.framework_conformance.activitycapture.nativequalification.kit import (
     NativeCommands,
 )
+from tests.hostshells import HOST_SHELLS, host_shell_id
 
 COMMAND_LINE_ENDING = os.linesep.encode("ascii")
 
@@ -42,6 +43,27 @@ class TestResultExchange:
             exchange.result + COMMAND_LINE_ENDING,
             b"",
         )
+
+    @pytest.mark.parametrize("shell", HOST_SHELLS, ids=host_shell_id)
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_agent_command_line_runs_unchanged_in_each_host_shell(
+        self,
+        exchange: ResultExchange,
+        native_commands: NativeCommands,
+        shell: str | None,
+    ) -> None:
+        # The privacy sentinel only checks something if the command line carries it.
+        assert exchange.note in exchange.command(ExchangeOperation.PRODUCE)
+        producer = await native_commands.run_in_shell(ExchangeOperation.PRODUCE, shell)
+        await exchange.wait(exchange.producer.entered, phase="producer entered")
+        exchange.producer.release.set()
+        produced, error = await producer.communicate()
+        assert (producer.returncode, produced, error) == (
+            0,
+            exchange.result + COMMAND_LINE_ENDING,
+            b"",
+        )
+        await exchange.wait(exchange.committed, phase="producer committed")
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_unproduced_commit_and_premature_consume_fail(

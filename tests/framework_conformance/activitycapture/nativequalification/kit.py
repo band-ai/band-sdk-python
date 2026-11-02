@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from tests.e2e.baseline.toolkit.resultexchange import ExchangeOperation, ResultExchange
+from tests.hostshells import shell_argv
 
 
 class NativeCommands:
@@ -17,6 +18,25 @@ class NativeCommands:
             *self.exchange.argv(operation),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+        )
+        self.processes.append(process)
+        return process
+
+    async def run_in_shell(
+        self, operation: ExchangeOperation, shell: str | None
+    ) -> asyncio.subprocess.Process:
+        """Start the command line an agent is given, as ``shell`` runs it."""
+        command = self.exchange.command(operation)
+        process = await (
+            asyncio.create_subprocess_shell(
+                command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            if shell is None
+            else asyncio.create_subprocess_exec(
+                *shell_argv(shell, command),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         )
         self.processes.append(process)
         return process

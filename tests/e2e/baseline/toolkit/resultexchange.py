@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import shlex
 import sys
+import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -45,6 +45,7 @@ class ResultExchange:
         self.committed = asyncio.Event()
         self.result = b""
         self._url: str | None = None
+        self._scripts: Path | None = None
 
     def _path(self, operation: ExchangeOperation) -> str:
         return f"/{self.note}/{operation.value}"
@@ -96,24 +97,38 @@ class ResultExchange:
             raise RuntimeError("Result exchange has not started")
         return f"{self._url}{self._path(operation)}"
 
-    def argv(self, operation: ExchangeOperation) -> tuple[str, ...]:
-        if operation == ExchangeOperation.COMMIT:
-            raise ValueError("Commit belongs to the producer command")
+    def _program(self, operation: ExchangeOperation) -> str:
         url = self.url(operation)
         program = (
-            "import urllib.request as u; local = u.build_opener(u.ProxyHandler({})); "
-            f"value = local.open({url!r}).read(); "
+            "import urllib.request as u\n"
+            "local = u.build_opener(u.ProxyHandler({}))\n"
+            f"value = local.open({url!r}).read()\n"
         )
         if operation == ExchangeOperation.PRODUCE:
             commit = self.url(ExchangeOperation.COMMIT)
             program += (
-                f"local.open(u.Request({commit!r}, data=value, method='POST')).read(); "
+                f"local.open(u.Request({commit!r}, data=value, method='POST')).read()\n"
             )
-        program += "print(value.decode('ascii'), flush=True)"
-        return Path(sys.executable).as_posix(), "-c", program
+        return program + "print(value.decode('ascii'), flush=True)\n"
+
+    def _script(self, operation: ExchangeOperation) -> Path:
+        # The note in the name puts it on the agent's command line, so a
+        # leaked command line trips the privacy sentinel.
+        if self._scripts is None:
+            raise RuntimeError("Result exchange has not started")
+        return self._scripts / f"{self.note}-{operation.value}.py"
+
+    def argv(self, operation: ExchangeOperation) -> tuple[str, str]:
+        if operation == ExchangeOperation.COMMIT:
+            raise ValueError("Commit belongs to the producer command")
+        return Path(sys.executable).as_posix(), self._script(operation).as_posix()
 
     def command(self, operation: ExchangeOperation) -> str:
-        return shlex.join(self.argv(operation))
+        """A command line that needs no quoting, so any host shell runs it as is."""
+        argv = self.argv(operation)
+        if any(part.split() != [part] for part in argv):
+            raise RuntimeError(f"Command path needs shell quoting: {argv}")
+        return " ".join(argv)
 
     @asynccontextmanager
     async def releasing_on_exit(self) -> AsyncIterator[None]:
@@ -146,8 +161,15 @@ class ResultExchange:
         try:
             await server.start()
             self._url = f"http://127.0.0.1:{server.bound_port}"
-            async with self.releasing_on_exit():
-                yield self
+            with tempfile.TemporaryDirectory(prefix="band-e2e-exchange-") as scripts:
+                self._scripts = Path(scripts).resolve()
+                for operation in (ExchangeOperation.PRODUCE, ExchangeOperation.CONSUME):
+                    self._script(operation).write_text(
+                        self._program(operation), encoding="utf-8"
+                    )
+                async with self.releasing_on_exit():
+                    yield self
         finally:
             self._url = None
+            self._scripts = None
             await server.stop()
