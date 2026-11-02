@@ -26,6 +26,8 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         adapter: Any,
         settings: Any,
         session_config: Any = None,
+        *,
+        link_factory: Any = None,
     ) -> Any:
         yield provisioned
 
