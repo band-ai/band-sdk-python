@@ -386,6 +386,7 @@ class ClaudeSessionManager:
         can_use_tool_factory: Callable[[ClaudeRoomSession, int], CanUseTool]
         | None = None,
         mcp_servers_factory: Callable[[str], dict[str, McpServerConfig]] | None = None,
+        settings_factory: Callable[[], str] | None = None,
         workspaces: RoomWorkspaces | None = None,
         retention: RoomRetentionConfig | None = None,
         settle_grace_s: float = TURN_SETTLE_GRACE_S,
@@ -401,6 +402,9 @@ class ClaudeSessionManager:
                 generation.
             mcp_servers_factory: Optional factory that returns a room's
                 ``mcp_servers``, replacing ``base_options.mcp_servers``.
+            settings_factory: Optional factory for the ``settings`` one CLI
+                launch reads, called at each launch so a file it names exists
+                then.
             workspaces: Adapter-local claims; omit to preserve base_options.cwd.
             retention: Residency settings, including the transition reporting
                 budget, which defaults to ``CLI_STARTUP_TIMEOUT_S``; idle
@@ -413,6 +417,7 @@ class ClaudeSessionManager:
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
         self._mcp_servers_factory = mcp_servers_factory
+        self._settings_factory = settings_factory
         self._workspaces = workspaces
         self._on_disposed = on_disposed
         self._retention = RoomRetention(
@@ -461,6 +466,8 @@ class ClaudeSessionManager:
             overrides["resume"] = resume
         if self._can_use_tool_factory:
             overrides["can_use_tool"] = self._can_use_tool_factory(session, generation)
+        if self._settings_factory is not None:
+            overrides["settings"] = self._settings_factory()
         return dataclasses.replace(self.base_options, **overrides)
 
     def discard(self, session: ClaudeRoomSession) -> None:
