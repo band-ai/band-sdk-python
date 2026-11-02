@@ -10,7 +10,13 @@ from typing import Any
 from band.client.rest import AsyncRestClient
 from band.platform.link import BandLink
 from tests.e2e.baseline.toolkit.activity import ActivityCapture
-from tests.e2e.baseline.toolkit.resultexchange import ExchangeWork
+from tests.e2e.baseline.toolkit.resultexchange import (
+    ExchangeWork,
+    release_all,
+    wait_for,
+)
+
+BARRIER = "memory save barrier"
 
 
 class HeldMemorySave:
@@ -55,17 +61,11 @@ class HeldMemorySave:
         return held
 
     async def wait(self, event: asyncio.Event, *, phase: str) -> None:
-        try:
-            async with asyncio.timeout(self.deadline_s):
-                await event.wait()
-        except TimeoutError:
-            raise TimeoutError(f"Missing memory save barrier: {phase}") from None
+        await wait_for(event, deadline_s=self.deadline_s, barrier=f"{BARRIER}: {phase}")
 
     @asynccontextmanager
     async def releasing_on_exit(self) -> AsyncIterator[None]:
         try:
             yield
         finally:
-            self.save.release.set()
-            if self.save.entered.is_set():
-                await self.wait(self.save.settled, phase="released save settled")
+            await release_all((self.save,), deadline_s=self.deadline_s, barrier=BARRIER)
