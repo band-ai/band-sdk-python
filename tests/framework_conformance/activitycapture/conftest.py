@@ -10,6 +10,7 @@ import pytest
 from phoenix_channels_python_client import PHXChannelsClient
 
 from band.client.streaming import WebSocketClient
+from tests.activitysupport import install_activity_support
 from tests.e2e.baseline.toolkit.activity import ActivityCapture, ObservingBandLink
 from tests.e2e.baseline.toolkit.activitywork import ActivityWork
 from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
@@ -32,9 +33,12 @@ async def held_lookup() -> AsyncIterator[tuple[ActivityWork, HeldLookupPeer]]:
 
 
 @pytest.fixture
-async def observed_link() -> AsyncIterator[
-    tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer]
-]:
+async def observed_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer]]:
+    # The peer's version header would otherwise teach the real process-wide
+    # support; a test needing a fresh negotiation installs its own.
+    install_activity_support(monkeypatch, learned=True)
     capture = ActivityCapture()
     peer = HeldActivityPeer()
     async with rest_client_over(peer.respond) as rest:

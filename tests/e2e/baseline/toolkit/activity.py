@@ -159,6 +159,42 @@ class ActivityCapture:
             ],
         }
 
+    async def sent(
+        self,
+        room_id: str,
+        *,
+        agent_id: str | None = None,
+        working: bool,
+        activity: dict[str, Any] | None = None,
+        since: int = 0,
+    ) -> ActivityReport:
+        """Await a matching report dispatched after ``since``, whatever its outcome.
+
+        The SDK sends ``working=False`` once, and a turn shorter than the
+        keep-alive sends its start once, so neither is retried after a failure.
+        """
+        record = await self._wait(
+            self.reports,
+            lambda r: (
+                r.sequence > since
+                and r.room_id == room_id
+                and (agent_id is None or r.agent_id == agent_id)
+                and r.working is working
+                and (activity is None or r.activity == activity)
+            ),
+            f"report room={room_id} working={working}",
+        )
+        # Settled, so a rejection that latched detail off in flight is seen.
+        async with asyncio.timeout(self.deadline_s):
+            await asyncio.wait({record.outcome})
+        # The record holds the detail the SDK meant to send; a latched rejection
+        # strips it from the wire while the report is still accepted.
+        assert activity is None or message_lifecycle.activity_support.supported, (
+            DETAIL_DISABLED,
+            record,
+        )
+        return record
+
     async def report(
         self,
         room_id: str,
@@ -170,33 +206,22 @@ class ActivityCapture:
     ) -> ActivityReport:
         """Await an accepted report after ``since``.
 
-        A request that fails in transport is not accepted, and the SDK leaves it to
-        the next keep-alive, so the barrier waits for a later matching report.
+        Only a held ``working=True`` state is re-sent by keep-alive, so a failed
+        request leaves the barrier waiting for a later matching report.
         """
         while True:
-            record = await self._wait(
-                self.reports,
-                lambda r, after=since: (
-                    r.sequence > after
-                    and r.room_id == room_id
-                    and (agent_id is None or r.agent_id == agent_id)
-                    and r.working is working
-                    and (activity is None or r.activity == activity)
-                ),
-                f"accepted report room={room_id} working={working}",
+            record = await self.sent(
+                room_id,
+                agent_id=agent_id,
+                working=working,
+                activity=activity,
+                since=since,
             )
-            async with asyncio.timeout(self.deadline_s):
-                outcome = await asyncio.shield(record.outcome)
+            outcome = record.outcome.result()
             if outcome.accepted:
                 break
             since = record.sequence
         assert outcome == ReportOutcome(accepted=True, stopped=False), (record, outcome)
-        # The record holds the detail the SDK meant to send; a latched rejection
-        # strips it from the wire while the report is still accepted.
-        assert activity is None or message_lifecycle.activity_support.supported, (
-            DETAIL_DISABLED,
-            record,
-        )
         return record
 
     async def held(
@@ -215,9 +240,22 @@ class ActivityCapture:
         )
 
     async def finished(self, room_id: str, agent_id: str, *, since: int) -> RawActivity:
-        """Await an accepted idle report and the platform's stop after ``since``."""
-        await self.report(room_id, agent_id=agent_id, working=False, since=since)
+        """Await the SDK's idle report and the platform's stop after ``since``.
+
+        The platform's TTL stops the activity even when that single report fails.
+        """
+        await self.sent(room_id, agent_id=agent_id, working=False, since=since)
         return await self.stopped(room_id, agent_id, since=since)
+
+    async def cleared(
+        self, room_id: str, agent_id: str, *, since: int
+    ) -> ActivityReport:
+        """Await the SDK's idle report after ``since``, without the platform's stop.
+
+        For a run a room message reached mid-turn: the platform can then drop
+        its pushes for the rest of that run (PLT-1731).
+        """
+        return await self.sent(room_id, agent_id=agent_id, working=False, since=since)
 
     async def control(
         self, room_id: str, *, since: int, agent_id: str | None = None
