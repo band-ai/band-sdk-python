@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from band_rest import AgentActivityDetail
 
-from tests.activitysupport import install_activity_support
+from tests.activitysupport import BOOLEAN_BODY, install_activity_support, tool_body
 from tests.e2e.baseline.toolkit.activity import (
     DETAIL_DISABLED,
     ActivityCapture,
@@ -14,7 +14,8 @@ from tests.e2e.baseline.toolkit.activity import (
 from tests.framework_conformance.activitycapture.kit import HeldActivityPeer
 
 ROOM = "room"
-DETAIL = {"kind": "tool_call", "name": "Read"}
+DETAIL_BODY = tool_body("Read")
+DETAIL = DETAIL_BODY["activity"]
 
 
 class TestDetailLatch:
@@ -29,7 +30,7 @@ class TestDetailLatch:
         record = await capture.report(ROOM, working=True, activity=DETAIL)
         assert (record.activity, peer.reports) == (
             DETAIL,
-            [{"working": True, "activity": DETAIL}],
+            [DETAIL_BODY],
         )
 
     async def test_latched_detail_cannot_pass_as_an_accepted_detail_report(
@@ -43,7 +44,7 @@ class TestDetailLatch:
         await link.report_activity(ROOM, True, activity=AgentActivityDetail(**DETAIL))
         with pytest.raises(AssertionError, match=DETAIL_DISABLED):
             await capture.report(ROOM, working=True, activity=DETAIL)
-        assert peer.reports == [{"working": True}]
+        assert peer.reports == [BOOLEAN_BODY]
 
     async def test_boolean_report_is_still_matched_once_detail_is_latched_off(
         self,

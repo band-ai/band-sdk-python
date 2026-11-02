@@ -7,6 +7,9 @@ from typing import Any
 
 import pytest
 
+from band.runtime.activity import REASONING
+from band.runtime.tools.types import BandTool
+from tests.activitysupport import tool_body
 from tests.e2e.baseline.toolkit.activity import (
     EXTRA_DETAIL,
     UNLISTED_TOOL,
@@ -17,9 +20,9 @@ from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
 from tests.framework_conformance.activitycapture.topics import TopicPeer
 
 ROOM = "room"
-BAND_TOOL = {"kind": "tool_call", "name": "band_send_message"}
-NATIVE_TOOL = {"kind": "tool_call", "name": "Bash"}
-ALLOWED = frozenset({"band_send_message"})
+BAND_TOOL = tool_body(BandTool.SEND_MESSAGE)["activity"]
+NATIVE_TOOL = tool_body("Bash")["activity"]
+ALLOWED = frozenset({BandTool.SEND_MESSAGE})
 UNLISTED = pytest.raises(AssertionError, match=UNLISTED_TOOL)
 EXTRA_FIELD = pytest.raises(AssertionError, match=EXTRA_DETAIL)
 
@@ -29,7 +32,9 @@ class TestPrivateToolNames:
         ("activity", "tool_names", "expectation"),
         [
             pytest.param(BAND_TOOL, ALLOWED, nullcontext(), id="allowed-name"),
-            pytest.param({"kind": "reasoning"}, ALLOWED, nullcontext(), id="no-tool"),
+            pytest.param(
+                {"kind": REASONING.kind}, ALLOWED, nullcontext(), id="no-tool"
+            ),
             pytest.param(NATIVE_TOOL, ALLOWED, UNLISTED, id="unlisted-name"),
             pytest.param(NATIVE_TOOL, None, nullcontext(), id="any-name-without-list"),
             pytest.param(

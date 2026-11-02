@@ -146,7 +146,7 @@ class ExcludedAdapter:
 def not_applicable(
     selected: Collection[Adapter], reason: str
 ) -> tuple[ExcludedAdapter, ...]:
-    """Every live adapter outside ``selected``, N/A for ``reason``.
+    """Mark every live adapter outside ``selected`` N/A for ``reason``.
 
     Passed as ``@per_adapter(exclude=...)``, it leaves exactly ``selected`` to run
     and gives every other registered adapter, including one added later, its row.

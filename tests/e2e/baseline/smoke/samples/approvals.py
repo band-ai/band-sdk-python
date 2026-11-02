@@ -265,6 +265,9 @@ class Notice:
         shown.assert_contains_any([self.text])
 
 
+DEFAULT_APPROVAL: ApprovalMode = "manual"
+
+
 @dataclass(frozen=True)
 class AgentSetup:
     """How a dialect agent is rooted, which features it runs, and how its asks
@@ -276,7 +279,7 @@ class AgentSetup:
     approvers: frozenset[str] | None = None
     # None keeps the adapter's own feature defaults.
     features: AdapterFeatures | None = None
-    approval: ApprovalMode = "manual"
+    approval: ApprovalMode = DEFAULT_APPROVAL
 
 
 @dataclass(frozen=True)
@@ -493,8 +496,8 @@ def cursor_test_adapter(
 def _cursor_features(
     setup: AgentSetup, capabilities: set[Capability] | None
 ) -> dict[str, Any]:
-    """The setup's features, with a workflow's ``capabilities`` replacing only
-    that knob so its emit default stays."""
+    """Return the setup's feature kwargs with only ``capabilities`` overridden,
+    so a workflow keeps its emit default."""
     features = feature_kwargs(setup.features)
     if capabilities is not None:
         features["capabilities"] = capabilities

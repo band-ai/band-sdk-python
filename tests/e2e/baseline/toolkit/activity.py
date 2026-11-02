@@ -199,14 +199,14 @@ class ActivityCapture:
         since: int,
         entered: int,
     ) -> ActivityReport:
-        """Detail pushed after ``since`` and re-reported after the work ``entered``."""
+        """Await detail pushed after ``since`` and re-reported after ``entered``."""
         await self.detail(room_id, agent_id, activity, since=since)
         return await self.report(
             room_id, agent_id=agent_id, working=True, activity=activity, since=entered
         )
 
     async def finished(self, room_id: str, agent_id: str, *, since: int) -> RawActivity:
-        """An accepted idle report and the platform's stop, both after ``since``."""
+        """Await an accepted idle report and the platform's stop after ``since``."""
         await self.report(room_id, agent_id=agent_id, working=False, since=since)
         return await self.stopped(room_id, agent_id, since=since)
 
@@ -279,8 +279,8 @@ class ActivityCapture:
     def assert_private(
         self, *sentinels: str, tool_names: Collection[str] | None = None
     ) -> None:
-        """No sentinel reached a push, details carry a kind and tool name only,
-        and every tool name is among ``tool_names`` when given."""
+        """Assert no sentinel reached a push and details carry only a kind and
+        a tool name, one of ``tool_names`` when given."""
         payload = json.dumps([event.payload for event in self.raw])
         for sentinel in sentinels:
             assert sentinel and sentinel not in payload

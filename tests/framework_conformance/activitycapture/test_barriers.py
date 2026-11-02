@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from band_rest import AgentActivityDetail
 
-from tests.activitysupport import install_activity_support
+from tests.activitysupport import install_activity_support, tool_body
 from tests.e2e.baseline.toolkit.activity import (
     ActivityCapture,
     ActivityPush,
@@ -22,8 +22,9 @@ pytestmark = pytest.mark.looptime
 
 ROOM = "room"
 AGENT = "agent"
-DETAIL = {"kind": "tool_call", "name": "Read"}
-OTHER_DETAIL = {"kind": "tool_call", "name": "Write"}
+DETAIL = tool_body("Read")["activity"]
+OTHER_DETAIL = tool_body("Write")["activity"]
+DETAIL_REPORT = AgentActivityDetail(**DETAIL)
 MISSING_PUSH = pytest.raises(TimeoutError, match="raw detail")
 MISSING_REPORT = pytest.raises(TimeoutError, match="report dispatched")
 MISSING_STOP = pytest.raises(TimeoutError, match="raw stop")
@@ -34,16 +35,33 @@ class TestActivityBarriers:
         (
             "pushed_before_since",
             "pushed_after_since",
-            "reports_after_entry",
+            "reported_after_entry",
             "expectation",
         ),
         [
-            pytest.param([], [DETAIL], 1, nullcontext(), id="pushed-and-re-reported"),
             pytest.param(
-                [], [DETAIL], 0, MISSING_REPORT, id="reported-only-before-entry"
+                [],
+                [DETAIL],
+                [DETAIL_REPORT],
+                nullcontext(),
+                id="pushed-and-re-reported",
             ),
-            pytest.param([], [OTHER_DETAIL], 1, MISSING_PUSH, id="other-tool-pushed"),
-            pytest.param([DETAIL], [], 1, MISSING_PUSH, id="pushed-before-since"),
+            pytest.param(
+                [], [DETAIL], [], MISSING_REPORT, id="reported-only-before-entry"
+            ),
+            pytest.param(
+                [], [DETAIL], [None], MISSING_REPORT, id="boolean-keep-alive-only"
+            ),
+            pytest.param(
+                [],
+                [OTHER_DETAIL],
+                [DETAIL_REPORT],
+                MISSING_PUSH,
+                id="other-tool-pushed",
+            ),
+            pytest.param(
+                [DETAIL], [], [DETAIL_REPORT], MISSING_PUSH, id="pushed-before-since"
+            ),
         ],
     )
     async def test_held_detail_needs_a_push_and_a_report_after_entry(
@@ -53,14 +71,13 @@ class TestActivityBarriers:
         raw_peer: tuple[TrackingWebSocketClient, TopicPeer],
         pushed_before_since: list[dict[str, Any]],
         pushed_after_since: list[dict[str, Any]],
-        reports_after_entry: int,
+        reported_after_entry: list[AgentActivityDetail | None],
         expectation: AbstractContextManager[object],
     ) -> None:
         install_activity_support(monkeypatch, learned=True)
         capture, link, _ = observed_link
         ws, peer = raw_peer
         capture.deadline_s = 1
-        detail = AgentActivityDetail(**DETAIL)
         async with capture.rooms(ws, ROOM):
             for activity in pushed_before_since:
                 await peer.emit(
@@ -69,7 +86,7 @@ class TestActivityBarriers:
                     {"agent_id": AGENT, "activity": activity},
                 )
             since = capture.cursor()
-            await link.report_activity(ROOM, True, activity=detail)
+            await link.report_activity(ROOM, True, activity=DETAIL_REPORT)
             for activity in pushed_after_since:
                 await peer.emit(
                     ROOM,
@@ -77,8 +94,8 @@ class TestActivityBarriers:
                     {"agent_id": AGENT, "activity": activity},
                 )
             entered = capture.cursor()
-            for _ in range(reports_after_entry):
-                await link.report_activity(ROOM, True, activity=detail)
+            for activity in reported_after_entry:
+                await link.report_activity(ROOM, True, activity=activity)
             with expectation:
                 record = await capture.held(
                     ROOM, AGENT, DETAIL, since=since, entered=entered

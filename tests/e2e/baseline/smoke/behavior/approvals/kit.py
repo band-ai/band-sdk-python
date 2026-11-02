@@ -17,6 +17,7 @@ from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.approvalroom import ApprovalRoom
 from tests.e2e.baseline.smoke.samples.approvals import (
+    DEFAULT_APPROVAL,
     DIALECTS,
     AgentSetup,
     Outcome,
@@ -79,7 +80,7 @@ async def approval_room(
     observer: InvocationObserver | None = None,
     link_factory: Callable[..., BandLink] = BandLink,
     features: AdapterFeatures | None = None,
-    approval: ApprovalMode = "manual",
+    approval: ApprovalMode = DEFAULT_APPROVAL,
 ) -> AsyncIterator[tuple[ApprovalRoom, Path]]:
     """Run the cell's agent in a fresh room and workdir: in ``approval`` mode
     with ``features``, or as ``build`` makes it, under ``session_config`` over a

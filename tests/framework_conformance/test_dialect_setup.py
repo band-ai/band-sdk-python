@@ -50,9 +50,9 @@ class TestDialectSetup:
         built: SimpleAdapter[Any] = DIALECTS[adapter].build(
             BaselineSettings(), AgentSetup(tmp_path, 1.0)
         )
-        assert (APPROVAL_OF[adapter](built.config), built.features.emit) == (
+        assert (APPROVAL_OF[adapter](built.config), built.features) == (
             "manual",
-            type(built).SUPPORTED_EMIT,
+            AdapterFeatures(emit=type(built).SUPPORTED_EMIT),
         )
 
     def test_cursor_workflow_capabilities_replace_only_that_setup_feature(
