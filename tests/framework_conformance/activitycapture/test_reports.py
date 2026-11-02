@@ -17,11 +17,13 @@ from tests.framework_conformance.activitycapture.kit import HeldActivityPeer
 
 
 class TestReportCapture:
+    @pytest.mark.looptime
     async def test_http_failure_is_not_an_accepted_report_or_stop(
         self,
         observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
     ) -> None:
         capture, link, peer = observed_link
+        capture.deadline_s = 1
         peer.responses.append(httpx.Response(503, json={"error": "Unavailable"}))
         stops: list[str] = []
 
@@ -32,8 +34,19 @@ class TestReportCapture:
             accepted=False, stopped=False
         )
         assert stops == []
-        with pytest.raises(AssertionError):
+        with pytest.raises(TimeoutError, match="accepted report"):
             await capture.report("room", working=True)
+
+    async def test_a_failed_request_waits_for_the_next_accepted_keep_alive(
+        self,
+        observed_link: tuple[ActivityCapture, ObservingBandLink, HeldActivityPeer],
+    ) -> None:
+        capture, link, peer = observed_link
+        peer.responses.append(httpx.Response(503, json={"error": "Unavailable"}))
+        assert not await link.report_activity("room", True)
+        assert await link.report_activity("room", True)
+        record = await capture.report("room", working=True)
+        assert record is capture.reports[1]
 
     async def test_original_stop_callback_failure_reaches_the_report_outcome(
         self,

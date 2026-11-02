@@ -26,7 +26,7 @@ DETAIL = tool_body("Read")["activity"]
 OTHER_DETAIL = tool_body("Write")["activity"]
 DETAIL_REPORT = AgentActivityDetail(**DETAIL)
 MISSING_PUSH = pytest.raises(TimeoutError, match="raw detail")
-MISSING_REPORT = pytest.raises(TimeoutError, match="report dispatched")
+MISSING_REPORT = pytest.raises(TimeoutError, match="accepted report")
 MISSING_STOP = pytest.raises(TimeoutError, match="raw stop")
 
 

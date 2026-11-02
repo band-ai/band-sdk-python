@@ -17,8 +17,8 @@ from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.approvalroom import ApprovalRoom
 from tests.e2e.baseline.smoke.samples.approvals import (
-    DEFAULT_APPROVAL,
     DIALECTS,
+    MANUAL_APPROVAL,
     AgentSetup,
     Outcome,
 )
@@ -80,13 +80,15 @@ async def approval_room(
     observer: InvocationObserver | None = None,
     link_factory: Callable[..., BandLink] = BandLink,
     features: AdapterFeatures | None = None,
-    approval: ApprovalMode = DEFAULT_APPROVAL,
+    approval: ApprovalMode = MANUAL_APPROVAL,
 ) -> AsyncIterator[tuple[ApprovalRoom, Path]]:
     """Run the cell's agent in a fresh room and workdir: in ``approval`` mode
     with ``features``, or as ``build`` makes it, under ``session_config`` over a
     ``link_factory`` link, with its turns watched by ``observer``."""
     dialect = DIALECTS[Adapter(cell.adapter_id)]
-    for dep in dialect.extra_deps:
+    # They make the backend raise an ask, which only a manual room decides.
+    asking_deps = dialect.extra_deps if approval == MANUAL_APPROVAL else ()
+    for dep in asking_deps:
         require_dep(dep, cell.settings)
     # OpenCode's turn-phase records are content-free INFO lines; a failing
     # cell's captured log then shows where its turn stopped. Scoped to that

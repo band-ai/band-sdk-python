@@ -265,7 +265,7 @@ class Notice:
         shown.assert_contains_any([self.text])
 
 
-DEFAULT_APPROVAL: ApprovalMode = "manual"
+MANUAL_APPROVAL: ApprovalMode = "manual"
 
 
 @dataclass(frozen=True)
@@ -279,7 +279,7 @@ class AgentSetup:
     approvers: frozenset[str] | None = None
     # None keeps the adapter's own feature defaults.
     features: AdapterFeatures | None = None
-    approval: ApprovalMode = DEFAULT_APPROVAL
+    approval: ApprovalMode = MANUAL_APPROVAL
 
 
 @dataclass(frozen=True)

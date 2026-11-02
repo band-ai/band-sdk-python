@@ -168,19 +168,28 @@ class ActivityCapture:
         activity: dict[str, Any] | None = None,
         since: int = 0,
     ) -> ActivityReport:
-        record = await self._wait(
-            self.reports,
-            lambda r: (
-                r.sequence > since
-                and r.room_id == room_id
-                and (agent_id is None or r.agent_id == agent_id)
-                and r.working is working
-                and (activity is None or r.activity == activity)
-            ),
-            f"report dispatched room={room_id} working={working}",
-        )
-        async with asyncio.timeout(self.deadline_s):
-            outcome = await asyncio.shield(record.outcome)
+        """Await an accepted report after ``since``.
+
+        A request that fails in transport is not accepted, and the SDK leaves it to
+        the next keep-alive, so the barrier waits for a later matching report.
+        """
+        while True:
+            record = await self._wait(
+                self.reports,
+                lambda r, after=since: (
+                    r.sequence > after
+                    and r.room_id == room_id
+                    and (agent_id is None or r.agent_id == agent_id)
+                    and r.working is working
+                    and (activity is None or r.activity == activity)
+                ),
+                f"accepted report room={room_id} working={working}",
+            )
+            async with asyncio.timeout(self.deadline_s):
+                outcome = await asyncio.shield(record.outcome)
+            if outcome.accepted:
+                break
+            since = record.sequence
         assert outcome == ReportOutcome(accepted=True, stopped=False), (record, outcome)
         # The record holds the detail the SDK meant to send; a latched rejection
         # strips it from the wire while the report is still accepted.
