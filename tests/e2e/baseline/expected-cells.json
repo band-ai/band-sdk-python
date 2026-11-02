@@ -789,8 +789,8 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/adapters/test_claude_sdk_settings.py::TestClaudeSdkSettings::test_a_selected_settings_file_acts_while_the_room_gets_its_reply",
-      "adapter": "claude_sdk",
+      "test": "tests/e2e/baseline/smoke/adapters/test_claude_sdk_settings.py::TestClaudeSdkSettings::test_a_settings_file_acts_while_the_room_gets_its_reply",
+      "adapter": "suite",
       "lanes": [
         "core"
       ],

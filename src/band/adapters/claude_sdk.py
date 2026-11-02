@@ -15,12 +15,14 @@ import json
 import logging
 import re
 import warnings
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from functools import partial
+from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Self, cast
 
 try:
@@ -174,7 +176,7 @@ from band.runtime.tools import (
     mcp_tool_names,
     turn_effect,
 )
-from band.workspaces import RoomWorkspaces, WorkspaceResolver
+from band.workspaces import RoomWorkspaces, WorkspaceResolver, is_host_absolute
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +264,42 @@ RESERVED_CLI_FLAGS: frozenset[str] = SDK_OWNED_CLI_FLAGS | BAND_UNSAFE_CLI_FLAGS
 BAND_MCP_TOKEN_ENV = "BAND_MCP_TOKEN"
 BAND_MCP_TOKEN_REF = f"${{{BAND_MCP_TOKEN_ENV}}}"
 
+# Flag settings every launch carries over any host settings: the host's other
+# Claude sessions cannot prompt the agent, and claude.ai connectors, which come
+# from the login rather than a setting source, stay off.
+ISOLATION_SETTINGS: Mapping[str, object] = MappingProxyType(
+    {"crossSessionInbound": "refuse", "disableClaudeAiConnectors": True}
+)
+
+
+def _is_inline_json(settings: str) -> bool:
+    return settings.lstrip().startswith("{")
+
+
+def _settings_object(text: str, source: str) -> dict[str, Any]:
+    """Parse ``text`` as the single JSON object Claude settings must be."""
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{source} is not valid JSON: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"{source} must be a JSON object")
+    return value
+
+
+def _inline_settings(text: str) -> dict[str, Any]:
+    return _settings_object(text, "inline Claude settings")
+
+
+def _read_settings_file(path: str) -> dict[str, Any]:
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValueError(
+            f"cannot read the Claude settings file {path}: {error.strerror}"
+        ) from error
+    return _settings_object(text, f"Claude settings file {path}")
+
 
 class ClaudeCLIOptions(BaseAdapterConfig):
     """How the Claude CLI process is launched; never how Band is wired into it.
@@ -278,16 +316,15 @@ class ClaudeCLIOptions(BaseAdapterConfig):
         extra_args: Additional CLI flags by bare name, ``{"flag": "value"}``
             or ``{"flag": None}`` for a bare flag. Flags in
             ``RESERVED_CLI_FLAGS`` are rejected.
-        settings: Explicit Claude configuration passed to the CLI verbatim —
-            a settings file path or inline JSON, mirroring
-            ``claude_agent_sdk.ClaudeAgentOptions.settings``. Opt-in: with
-            none the CLI is launched without ``--settings`` and only
-            ``setting_sources`` decides what host config loads. Selecting it
-            does not enable user/project setting sources, and the file's
-            contents are the operator's own trusted configuration: native
-            permission rules, managed policy, hooks and plugins inside it
-            keep Claude Code's own precedence, which this SDK neither
-            overrides nor validates.
+        settings: Host Claude settings, as inline JSON or an absolute
+            settings file path, layered under ``ISOLATION_SETTINGS`` into the
+            CLI's single ``--settings`` value; the isolation keys always win.
+            A file is read when the adapter starts, so edits apply on the next
+            start, and a missing or malformed file fails that start. Selecting
+            settings does not open user or project setting sources. The
+            contents are trusted operator configuration: permission rules,
+            hooks and plugins inside keep Claude Code's own precedence, which
+            this SDK does not validate.
     """
 
     cli_path: str | None = None
@@ -320,6 +357,19 @@ class ClaudeCLIOptions(BaseAdapterConfig):
             )
         return env
 
+    @field_validator("settings")
+    @classmethod
+    def _check_settings(cls, settings: str | None) -> str | None:
+        if settings is None:
+            return None
+        if _is_inline_json(settings):
+            _inline_settings(settings)
+        elif not is_host_absolute(settings):
+            raise ValueError(
+                f"settings must be inline JSON or an absolute file path: {settings!r}"
+            )
+        return settings
+
     def sdk_fields(self) -> dict[str, Any]:
         """The ``ClaudeAgentOptions`` fields these options own."""
         return {
@@ -330,8 +380,32 @@ class ClaudeCLIOptions(BaseAdapterConfig):
             "add_dirs": list(self.add_dirs),
             "env": dict(self.env),
             "extra_args": dict(self.extra_args),
-            "settings": self.settings,
+            "settings": self._flag_settings(),
         }
+
+    def _flag_settings(self) -> str:
+        """The CLI's ``--settings`` JSON: host settings under the isolation keys."""
+        host = self._host_settings()
+        if overridden := sorted(
+            key
+            for key, value in ISOLATION_SETTINGS.items()
+            if key in host and host[key] != value
+        ):
+            logger.warning(
+                "Claude settings keys %s are enforced by the adapter; "
+                "the host's values are ignored",
+                overridden,
+            )
+        return json.dumps({**host, **ISOLATION_SETTINGS})
+
+    def _host_settings(self) -> dict[str, Any]:
+        match self.settings:
+            case None:
+                return {}
+            case inline if _is_inline_json(inline):
+                return _inline_settings(inline)
+            case path:
+                return _read_settings_file(path)
 
 
 # Upper bound on draining the interrupted turn's final result after a
@@ -783,6 +857,9 @@ class ClaudeSDKAdapter(
             await self.cleanup_all()
         await super().on_started(agent_name, agent_description)
 
+        # Read before opening the Band MCP server: a bad settings file then
+        # fails the start with nothing to clean up.
+        cli_fields = self.config.cli.sdk_fields()
         await self._mcp.reopen()
         mcp_backend = await self._mcp.ensure()
 
@@ -818,7 +895,7 @@ class ClaudeSDKAdapter(
             # ToolSearch does not engage and the Band tools stay directly in context.
             # Configurable via the config for callers who want their host config.
             setting_sources=list(self.config.setting_sources),
-            **self.config.cli.sdk_fields(),
+            **cli_fields,
         )
 
         # Add extended thinking if configured
