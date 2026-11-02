@@ -65,8 +65,9 @@ class TestReasoningOnlyActivity:
             )
             await capture.wait_for_reply(sent, identity.id)
             # A turn this brief may never be pushed (the platform sends at most
-            # one change per second), so only accepted reports are asserted.
-            await observed.report(
+            # one change per second) and reports its start and end once each,
+            # so the cell asserts what the SDK sent.
+            await observed.sent(
                 room, agent_id=identity.id, working=False, since=warming
             )
 
@@ -79,7 +80,7 @@ class TestReasoningOnlyActivity:
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
-            thinking = await observed.report(
+            thinking = await observed.sent(
                 room,
                 agent_id=identity.id,
                 working=True,
@@ -87,7 +88,7 @@ class TestReasoningOnlyActivity:
                 since=since,
             )
             await capture.wait_for_reply(sent, identity.id, since=replies)
-            await observed.report(
+            await observed.sent(
                 room, agent_id=identity.id, working=False, since=thinking.sequence
             )
             observed.assert_private(marker, tool_names=frozenset(BandTool))
