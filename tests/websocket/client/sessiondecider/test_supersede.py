@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from band.client.streaming.session_decider import SupersedeVerdict
-from tests.platform.linkclose.kit import SUPERSEDED
+from tests.conftest import SUPERSEDED
 from tests.websocket.client.sessiondecider.kit import (
     RETRYABLE,
     STOPS,

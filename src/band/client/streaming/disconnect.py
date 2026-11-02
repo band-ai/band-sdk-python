@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from band_sdk_core import DeadReason, SessionOutcome, StaleReason
@@ -33,29 +33,39 @@ class TerminalReason(StrEnum):
     STALE_CONNECTION = "stale_connection"
 
 
+def http_refusal_reason(status_code: int) -> str:
+    """Name a refusal whose body carries no platform error code."""
+    return f"http_{status_code}"
+
+
+def with_outcome(
+    reason: WebSocketDisconnectReason, outcome: SessionOutcome
+) -> WebSocketDisconnectReason:
+    """Add why the session itself ended (dead or stale) to ``reason``."""
+    return replace(
+        reason, dead_reason=outcome.dead_reason, stale_reason=outcome.stale_reason
+    )
+
+
 def refusal_reason(
     refusal: WebSocketUpgradeError, outcome: SessionOutcome
 ) -> WebSocketDisconnectReason:
     """Describe a session ended by a refused upgrade."""
-    return WebSocketDisconnectReason(
-        reason=refusal.code or f"http_{refusal.status_code}",
+    reason = WebSocketDisconnectReason(
+        reason=refusal.code or http_refusal_reason(refusal.status_code),
         message=refusal.message,
         retryable=False,
         retry_after=refusal.retry_after,
         correlation_id=refusal.request_id,
-        dead_reason=outcome.dead_reason,
-        stale_reason=outcome.stale_reason,
     )
+    return with_outcome(reason, outcome)
 
 
 def session_reason(
     reason: TerminalReason, message: str, outcome: SessionOutcome
 ) -> WebSocketDisconnectReason:
     """Describe a session ended by a failed connect, a close or a stale socket."""
-    return WebSocketDisconnectReason(
-        reason=reason,
-        message=message,
-        retryable=False,
-        dead_reason=outcome.dead_reason,
-        stale_reason=outcome.stale_reason,
+    return with_outcome(
+        WebSocketDisconnectReason(reason=reason, message=message, retryable=False),
+        outcome,
     )

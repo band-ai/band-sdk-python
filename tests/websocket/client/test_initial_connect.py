@@ -3,11 +3,16 @@ retryable refusals wait the session's delay, terminal ones end the entry."""
 
 from __future__ import annotations
 
+import logging
 from http import HTTPStatus
 
 import pytest
+from band_sdk_core import DeadReason
 
 from band.client.streaming import WebSocketClient, WebSocketUpgradeError
+from band.client.streaming.disconnect import http_refusal_reason
+from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
+from band.client.streaming.session_decider import logger as decider_logger
 from band.core.types import ConflictPolicy
 from band.testing import fake_phoenix_server
 from tests.platform.linkclose.kit import AGENT_ID
@@ -17,6 +22,7 @@ from tests.toolkit.timecontrol import controlled_clock
 from tests.websocket.client.kit import observe_retries, upgrade_error_body
 
 RETRY_AFTER_S = 12
+INVALID_ON_CONFLICT = "invalid_on_conflict"
 
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
@@ -73,22 +79,46 @@ class TestInitialConnect:
                 await client.__aexit__(None, None, None)
 
     @pytest.mark.parametrize(
-        ("status", "code", "reason"),
+        ("status", "body", "code", "reason"),
         [
-            (HTTPStatus.BAD_REQUEST, "invalid_on_conflict", "invalid_on_conflict"),
-            (HTTPStatus.FORBIDDEN, None, "http_403"),
-            (HTTPStatus.CONFLICT, "connection_conflict", "connection_conflict"),
+            pytest.param(
+                HTTPStatus.BAD_REQUEST,
+                upgrade_error_body(INVALID_ON_CONFLICT, status=HTTPStatus.BAD_REQUEST),
+                INVALID_ON_CONFLICT,
+                INVALID_ON_CONFLICT,
+                id="400",
+            ),
+            pytest.param(
+                HTTPStatus.FORBIDDEN,
+                b"Forbidden",
+                None,
+                http_refusal_reason(HTTPStatus.FORBIDDEN),
+                id="403",
+            ),
+            pytest.param(
+                HTTPStatus.CONFLICT,
+                upgrade_error_body(
+                    CONNECTION_CONFLICT_CODE, status=HTTPStatus.CONFLICT
+                ),
+                CONNECTION_CONFLICT_CODE,
+                CONNECTION_CONFLICT_CODE,
+                id="409",
+            ),
         ],
     )
     async def test_a_terminal_refusal_ends_the_entry_after_one_upgrade(
-        self, status: HTTPStatus, code: str | None, reason: str
+        self,
+        status: HTTPStatus,
+        body: bytes,
+        code: str | None,
+        reason: str,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        body = upgrade_error_body(code, status=status).decode() if code else "Forbidden"
         async with fake_phoenix_server() as server:
             client = WebSocketClient(server.url, "test-key", AGENT_ID)
             with (
-                observe_retries() as retries,
-                server.refusing_upgrades(status, body=body),
+                caplog.at_level(logging.WARNING, logger=decider_logger.name),
+                server.refusing_upgrades(status, body=body.decode()),
                 pytest.raises(WebSocketUpgradeError) as refused,
             ):
                 await client.__aenter__()
@@ -97,7 +127,12 @@ class TestInitialConnect:
         assert client.last_disconnect_reason is not None
         assert client.last_disconnect_reason.reason == reason
         assert len(server.upgrades) == 1
-        assert retries.empty()
+        # The boot's verdict is logged once, and nothing was retried.
+        assert [
+            record.args
+            for record in caplog.records
+            if record.name == decider_logger.name
+        ] == [(reason, DeadReason.Classified, refused.value.message)]
 
     async def test_the_conflict_policy_rides_every_upgrade_until_one_is_accepted(
         self,

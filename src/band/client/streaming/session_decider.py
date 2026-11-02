@@ -23,6 +23,7 @@ from phoenix_channels_python_client import (
     ReconnectDecision,
     ReconnectEvent,
 )
+from phoenix_channels_python_client.client_types import PROCEED
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 
 from band.client.streaming.disconnect import (
@@ -38,7 +39,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PROCEED = ReconnectDecision(should_reconnect=True)
 STOP = ReconnectDecision(should_reconnect=False)
 
 
@@ -106,9 +106,6 @@ class SessionDecider:
             logger.info("Ignoring a stale supersede (%s)", outcome.stale_reason)
             return SupersedeVerdict.STALE
         if outcome.state is not SessionState.Dead:
-            logger.info(
-                "Supersede is retryable; reconnecting in %ss", outcome.retry_after_s
-            )
             self._superseded = outcome
             return SupersedeVerdict.RETRY
         if self._decided:
@@ -197,6 +194,14 @@ class SessionDecider:
         self.terminal = reason
         if self._accepted:
             self._on_terminal(reason)
+            return
+        # The caller gets only the raised error, which drops the session's reason.
+        logger.warning(
+            "WebSocket session ended before connecting: %s (%s): %s",
+            reason.reason,
+            reason.dead_reason,
+            reason.message,
+        )
 
     @property
     def _decided(self) -> bool:

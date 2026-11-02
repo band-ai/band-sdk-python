@@ -8,10 +8,8 @@ import pytest
 from band_sdk_core import DeadReason
 
 from band.client.streaming.disconnect import TerminalReason
-from tests.sessionpolicies import session_policy
+from tests.sessionpolicies import LOW_RAPID_THRESHOLD, session_policy
 from tests.websocket.client.sessiondecider.kit import DeciderProbe, verdict
-
-RAPID_THRESHOLD = 3
 
 
 @pytest.mark.looptime
@@ -46,14 +44,14 @@ class TestCloses:
         assert probe.decider.terminal == reason
 
     async def test_sockets_that_keep_dropping_at_once_end_the_session(self) -> None:
-        probe = DeciderProbe(session_policy(rapid_threshold=RAPID_THRESHOLD))
+        probe = DeciderProbe(session_policy(rapid_threshold=LOW_RAPID_THRESHOLD))
         decisions = []
-        for _ in range(RAPID_THRESHOLD):
+        for _ in range(LOW_RAPID_THRESHOLD):
             probe.connect()
             decisions.append(probe.closed(1000).should_reconnect)
 
         [reason] = probe.reported
-        assert decisions == [True] * (RAPID_THRESHOLD - 1) + [False]
+        assert decisions == [True] * (LOW_RAPID_THRESHOLD - 1) + [False]
         assert (reason.reason, reason.dead_reason) == (
             TerminalReason.RAPID_DISCONNECT,
             DeadReason.RapidDisconnect,

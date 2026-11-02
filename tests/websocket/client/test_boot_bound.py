@@ -4,6 +4,7 @@ until ``connect_timeout`` or the caller gives up; then every attempt stops."""
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Callable, Coroutine
 from http import HTTPStatus
 from typing import Any
@@ -55,6 +56,15 @@ BOOTS = pytest.mark.parametrize(
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
 class TestBootBound:
+    @pytest.mark.parametrize("connect_timeout", [0, -1, math.nan, math.inf])
+    def test_a_bound_that_never_or_always_expires_is_rejected(
+        self, connect_timeout: float
+    ) -> None:
+        with pytest.raises(ValueError, match="connect_timeout"):
+            WebSocketClient(
+                "ws://test.invalid", "test-key", connect_timeout=connect_timeout
+            )
+
     @BOOTS
     async def test_a_boot_that_never_connects_times_out_at_connect_timeout(
         self, boot: Boot
@@ -71,6 +81,7 @@ class TestBootBound:
                 ):
                     async with background(entry) as entering:
                         while loop.time() - start < DEFAULT_CONNECT_TIMEOUT_S:
+                            assert not entering.done()
                             await clock.elapse(await retries.get())
                         with pytest.raises(TimeoutError, match="did not connect"):
                             await entering
@@ -110,3 +121,24 @@ class TestBootBound:
                     assert len(server.upgrades) == attempts
                     assert subject.last_disconnect_reason is None
             assert asyncio.all_tasks() == before
+
+    @BOOTS
+    async def test_a_cancel_as_the_bound_expires_stays_a_cancellation(
+        self, boot: Boot
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        async with controlled_clock() as clock, fake_phoenix_server() as server:
+            start = loop.time()
+            subject, entry = boot(server.url, DEFAULT_CONNECT_TIMEOUT_S)
+            with (
+                observe_retries() as retries,
+                server.refusing_upgrades(HTTPStatus.SERVICE_UNAVAILABLE),
+            ):
+                async with background(entry) as entering:
+                    loop.call_at(start + DEFAULT_CONNECT_TIMEOUT_S, entering.cancel)
+                    while loop.time() - start < DEFAULT_CONNECT_TIMEOUT_S:
+                        await clock.elapse(await retries.get())
+                    with pytest.raises(asyncio.CancelledError):
+                        await entering
+
+            assert subject.last_disconnect_reason is None

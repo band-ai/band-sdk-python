@@ -7,7 +7,7 @@ from band_sdk_core import StaleReason
 
 from band.client.streaming.disconnect import TerminalReason
 from band.client.streaming.session_decider import SupersedeVerdict
-from tests.platform.linkclose.kit import SUPERSEDED
+from tests.conftest import SUPERSEDED
 from tests.websocket.client.sessiondecider.kit import (
     PROCEEDS,
     RETRYABLE,

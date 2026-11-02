@@ -115,6 +115,10 @@ class PhoenixConnection:
         while topic not in self.joined_topics:
             await self.changed.wait()
 
+    async def wait_for_leave(self, topic: str) -> None:
+        while topic in self.joined_topics:
+            await self.changed.wait()
+
     async def wait_for_heartbeats(self, count: int) -> None:
         while len(self.heartbeats) < count:
             await self.changed.wait()
@@ -201,6 +205,7 @@ class FakePhoenixServer:
         self.joined_topics.discard(topic)
         observed.joined_topics.discard(topic)
         observed.join_refs.pop(topic, None)
+        observed.notify()
 
     async def _reply(
         self,

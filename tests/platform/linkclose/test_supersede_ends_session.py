@@ -13,15 +13,16 @@ from websockets.frames import CloseCode
 from band.client.streaming.client import WireEvent
 from band.platform.event import ReconnectedEvent, WebSocketDisconnectedEvent
 from band.testing import fake_phoenix_server
-from tests.conftest import RETRYABLE_SUPERSEDE, TERMINAL_SUPERSEDE
+from tests.conftest import RETRYABLE_SUPERSEDE, SUPERSEDED, TERMINAL_SUPERSEDE
 from tests.platform.linkclose.kit import (
     CONTROL_TOPIC,
     HANG_GUARD_S,
-    SUPERSEDED,
     connected,
+    drain_events,
     during_connect,
     handle_supersede,
     make_link,
+    park_supersedes,
     running,
 )
 from tests.platform.recovery.kit import observe_disconnects
@@ -30,6 +31,7 @@ from tests.sessionpolicies import (
     session_policy,
 )
 from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
 from tests.websocket.client.kit import observe_retries
 
@@ -64,6 +66,43 @@ class TestSupersedeEndsSession:
             )
 
             assert server.connection_count == 1
+
+    async def test_a_new_session_drops_the_ended_one_s_unread_event(self) -> None:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url)
+            await link.connect()
+            await server.push(CONTROL_TOPIC, WireEvent.SUPERSEDE, TERMINAL_SUPERSEDE)
+            await server.close_connection(code=CloseCode.GOING_AWAY)
+            await asyncio.wait_for(
+                link.run_forever(install_signal_handlers=False), HANG_GUARD_S
+            )
+            await link.disconnect()
+
+            async with connected(link):
+                assert drain_events(link) == []
+                assert link.is_connected
+
+    async def test_a_supersede_handled_during_disconnect_reports_nothing(
+        self,
+    ) -> None:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url)
+            supersede = park_supersedes(link)
+            await link.connect()
+            connection = await server.wait_for_connection(1)
+            await server.push(CONTROL_TOPIC, WireEvent.SUPERSEDE, TERMINAL_SUPERSEDE)
+            await asyncio.wait_for(supersede.arrived.wait(), HANG_GUARD_S)
+
+            async with background(link.disconnect()) as disconnecting:
+                await asyncio.wait_for(
+                    connection.wait_for_leave(CONTROL_TOPIC), HANG_GUARD_S
+                )
+                supersede.released.set()
+                await asyncio.wait_for(supersede.handled.wait(), HANG_GUARD_S)
+                await asyncio.wait_for(disconnecting, HANG_GUARD_S)
+
+            assert drain_events(link) == []
+            assert link.last_disconnect_reason is None
 
     async def test_disconnecting_an_ended_session_logs_no_warning(
         self, caplog: pytest.LogCaptureFixture
@@ -144,15 +183,13 @@ class TestSupersedeEndsSession:
                         await handshake.arrived.wait()
 
                         await handle_supersede(link)
+                        handshake.release()
                         await run
 
                     await clock.elapse(BEYOND_ANY_RETRY_S)
                     assert link.last_disconnect_reason == SUPERSEDED
-                    assert len(server.upgrades) == 2
-                    assert all(
-                        not connection.joined_topics
-                        for connection in server.connections[1:]
-                    )
+                    assert (len(server.upgrades), server.connection_count) == (2, 2)
+                    assert server.connections[1].joined_topics == set()
 
     @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_a_retryable_supersede_reconnects_after_its_retry_after(

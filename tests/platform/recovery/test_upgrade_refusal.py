@@ -9,16 +9,18 @@ import pytest
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 
 from band.client.streaming import WebSocketUpgradeError
+from band.client.streaming.disconnect import http_refusal_reason
 from band.platform.event import WebSocketDisconnectedEvent
 from band.testing import fake_phoenix_server
-from tests.platform.linkclose.kit import connected, make_link
+from tests.platform.linkclose.kit import connected, drain_events, make_link
 from tests.platform.recovery.kit import observe_disconnects
 from tests.sessionpolicies import BEYOND_ANY_RETRY_S
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
+from tests.websocket.client.kit import observe_retries
 
-FORBIDDEN_REASON = f"http_{HTTPStatus.FORBIDDEN.value}"
+FORBIDDEN_REASON = http_refusal_reason(HTTPStatus.FORBIDDEN)
 
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
@@ -37,7 +39,7 @@ class TestUpgradeRefusal:
             assert link.last_disconnect_reason is not None
             assert link.last_disconnect_reason.reason == FORBIDDEN_REASON
             assert not link.is_connected
-            assert link._event_queue.empty()
+            assert drain_events(link) == []
             assert len(server.upgrades) == 1
 
     async def test_a_forbidden_reconnect_ends_the_session_with_one_event(
@@ -50,10 +52,13 @@ class TestUpgradeRefusal:
                 connected(link),
                 background(link.run_forever(install_signal_handlers=False)) as run,
             ):
-                with server.refusing_upgrades(HTTPStatus.FORBIDDEN):
+                with (
+                    observe_retries() as retries,
+                    server.refusing_upgrades(HTTPStatus.FORBIDDEN),
+                ):
                     await server.abort_connection()
                     await disconnected.get()
-                    await clock.elapse(0.01)
+                    await clock.elapse(await retries.get())
                     with pytest.raises(PHXConnectionError, match="403") as failure:
                         await run
                 assert "test-key" not in str(failure.value)
@@ -64,9 +69,8 @@ class TestUpgradeRefusal:
 
                 assert link.last_disconnect_reason is not None
                 assert link.last_disconnect_reason.reason == FORBIDDEN_REASON
-                assert await anext(link) == WebSocketDisconnectedEvent(
-                    payload=link.last_disconnect_reason
-                )
-                assert link._event_queue.empty()
+                assert drain_events(link) == [
+                    WebSocketDisconnectedEvent(payload=link.last_disconnect_reason)
+                ]
                 assert not link.is_connected
                 assert (server.connection_count, len(server.upgrades)) == (1, 2)

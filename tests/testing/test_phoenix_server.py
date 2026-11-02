@@ -168,3 +168,25 @@ class TestFakePhoenixServer:
                 assert server.connection_count == 1
             finally:
                 await link.disconnect()
+
+    async def test_a_held_upgrade_is_answered_when_the_hold_ends(self) -> None:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url)
+            async with background(link.connect()) as connecting:
+                with server.holding_upgrades() as handshake:
+                    await handshake.arrived.wait()
+                await connecting
+
+            try:
+                assert server.connection_count == 1
+            finally:
+                await link.disconnect()
+
+    async def test_only_one_upgrade_can_be_held_at_a_time(self) -> None:
+        async with fake_phoenix_server() as server:
+            with (
+                server.holding_upgrades(),
+                pytest.raises(ValueError, match="already held"),
+                server.holding_upgrades(),
+            ):
+                pass

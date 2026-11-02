@@ -7,16 +7,17 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 
-from band_sdk_core import AgentTopicKind, DeadReason, SessionPolicy
+from band_sdk_core import AgentTopicKind, SessionPolicy
 
 from band.client.streaming import (
     AgentControlPayload,
     ControlMode,
     SupersedePayload,
     WebSocketClient,
-    WebSocketDisconnectReason,
 )
+from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
 from tests.conftest import TERMINAL_SUPERSEDE
 from tests.sessionpolicies import millisecond_backoff
@@ -24,10 +25,6 @@ from tests.sessionpolicies import millisecond_backoff
 AGENT_ID = "agent-123"
 CONTROL_TOPIC = AgentTopicKind.Control.topic(AGENT_ID)
 HANG_GUARD_S = 5.0
-
-SUPERSEDED = WebSocketDisconnectReason(
-    **TERMINAL_SUPERSEDE, dead_reason=DeadReason.Classified
-)
 
 
 def make_link(
@@ -107,6 +104,39 @@ async def during_connect(
         yield
     finally:
         del link._join_agent_control_channel
+
+
+@dataclass
+class ParkedSupersede:
+    """A supersede push the link received, held before its session sees it."""
+
+    arrived: asyncio.Event = field(default_factory=asyncio.Event)
+    released: asyncio.Event = field(default_factory=asyncio.Event)
+    handled: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+def park_supersedes(link: BandLink) -> ParkedSupersede:
+    """Hold each supersede push until ``released``. Arm before ``connect()``,
+    which binds the handler."""
+    parked = ParkedSupersede()
+    on_supersede = link._on_supersede
+
+    async def park(ws: WebSocketClient, payload: SupersedePayload) -> None:
+        parked.arrived.set()
+        await parked.released.wait()
+        await on_supersede(ws, payload)
+        parked.handled.set()
+
+    link._on_supersede = park
+    return parked
+
+
+def drain_events(link: BandLink) -> list[PlatformEvent]:
+    """Every event the link has queued that the host has not read yet."""
+    events: list[PlatformEvent] = []
+    while not link._event_queue.empty():
+        events.append(link._event_queue.get_nowait())
+    return events
 
 
 async def handle_supersede(link: BandLink) -> None:

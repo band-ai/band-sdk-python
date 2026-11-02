@@ -43,6 +43,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 from band_rest.core import http_client
+from band_sdk_core import DeadReason
 from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -59,6 +60,7 @@ from band.client.streaming import (
     RoomAddedPayload,
     RoomDeletedPayload,
     RoomRemovedPayload,
+    WebSocketDisconnectReason,
 )
 from band.core.settlement import SettlementResult
 from band.platform.event import (
@@ -401,6 +403,11 @@ RETRYABLE_SUPERSEDE: dict[str, Any] = {
     "retryable": True,
     "retry_after": 20,
 }
+
+# The reason a session ended by ``TERMINAL_SUPERSEDE`` records.
+SUPERSEDED = WebSocketDisconnectReason(
+    **TERMINAL_SUPERSEDE, dead_reason=DeadReason.Classified
+)
 
 
 def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:

@@ -154,13 +154,16 @@ class RetryRecorder(logging.Handler):
     def __init__(self) -> None:
         super().__init__(logging.WARNING)
         self.delays: asyncio.Queue[float] = asyncio.Queue()
+        # Kept for the caller to assert: raising here would escape the
+        # decider's log call and end the session instead.
+        self.unexpected: list[str] = []
 
     def emit(self, record: logging.LogRecord) -> None:
         match record.args:
             case (_, float(delay_s)):
                 self.delays.put_nowait(delay_s)
             case _:
-                raise AssertionError(f"Unexpected decider record: {record.msg}")
+                self.unexpected.append(record.getMessage())
 
 
 @contextmanager
@@ -173,3 +176,4 @@ def observe_retries() -> Iterator[asyncio.Queue[float]]:
         yield recorder.delays
     finally:
         decider_logger.removeHandler(recorder)
+    assert recorder.unexpected == []

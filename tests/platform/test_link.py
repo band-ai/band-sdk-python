@@ -32,7 +32,6 @@ from band.platform.event import (
     RoomAddedEvent,
     RoomDeletedEvent,
     RoomRemovedEvent,
-    WebSocketDisconnectedEvent,
 )
 from band.platform.link import BandLink
 from tests.conftest import TERMINAL_SUPERSEDE, make_message_event
@@ -297,20 +296,6 @@ class TestBandLinkConnection:
         with pytest.raises(RuntimeError, match="Not connected"):
             await link.run_forever()
 
-    async def test_terminal_verdict_records_reason_and_queues_one_event(self):
-        """A session's terminal verdict marks the link disconnected, records
-        the reason, and queues exactly one event carrying it."""
-        link = BandLink(agent_id="agent-123", api_key="test-key")
-        link._is_connected = True
-        reason = SupersedePayload(**TERMINAL_SUPERSEDE).to_disconnect_reason()
-
-        link._on_terminal(reason)
-
-        assert link.is_connected is False
-        assert link.last_disconnect_reason == reason
-        assert await link.__anext__() == WebSocketDisconnectedEvent(payload=reason)
-        assert link._event_queue.empty()
-
     async def test_disconnect_after_a_terminal_verdict_skips_the_control_leave(
         self, mock_ws_client
     ):
@@ -326,7 +311,6 @@ class TestBandLinkConnection:
 
         await link.disconnect()
 
-        mock_ws_client.end_session.assert_called_once_with()
         mock_ws_client.leave_agent_control_channel.assert_not_awaited()
         mock_ws_client.__aexit__.assert_called_once_with(None, None, None)
         assert link.is_connected is False

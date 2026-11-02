@@ -13,14 +13,14 @@ from band.client.streaming import (
 )
 from band.client.streaming.client import WireEvent
 from band.testing import fake_phoenix_server
-from tests.conftest import TERMINAL_SUPERSEDE
+from tests.conftest import SUPERSEDED, TERMINAL_SUPERSEDE
 from tests.platform.linkclose.kit import (
     AGENT_ID,
     CONTROL_TOPIC,
     HANG_GUARD_S,
-    SUPERSEDED,
     control_wire_payload,
 )
+from tests.toolkit.tasks import background
 
 
 class TestReusedClient:
@@ -52,17 +52,16 @@ class TestReusedClient:
                 await ws.join_agent_control_channel(
                     AGENT_ID, on_supersede=ws.handle_supersede, on_control=on_control
                 )
-                run = asyncio.create_task(ws.run_forever(install_signal_handlers=False))
-                await server.push(
-                    CONTROL_TOPIC,
-                    WireEvent.AGENT_CONTROL,
-                    control_wire_payload("control-0"),
-                )
-                await asyncio.wait_for(controlled.wait(), HANG_GUARD_S)
+                async with background(
+                    ws.run_forever(install_signal_handlers=False)
+                ) as run:
+                    await server.push(
+                        CONTROL_TOPIC,
+                        WireEvent.AGENT_CONTROL,
+                        control_wire_payload("control-0"),
+                    )
+                    await asyncio.wait_for(controlled.wait(), HANG_GUARD_S)
 
-                assert not run.done()
-                assert ws.last_disconnect_reason is None
-                assert verdicts == [SUPERSEDED]
-
-                run.cancel()
-                await asyncio.wait({run})
+                    assert not run.done()
+                    assert ws.last_disconnect_reason is None
+                    assert verdicts == [SUPERSEDED]

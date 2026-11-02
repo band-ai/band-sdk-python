@@ -59,6 +59,8 @@ class TestUpgradeErrors:
             (None, "0", 0),
             (None, "-5", None),
             (-5, None, None),
+            (-5, "30", 30),
+            (True, "30", 30),
             (None, "Wed, 21 Oct 2026 07:28:00 GMT", None),
             (None, "soon", None),
             (True, None, None),

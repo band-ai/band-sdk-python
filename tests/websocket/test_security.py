@@ -14,6 +14,7 @@ from websockets.http11 import Request, Response
 
 from band.client.streaming.client import WebSocketClient
 from band.client.streaming.errors import WebSocketUpgradeError
+from band.client.streaming.session_decider import logger as decider_logger
 from band.testing import fake_phoenix_server
 
 SECRET = "synthetic/private+ credential?x=1&z=#[]"
@@ -143,13 +144,12 @@ class TestTransportDiagnosticSecurity:
             ):
                 await client.__aenter__()
 
-        retries = [
-            record
-            for record in caplog.records
-            if record.name == "band.client.streaming.session_decider"
+        [retry] = [
+            record for record in caplog.records if record.name == decider_logger.name
         ]
-        assert [record.levelno for record in retries] == [logging.WARNING]
-        assert f"refused ({status}:" in retries[0].getMessage()
+        detail, _delay_s = retry.args
+        assert retry.levelno == logging.WARNING
+        assert str(status.value) in detail
         self.assert_private(client_log(caplog))
         assert client.last_disconnect_reason is None
         assert len(server.upgrades) == 1

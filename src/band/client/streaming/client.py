@@ -24,7 +24,10 @@ from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from pydantic import Field
 
-from band.client.streaming.disconnect import WebSocketDisconnectReason
+from band.client.streaming.disconnect import (
+    WebSocketDisconnectReason,
+    with_outcome,
+)
 from band.client.streaming.session_decider import SessionDecider, SupersedeVerdict
 from band.client.streaming.wire import WirePayload
 from band.core.retention.cleanup import report_owned, spawn_owned
@@ -258,16 +261,15 @@ class SupersedePayload(WirePayload):
     def to_disconnect_reason(
         self, outcome: SessionOutcome | None = None
     ) -> WebSocketDisconnectReason:
-        return WebSocketDisconnectReason(
+        reason = WebSocketDisconnectReason(
             reason=self.reason,
             message=self.message,
             retryable=self.retryable,
             retry_after=self.retry_after,
             target_socket_id=self.target_socket_id,
             correlation_id=self.correlation_id,
-            dead_reason=outcome.dead_reason if outcome is not None else None,
-            stale_reason=outcome.stale_reason if outcome is not None else None,
         )
+        return reason if outcome is None else with_outcome(reason, outcome)
 
 
 class WireEvent(StrEnum):
@@ -329,8 +331,7 @@ _PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
 
 KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
-# A boot that never connects gives up after this long; ``None`` leaves the
-# bound to the caller.
+# See ``WebSocketClient`` for what the bound covers.
 DEFAULT_CONNECT_TIMEOUT_S = 300.0
 SUPERSEDE_SHUTDOWN_REASON = "superseded by another connection"
 
@@ -477,9 +478,10 @@ class WebSocketClient:
             if refusal is None:
                 raise
             raise refusal from None
-        except BaseException:
+        except BaseException as exc:
             decider.end()
-            if deadline.expired():
+            # Only this bound's own timeout; a caller's cancel stays a cancel.
+            if isinstance(exc, TimeoutError) and deadline.expired():
                 raise TimeoutError(
                     f"WebSocket did not connect within {self._connect_timeout}s"
                 ) from None

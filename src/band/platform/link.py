@@ -186,12 +186,7 @@ class BandLink:
     # --- Connection lifecycle ---
 
     async def connect(self) -> None:
-        """Connect and join agent_control.
-
-        Retryable refusals and failures are retried until the socket is up,
-        a terminal verdict ends the session, or ``connect_timeout`` expires
-        (``TimeoutError``; ``None`` leaves the bound to the caller).
-        """
+        """Connect as entering ``WebSocketClient`` does, then join agent_control."""
         if self._connecting or self._ws is not None:
             logger.warning("Already connected or connecting")
             return

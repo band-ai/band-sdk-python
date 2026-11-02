@@ -24,6 +24,7 @@ from band.core.types import ConflictPolicy
 from band.platform.link import BandLink
 from band.testing import FakePhoenixServer, JoinOutcome, fake_phoenix_server
 from tests.conftest import spy_on_reconciliation_drain
+from tests.platform.linkclose.kit import drain_events
 
 
 def make_link(
@@ -267,4 +268,4 @@ async def test_refused_duplicate_raises_agent_already_running() -> None:
         assert on_conflict_per_upgrade(server) == [ConflictPolicy.REJECT]
         assert link.last_disconnect_reason is not None
         assert link.last_disconnect_reason.reason == CONNECTION_CONFLICT_CODE
-        assert link._event_queue.empty()
+        assert drain_events(link) == []

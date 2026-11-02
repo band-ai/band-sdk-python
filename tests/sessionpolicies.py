@@ -23,6 +23,9 @@ DEFAULT_POLICY_FIELDS: dict[str, float] = {
 }
 
 
+# A rapid-disconnect threshold a test reaches in a few drops.
+LOW_RAPID_THRESHOLD = 3
+
 # Long after the last retry any policy built here could have scheduled.
 BEYOND_ANY_RETRY_S = 2 * DEFAULT_POLICY_FIELDS["max_delay_s"]
 
