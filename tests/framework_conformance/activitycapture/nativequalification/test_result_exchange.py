@@ -52,13 +52,15 @@ class TestResultExchange:
         native_commands: NativeCommands,
         shell: str | None,
     ) -> None:
+        # The privacy sentinel only checks something if the command line carries it.
+        assert exchange.note in exchange.command(ExchangeOperation.PRODUCE)
         producer = await native_commands.run_in_shell(ExchangeOperation.PRODUCE, shell)
         await exchange.wait(exchange.producer.entered, phase="producer entered")
         exchange.producer.release.set()
         produced, error = await producer.communicate()
-        assert (producer.returncode, produced.strip(), error) == (
+        assert (producer.returncode, produced, error) == (
             0,
-            exchange.result,
+            exchange.result + COMMAND_LINE_ENDING,
             b"",
         )
         await exchange.wait(exchange.committed, phase="producer committed")

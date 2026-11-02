@@ -111,15 +111,17 @@ class ResultExchange:
             )
         return program + "print(value.decode('ascii'), flush=True)\n"
 
+    def _script(self, operation: ExchangeOperation) -> Path:
+        # The note in the name puts it on the agent's command line, so a
+        # leaked command line trips the privacy sentinel.
+        if self._scripts is None:
+            raise RuntimeError("Result exchange has not started")
+        return self._scripts / f"{self.note}-{operation.value}.py"
+
     def argv(self, operation: ExchangeOperation) -> tuple[str, str]:
         if operation == ExchangeOperation.COMMIT:
             raise ValueError("Commit belongs to the producer command")
-        if self._scripts is None:
-            raise RuntimeError("Result exchange has not started")
-        return (
-            Path(sys.executable).as_posix(),
-            (self._scripts / f"{operation.value}.py").as_posix(),
-        )
+        return Path(sys.executable).as_posix(), self._script(operation).as_posix()
 
     def command(self, operation: ExchangeOperation) -> str:
         """A command line that needs no quoting, so any host shell runs it as is."""
@@ -162,7 +164,7 @@ class ResultExchange:
             with tempfile.TemporaryDirectory(prefix="band-e2e-exchange-") as scripts:
                 self._scripts = Path(scripts).resolve()
                 for operation in (ExchangeOperation.PRODUCE, ExchangeOperation.CONSUME):
-                    (self._scripts / f"{operation.value}.py").write_text(
+                    self._script(operation).write_text(
                         self._program(operation), encoding="utf-8"
                     )
                 async with self.releasing_on_exit():
