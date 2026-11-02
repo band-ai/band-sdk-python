@@ -60,51 +60,53 @@ class TestBootBound:
         self, boot: Boot
     ) -> None:
         loop = asyncio.get_running_loop()
-        async with controlled_clock() as clock, fake_phoenix_server() as server:
+        async with controlled_clock() as clock:
             before = asyncio.all_tasks()
-            start = loop.time()
-            subject, entry = boot(server.url, DEFAULT_CONNECT_TIMEOUT_S)
-            with (
-                observe_retries() as retries,
-                server.refusing_upgrades(HTTPStatus.SERVICE_UNAVAILABLE),
-            ):
-                async with background(entry) as entering:
-                    while loop.time() - start < DEFAULT_CONNECT_TIMEOUT_S:
-                        await clock.elapse(await retries.get())
-                    with pytest.raises(TimeoutError, match="did not connect"):
-                        await entering
-                attempts = len(server.upgrades)
-                await clock.elapse(BEYOND_ANY_RETRY_S)
+            async with fake_phoenix_server() as server:
+                start = loop.time()
+                subject, entry = boot(server.url, DEFAULT_CONNECT_TIMEOUT_S)
+                with (
+                    observe_retries() as retries,
+                    server.refusing_upgrades(HTTPStatus.SERVICE_UNAVAILABLE),
+                ):
+                    async with background(entry) as entering:
+                        while loop.time() - start < DEFAULT_CONNECT_TIMEOUT_S:
+                            await clock.elapse(await retries.get())
+                        with pytest.raises(TimeoutError, match="did not connect"):
+                            await entering
+                    attempts = len(server.upgrades)
+                    await clock.elapse(BEYOND_ANY_RETRY_S)
 
-                # Refusals never trip the rapid-disconnect breaker.
-                assert attempts > DEFAULT_POLICY_FIELDS["rapid_threshold"]
-                assert len(server.upgrades) == attempts
-                assert subject.last_disconnect_reason is None
-                assert asyncio.all_tasks() == before
+                    # Refusals never trip the rapid-disconnect breaker.
+                    assert attempts > DEFAULT_POLICY_FIELDS["rapid_threshold"]
+                    assert len(server.upgrades) == attempts
+                    assert subject.last_disconnect_reason is None
+            assert asyncio.all_tasks() == before
 
     @BOOTS
     async def test_an_unbounded_boot_retries_until_the_caller_cancels(
         self, boot: Boot
     ) -> None:
         loop = asyncio.get_running_loop()
-        async with controlled_clock() as clock, fake_phoenix_server() as server:
+        async with controlled_clock() as clock:
             before = asyncio.all_tasks()
-            start = loop.time()
-            subject, entry = boot(server.url, None)
-            with (
-                observe_retries() as retries,
-                server.refusing_upgrades(HTTPStatus.SERVICE_UNAVAILABLE),
-            ):
-                async with background(entry) as entering:
-                    while loop.time() - start < 2 * DEFAULT_CONNECT_TIMEOUT_S:
-                        await clock.elapse(await retries.get())
-                    assert not entering.done()
-                    entering.cancel()
-                    with pytest.raises(asyncio.CancelledError):
-                        await entering
-                attempts = len(server.upgrades)
-                await clock.elapse(BEYOND_ANY_RETRY_S)
+            async with fake_phoenix_server() as server:
+                start = loop.time()
+                subject, entry = boot(server.url, None)
+                with (
+                    observe_retries() as retries,
+                    server.refusing_upgrades(HTTPStatus.SERVICE_UNAVAILABLE),
+                ):
+                    async with background(entry) as entering:
+                        while loop.time() - start < 2 * DEFAULT_CONNECT_TIMEOUT_S:
+                            await clock.elapse(await retries.get())
+                        assert not entering.done()
+                        entering.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await entering
+                    attempts = len(server.upgrades)
+                    await clock.elapse(BEYOND_ANY_RETRY_S)
 
-                assert len(server.upgrades) == attempts
-                assert subject.last_disconnect_reason is None
-                assert asyncio.all_tasks() == before
+                    assert len(server.upgrades) == attempts
+                    assert subject.last_disconnect_reason is None
+            assert asyncio.all_tasks() == before

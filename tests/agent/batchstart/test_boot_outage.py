@@ -14,7 +14,7 @@ from tests.agent.batchstart.kit import SESSION, BareBatchAdapter, Platform
 from tests.scenarios.peer import AGENT_ID
 from tests.sessionpolicies import BEYOND_ANY_RETRY_S
 from tests.toolkit.clock import binary_clock_resolution
-from tests.toolkit.tasks import background
+from tests.toolkit.tasks import background, tasks_started_since
 from tests.toolkit.timecontrol import controlled_clock
 from tests.websocket.client.kit import observe_retries
 
@@ -58,4 +58,4 @@ class TestBootOutage:
 
             assert not agent.is_running
             assert len(platform.server.upgrades) == attempts
-            assert asyncio.all_tasks() == before
+            assert tasks_started_since(before) == set()
