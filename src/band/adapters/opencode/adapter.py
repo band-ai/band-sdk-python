@@ -358,12 +358,11 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         self._mcp_lifecycle_lock = asyncio.Lock()
         self._registration: McpRegistration | None = None
         self._system_prompt: str = ""
-        # The tools this adapter registers with OpenCode (band platform tools +
-        # custom tools). Computed once at construction -- both inputs are known
-        # here -- and reused when the shared MCP backend is built. Deriving the
-        # names eagerly keeps the "is this our own band tool?" auto-approve
-        # check independent of MCP-registration timing, so a second room's
-        # first turn can't race an empty set.
+        # Platform + custom tool names for MCP registration and auto-approve.
+        # Refreshed again from apply_effective_features after capability
+        # negotiation; deriving them eagerly still keeps the "is this our own
+        # band tool?" check independent of MCP-registration timing so a second
+        # room's first turn can't race an empty set.
         self._refresh_tool_definitions()
 
     def _refresh_tool_definitions(self) -> None:
@@ -374,7 +373,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         )
 
     def apply_effective_features(self, features: AdapterFeatures) -> None:
-        """Keep the MCP registration aligned with negotiated capabilities."""
+        """Refresh tool defs after negotiation (before the first MCP ensure)."""
         super().apply_effective_features(features)
         self._refresh_tool_definitions()
 
