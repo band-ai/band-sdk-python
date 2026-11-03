@@ -58,6 +58,8 @@ class TestOpencodeMcpCrash:
             reply_capture,
             label="mcp-crash-opencode-live",
             title="e2e-opencode-mcp-crash",
+            # Relay would keep the room green with a dead MCP tool path.
+            config={"fallback_send_agent_text": False},
             budget=BUDGET,
         ) as room:
             first = await room.liveness_reply(before_marker)

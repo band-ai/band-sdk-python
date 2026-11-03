@@ -62,7 +62,7 @@ class TestLettaMcpCrash:
             reply_capture,
             label="mcp-crash-letta-live",
             title="e2e-letta-mcp-crash",
-            auto_relay=False,
+            config={"auto_relay": False},
             budget=BUDGET,
         ) as room:
             before = LettaRegistration.capture(room.adapter)

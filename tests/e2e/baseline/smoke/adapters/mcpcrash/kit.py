@@ -6,7 +6,7 @@ provisioning, capture barriers, and the Letta-vs-Shared crash dispatch.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -37,12 +37,12 @@ class LettaRegistration:
     """Stable Letta MCP registration identity captured before a crash."""
 
     server_id: str
-    tool_ids: list[str]
+    tool_ids: frozenset[str]
 
     @classmethod
     def capture(cls, adapter: Any) -> LettaRegistration:
         server_id = adapter._mcp.server_id
-        tool_ids = list(adapter._mcp.tool_ids)
+        tool_ids = frozenset(adapter._mcp.tool_ids)
         assert server_id, "adapter registered no MCP server with Letta"
         assert tool_ids, "Letta discovered no tools from the self-hosted MCP server"
         return cls(server_id=server_id, tool_ids=tool_ids)
@@ -51,18 +51,20 @@ class LettaRegistration:
         """Same registration ids, ready again, tools rediscovered via Letta."""
         assert adapter._mcp.ready
         assert adapter._mcp.server_id == self.server_id
-        assert adapter._mcp.tool_ids == self.tool_ids
+        assert frozenset(adapter._mcp.tool_ids) == self.tool_ids
         discovered = await adapter._client.mcp_servers.tools.list(
             mcp_server_id=self.server_id
         )
-        assert [tool.id for tool in discovered if getattr(tool, "id", None)] == (
-            self.tool_ids
-        ), "Letta could not rediscover Band tools at the repointed URL"
+        assert {
+            tool.id for tool in discovered if getattr(tool, "id", None)
+        } == self.tool_ids, (
+            "Letta could not rediscover Band tools at the repointed URL"
+        )
 
     def assert_stable(self, adapter: Any) -> None:
         """Registration identity survived a post-crash conversational turn."""
         assert adapter._mcp.server_id == self.server_id
-        assert adapter._mcp.tool_ids == self.tool_ids
+        assert frozenset(adapter._mcp.tool_ids) == self.tool_ids
         assert adapter._mcp.ready
 
 
@@ -72,19 +74,30 @@ class OpencodeRegistration:
 
     name: str
     url: str
+    backend: BandMCPBackend
 
     @classmethod
     def capture(cls, adapter: Any) -> OpencodeRegistration:
         registration = adapter._registration
+        backend = adapter._mcp.current
         assert registration is not None, "OpenCode never registered Band MCP"
-        return cls(name=adapter._mcp_server_name, url=registration.url)
+        assert backend is not None, "OpenCode has no Band MCP backend"
+        return cls(
+            name=adapter._mcp_server_name, url=registration.url, backend=backend
+        )
 
     async def assert_reregistered(self, adapter: Any) -> None:
-        """Same MCP name on a new URL that serves Band tools."""
+        """Same MCP name on a replacement backend that serves Band tools.
+
+        Port reuse can keep the URL string identical; identity of the backend
+        object is the durable replacement signal.
+        """
         live = adapter._registration
+        current = adapter._mcp.current
         assert live is not None, "OpenCode did not re-register Band MCP after the crash"
         assert adapter._mcp_server_name == self.name
-        assert live.url != self.url, "replacement kept the dead registration URL"
+        assert current is not None and current is not self.backend
+        assert current.is_running
         served = await served_tool_names(
             live.url, BandMCPTransport.SSE, headers=live.headers
         )
@@ -93,11 +106,11 @@ class OpencodeRegistration:
     def assert_replaced(self, adapter: Any) -> None:
         """Structural side signal after a conversational recovery turn."""
         live = adapter._registration
+        current = adapter._mcp.current
         assert live is not None
         assert adapter._mcp_server_name == self.name
-        assert live.url != self.url, (
-            "reply arrived without OpenCode re-registering the new URL"
-        )
+        assert current is not None and current is not self.backend
+        assert current.is_running
 
 
 @dataclass
@@ -158,15 +171,25 @@ async def crash_band_mcp(adapter: Any) -> BandMCPBackend:
     return backend
 
 
+def _build_adapter(
+    cell: AdapterCell, *, config: Mapping[str, Any] | None = None
+) -> Any:
+    adapter = cell.build()
+    if config:
+        adapter.config = adapter.config.model_copy(update=dict(config))
+    return adapter
+
+
 @asynccontextmanager
 async def hosted_adapter(
-    cell: AdapterCell, *, label: str, auto_relay: bool | None = None
+    cell: AdapterCell,
+    *,
+    label: str,
+    config: Mapping[str, Any] | None = None,
 ) -> AsyncIterator[HostedAdapter]:
     """Provision, build, and run the cell's adapter without a room."""
     identity = await cell.provision(label=label)
-    adapter = cell.build()
-    if auto_relay is not None:
-        adapter.config = adapter.config.model_copy(update={"auto_relay": auto_relay})
+    adapter = _build_adapter(cell, config=config)
     with cell.resources.track_running(identity.id):
         async with running_agent(identity, adapter, cell.settings):
             yield HostedAdapter(adapter=adapter, identity=identity)
@@ -181,14 +204,12 @@ async def hosted_room(
     *,
     label: str,
     title: str,
-    auto_relay: bool | None = None,
+    config: Mapping[str, Any] | None = None,
     budget: SlowTurnBudget = BUDGET,
 ) -> AsyncIterator[HostedRoom]:
     """Provision a room and run the cell's adapter under reply capture."""
     identity = await cell.provision(label=label)
-    adapter = cell.build()
-    if auto_relay is not None:
-        adapter.config = adapter.config.model_copy(update={"auto_relay": auto_relay})
+    adapter = _build_adapter(cell, config=config)
     room_id = await resource_manager.provision_room(
         title=title, participants=[identity.id]
     )
