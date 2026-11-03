@@ -5,8 +5,10 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -35,6 +37,8 @@ from tests.e2e.baseline.scorecard import (
     outcome_row,
     to_markdown,
 )
+from tests.e2e.baseline.toolkit import adapters as adapters_module
+from tests.e2e.baseline.toolkit.adapters import MatrixAllowlist, spec_for
 from tests.e2e.baseline.toolkit.deps import Lane
 from tests.framework_conformance.scorecardkit import (
     _ADAPTER_A,
@@ -68,7 +72,38 @@ class TestScorecard:
 
         assert str(Adapter.CREWAI) not in _parametrized_adapter_ids(fn)
         payload = _per_adapter_marker(fn)
-        assert payload.exclude == (ExcludedAdapter(Adapter.CREWAI, "cumulative usage"),)
+        assert ExcludedAdapter(Adapter.CREWAI, "cumulative usage") in payload.exclude
+
+    def test_matrix_only_adapter_is_na_outside_its_allowlist(self) -> None:
+        limited = replace(
+            spec_for(Adapter.CREWAI),
+            matrix_only=MatrixAllowlist(frozenset({"test_listed"}), "quota"),
+        )
+        with patch.dict(adapters_module._REGISTRY, {Adapter.CREWAI: limited}):
+
+            @per_adapter(Adapter.CREWAI, Adapter.AGNO)
+            def test_listed() -> None: ...
+
+            @per_adapter(Adapter.CREWAI, Adapter.AGNO)
+            def test_unlisted() -> None: ...
+
+        assert str(Adapter.CREWAI) in _parametrized_adapter_ids(test_listed)
+        assert _per_adapter_marker(test_listed).exclude == ()
+        assert str(Adapter.CREWAI) not in _parametrized_adapter_ids(test_unlisted)
+        assert _per_adapter_marker(test_unlisted).exclude == (
+            ExcludedAdapter(Adapter.CREWAI, "quota"),
+        )
+
+    def test_matrix_only_cannot_leave_a_test_without_adapters(self) -> None:
+        limited = replace(
+            spec_for(Adapter.CREWAI),
+            matrix_only=MatrixAllowlist(frozenset({"test_listed"}), "quota"),
+        )
+        with (
+            patch.dict(adapters_module._REGISTRY, {Adapter.CREWAI: limited}),
+            pytest.raises(ValueError, match="no adapters"),
+        ):
+            per_adapter(Adapter.CREWAI)(lambda: None)
 
     def test_per_adapter_rejects_unregistered_exclusion(self) -> None:
         # Adapter is a StrEnum, so a plain unregistered string is an unknown id.

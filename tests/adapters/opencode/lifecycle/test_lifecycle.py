@@ -19,14 +19,20 @@ from band.testing import FakeAgentTools, events_of_type
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
+    APPROVED_ASK_NOTICES,
     FakeOpencodeClient,
+    approve,
     event_message_updated,
     event_session_idle,
     event_text_part,
     idle_client,
     make_platform_message,
+    model_answer,
+    parked_turn_client,
+    room_turn,
     run_single_turn,
     tools_protocol,
+    turn_finished,
     wait_for,
 )
 from tests.adapters.usage_events import recorded_usage_payloads
@@ -361,6 +367,47 @@ class TestLifecycle:
         except asyncio.CancelledError:
             pass
         await adapter.on_cleanup("room-1")
+
+    async def test_a_turn_held_on_approval_leaves_another_room_progressing(
+        self, park_room, tools
+    ) -> None:
+        """Every room shares one client and event stream, so a room waiting on
+        a human must not stall another room's turn on that stream."""
+        fake_client = parked_turn_client(
+            after_approval=model_answer("msg-r1", "reply to room 1"),
+            later_prompts=[
+                [
+                    event_message_updated("sess-2", "msg-r2"),
+                    event_text_part("sess-2", "msg-r2", "reply to room 2"),
+                    event_session_idle("sess-2"),
+                ]
+            ],
+        )
+        adapter = await park_room(fake_client)
+        held = await room_turn(adapter)
+        room2_tools = FakeAgentTools(participants=ROOM_MEMBERS)
+
+        await deliver_message(
+            adapter,
+            make_platform_message(room_id="room-2", content="hello room 2"),
+            tools_protocol(room2_tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-2",
+        )
+
+        assert [m["content"] for m in room2_tools.messages_sent] == ["reply to room 2"]
+        assert held.watcher is not None and not held.watcher.done()
+
+        await approve(adapter)
+        await turn_finished(held)
+
+        assert [m["content"] for m in tools.messages_sent] == [
+            *APPROVED_ASK_NOTICES,
+            "reply to room 1",
+        ]
 
     async def test_two_rooms_active_concurrently(self, tools) -> None:
         """Interleaved turns keep events and platform tools scoped by room."""

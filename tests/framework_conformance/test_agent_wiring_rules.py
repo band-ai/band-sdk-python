@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from typing import cast
 from unittest.mock import patch
@@ -17,6 +18,7 @@ from tests.e2e.baseline.agents import (
 from tests.e2e.baseline.toolkit import adapters as adapters_module
 from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
 from tests.framework_conformance.wiringitems import FakeItem, wiring_error_reason
+from tests.paths import BASELINE_DIR
 
 # --- e2e_pending allowlist ----------------------------------------------------------------
 
@@ -191,3 +193,18 @@ class TestAgentWiringRules:
             "reason in the registration's e2e_pending string, and file the "
             "live-lane follow-up."
         )
+
+    def test_matrix_only_allowlists_name_existing_tests(self) -> None:
+        """A renamed or deleted test can't silently drop out of an adapter's allowlist."""
+
+        sources = "\n".join(
+            path.read_text(encoding="utf-8") for path in BASELINE_DIR.rglob("test_*.py")
+        )
+        stale = {
+            f"{spec.id}: {name}"
+            for spec in specs()
+            if spec.matrix_only is not None
+            for name in spec.matrix_only.tests
+            if not re.search(rf"def {name}\(", sources)
+        }
+        assert not stale, f"matrix_only names no baseline test: {sorted(stale)}"

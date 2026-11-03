@@ -50,8 +50,10 @@ guards/test_user_ops.py:
   test_user_ops_lookup_peers_excludes_room_members: all
 smoke/activity/test_memory_activity.py::TestMemoryActivity:
   test_storing_a_memory_reports_memory_and_clears:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, omp, omp_acp, pydantic_ai, strands]
     na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
     - reason: registers no Band memory capability
       adapters: [codex, crewai_flow, letta]
     - reason: saves memory from inside execute_python, which the room sees instead
@@ -61,8 +63,10 @@ smoke/activity/test_native_reporting.py::TestNativeReporting:
     pass: [claude_sdk]
 smoke/activity/test_native_tool_activity.py::TestNativeToolActivity:
   test_held_native_command_reports_its_name_and_clears:
-    pass: [claude_sdk, codex, cursor_acp, opencode]
+    pass: [claude_sdk, codex, cursor_acp]
     na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
     - reason: no E2E native-command dialect
       adapters: [agno, anthropic, antigravity_acp, copilot_acp, copilot_sdk, crewai, crewai_flow, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, pydantic_ai, strands]
 smoke/activity/test_permission_activity.py::TestPermissionActivity:
@@ -176,25 +180,32 @@ smoke/behavior/approvals/test_approvals.py::TestApprovals:
   test_a_question_is_answered_in_free_text_from_the_room:
     pass: [opencode]
   test_a_session_approval_covers_a_repeat_of_the_same_command:
-    pass: [codex, cursor_acp, opencode]
+    pass: [codex, cursor_acp]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
+  test_each_of_two_gated_commands_is_decided_on_its_own:
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_each_of_two_gated_commands_is_decided_on_its_own[False-claude_sdk]: core
   test_each_of_two_gated_commands_is_decided_on_its_own[False-codex]: backends
   test_each_of_two_gated_commands_is_decided_on_its_own[False-cursor_acp]: backends
-  test_each_of_two_gated_commands_is_decided_on_its_own[False-opencode]: backends
   test_each_of_two_gated_commands_is_decided_on_its_own[True-claude_sdk]: core
   test_each_of_two_gated_commands_is_decided_on_its_own[True-codex]: backends
   test_each_of_two_gated_commands_is_decided_on_its_own[True-cursor_acp]: backends
-  test_each_of_two_gated_commands_is_decided_on_its_own[True-opencode]: backends
   test_only_an_authorized_member_decides_an_ask:
     pass: [claude_sdk, cursor_acp]
+  test_pending_work_preserves_order_without_hiding_an_approval:
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_pending_work_preserves_order_without_hiding_an_approval[False-claude_sdk]: core
   test_pending_work_preserves_order_without_hiding_an_approval[False-codex]: backends
   test_pending_work_preserves_order_without_hiding_an_approval[False-cursor_acp]: backends
-  test_pending_work_preserves_order_without_hiding_an_approval[False-opencode]: backends
   test_pending_work_preserves_order_without_hiding_an_approval[True-claude_sdk]: core
   test_pending_work_preserves_order_without_hiding_an_approval[True-codex]: backends
   test_pending_work_preserves_order_without_hiding_an_approval[True-cursor_acp]: backends
-  test_pending_work_preserves_order_without_hiding_an_approval[True-opencode]: backends
   test_the_room_reply_decides_whether_the_gated_command_runs[approve-claude_sdk]: core
   test_the_room_reply_decides_whether_the_gated_command_runs[approve-codex]: backends
   test_the_room_reply_decides_whether_the_gated_command_runs[approve-cursor_acp]: backends
@@ -239,21 +250,46 @@ smoke/behavior/test_processing_barrier.py:
     pass: [anthropic, langgraph, letta]
 smoke/behavior/test_queued_decisions.py::TestQueuedDecisions:
   test_a_queue_of_fyis_is_declined_once_for_every_original:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_a_request_is_answered_as_its_sender_corrected_it:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_a_request_is_answered_when_an_fyi_arrived_after_it:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
 smoke/behavior/test_queued_messages.py::TestQueuedMessages:
   test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_queued_originals_share_one_invocation:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_without_opt_in_each_queued_original_gets_its_own_invocation:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
 smoke/behavior/test_queued_rooms.py::TestQueuedRooms:
+  test_a_turn_held_in_one_room_leaves_the_other_room_progressing:
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-agno]: core
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-anthropic]: core
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-antigravity_acp]: google
@@ -269,7 +305,6 @@ smoke/behavior/test_queued_rooms.py::TestQueuedRooms:
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-letta]: letta
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-nooa]: nooa
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-omp_acp]: backends
-  test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-opencode]: backends
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-pydantic_ai]: core
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-strands]: strands
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-agno]: core
@@ -287,7 +322,6 @@ smoke/behavior/test_queued_rooms.py::TestQueuedRooms:
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-letta]: letta
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-nooa]: nooa
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-omp_acp]: backends
-  test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-opencode]: backends
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-pydantic_ai]: core
   test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-strands]: strands
 smoke/behavior/test_reconnect.py::TestReconnect:
@@ -335,23 +369,27 @@ smoke/inspection/test_tool_calls.py:
   test_with_args_tolerant_match: core
 smoke/inspection/test_usage.py:
   test_usage_not_cumulative_across_turns:
-    pass: [agno, anthropic, claude_sdk, codex, copilot_sdk, gemini, google_adk, langgraph, letta, nooa, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, claude_sdk, codex, copilot_sdk, gemini, google_adk, langgraph, letta, nooa, pydantic_ai, strands]
     na:
     - reason: ACP adapter does not emit per-turn token usage
       adapters: [antigravity_acp, copilot_acp, cursor_acp, omp_acp]
     - reason: 'deferred: cumulative-lifetime counter, not per-turn'
       adapters: [crewai]
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
     - reason: native OMP adapter does not emit per-turn usage
       adapters: [omp]
     - reason: usage lives in user-supplied flow internals
       adapters: [crewai_flow]
   test_usage_recorded_for_a_turn:
-    pass: [agno, anthropic, claude_sdk, codex, copilot_sdk, gemini, google_adk, langgraph, letta, nooa, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, claude_sdk, codex, copilot_sdk, gemini, google_adk, langgraph, letta, nooa, pydantic_ai, strands]
     na:
     - reason: ACP adapter does not emit per-turn token usage
       adapters: [antigravity_acp, copilot_acp, cursor_acp, omp_acp]
     - reason: 'deferred: cumulative-lifetime counter, not per-turn'
       adapters: [crewai]
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
     - reason: native OMP adapter does not emit per-turn usage
       adapters: [omp]
     - reason: usage lives in user-supplied flow internals
@@ -395,35 +433,58 @@ smoke/matrix/test_adapter_matrix.py:
     pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, crewai_flow, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
 smoke/matrix/test_burst_recall.py:
   test_burst_handled_then_spanning_recall:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, pydantic_ai, strands]
     na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
     - reason: "terminal echo flow with no memory \u2014 cannot span-recall an early fact"
       adapters: [crewai_flow]
 smoke/matrix/test_capability_matrix.py:
   test_file_round_trip_across_files_adapters:
     na:
     - reason: E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)
-      adapters: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+      adapters: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, pydantic_ai, strands]
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_image_vision_passthrough_across_adapters:
     na:
     - reason: E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)
-      adapters: [agno, anthropic, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, langgraph, letta, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+      adapters: [agno, anthropic, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, langgraph, letta, nooa, omp, omp_acp, pydantic_ai, strands]
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_list_contacts_across_contacts_adapters:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_memory_survives_adapter_rehydration:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_recall_memory_across_memory_adapters:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_reply_across_non_memory_adapters:
     pass: [codex, crewai_flow, letta]
   test_store_memory_across_memory_adapters:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
   test_task_lifecycle_across_task_adapters:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
 smoke/matrix/test_concurrent_instances.py:
   test_concurrent_same_adapter_instances_each_reply:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, crewai_flow, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, crewai_flow, cursor_acp, gemini, google_adk, langgraph, nooa, omp, omp_acp, pydantic_ai, strands]
     na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
     - reason: global-by-name MCP tools collide across concurrent same-adapter instances (see module docstring)
       adapters: [letta]
 smoke/matrix/test_context_recall.py:
@@ -459,11 +520,16 @@ smoke/matrix/test_invoker_draining.py::TestInvokerDraining:
     pass: [agno, anthropic, claude_sdk, copilot_sdk, crewai, gemini, google_adk, langgraph, nooa, pydantic_ai, strands]
 smoke/matrix/test_loop_suppression.py:
   test_peer_message_drives_turn_without_loop:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, crewai_flow, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, crewai_flow, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, pydantic_ai, strands]
+    na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
 smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported:
   test_a_turn_that_did_nothing_is_reported_and_failed:
-    pass: [agno, antigravity_acp, codex, copilot_acp, crewai, cursor_acp, langgraph, letta, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, antigravity_acp, codex, copilot_acp, crewai, cursor_acp, langgraph, letta, nooa, omp, omp_acp, pydantic_ai, strands]
     na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
     - reason: ignores exclude_tools, so band_no_reply stays callable
       adapters: [anthropic, claude_sdk, gemini, google_adk]
     - reason: relays the model's final text, so an empty turn can't be scripted reliably
@@ -478,8 +544,10 @@ smoke/matrix/test_no_reply.py::TestNoReply:
       adapters: [crewai_flow]
 smoke/matrix/test_noisy_room.py:
   test_recall_and_ignore_crosstalk_in_busy_room:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, pydantic_ai, strands]
     na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
     - reason: "terminal echo flow with no memory \u2014 cannot recall a seeded fact"
       adapters: [crewai_flow]
 smoke/matrix/test_participant_management.py:
@@ -524,8 +592,10 @@ smoke/matrix/test_rehydration_partial.py:
       adapters: [crewai_flow]
 smoke/matrix/test_room_isolation.py:
   test_rooms_keep_isolated_context:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, pydantic_ai, strands]
     na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
     - reason: "terminal echo flow with no memory \u2014 cannot recall a per-room note"
       adapters: [crewai_flow]
 smoke/matrix/test_room_workspaces.py:

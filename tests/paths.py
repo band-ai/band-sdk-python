@@ -28,6 +28,8 @@ SHIPPED_SOURCE_ROOTS = (SRC_ROOT, BAND_MCP_DIR / "src")
 # The scripted provider child the room lifecycle tests run.
 ROOM_PEER = REPO_ROOT / "tests" / "adapters" / "roompeer.py"
 ENV_TEST_FILE = REPO_ROOT / ".env.test"
+# The live baseline suite (its test modules and registry).
+BASELINE_DIR = REPO_ROOT / "tests" / "e2e" / "baseline"
 BUG_HUNTING_SCRIPTS = (
     REPO_ROOT / ".claude" / "skills" / "bug-hunting-via-example" / "scripts"
 )
