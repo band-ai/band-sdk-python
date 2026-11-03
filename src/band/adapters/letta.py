@@ -208,7 +208,7 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         )
 
     def apply_effective_features(self, features: AdapterFeatures) -> None:
-        """Rebuild the unstarted MCP bridge with negotiated capabilities."""
+        """Rebuild the unstarted MCP bridge with negotiated features."""
         super().apply_effective_features(features)
         self._mcp = self._build_mcp_bridge()
 

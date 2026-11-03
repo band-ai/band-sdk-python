@@ -41,7 +41,7 @@ class TestOpencodeToolFilters:
             )
             await adapter.on_cleanup("room-1")
 
-        assert len(starts.requested) == 1
-        names = {definition.name for definition in starts.requested[0].tool_definitions}
+        (settings,) = starts.requested
+        names = {definition.name for definition in settings.tool_definitions}
         assert names.isdisjoint(excluded)
         assert MEMORY_TOOL_NAMES <= names
