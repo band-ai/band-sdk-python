@@ -84,7 +84,7 @@ from band.runtime.formatters import (
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.sessionresume import SessionSeed
 from band.runtime.toolactivity import end_activity, start_native_tool_activity
-from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
+from band.runtime.tools import CHAT_ID_FIELD_NAME, selected_tool_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -367,9 +367,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         self._refresh_tool_definitions()
 
     def _refresh_tool_definitions(self) -> None:
-        self._tool_definitions = list(
-            iter_tool_definitions(capabilities=self.features.capabilities)
-        )
+        self._tool_definitions = selected_tool_definitions(self.features)
         self._own_tool_names = frozenset(
             {definition.name for definition in self._tool_definitions}
             | {get_custom_tool_name(model) for model, _fn in self._custom_tools}

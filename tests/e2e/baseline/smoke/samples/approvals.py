@@ -65,6 +65,8 @@ from band.adapters.opencode.approvals.wording import (
     APPROVAL_HANDLED_TEMPLATE,
     APPROVAL_NO_LONGER_PENDING_TEMPLATE,
     APPROVAL_TIMED_OUT_TEMPLATE,
+    QUESTION_ANSWERED_TEMPLATE,
+    QUESTION_REJECTED_TEMPLATE,
     format_question_prompt,
 )
 from band.adapters.opencode.approvals.wording import (
@@ -192,6 +194,15 @@ def question_request() -> str:
     )
 
 
+def question_decline_request(*, done: str) -> str:
+    """Ask the agent to put a question to the room, then continue after a decline."""
+    return (
+        "Use your question tool to ask me one short clarifying question. "
+        "If I decline it, do not ask again; finish with a short room reply that "
+        f"contains exactly `{done}`."
+    )
+
+
 def template_pattern(template: str, *, token: str = "token") -> re.Pattern[str]:
     """A regex matching what ``template`` renders, capturing each field by name.
 
@@ -292,10 +303,11 @@ class SessionApproval:
 
 @dataclass(frozen=True)
 class QuestionRelay:
-    """How the agent puts a question to the room, and confirms the answer."""
+    """How the agent puts a question to the room, and confirms the answer or decline."""
 
     request: re.Pattern[str]
     answered: Callable[[re.Match[str]], Notice]
+    rejected: Callable[[re.Match[str]], Notice]
 
     def find(self, messages: list[MessageCreatedPayload]) -> re.Match[str] | None:
         matches = (self.request.search(m.content or "") for m in messages)
@@ -601,7 +613,10 @@ OPENCODE_QUESTION = QuestionRelay(
         format_question_prompt([], "{request_id}").splitlines()[0], token="request_id"
     ),
     answered=lambda request: Notice(
-        f"OpenCode question `{request['token']}` answered."
+        QUESTION_ANSWERED_TEMPLATE.format(request_id=request["token"])
+    ),
+    rejected=lambda request: Notice(
+        QUESTION_REJECTED_TEMPLATE.format(request_id=request["token"])
     ),
 )
 
