@@ -225,10 +225,26 @@ class LettaMCPBridge:
 
             server_id = server.id
 
-            # Discover available tools from the MCP server
+            # Discover available tools from the MCP server, then keep only the
+            # names this bridge was built with. Self-host LocalMCPServer already
+            # advertises that filtered set; external/Cloud band-mcp may list the
+            # full platform surface, so attach must honor exclude_tools here.
             tools = await client.mcp_servers.tools.list(mcp_server_id=server_id)
-            self.tool_ids = [t.id for t in tools if getattr(t, "id", None)]
-            tool_names = [t.name for t in tools]
+            allowed = {definition.name for definition in self._tool_definitions}
+            # External band-mcp may advertise legacy create_agent_chat_* aliases
+            # for the same send/event tools; keep those attachable whenever the
+            # modern names remain allowed after exclude_tools.
+            if SEND_MESSAGE_TOOL_NAMES[0] in allowed:
+                allowed.update(SEND_MESSAGE_TOOL_NAMES)
+            if SEND_EVENT_TOOL_NAMES[0] in allowed:
+                allowed.update(SEND_EVENT_TOOL_NAMES)
+            selected = [
+                tool
+                for tool in tools
+                if getattr(tool, "id", None) and getattr(tool, "name", None) in allowed
+            ]
+            self.tool_ids = [tool.id for tool in selected]
+            tool_names = [tool.name for tool in selected]
             self.resolve_send_tools(tool_names)
             # Ready only once discovery succeeded — a half-registered server
             # must not short-circuit the next ensure_ready into running

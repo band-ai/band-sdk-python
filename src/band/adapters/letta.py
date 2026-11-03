@@ -56,8 +56,8 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.toolactivity import end_activity, start_memory_activity
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
-    iter_tool_definitions,
     redact_tool_call_args,
+    selected_tool_definitions,
     turn_effect,
 )
 
@@ -202,15 +202,13 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
     def _build_mcp_bridge(self) -> LettaMCPBridge:
         return LettaMCPBridge(
             self.config.mcp,
-            tool_definitions=iter_tool_definitions(
-                capabilities=self.features.capabilities,
-            ),
+            tool_definitions=selected_tool_definitions(self.features),
             get_tools=self._get_room_tools,
             teardown_timeout_s=self.config.teardown_timeout_s,
         )
 
     def apply_effective_features(self, features: AdapterFeatures) -> None:
-        """Rebuild the unstarted MCP bridge with negotiated capabilities."""
+        """Rebuild the unstarted MCP bridge with negotiated features."""
         super().apply_effective_features(features)
         self._mcp = self._build_mcp_bridge()
 

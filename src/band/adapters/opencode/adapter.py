@@ -84,7 +84,7 @@ from band.runtime.formatters import (
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.sessionresume import SessionSeed
 from band.runtime.toolactivity import end_activity, start_native_tool_activity
-from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
+from band.runtime.tools import CHAT_ID_FIELD_NAME, selected_tool_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -358,25 +358,22 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         self._mcp_lifecycle_lock = asyncio.Lock()
         self._registration: McpRegistration | None = None
         self._system_prompt: str = ""
-        # The tools this adapter registers with OpenCode (band platform tools +
-        # custom tools). Computed once at construction -- both inputs are known
-        # here -- and reused when the shared MCP backend is built. Deriving the
-        # names eagerly keeps the "is this our own band tool?" auto-approve
-        # check independent of MCP-registration timing, so a second room's
-        # first turn can't race an empty set.
+        # Platform + custom tool names for MCP registration and auto-approve.
+        # Refreshed again from apply_effective_features after capability
+        # negotiation; deriving them eagerly still keeps the "is this our own
+        # band tool?" check independent of MCP-registration timing so a second
+        # room's first turn can't race an empty set.
         self._refresh_tool_definitions()
 
     def _refresh_tool_definitions(self) -> None:
-        self._tool_definitions = list(
-            iter_tool_definitions(capabilities=self.features.capabilities)
-        )
+        self._tool_definitions = selected_tool_definitions(self.features)
         self._own_tool_names = frozenset(
             {definition.name for definition in self._tool_definitions}
             | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
         )
 
     def apply_effective_features(self, features: AdapterFeatures) -> None:
-        """Keep the MCP registration aligned with negotiated capabilities."""
+        """Refresh tool defs after negotiation (before the first MCP ensure)."""
         super().apply_effective_features(features)
         self._refresh_tool_definitions()
 

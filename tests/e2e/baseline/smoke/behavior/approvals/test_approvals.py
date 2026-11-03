@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from band.adapters.opencode.approvals.commands import PermissionReplyWord
 from band.client.streaming import DeliveryStatus
 from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.agents import Adapter, per_adapter
@@ -24,6 +25,7 @@ from tests.e2e.baseline.smoke.samples.approvals import (
     command_request,
     commands_request,
     marker_command,
+    question_decline_request,
     question_request,
     repeat_request,
     written_lines,
@@ -345,6 +347,42 @@ class TestApprovals:
                 lambda _msgs: any(
                     codeword in said and notice.text not in said
                     for said in room.said_since(answered)
+                ),
+                deadline_s=BUDGET.deadline_s,
+            )
+            await notice.assert_shown(room.capture, room.agent.id)
+
+    @per_adapter(*ASKING)
+    @pytest.mark.timeout(extra=BUDGET.extra_s)
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_a_question_decline_lets_the_model_continue(
+        self,
+        cell: AdapterCell,
+        user_ops: UserOps,
+        reply_capture: CaptureFactory,
+    ) -> None:
+        """Declining a question returns the turn to the model so it can still reply."""
+        done = unique_marker("declined")
+        async with approval_room(
+            cell, user_ops, reply_capture, label="question-decline", budget=BUDGET
+        ) as (room, _workdir):
+            relay = room.dialect.question
+            assert relay is not None
+
+            await room.say(question_decline_request(done=done))
+            asked = await room.capture.wait_until(
+                lambda msgs: relay.find(msgs) is not None, deadline_s=BUDGET.deadline_s
+            )
+            question = relay.find(asked)
+            assert question is not None
+            declined = await room.say(
+                f"{PermissionReplyWord.REJECT} {question['token']}"
+            )
+            notice = relay.rejected(question)
+            await room.capture.wait_until(
+                lambda _msgs: any(
+                    done in said and notice.text not in said
+                    for said in room.said_since(declined)
                 ),
                 deadline_s=BUDGET.deadline_s,
             )
