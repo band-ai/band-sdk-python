@@ -57,9 +57,7 @@ class LettaRegistration:
         )
         assert {
             tool.id for tool in discovered if getattr(tool, "id", None)
-        } == self.tool_ids, (
-            "Letta could not rediscover Band tools at the repointed URL"
-        )
+        } == self.tool_ids, "Letta could not rediscover Band tools at the repointed URL"
 
     def assert_stable(self, adapter: Any) -> None:
         """Registration identity survived a post-crash conversational turn."""
@@ -82,9 +80,7 @@ class OpencodeRegistration:
         backend = adapter._mcp.current
         assert registration is not None, "OpenCode never registered Band MCP"
         assert backend is not None, "OpenCode has no Band MCP backend"
-        return cls(
-            name=adapter._mcp_server_name, url=registration.url, backend=backend
-        )
+        return cls(name=adapter._mcp_server_name, url=registration.url, backend=backend)
 
     async def assert_reregistered(self, adapter: Any) -> None:
         """Same MCP name on a replacement backend that serves Band tools.
