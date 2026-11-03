@@ -747,10 +747,30 @@ nodeid. Excluded adapters get explicit N/A rows.
   emits nothing.
 - **CI checks every supported lane and OS pair.** Each lane writes
   `artifacts/scorecard-<lane>-<os>.json`. The final job compares every fragment
-  with `expected-cells.json`, including bespoke smokes, and writes a merged grid
+  with `expected-cells.yaml`, including bespoke smokes, and writes a merged grid
   for the run summary. An absent fragment, missing result, required skip, unexpected
-  active cell, or failure reddens the gate. The manifest lists supported OSes
-  for each lane and explicit N/A reasons for environment-gated file cells.
+  active cell, or failure reddens the gate. Supported OSes come from the lane
+  registry, not the manifest.
+- **The manifest stores only what the registry can't derive.** It is grouped by
+  test file, then test:
+
+  ```yaml
+  guards/test_adapter_registry.py:
+    test_every_adapter_has_a_ci_home: all     # adapter-agnostic, every lane
+  smoke/adapters/test_codex.py:
+    test_codex_thoughts_are_not_placeholders: backends   # one lane (@lane / @with_adapters)
+  smoke/activity/test_permission_activity.py::TestPermissionActivity:
+    test_pending_approval_reports_permission_and_clears:
+      pass: [claude_sdk, codex, opencode]     # each in its home lane
+      na:                                     # expected N/A in every lane
+      - reason: no E2E room-approval dialect
+        adapters: [agno, anthropic, ...]
+  ```
+
+  A matrix test carries `lane: <id>` only when `@lane` pins it off its adapters'
+  home lanes; an env-gated adapter-agnostic test is an `na` group whose adapter is
+  `suite`. Loading rejects unknown keys, lanes, and adapters, and regeneration
+  refuses any collected cells the format can't reproduce.
 - **Update the manifest when intentional coverage changes.** Collect the default
   extra, then collect legacy and union Parlant's structurally separate extra:
 
@@ -760,7 +780,7 @@ nodeid. Excluded adapters get explicit N/A rows.
   uv run --isolated --python 3.12 --extra dev-parlant --all-packages python -m tests.e2e.baseline.scorecard manifest --merge-existing
   ```
 
-  Review the JSON diff and keep the conformance collection check passing. The
+  Review the manifest diff and keep the conformance collection check passing. The
   gate derives selected lanes from the workflow dispatch inputs, not from
   whichever fragments happened to arrive.
 

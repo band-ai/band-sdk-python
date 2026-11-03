@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +17,7 @@ from tests.e2e.baseline.agents import (
 )
 from tests.e2e.baseline.scorecard import (
     ENV_GATED_MARKER,
+    MANIFEST_PATH,
     SUITE_ADAPTER,
     ExpectedCell,
     GateResult,
@@ -29,6 +29,7 @@ from tests.e2e.baseline.scorecard import (
     expected_cells,
     gate_manifest,
     gate_summary,
+    load_manifest,
     merge,
     na_rows,
     outcome_row,
@@ -297,7 +298,7 @@ class TestScorecard:
         assert [row.test for row in result.missing] == [required.test]
 
     def test_expected_manifest_matches_collected_baseline(self, tmp_path: Path) -> None:
-        generated = tmp_path / "expected-cells.json"
+        generated = tmp_path / MANIFEST_PATH.name
         result = subprocess.run(
             [
                 sys.executable,
@@ -313,13 +314,9 @@ class TestScorecard:
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        checked_in = REPO_ROOT / "tests/e2e/baseline/expected-cells.json"
-        fresh = json.loads(generated.read_text())
-        committed = json.loads(checked_in.read_text())
-        assert fresh["supported_os"] == committed["supported_os"]
-        current = {(cell["test"], cell["adapter"]): cell for cell in fresh["cells"]}
+        current = {(cell.test, cell.adapter): cell for cell in load_manifest(generated)}
         expected = {
-            (cell["test"], cell["adapter"]): cell for cell in committed["cells"]
+            (cell.test, cell.adapter): cell for cell in load_manifest(MANIFEST_PATH)
         }
         assert all(expected.get(key) == cell for key, cell in current.items())
         for path in (
@@ -329,23 +326,22 @@ class TestScorecard:
             owned = [
                 cell
                 for cell in current.values()
-                if f"tests/e2e/baseline/{path}::" in cell["test"]
+                if f"tests/e2e/baseline/{path}::" in cell.test
             ]
             assert len(owned) == 1, f"missing or duplicated Strands cell: {path}"
-            assert owned[0]["lanes"] == [str(Lane.STRANDS)]
-
+            assert owned[0].lanes == (str(Lane.STRANDS),)
         extra = [cell for key, cell in expected.items() if key not in current]
         parlant_extra = [
             cell
             for cell in extra
-            if cell["test"].startswith(
+            if cell.test.startswith(
                 "tests/e2e/baseline/smoke/adapters/test_parlant.py::"
             )
         ]
         assert bool(parlant_extra) == (importlib.util.find_spec("parlant") is None)
         uncollectable_lanes = lanes_without_an_installable_adapter()
         assert all(
-            cell in parlant_extra or set(cell["lanes"]) <= uncollectable_lanes
+            cell in parlant_extra or set(cell.lanes) <= uncollectable_lanes
             for cell in extra
         )
 

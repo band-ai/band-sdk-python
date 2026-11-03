@@ -97,8 +97,9 @@ copilot_sdk = [
 ]
 parlant = [
     # Floor at 3.3.2: older versions stall the in-process server's post-preamble
-    # message generation (event-loop starvation).
-    "parlant>=3.3.2",
+    # message generation (event-loop starvation). Below 4: parlant 4.0 removed the
+    # engine hooks and entity-context modules the adapter imports.
+    "parlant>=3.3.2,<4",
     "openai>=2.0.0",
     "werkzeug>=3.1.6",
 ]
@@ -333,8 +334,8 @@ dev-parlant = [
     "pytest-timeout>=2.4.0",
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",
-    # Parlant and its deps (see the parlant extra for why >=3.3.2)
-    "parlant>=3.3.2",
+    # Parlant and its deps (see the parlant extra for the version range)
+    "parlant>=3.3.2,<4",
     "openai>=3.26.0,<4",
     "werkzeug>=3.1.6",
     # Anthropic client: the baseline E2E conftest imports it at module load and
