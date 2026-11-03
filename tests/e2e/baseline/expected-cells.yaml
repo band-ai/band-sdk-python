@@ -93,6 +93,16 @@ smoke/adapters/copilotsdk/test_roomquestion.py::TestRoomQuestion:
   test_copilot_ask_user_room_question_answered_by_next_message: core
 smoke/adapters/copilotsdk/test_sharedclient.py::TestSharedClient:
   test_copilot_shared_client_across_adapter_lifecycles: core
+smoke/adapters/mcpcrash/test_letta.py::TestLettaMcpCrash:
+  test_a_crashed_server_is_repointed_for_live_letta:
+    pass: [letta]
+  test_a_reply_survives_a_crashed_band_mcp_server:
+    pass: [letta]
+smoke/adapters/mcpcrash/test_opencode.py::TestOpencodeMcpCrash:
+  test_a_crashed_server_is_re_registered_with_live_serve:
+    pass: [opencode]
+  test_a_reply_survives_a_crashed_band_mcp_server:
+    pass: [opencode]
 smoke/adapters/omp/test_permission_cancel.py::TestOmpPermissionCancel:
   test_omp_native_permission_is_cancelled: backends
 smoke/adapters/omp/test_permission_deny.py::TestOmpPermissionDeny:
@@ -144,22 +154,12 @@ smoke/adapters/test_letta.py:
     pass: [letta]
   test_self_hosted_mcp_registration_health:
     pass: [letta]
-smoke/adapters/test_letta_mcp_crash.py::TestLettaMcpCrash:
-  test_a_crashed_server_is_repointed_for_live_letta:
-    pass: [letta]
-  test_a_reply_survives_a_crashed_band_mcp_server:
-    pass: [letta]
 smoke/adapters/test_nooa.py::TestNooaValidationAliases:
   test_aliased_payload_round_trips: nooa
 smoke/adapters/test_omp_acp.py:
   test_omp_acp_band_tool_call_is_narrated: backends
   test_omp_acp_form_elicitation_denied_is_narrated: backends
   test_omp_raw_acp_prompt_completes: backends
-smoke/adapters/test_opencode_mcp_crash.py::TestOpencodeMcpCrash:
-  test_a_crashed_server_is_re_registered_with_live_serve:
-    pass: [opencode]
-  test_a_reply_survives_a_crashed_band_mcp_server:
-    pass: [opencode]
 smoke/adapters/test_parlant.py:
   test_parlant_delivers_typed_custom_tool_arguments: parlant
   test_parlant_executes_custom_tool: parlant
