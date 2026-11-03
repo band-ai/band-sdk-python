@@ -231,6 +231,13 @@ class LettaMCPBridge:
             # full platform surface, so attach must honor exclude_tools here.
             tools = await client.mcp_servers.tools.list(mcp_server_id=server_id)
             allowed = {definition.name for definition in self._tool_definitions}
+            # External band-mcp may advertise legacy create_agent_chat_* aliases
+            # for the same send/event tools; keep those attachable whenever the
+            # modern names remain allowed after exclude_tools.
+            if SEND_MESSAGE_TOOL_NAMES[0] in allowed:
+                allowed.update(SEND_MESSAGE_TOOL_NAMES)
+            if SEND_EVENT_TOOL_NAMES[0] in allowed:
+                allowed.update(SEND_EVENT_TOOL_NAMES)
             selected = [
                 tool
                 for tool in tools
