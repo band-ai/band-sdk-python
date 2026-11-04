@@ -27,13 +27,16 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from crewai.tools import BaseTool
+    from crewai.tools import BaseTool, ToolFailure
 
-from band.core.exceptions import BandToolError
+from band.core.exceptions import BandToolError, InputNotAccepted
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.crewai.catalog import (
+    ENVELOPE_ERROR,
+    ENVELOPE_STATUS_KEY,
+    ENVELOPE_SUCCESS,
     PLATFORM_TOOLS,
     Invocation,
     ToolSpec,
@@ -50,18 +53,21 @@ from band.integrations.crewai.reporting import (
 from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
     CustomToolDef,
+    declared_effect,
     execute_custom_tool,
     get_custom_tool_name,
 )
 from band.runtime.tools import (
     EVENT_TOOL_NAMES,
     BandTool,
+    TurnEffect,
     append_available_mention_handles,
     get_band_tool_category,
     get_tool_description,
     turn_effect,
     withheld_tool_names,
 )
+from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -77,26 +83,36 @@ def _execute_tool(
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
     arguments: Mapping[str, Any],
-) -> str:
+) -> str | ToolFailure:
     """Execute a tool with common error handling and reporting.
 
-    Returns a JSON string with status and result/error.
+    Preserve CrewAI failure identity alongside the model-facing JSON text.
     """
+    from crewai.tools import ToolFailure  # noqa: PLC0415 -- optional dependency
+
     context = get_context()
     if context is None:
-        return json.dumps(
-            {
-                "status": "error",
-                "message": "No room context available - tool called outside message handling",
-            }
+        return ToolFailure(
+            message=json.dumps(
+                {
+                    ENVELOPE_STATUS_KEY: ENVELOPE_ERROR,
+                    "message": "No room context available - tool called outside message handling",
+                }
+            ),
+            code=None,
         )
 
     room_id = context.room_id
     tools = context.tools
 
-    async def _execute() -> str:
+    if context.reply_tracker is not None:
+        context.reply_tracker.any_tool_ran = True
+
+    async def _execute() -> str | ToolFailure:
         try:
             return await coro_factory(tools)
+        except InputNotAccepted:
+            raise
         except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             error_msg = str(e)
             if tool_name == BandTool.SEND_MESSAGE and isinstance(
@@ -110,7 +126,12 @@ def _execute_tool(
             logger.error("%s failed in room %s: %s", tool_name, room_id, error_msg)
             if tool_name not in EVENT_TOOL_NAMES:
                 await reporter.report_result(tools, tool_name, error_msg, is_error=True)
-            return json.dumps({"status": "error", "message": error_msg})
+            return ToolFailure(
+                message=json.dumps(
+                    {ENVELOPE_STATUS_KEY: ENVELOPE_ERROR, "message": error_msg}
+                ),
+                code=None,
+            )
 
     execution = (
         _execute()
@@ -120,27 +141,21 @@ def _execute_tool(
     result = run_async(execution, fallback_loop=fallback_loop)
 
     if context.reply_tracker is not None:
-        _note_tool_activity(context.reply_tracker, tool_name, result, arguments)
+        _note_successful_post(context.reply_tracker, tool_name, result, arguments)
     return result
 
 
-def _note_tool_activity(
+def _note_successful_post(
     tracker: ReplyTracker,
     tool_name: str,
-    result: str,
+    result: str | ToolFailure,
     arguments: Mapping[str, Any],
 ) -> None:
-    """Note that a tool ran, and what a successful ``band_send_message`` said.
-
-    ``any_tool_ran`` flips on this call alone, whether the tool succeeded or
-    not, so a turn that tried *something* is never mistaken for one where the
-    model's very first response came back empty.
-    """
-    tracker.any_tool_ran = True
-    if tool_name != BandTool.SEND_MESSAGE:
+    """Keep only successful room posts in the next turn's history."""
+    if tool_name != BandTool.SEND_MESSAGE or not isinstance(result, str):
         return
     try:
-        if json.loads(result).get("status") != "success":
+        if json.loads(result).get(ENVELOPE_STATUS_KEY) != ENVELOPE_SUCCESS:
             return
     except (json.JSONDecodeError, AttributeError, TypeError):
         return
@@ -211,7 +226,7 @@ def _custom_tool(
         BaseTool,
     )
 
-    input_model, _ = definition
+    input_model, handler = definition
     tool_name = get_custom_tool_name(input_model)
 
     class CustomCrewAITool(BaseTool):
@@ -219,15 +234,30 @@ def _custom_tool(
         description: str = input_model.__doc__ or f"Execute {tool_name}"
         args_schema: type[BaseModel] = input_model
         cache_function: Any = _no_cache
+        result_as_answer: bool = (
+            declared_effect(handler) or TurnEffect.OBSERVE
+        ).ends_turn
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            async def execute(tools: AgentToolsProtocol) -> str:
+            async def execute(tools: AgentToolsProtocol) -> str | ToolFailure:
+                from crewai.tools import ToolFailure  # noqa: PLC0415 -- optional dependency
+
                 await reporter.report_call(tools, tool_name, kwargs)
                 result = await execute_custom_tool(
                     tool=definition, arguments=kwargs, tools=tools
                 )
-                await reporter.report_result(tools, tool_name, result)
-                return json.dumps({"status": "success", "result": result}, default=str)
+                failed = is_failed_tool_output(result)
+                await reporter.report_result(tools, tool_name, result, is_error=failed)
+                envelope = json.dumps(
+                    {
+                        ENVELOPE_STATUS_KEY: ENVELOPE_ERROR
+                        if failed
+                        else ENVELOPE_SUCCESS,
+                        "result": result,
+                    },
+                    default=str,
+                )
+                return ToolFailure(message=envelope, code=None) if failed else envelope
 
             return _execute_tool(
                 tool_name=tool_name,

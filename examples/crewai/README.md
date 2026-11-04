@@ -452,3 +452,23 @@ Those examples depend heavily on model quality and prompt interpretation. They a
 - [CrewAI Documentation](https://docs.crewai.com/)
 - [CrewAI GitHub](https://github.com/crewAIInc/crewAI)
 - [Band SDK Documentation](https://github.com/band-ai/band-sdk-python)
+
+
+### Custom decline tools
+
+A successful custom handler decorated with
+`@declares_turn_effect(TurnEffect.DECLINE)` ends the invoking CrewAI agent or
+task, just like `band_no_reply`. CrewAI executes a native batch in order when
+it contains a terminal tool: earlier calls run and later calls are skipped.
+OBSERVE, ACT and REPLY effects continue normal execution.
+
+Raised recoverable errors, invalid arguments and recognized failed returns
+(`{"ok": false}` or legacy `Error:` text) remain failures. They allow the model
+to recover under CrewAI's default warn policy; an explicit native raise policy
+still aborts. Tool results report their error state even when the handler
+declares DECLINE. A Flow that called a sub-Crew still owns its later actions and
+can return an explicit direct response after the inner decline.
+
+Reusing a CrewAI ReAct Crew/Task can retain terminal-result history
+([INT-1972](https://linear.app/thenvoi/issue/INT-1972)). This change does not repair
+that native history limitation or promise silence across outer Flow steps.

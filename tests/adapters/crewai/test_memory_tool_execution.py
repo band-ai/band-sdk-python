@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 from band.core.memory_types import MemoryType
 from band.core.types import Capability
+from tests.crewaicontract import tool_result_data
 
 
 class TestMemoryToolExecution:
@@ -30,7 +30,7 @@ class TestMemoryToolExecution:
                 status="active",
             )
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert result_data["data"][0]["id"] == "memory-1"
         mock_tools.list_memories.assert_awaited_once_with(
@@ -65,7 +65,7 @@ class TestMemoryToolExecution:
                 subject_id="subject-1",
             )
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert result_data["result_status"] == "stored"
         assert result_data["id"] == "memory-1"
@@ -92,7 +92,7 @@ class TestMemoryToolExecution:
         with room_context("room-123"):
             result = get_memory_tool._run(memory_id="memory-1")
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert result_data["id"] == "memory-1"
         mock_tools.get_memory.assert_awaited_once_with("memory-1")
@@ -112,7 +112,7 @@ class TestMemoryToolExecution:
         with room_context("room-123"):
             result = supersede_memory_tool._run(memory_id="memory-1")
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert result_data["result_status"] == "superseded"
         assert result_data["id"] == "memory-1"
@@ -131,7 +131,7 @@ class TestMemoryToolExecution:
         with room_context("room-123"):
             result = archive_memory_tool._run(memory_id="memory-1")
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert result_data["result_status"] == "archived"
         assert result_data["id"] == "memory-1"

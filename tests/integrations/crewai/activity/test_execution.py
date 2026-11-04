@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -12,6 +11,7 @@ from band.integrations.crewai.tools import (
 )
 from band.testing import FakeAgentTools
 from band.testing.activity import ActivityRecorder, shown_tool
+from tests.crewaicontract import tool_result_data
 from tests.integrations.activitykit import LookupInput
 
 pytest.importorskip("crewai")
@@ -40,7 +40,7 @@ class TestCrewAIActivity:
             custom_tools=[(LookupInput, lookup)],
         )
         lookup_tool = next(tool for tool in built if tool.name == "lookup")
-        result = json.loads(lookup_tool.run(note="private-argument"))
+        result = tool_result_data(lookup_tool.run(note="private-argument"))
         assert result["status"] == ("error" if failed else "success")
         assert received == ["private-argument"]
         assert shown_while_running == [shown_tool("lookup")]
