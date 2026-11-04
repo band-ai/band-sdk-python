@@ -1,6 +1,6 @@
 ---
 name: band-run-e2e-live
-description: Use this skill when the user wants to RUN the band-sdk-python E2E baseline tests against the live platform + real LLMs (not write them) — "run the e2e tests live", "run the usage smoke for anthropic", "validate this adapter live", "run all lanes", "why does the codex/opencode lane skip/fail", "set up .env.test", "switch the venv for crewai", "run crewai and the dev lanes at the same time / in parallel". Covers the venv-per-lane dependency split (including `uv run --isolated` for running lanes simultaneously), .env.test, BAND_E2E_LANE scoping, per-lane commands, and the backends (codex/opencode) auth/CWD/server gotchas. For AUTHORING new E2E tests use band-write-e2e-test instead; for diagnosing a failing test use band-investigate-test-error.
+description: Use this skill when the user wants to RUN the band-sdk-python E2E baseline tests against the live platform + real LLMs (not write them) — "run the e2e tests live", "run the usage smoke for anthropic", "validate this adapter live", "run all lanes", "why does the backends/opencode lane skip/fail", "set up .env.test", "switch the venv for crewai", "run crewai and the dev lanes at the same time / in parallel". Covers the venv-per-lane dependency split (including `uv run --isolated` for running lanes simultaneously), .env.test, BAND_E2E_LANE scoping, per-lane commands, and the backends (codex and the ACP CLIs) and opencode auth/CWD/server gotchas. For AUTHORING new E2E tests use band-write-e2e-test instead; for diagnosing a failing test use band-investigate-test-error.
 ---
 
 # Run the E2E Live Tests
@@ -35,7 +35,7 @@ crewai, parlant, and Strands/NOOA are kept out of the default venv, so there are
 
 | Extra | Command | Contains | Lanes it serves |
 |---|---|---|---|
-| `dev` | `uv sync --locked --all-packages --extra dev` | everything **except crewai, parlant, strands and nooa** (anthropic, claude_sdk, copilot_sdk, agno, langgraph, pydantic_ai, gemini, google_adk, ACP, opencode, letta) | core, google, backends, letta |
+| `dev` | `uv sync --locked --all-packages --extra dev` | everything **except crewai, parlant, strands and nooa** (anthropic, claude_sdk, copilot_sdk, agno, langgraph, pydantic_ai, gemini, google_adk, ACP, opencode, letta) | core, google, backends, opencode, letta |
 | `dev-crewai` | `uv sync --locked --all-packages --extra dev-crewai` | crewai + test tooling only (**no** pydantic-ai/parlant/agno/gemini/...) | crewai |
 | `dev-strands-nooa` | `uv sync --locked --all-packages --extra dev-strands-nooa` | Strands, NOOA (Python 3.12–3.13, off Windows) and their LangGraph peer, on OpenAI 2 | strands, nooa |
 | `dev-parlant` | `uv sync --locked --all-packages --extra dev-parlant` | parlant + test tooling | parlant |
@@ -79,7 +79,8 @@ with `@lane(Lane.X)` (that's a `band-write-e2e-test` concern).
 | `core` | dev | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | ANTHROPIC + OPENAI keys (copilot_sdk self-downloads its CLI runtime; Anthropic BYOK, no GitHub auth) |
 | `google` | dev | gemini, google_adk (split out for rate-limit isolation) | GOOGLE/GEMINI key |
 | `crewai` | **dev-crewai** | crewai, crewai_flow | OPENAI key |
-| `backends` | dev | codex, opencode, copilot_acp, cursor_acp, omp_acp | see gotchas below |
+| `backends` | dev | codex, copilot_acp, cursor_acp, omp_acp | see gotchas below |
+| `opencode` | dev | opencode (live runs only its `matrix_only` core cells) | a running `opencode serve` on the free Zen model — see "opencode lane" below |
 | `letta` | dev | letta (matrix fan; Linux-only in CI) | docker Letta server + OPENAI key — see "letta lane" below |
 | `strands` | **dev-strands-nooa** | strands | OPENAI key |
 | `nooa` | **dev-strands-nooa** | nooa | ANTHROPIC key; Python 3.12–3.13 on POSIX; Linux-only in CI |
@@ -108,7 +109,7 @@ E2E_TESTS_ENABLED=true uv run --all-packages pytest tests/e2e/baseline/ --collec
 - Always `--no-cov`. Live cells take ~10–60s each (real provisioning + LLM) — give
   generous command timeouts (a full lane can run minutes).
 - To validate the SDK across lanes end-to-end: run `core` + `google` on `dev`, then
-  switch to `dev-crewai` for `crewai`. `backends` usually needs local setup (below).
+  switch to `dev-crewai` for `crewai`. `backends` and `opencode` usually need local setup (below).
 
 ## Running lanes simultaneously
 
@@ -129,7 +130,7 @@ E2E_TESTS_ENABLED=true BAND_E2E_LANE=crewai \
   pytest tests/e2e/baseline/ -v --no-cov
 ```
 
-- The dev lanes (`core`, `google`, `backends`, `letta`) all share `dev`, so they can run
+- The dev lanes (`core`, `google`, `backends`, `opencode`, `letta`) all share `dev`, so they can run
   concurrently against the **same** `.venv` — an isolated env is only needed for the
   lanes on a conflicting extra.
 
@@ -146,21 +147,20 @@ read its pytest summary. A shell `wait` without individual statuses does
 not establish that every lane passed. Clean up processes and servers started
 by this run, including when a lane fails or is interrupted.
 
-- **`letta` and `backends` need local infrastructure** described below.
+- **`letta`, `backends` and `opencode` need local infrastructure** described below.
 - **Shared-provider rate limits** can make parallel runs counterproductive:
   core, CrewAI, and Strands all use OpenAI. Serialize those lanes when needed.
   Provisioning uses unique agent names and an age guard for orphan sweeps.
 
 ## backends lane — use the setup scripts
 
-The canonical setup is **`.github/scripts/setup-codex.sh`**,
-**`.github/scripts/setup-opencode.sh`**, `setup-copilot.sh`, `setup-cursor.sh` and
-`setup-omp.sh` (invoked by the `backends` job in `.github/workflows/e2e.yml`, gated on
-`if: matrix.lane == 'backends'`). Read them first — they are the source of truth for
-what this lane needs. They install the CLIs, authenticate/serve, and export
-`CODEX_CWD` / `E2E_CODEX_CWD_IS_DISPOSABLE` / `OPENCODE_BASE_URL` /
-`E2E_OPENCODE_BASH_ASKS` to later steps via **`$GITHUB_ENV`** (CI-only; **not** GitHub
-secrets, and the scripts won't run verbatim locally because `$GITHUB_ENV` is unset).
+The canonical setup is **`.github/scripts/setup-codex.sh`**, `setup-copilot.sh`,
+`setup-cursor.sh` and `setup-omp.sh` (invoked by the `backends` job in
+`.github/workflows/e2e.yml`, gated on `if: matrix.lane == 'backends'`). Read them
+first — they are the source of truth for what this lane needs. They install the CLIs,
+authenticate, and export `CODEX_CWD` / `E2E_CODEX_CWD_IS_DISPOSABLE` to later steps
+via **`$GITHUB_ENV`** (CI-only; **not** GitHub secrets, and the scripts won't run
+verbatim locally because `$GITHUB_ENV` is unset).
 Locally, do the equivalent:
 
 - **codex** (`setup-codex.sh`): use the pinned CLI versions in that script.
@@ -174,18 +174,6 @@ Locally, do the equivalent:
   the repository and `E2E_CODEX_CWD_IS_DISPOSABLE=true`. A temporary directory
   is valid for a run when recreated and cleaned up by that run; a saved path
   must still exist. The model default comes from `core/defaultmodels.py`.
-- **opencode** (`setup-opencode.sh`): use the script's pinned version and
-  config JSON, but put `opencode.json` only in this run's disposable server
-  working directory (the script verifies this placement across platforms).
-  Do not overwrite `~/.config/opencode/opencode.json`. Load
-  `OPENCODE_ZEN_API_KEY` from `.env.test` into the server process, start it
-  from that directory on a free loopback port, and track its process handle
-  and log. Poll `/global/health` with a bounded deadline before testing;
-  terminate and await the owned server during cleanup.
-  Set `OPENCODE_BASE_URL` to that server and declare
-  `E2E_OPENCODE_BASH_ASKS=true` only when its `bash` permission is `ask`.
-  The manual-approval smoke needs a real `permission.asked`; server rules,
-  rather than adapter `approval_mode`, determine whether it is raised.
 - **copilot_acp / cursor_acp / omp_acp** (`setup-copilot.sh`, `setup-cursor.sh`,
   `setup-omp.sh`): copilot_acp is Anthropic BYOK — the gate is the `copilot` CLI plus
   `ANTHROPIC_API_KEY`, no login; cursor_acp needs the `agent` CLI plus
@@ -200,7 +188,38 @@ Locally, do the equivalent:
   from tests.e2e.baseline.settings import BaselineSettings
   from tests.e2e.baseline.toolkit.deps import Dep, requirement_reason
   s = BaselineSettings()
-  for d in (Dep.CODEX_CLI, Dep.CODEX_CWD, Dep.OPENCODE_SERVER, Dep.COPILOT_CLI, Dep.CURSOR_CLI, Dep.OMP):
+  for d in (Dep.CODEX_CLI, Dep.CODEX_CWD, Dep.COPILOT_CLI, Dep.CURSOR_CLI, Dep.OMP):
+      r = requirement_reason(d, s); print(d.value, 'OK' if r is None else f'MISSING -> {r}')
+  "
+  ```
+
+## opencode lane — a local OpenCode server
+
+OpenCode has its own short lane: CI signs in to OpenCode Zen through GitHub OIDC for a
+one-hour token, and the free Zen quota is shared, so live OpenCode runs only its
+`matrix_only` core cells. **`.github/scripts/setup-opencode.sh`** (gated on
+`if: matrix.lane == 'opencode'`) is the source of truth; it exports
+`OPENCODE_BASE_URL` / `E2E_OPENCODE_BASH_ASKS` via `$GITHUB_ENV` (CI-only). Locally:
+
+- Use the script's pinned version and
+  config JSON, but put `opencode.json` only in this run's disposable server
+  working directory (the script verifies this placement across platforms).
+  Do not overwrite `~/.config/opencode/opencode.json`. Load
+  `OPENCODE_ZEN_API_KEY` from `.env.test` into the server process, start it
+  from that directory on a free loopback port, and track its process handle
+  and log. Poll `/global/health` with a bounded deadline before testing;
+  terminate and await the owned server during cleanup.
+  Set `OPENCODE_BASE_URL` to that server and declare
+  `E2E_OPENCODE_BASH_ASKS=true` only when its `bash` permission is `ask`.
+  The manual-approval smoke needs a real `permission.asked`; server rules,
+  rather than adapter `approval_mode`, determine whether it is raised.
+- Verify the requirement gate without spending an LLM call:
+  ```bash
+  E2E_TESTS_ENABLED=true BAND_E2E_LANE=opencode uv run --all-packages python -c "
+  from tests.e2e.baseline.settings import BaselineSettings
+  from tests.e2e.baseline.toolkit.deps import Dep, requirement_reason
+  s = BaselineSettings()
+  for d in (Dep.OPENCODE_SERVER, Dep.OPENCODE_BASH_ASKS):
       r = requirement_reason(d, s); print(d.value, 'OK' if r is None else f'MISSING -> {r}')
   "
   ```
@@ -277,9 +296,10 @@ size, not an exact total — compare it within one provider, never across provid
    (Or, to run steps 2 and 3 in parallel, use `uv run --locked --isolated` per "Running
    lanes simultaneously" — no back-and-forth `uv sync`.)
 4. `backends` (on `dev`): set up via the equivalents of the `.github/scripts/setup-*.sh`
-   scripts above (API-key codex login, running opencode server, `.env.test`
-   entries), then `BAND_E2E_LANE=backends`. `letta` (on `dev`): start the docker Letta
-   server per "letta lane", then `BAND_E2E_LANE=letta`. If either is not set up, report
+   scripts above (API-key codex login, `.env.test` entries), then
+   `BAND_E2E_LANE=backends`. `opencode` (on `dev`): start the OpenCode server per
+   "opencode lane", then `BAND_E2E_LANE=opencode`. `letta` (on `dev`): start the docker Letta
+   server per "letta lane", then `BAND_E2E_LANE=letta`. If any is not set up, report
    it as unverified locally; only current CI evidence establishes its CI result.
 5. Report exact commands, pass/fail/skip totals, and any unrun lanes. Commit/push
    only when authorized and the required checks pass.

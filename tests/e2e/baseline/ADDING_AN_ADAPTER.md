@@ -133,7 +133,8 @@ one and only place you express lane association:
 | only a provider key (`Dep.OPENAI` / `Dep.ANTHROPIC`) | `core` | `dev` |
 | `Dep.GOOGLE` | `google` | `dev` |
 | `Dep.LETTA` | `letta` | `dev` |
-| `Dep.CODEX_CLI` / `Dep.OPENCODE_SERVER` | `backends` | `dev` |
+| `Dep.CODEX_CLI` | `backends` | `dev` |
+| `Dep.OPENCODE_SERVER` | `opencode` | `dev` |
 | `Dep.CREWAI` | `crewai` | `dev-crewai` |
 
 An adapter belongs to exactly one lane: two deps naming different non-default lanes

@@ -303,30 +303,13 @@ jobs:
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-omp.sh
 
-    # Exchanges the job's OIDC token for a short-lived Zen key (no stored secret to
-    # expire). The console credential trusts only the branches it lists; client_id
-    # is public.
+    # A short-lived Zen key from the job's OIDC token (no stored secret to expire).
+    # The console credential trusts only the branches it lists.
     - name: Sign in to OpenCode Zen (opencode)
       if: matrix.lane == 'opencode'
       env:
-        AUDIENCE: https://opencode.ai/console
-        CLIENT_ID: sk_33331c61-1b4c-4d5e-b239-39e7dd87a346
-      run: |
-        oidc=$(curl -sSf --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" | jq -r .value)
-        response=$(curl -sSf https://opencode.ai/console/auth/oauth/token \
-          -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
-          -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
-          -d client_id="$CLIENT_ID" \
-          -d subject_token="$oidc")
-        token=$(jq -r '.access_token // empty' <<<"$response")
-        if [ -z "$token" ]; then
-          echo "OpenCode token exchange returned no access_token" >&2
-          exit 1
-        fi
-        echo "::add-mask::$token"
-        echo "OpenCode Zen token expires_in=$(jq -r '.expires_in // "unknown"' <<<"$response")"
-        echo "OPENCODE_ZEN_API_KEY=$token" >> "$GITHUB_ENV"
+        OPENCODE_ZEN_CLIENT_ID: sk_33331c61-1b4c-4d5e-b239-39e7dd87a346
+      run: bash .github/scripts/opencode-zen-sign-in.sh
 
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'opencode'

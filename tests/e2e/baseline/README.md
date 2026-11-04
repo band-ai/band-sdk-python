@@ -648,10 +648,11 @@ E2E_TESTS_ENABLED=true BAND_E2E_LANE=backends uv run pytest \
   tests/e2e/baseline/ -k cursor_acp -v -s --no-cov
 ```
 
-`backends` folds codex + opencode into one job (both install `dev`, differ only in
+`backends` folds the coding-agent CLIs into one job (all install `dev`, differ only in
 the backend their job stands up) so a job-per-backend isn't needed; the cost is that
-one backend failing to come up can redden the other's cells (the per-adapter report
-still shows which). `google` gets its own lane so Google free-tier rate-limit
+one backend failing to come up can redden the others' cells (the per-adapter report
+still shows which). `opencode` stands alone because CI's OIDC-issued Zen token lasts
+one hour and the free quota is shared, so its lane stays short. `google` gets its own lane so Google free-tier rate-limit
 flakiness is isolated; `letta` stands alone for the live Letta server its job stands up;
 `parlant` stands alone because its own venv can't share a resolved environment with
 `pydantic_ai` (unlike every other split above, this one is a packaging conflict, not
@@ -688,7 +689,7 @@ schedulable as-is.
 **Run locally:**
 
 ```bash
-uv sync --extra dev            # the core/google/backends/letta venv
+uv sync --extra dev            # the core/google/backends/opencode/letta venv
 BAND_E2E_LANE=core E2E_TESTS_ENABLED=true \
   uv run pytest tests/e2e/baseline/ -v -s --no-cov
 

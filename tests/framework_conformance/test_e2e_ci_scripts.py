@@ -18,8 +18,14 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
+from urllib.parse import parse_qs
 
 import pytest
 
@@ -28,6 +34,7 @@ from tests.paths import CI_SCRIPTS, REPO_ROOT
 _EMIT_LANE_MATRIX = CI_SCRIPTS / "emit-lane-matrix.py"
 _RUN_BASELINE_E2E = CI_SCRIPTS / "run-baseline-e2e.sh"
 _READ_MENTIONS = CI_SCRIPTS / "read-integrations-mentions.sh"
+_ZEN_SIGN_IN = CI_SCRIPTS / "opencode-zen-sign-in.sh"
 _RECORD_BACKENDS_ENVIRONMENT = CI_SCRIPTS / "record-backends-environment.py"
 _ROSTER = Path(".github") / "integrations-team.txt"
 
@@ -356,3 +363,139 @@ def test_cli_version_reports_not_found_and_timeout(
     _fake_cli(bin_dir, "empty-cli")
     monkeypatch.setattr(module, "VERSION_TIMEOUT_S", 30)
     assert module.cli_version("empty-cli") == "empty version output"
+
+
+# --- opencode-zen-sign-in.sh ---------------------------------------------------------------
+
+_OIDC_TOKEN = "github-oidc-jwt"
+_ZEN_KEY = "zen-short-lived-key"
+_OIDC_OK = (200, {"value": _OIDC_TOKEN})
+
+
+@dataclass
+class _SignInEndpoints:
+    """A local stand-in for GitHub's OIDC endpoint and the Zen token exchange."""
+
+    oidc: tuple[int, dict[str, object]]
+    exchange: tuple[int, dict[str, object]]
+    exchanges: list[dict[str, list[str]]] = field(default_factory=list)
+
+
+@contextmanager
+def _serving(endpoints: _SignInEndpoints) -> Iterator[str]:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self._reply(endpoints.oidc)
+
+        def do_POST(self) -> None:
+            body = self.rfile.read(int(self.headers["Content-Length"])).decode()
+            endpoints.exchanges.append(parse_qs(body))
+            self._reply(endpoints.exchange)
+
+        def _reply(self, reply: tuple[int, dict[str, object]]) -> None:
+            status, payload = reply
+            data = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def _sign_in(
+    tmp_path: Path, endpoints: _SignInEndpoints
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Run the real sign-in script against ``endpoints``; return it and $GITHUB_ENV."""
+    github_env = tmp_path / "github_env"
+    github_env.write_text("")
+    with _serving(endpoints) as base:
+        result = subprocess.run(
+            ["bash", str(_ZEN_SIGN_IN)],
+            env={
+                "PATH": os.environ["PATH"],
+                "OPENCODE_ZEN_CLIENT_ID": "client-1",
+                "ACTIONS_ID_TOKEN_REQUEST_URL": f"{base}/oidc?v=1",
+                "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
+                "OPENCODE_ZEN_TOKEN_URL": f"{base}/token",
+                "GITHUB_ENV": str(github_env),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    return result, github_env.read_text()
+
+
+@posix_shell_only
+def test_zen_sign_in_masks_and_exports_a_granted_key(tmp_path: Path) -> None:
+    endpoints = _SignInEndpoints(
+        _OIDC_OK, (200, {"access_token": _ZEN_KEY, "expires_in": 3600})
+    )
+
+    result, github_env = _sign_in(tmp_path, endpoints)
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [
+        f"::add-mask::{_ZEN_KEY}",
+        "OpenCode Zen token expires_in=3600",
+    ]
+    assert github_env == f"OPENCODE_ZEN_API_KEY={_ZEN_KEY}\n"
+    [exchange] = endpoints.exchanges
+    assert (exchange["subject_token"], exchange["client_id"]) == (
+        [_OIDC_TOKEN],
+        ["client-1"],
+    )
+
+
+@posix_shell_only
+def test_zen_sign_in_logs_a_rejection_reason_and_exports_nothing(
+    tmp_path: Path,
+) -> None:
+    rejection = {"error": "invalid_grant", "error_description": "branch not trusted"}
+
+    result, github_env = _sign_in(
+        tmp_path, _SignInEndpoints(_OIDC_OK, (400, rejection))
+    )
+
+    assert result.returncode != 0
+    assert "OpenCode Zen sign-in failed: token exchange:" in result.stderr
+    assert "branch not trusted" in result.stderr
+    assert github_env == ""
+
+
+@posix_shell_only
+def test_zen_sign_in_rejects_an_exchange_that_grants_no_key(tmp_path: Path) -> None:
+    result, github_env = _sign_in(
+        tmp_path, _SignInEndpoints(_OIDC_OK, (200, {"expires_in": 3600}))
+    )
+
+    assert result.returncode != 0
+    assert "token exchange returned no access_token" in result.stderr
+    assert github_env == ""
+
+
+@posix_shell_only
+def test_zen_sign_in_stops_before_the_exchange_without_an_oidc_token(
+    tmp_path: Path,
+) -> None:
+    endpoints = _SignInEndpoints((200, {}), (200, {"access_token": _ZEN_KEY}))
+
+    result, github_env = _sign_in(tmp_path, endpoints)
+
+    assert result.returncode != 0
+    assert "GitHub OIDC response has no token" in result.stderr
+    assert endpoints.exchanges == []
+    assert github_env == ""

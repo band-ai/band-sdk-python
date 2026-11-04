@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install + start the OpenCode server for the `backends` e2e lane.
+# Install + start the OpenCode server for the `opencode` e2e lane.
 #
 # Reads OPENCODE_ZEN_API_KEY (job env, the Zen provider key) and
 # OPENCODE_SERVE_LOG (job env, the checkout-relative server log path), and exports

@@ -129,7 +129,7 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     # rest of the provider-key adapters (and can be run/keyed separately).
     Lane.GOOGLE: Extra.DEV,
     # Letta runs the ``dev`` extra but stands up its own self-hosted server, so it
-    # gets its own lane (split out of ``backends``, which keeps codex + opencode).
+    # gets its own lane (split out of ``backends``).
     Lane.LETTA: Extra.DEV,
     # Parlant's own `griffe`/`griffelib` transitive deps collide with pydantic-ai's
     # (same import path, two distributions), so it needs its own extra entirely —
@@ -411,7 +411,7 @@ _DEPS: dict[Dep, DepSpec] = {
         _codex_cli_available, "Codex CLI not found on PATH", lane=Lane.BACKENDS
     ),
     # The Copilot CLI (unlike the self-downloading Copilot SDK) must be stood up on
-    # PATH, so its ACP backend rides the ``backends`` lane alongside codex/opencode.
+    # PATH, so its ACP backend rides the ``backends`` lane alongside codex.
     Dep.COPILOT_CLI: DepSpec(
         _copilot_cli_available, "Copilot CLI not found on PATH", lane=Lane.BACKENDS
     ),

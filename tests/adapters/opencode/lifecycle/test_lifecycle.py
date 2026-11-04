@@ -399,7 +399,8 @@ class TestLifecycle:
         )
 
         assert [m["content"] for m in room2_tools.messages_sent] == ["reply to room 2"]
-        assert held.watcher is not None and not held.watcher.done()
+        # Room 1 has only its approval request: its turn is still waiting.
+        assert [m["content"] for m in tools.messages_sent] == APPROVED_ASK_NOTICES[:1]
 
         await approve(adapter)
         await turn_finished(held)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import replace
 from typing import cast
 from unittest.mock import patch
@@ -15,10 +14,16 @@ from tests.e2e.baseline.agents import (
     WithAdapters,
     per_adapter,
 )
+from tests.e2e.baseline.scorecard import MANIFEST_PATH, load_manifest
 from tests.e2e.baseline.toolkit import adapters as adapters_module
-from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
+from tests.e2e.baseline.toolkit.adapters import Adapter, AdapterSpec, spec_for, specs
 from tests.framework_conformance.wiringitems import FakeItem, wiring_error_reason
-from tests.paths import BASELINE_DIR
+
+
+def _function_name(test: str) -> str:
+    """The test function a manifest cell names, its parameter ids stripped."""
+    return test.rsplit("::", 1)[-1].split("[", 1)[0]
+
 
 # --- e2e_pending allowlist ----------------------------------------------------------------
 
@@ -194,17 +199,24 @@ class TestAgentWiringRules:
             "live-lane follow-up."
         )
 
-    def test_matrix_only_allowlists_name_existing_tests(self) -> None:
-        """A renamed or deleted test can't silently drop out of an adapter's allowlist."""
+    @pytest.mark.parametrize(
+        "spec",
+        [spec for spec in specs() if spec.matrix_only is not None],
+        ids=lambda spec: str(spec.id),
+    )
+    def test_matrix_only_allowlist_is_exactly_the_adapters_live_cells(
+        self, spec: AdapterSpec
+    ) -> None:
+        """A renamed, deleted, or no-longer-selecting test can't silently cost the
+        adapter a live cell, and a same-named test elsewhere can't add one.
 
-        sources = "\n".join(
-            path.read_text(encoding="utf-8") for path in BASELINE_DIR.rglob("test_*.py")
-        )
-        stale = {
-            f"{spec.id}: {name}"
-            for spec in specs()
-            if spec.matrix_only is not None
-            for name in spec.matrix_only.tests
-            if not re.search(rf"def {name}\(", sources)
+        The manifest is the collected suite (``test_expected_manifest_matches_
+        collected_baseline`` keeps it so), so its passing cells are what runs.
+        """
+        assert spec.matrix_only is not None
+        live = {
+            _function_name(cell.test)
+            for cell in load_manifest(MANIFEST_PATH)
+            if cell.adapter == spec.id and cell.status == "pass"
         }
-        assert not stale, f"matrix_only names no baseline test: {sorted(stale)}"
+        assert live == spec.matrix_only.tests
