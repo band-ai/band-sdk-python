@@ -10,6 +10,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from band_sdk_core import AgentFailure
+from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.pregel import Pregel
 from pydantic import PositiveInt
@@ -487,7 +488,15 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
 
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
-            is_error = event_type == LangChainToolEvent.ERROR or bool(data.get("error"))
+            output = data.get("output")
+            is_error = (
+                event_type == LangChainToolEvent.ERROR
+                or bool(data.get("error"))
+                or (
+                    isinstance(output, ToolMessage)
+                    and langchain_tools.failed_result(output)
+                )
+            )
             payload = {
                 ToolEventKey.NAME: tool_name,
                 ToolEventKey.OUTPUT: _redacted_tool_end_output(tool_name, data),

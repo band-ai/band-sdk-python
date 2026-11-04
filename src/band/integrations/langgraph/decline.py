@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -10,18 +9,8 @@ from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.runtime import Runtime
 
+from band.integrations.langgraph.langchain_tools import failed_result
 from band.runtime.tools import TurnEffect
-from band.runtime.tools.schema import is_failed_tool_output
-
-
-def failed_result(message: ToolMessage) -> bool:
-    content = message.content
-    if isinstance(content, str):
-        try:
-            content = json.loads(content)
-        except ValueError:
-            pass
-    return message.status != "success" or is_failed_tool_output(content)
 
 
 def terminal_decline(

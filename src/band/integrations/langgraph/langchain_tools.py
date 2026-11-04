@@ -7,11 +7,12 @@ LangChain's StructuredTool format for use with LangGraph.
 
 from __future__ import annotations
 
+import json
 import logging
 import warnings
 from typing import Any
 
-from langchain_core.messages import ImageContentBlock
+from langchain_core.messages import ImageContentBlock, ToolMessage
 from langchain_core.tools import StructuredTool, ToolException
 
 from band.core.exceptions import (
@@ -49,6 +50,17 @@ PASSTHROUGH_TOOL_ERRORS = (
     TerminalProviderFailure,
     ToolException,
 )
+
+
+def failed_result(message: ToolMessage) -> bool:
+    """Identify native error status and recognized failed output."""
+    content = message.content
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except ValueError:
+            pass
+    return message.status != "success" or is_failed_tool_output(content)
 
 
 def _with_capability(

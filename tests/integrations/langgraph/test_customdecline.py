@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
+from unittest.mock import ANY
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
@@ -10,10 +12,10 @@ from langchain_core.tools import StructuredTool, ToolException
 
 from band.adapters.langgraph import LangGraphAdapter
 from band.core.exceptions import InputNotAccepted, RoomExecutionStoppedError
-from band.core.types import Emit
+from band.core.types import Emit, ToolEventKey
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import BandTool, TurnEffect
-from band.testing import FakeAgentTools, reported_failures
+from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
 from tests.integrations.langgraph.declinekit import (
     CUSTOM,
@@ -64,7 +66,19 @@ class TestPortableDecline:
             for message in state["channel_values"]["messages"]
             if isinstance(message, ToolMessage)
         ]
-        assert results[0].status == ("success" if output == SUCCESS else "error")
+        expected_result = ToolMessage(
+            content=str(output),
+            name=CUSTOM,
+            tool_call_id="decline",
+            status="success" if output == SUCCESS else "error",
+        )
+        assert results[0].status == expected_result.status
+        assert json.loads(events_of_type(tools, "tool_result")[0]["content"]) == {
+            ToolEventKey.NAME: CUSTOM,
+            ToolEventKey.OUTPUT: str(expected_result),
+            ToolEventKey.TOOL_CALL_ID: ANY,
+            ToolEventKey.IS_ERROR: output != SUCCESS,
+        }
         assert reported_failures(tools) == []
 
     @pytest.mark.parametrize("error", [ValueError(FAILURE), ToolException(FAILURE)])
