@@ -23,7 +23,13 @@ from typing_extensions import Unpack
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
-from band.core.exceptions import ProviderRunError
+from band.core.exceptions import (
+    CleanupIncompleteError,
+    InputNotAccepted,
+    ProviderRunError,
+    RoomExecutionStoppedError,
+    TerminalProviderFailure,
+)
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import sanitize_tool_schema
@@ -39,6 +45,7 @@ from band.core.types import (
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
+    declared_effect,
     execute_custom_tool,
     find_custom_tool,
 )
@@ -50,11 +57,19 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.tools.effects import turn_effect
+from band.runtime.tools.schema import (
+    format_tool_validation_error,
+    is_failed_tool_output,
+)
+from band.runtime.tools.types import TurnEffect
 
 if TYPE_CHECKING:
     from google.adk.runners import InMemoryRunner
     from google.adk.tools import ToolContext
     from google.genai import Client
+
+    from band.integrations.google_adk.decline import DeclineBatch
 
 logger = logging.getLogger(__name__)
 
@@ -240,11 +255,13 @@ def _get_tool_bridge_class() -> type:
             parameters_schema: dict[str, Any],
             tools: AgentToolsProtocol,
             custom_tools: list[CustomToolDef],
+            batch: DeclineBatch | None = None,
         ):
             super().__init__(name=tool_name, description=tool_description)
             self._parameters_schema = parameters_schema
             self._tools = tools
             self._custom_tools = custom_tools
+            self._batch = batch
 
             # Eagerly build and cache the declaration so schema errors
             # surface at construction time rather than mid-conversation.
@@ -289,32 +306,50 @@ def _get_tool_bridge_class() -> type:
             tool_context: ToolContext,
         ) -> Any:
             """Execute the tool via Band's AgentToolsProtocol."""
+            effect = TurnEffect.OBSERVE
             try:
                 custom_tool = find_custom_tool(self._custom_tools, self.name)
                 if custom_tool:
+                    effect = declared_effect(custom_tool[1]) or TurnEffect.OBSERVE
                     result = await execute_custom_tool(
                         custom_tool, args, tools=self._tools
                     )
+                    succeeded = not is_failed_tool_output(result)
                 else:
-                    result = await self._tools.execute_tool_call(self.name, args)
-
-                if not isinstance(result, str):
-                    return json.dumps(result, default=str)
-                return result
-            except ValidationError as e:
-                errors = "; ".join(
-                    f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}"
-                    for err in e.errors()
-                )
-                msg = f"Invalid arguments for {self.name}: {errors}"
-                logger.error("Tool %s validation failed: %s", self.name, msg)
-                return msg
-            except ValueError as e:
-                logger.error("Invalid arguments for %s: %s", self.name, e)
-                return str(e)
-            except Exception as e:
+                    effect = turn_effect(self.name)
+                    outcome = await self._tools.execute_tool_call_structured(
+                        self.name, args
+                    )
+                    result, succeeded = outcome.value, outcome.ok
+                if succeeded and not isinstance(result, str):
+                    result = json.dumps(result, default=str)
+            except (
+                InputNotAccepted,
+                RoomExecutionStoppedError,
+                CleanupIncompleteError,
+                TerminalProviderFailure,
+            ):
+                raise
+            except ValidationError as exc:
+                # Platform validation can raise before a structured outcome exists.
+                result = format_tool_validation_error(self.name, exc)
+                succeeded = False
+                logger.error("Tool %s validation failed", self.name)
+            except ValueError as exc:
+                logger.error("Invalid arguments for %s: %s", self.name, exc)
+                result, succeeded = str(exc), False
+            except Exception as exc:
                 logger.exception("Tool %s failed", self.name)
-                return f"Error executing {self.name}: {e}"
+                result = f"Error executing {self.name}: {exc}"
+                succeeded = False
+
+            if self._batch is not None:
+                self._batch.completed(
+                    tool_context.invocation_id, self.name, succeeded, effect
+                )
+            if not succeeded:
+                return {"ok": False, "error": result}
+            return result
 
     # Override every detected declaration method so the bridge works
     # even if ADK renames the internal API in a future minor release.
@@ -468,7 +503,9 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
 
         logger.info("Google ADK adapter started for agent: %s", agent_name)
 
-    def _build_adk_tools(self, tools: AgentToolsProtocol) -> list[Any]:
+    def _build_adk_tools(
+        self, tools: AgentToolsProtocol, batch: DeclineBatch | None = None
+    ) -> list[Any]:
         """Build ADK tool bridges from Band tool schemas."""
         ToolBridge = _get_tool_bridge_class()
         openai_schemas = tools.get_openai_tool_schemas(
@@ -485,6 +522,7 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
                     parameters_schema=func_def.get("parameters", {}),
                     tools=tools,
                     custom_tools=self._custom_tools,
+                    batch=batch,
                 )
             )
 
@@ -500,6 +538,7 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
                         parameters_schema=func_def.get("parameters", {}),
                         tools=tools,
                         custom_tools=self._custom_tools,
+                        batch=batch,
                     )
                 )
 
@@ -508,7 +547,12 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
     def _create_runner(self, tools: AgentToolsProtocol) -> InMemoryRunner:
         """Create a fresh ADK InMemoryRunner with current tools."""
         ADKAgent, InMemoryRunnerCls, _, Gemini, types = _require_adk()
-        adk_tools = self._build_adk_tools(tools)
+        from band.integrations.google_adk.decline import (  # noqa: PLC0415 -- optional google_adk dependency
+            DeclineBatch,
+        )
+
+        batch = DeclineBatch()
+        adk_tools = self._build_adk_tools(tools, batch)
 
         adk_agent = ADKAgent(
             name=_sanitize_adk_agent_name(self.agent_name),
@@ -520,6 +564,8 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
             ),
             instruction=self._system_prompt,
             tools=adk_tools,
+            before_model_callback=batch.before_model,
+            after_model_callback=batch.after_model,
         )
 
         return InMemoryRunnerCls(
@@ -824,6 +870,9 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
                         content=json.dumps(
                             {
                                 ToolEventKey.NAME: tool_name,
+                                ToolEventKey.IS_ERROR: is_failed_tool_output(
+                                    getattr(fr, "response", None)
+                                ),
                                 ToolEventKey.OUTPUT: _redacted_function_response_output(
                                     tool_name, getattr(fr, "response", None)
                                 ),
