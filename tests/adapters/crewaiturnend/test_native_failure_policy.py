@@ -7,10 +7,12 @@ from typing import Any
 import pytest
 from crewai.tools.tool_failure import ToolExecutionFailedError
 
-from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import TurnEffect
 from band.testing import failure_reports
 from tests.adapters.crewaiturnend.kit import (
+    DECLINED_RESULT,
+    WORKED_RESULT,
     DeclineInput,
     UnavailableDeclineTools,
     WorkInput,
@@ -33,7 +35,9 @@ class TestNativeFailurePolicy:
             calls.append(args.reason)
             raise ValueError("unavailable")
 
-        model = scripted_model(native, ToolCall("decline", {"reason": "try"}))
+        model = scripted_model(
+            native, ToolCall(get_custom_tool_name(DeclineInput), {"reason": "try"})
+        )
         tools = turn_tools()
 
         with pytest.raises(ToolExecutionFailedError):
@@ -58,12 +62,12 @@ class TestNativeFailurePolicy:
         @declares_turn_effect(TurnEffect.DECLINE)
         async def decline(args: DeclineInput) -> Any:
             calls.append(args.reason)
-            return "declined"
+            return DECLINED_RESULT
 
         model = scripted_model(
             native,
-            ToolCall("decline", {"reason": ["invalid"]}),
-            ToolCall("decline", {"reason": "valid"}),
+            ToolCall(get_custom_tool_name(DeclineInput), {"reason": ["invalid"]}),
+            ToolCall(get_custom_tool_name(DeclineInput), {"reason": "valid"}),
         )
         tools = turn_tools()
 
@@ -84,7 +88,9 @@ class TestNativeFailurePolicy:
             calls.append(args.reason)
             raise ValueError("unavailable")
 
-        model = scripted_model(native, ToolCall("decline", {"reason": "try"}))
+        model = scripted_model(
+            native, ToolCall(get_custom_tool_name(DeclineInput), {"reason": "try"})
+        )
         tools = turn_tools()
         await run_flow_turn(
             model, tools, custom_tools=[(DeclineInput, decline)], failure_policy="raise"
@@ -106,12 +112,12 @@ class TestNativeFailurePolicy:
         @declares_turn_effect(TurnEffect.ACT)
         async def work(args: WorkInput) -> Any:
             calls.append(args.value)
-            return "worked"
+            return WORKED_RESULT
 
         model = scripted_model(
             native,
             ToolCall("band_no_reply", {"reason": "try"}),
-            ToolCall("work", {"value": "recovered"}),
+            ToolCall(get_custom_tool_name(WorkInput), {"value": "recovered"}),
         )
         tools = UnavailableDeclineTools()
 

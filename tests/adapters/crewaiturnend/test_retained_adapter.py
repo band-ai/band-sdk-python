@@ -8,9 +8,15 @@ from typing import Any
 
 import pytest
 
-from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import TurnEffect
-from tests.adapters.crewaiturnend.kit import DeclineInput, WorkInput, scripted_model
+from tests.adapters.crewaiturnend.kit import (
+    DECLINED_RESULT,
+    WORKED_RESULT,
+    DeclineInput,
+    WorkInput,
+    scripted_model,
+)
 from tests.framework_conformance.turnprobes import (
     ToolCall,
     turn_input,
@@ -30,21 +36,25 @@ class TestRetainedAdapter:
         @declares_turn_effect(TurnEffect.DECLINE)
         async def decline(args: DeclineInput) -> Any:
             calls.append(args.reason)
-            return "declined"
+            return DECLINED_RESULT
 
         @declares_turn_effect(TurnEffect.ACT)
         async def work(args: WorkInput) -> Any:
             calls.append(args.value)
-            return "worked"
+            return WORKED_RESULT
 
-        model = scripted_model(native, ToolCall("decline", {"reason": "first"}))
+        model = scripted_model(
+            native, ToolCall(get_custom_tool_name(DeclineInput), {"reason": "first"})
+        )
         # Each independent turn gets its own ledger and unique input identity.
         async with retained_adapter(
             kind, model, [(DeclineInput, decline), (WorkInput, work)]
         ) as adapter:
             await adapter.on_event(turn_input(turn_tools()))
             model.responses.clear()
-            followup = scripted_model(native, ToolCall("work", {"value": "second"}))
+            followup = scripted_model(
+                native, ToolCall(get_custom_tool_name(WorkInput), {"value": "second"})
+            )
             model.responses.extend(followup.responses)
             second = turn_input(turn_tools(), replace(user_message(), id="second"))
             await adapter.on_event(second)
@@ -63,20 +73,20 @@ class TestRetainedAdapter:
         @declares_turn_effect(TurnEffect.DECLINE)
         async def decline(args: DeclineInput) -> Any:
             calls.append(args.reason)
-            return "declined"
+            return DECLINED_RESULT
 
         @declares_turn_effect(TurnEffect.ACT)
         async def work(args: WorkInput) -> Any:
             entered.set()
             await release.wait()
             calls.append(args.value)
-            return "worked"
+            return WORKED_RESULT
 
         # A script is shared only at the model boundary; dispatch is ordered by a gate.
         model = scripted_model(
             True,
-            ToolCall("work", {"value": "other"}),
-            ToolCall("decline", {"reason": "first"}),
+            ToolCall(get_custom_tool_name(WorkInput), {"value": "other"}),
+            ToolCall(get_custom_tool_name(DeclineInput), {"reason": "first"}),
         )
         async with retained_adapter(
             kind, model, [(DeclineInput, decline), (WorkInput, work)]

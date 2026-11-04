@@ -30,6 +30,8 @@ from tests.framework_conformance.turnprobes import (
 
 #: Memory is enabled so a script can do real work before replying.
 CAPABILITIES = frozenset({Capability.MEMORY})
+DECLINED_RESULT = "declined"
+WORKED_RESULT = "worked"
 
 TurnRunner = Callable[[ScriptedLLM, FakeAgentTools], Awaitable[None]]
 

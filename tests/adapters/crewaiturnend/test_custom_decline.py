@@ -10,6 +10,8 @@ from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import TurnEffect
 from band.testing import failure_reports
 from tests.adapters.crewaiturnend.kit import (
+    DECLINED_RESULT,
+    WORKED_RESULT,
     DeclineInput,
     WorkInput,
     legacy_terminal,
@@ -31,7 +33,7 @@ class TestCustomDecline:
         @declares_turn_effect(TurnEffect.DECLINE)
         async def decline(args: DeclineInput) -> str:
             calls.append(args.reason)
-            return "declined"
+            return DECLINED_RESULT
 
         model = scripted_model(
             native, ToolCall(get_custom_tool_name(DeclineInput), {"reason": "done"})
@@ -68,7 +70,7 @@ class TestCustomDecline:
         @declares_turn_effect(TurnEffect.ACT)
         async def work(args: WorkInput) -> str:
             calls.append(args.value)
-            return "worked"
+            return WORKED_RESULT
 
         model = scripted_model(
             native,
@@ -110,7 +112,7 @@ class TestCustomDecline:
         @declares_turn_effect(TurnEffect.ACT)
         async def work(args: WorkInput) -> str:
             calls.append(args.value)
-            return "worked"
+            return WORKED_RESULT
 
         model = scripted_model(
             native,
@@ -141,7 +143,7 @@ class TestCustomDecline:
         @declares_turn_effect(TurnEffect.ACT)
         async def work(args: WorkInput) -> str:
             calls.append(args.value)
-            return "worked"
+            return WORKED_RESULT
 
         model = scripted_model(
             native,

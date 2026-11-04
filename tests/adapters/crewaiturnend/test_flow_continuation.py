@@ -7,11 +7,18 @@ from typing import Any
 import pytest
 
 from band.adapters.crewai_flow import DirectResponseDecision
-from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import TurnEffect
 from band.testing import failure_reports
-from tests.adapters.crewaiturnend.kit import DeclineInput, run_flow_turn, scripted_model
+from tests.adapters.crewaiturnend.kit import (
+    DECLINED_RESULT,
+    DeclineInput,
+    run_flow_turn,
+    scripted_model,
+)
 from tests.framework_conformance.turnprobes import ToolCall, turn_tools
+
+OUTER_RESPONSE = "Outer response"
 
 
 class TestFlowContinuation:
@@ -24,18 +31,22 @@ class TestFlowContinuation:
         @declares_turn_effect(TurnEffect.DECLINE)
         async def decline(args: DeclineInput) -> Any:
             actions.append(args.reason)
-            return "declined"
+            return DECLINED_RESULT
 
         async def continue_flow(runtime: Any) -> Any:
             actions.append("outer action")
             # Direct runtime custom calls also return normally after a decline.
-            result = await runtime.call_tool("decline", {"reason": "direct"})
-            assert result == "declined"
+            result = await runtime.call_tool(
+                get_custom_tool_name(DeclineInput), {"reason": "direct"}
+            )
+            assert result == DECLINED_RESULT
             return DirectResponseDecision(
-                decision="direct_response", content="Outer response"
+                decision="direct_response", content=OUTER_RESPONSE
             ).model_dump()
 
-        model = scripted_model(native, ToolCall("decline", {"reason": "inner"}))
+        model = scripted_model(
+            native, ToolCall(get_custom_tool_name(DeclineInput), {"reason": "inner"})
+        )
         tools = turn_tools()
 
         await run_flow_turn(
@@ -44,5 +55,5 @@ class TestFlowContinuation:
 
         assert model.asked == 1
         assert actions == ["inner", "outer action", "direct"]
-        assert tools.chat == ["Outer response"]
+        assert tools.chat == [OUTER_RESPONSE]
         assert failure_reports(tools) == []

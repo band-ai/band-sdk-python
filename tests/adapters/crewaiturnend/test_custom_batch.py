@@ -6,9 +6,11 @@ from typing import Any
 
 import pytest
 
-from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import TurnEffect
 from tests.adapters.crewaiturnend.kit import (
+    DECLINED_RESULT,
+    WORKED_RESULT,
     DeclineInput,
     WorkInput,
     run_crewai_turn,
@@ -32,21 +34,21 @@ class TestCustomBatch:
         @declares_turn_effect(TurnEffect.DECLINE)
         async def decline(args: DeclineInput) -> Any:
             calls.append("decline")
-            return "declined"
+            return DECLINED_RESULT
 
         @declares_turn_effect(TurnEffect.ACT)
         async def work(args: WorkInput) -> Any:
             calls.append(args.value)
-            return "worked"
+            return WORKED_RESULT
 
         ordered = {
             "work-first": [
-                ToolCall("work", {"value": "work"}),
-                ToolCall("decline", {"reason": "done"}),
+                ToolCall(get_custom_tool_name(WorkInput), {"value": "work"}),
+                ToolCall(get_custom_tool_name(DeclineInput), {"reason": "done"}),
             ],
             "decline-first": [
-                ToolCall("decline", {"reason": "done"}),
-                ToolCall("work", {"value": "work"}),
+                ToolCall(get_custom_tool_name(DeclineInput), {"reason": "done"}),
+                ToolCall(get_custom_tool_name(WorkInput), {"value": "work"}),
             ],
         }
         model = ScriptedLLM(step(*ordered[order]))
@@ -73,12 +75,12 @@ class TestCustomBatch:
         @declares_turn_effect(TurnEffect.ACT)
         async def work(args: WorkInput) -> Any:
             calls.append(args.value)
-            return "worked"
+            return WORKED_RESULT
 
         model = ScriptedLLM(
             step(
-                ToolCall("decline", {"reason": "try"}),
-                ToolCall("work", {"value": "work"}),
+                ToolCall(get_custom_tool_name(DeclineInput), {"reason": "try"}),
+                ToolCall(get_custom_tool_name(WorkInput), {"value": "work"}),
             ),
             "Done.",
         )
