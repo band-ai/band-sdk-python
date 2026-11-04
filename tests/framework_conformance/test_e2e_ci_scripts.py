@@ -18,36 +18,19 @@ import os
 import shutil
 import subprocess
 import sys
-import threading
-from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
-from urllib.parse import parse_qs
 
 import pytest
 
+from tests.framework_conformance.ciscriptkit import posix_shell_only
 from tests.paths import CI_SCRIPTS, REPO_ROOT
 
 _EMIT_LANE_MATRIX = CI_SCRIPTS / "emit-lane-matrix.py"
 _RUN_BASELINE_E2E = CI_SCRIPTS / "run-baseline-e2e.sh"
 _READ_MENTIONS = CI_SCRIPTS / "read-integrations-mentions.sh"
-_ZEN_SIGN_IN = CI_SCRIPTS / "opencode-zen-sign-in.sh"
 _RECORD_BACKENDS_ENVIRONMENT = CI_SCRIPTS / "record-backends-environment.py"
 _ROSTER = Path(".github") / "integrations-team.txt"
-
-# POSIX-shell only. On Windows, `shutil.which("bash")` finds System32\bash.exe —
-# the WSL launcher, not a shell — which on a runner with no WSL distro installed
-# prints a UTF-16 "no installed distributions" notice and exits 1. So a
-# which()-based guard does not skip, it just fails confusingly. The script under
-# test only ever runs in the ubuntu-only `mark-baseline` job anyway, so a POSIX
-# shell is its real contract.
-posix_shell_only = pytest.mark.skipif(
-    sys.platform == "win32" or shutil.which("bash") is None,
-    reason="needs a POSIX bash (Windows `bash` is the WSL launcher)",
-)
 
 
 def _run_baseline(
@@ -363,167 +346,3 @@ def test_cli_version_reports_not_found_and_timeout(
     _fake_cli(bin_dir, "empty-cli")
     monkeypatch.setattr(module, "VERSION_TIMEOUT_S", 30)
     assert module.cli_version("empty-cli") == "empty version output"
-
-
-# --- opencode-zen-sign-in.sh ---------------------------------------------------------------
-
-_OIDC_TOKEN = "github-oidc-jwt"
-_ZEN_KEY = "zen-short-lived-key"
-_OIDC_OK = (200, {"value": _OIDC_TOKEN})
-_UNREACHED = (500, {})
-_SIGN_IN_FAILED = "OpenCode Zen sign-in failed: "
-
-
-@dataclass
-class _SignInEndpoints:
-    """A local stand-in for GitHub's OIDC endpoint and the Zen token exchange."""
-
-    oidc: tuple[int, dict[str, object]]
-    exchange: tuple[int, dict[str, object]]
-    oidc_requests: list[tuple[str, str | None]] = field(default_factory=list)
-    exchanges: list[dict[str, list[str]]] = field(default_factory=list)
-
-
-@contextmanager
-def _serving(endpoints: _SignInEndpoints) -> Iterator[str]:
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            endpoints.oidc_requests.append(
-                (self.path, self.headers.get("Authorization"))
-            )
-            self._reply(endpoints.oidc)
-
-        def do_POST(self) -> None:
-            body = self.rfile.read(int(self.headers["Content-Length"])).decode()
-            endpoints.exchanges.append(parse_qs(body))
-            self._reply(endpoints.exchange)
-
-        def _reply(self, reply: tuple[int, dict[str, object]]) -> None:
-            status, payload = reply
-            data = json.dumps(payload).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def log_message(self, format: str, *args: object) -> None:
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}"
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-
-
-def _sign_in(
-    tmp_path: Path, endpoints: _SignInEndpoints
-) -> tuple[subprocess.CompletedProcess[str], str]:
-    """Run the real sign-in script against ``endpoints``; return it and $GITHUB_ENV."""
-    github_env = tmp_path / "github_env"
-    github_env.write_text("")
-    with _serving(endpoints) as base:
-        result = subprocess.run(
-            ["bash", str(_ZEN_SIGN_IN)],
-            env={
-                "PATH": os.environ["PATH"],
-                "OPENCODE_ZEN_CLIENT_ID": "client-1",
-                "ACTIONS_ID_TOKEN_REQUEST_URL": f"{base}/oidc?v=1",
-                "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
-                "OPENCODE_ZEN_TOKEN_URL": f"{base}/token",
-                "GITHUB_ENV": str(github_env),
-            },
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    return result, github_env.read_text()
-
-
-@posix_shell_only
-def test_zen_sign_in_masks_and_exports_a_granted_key(tmp_path: Path) -> None:
-    endpoints = _SignInEndpoints(
-        _OIDC_OK, (200, {"access_token": _ZEN_KEY, "expires_in": 3600})
-    )
-
-    result, github_env = _sign_in(tmp_path, endpoints)
-
-    assert result.returncode == 0
-    assert result.stdout.splitlines() == [
-        f"::add-mask::{_ZEN_KEY}",
-        "OpenCode Zen token expires_in=3600",
-    ]
-    assert github_env == f"OPENCODE_ZEN_API_KEY={_ZEN_KEY}\n"
-    assert endpoints.oidc_requests == [
-        ("/oidc?v=1&audience=https://opencode.ai/console", "Bearer request-token")
-    ]
-    assert endpoints.exchanges == [
-        {
-            "grant_type": ["urn:ietf:params:oauth:grant-type:token-exchange"],
-            "subject_token_type": ["urn:ietf:params:oauth:token-type:jwt"],
-            "client_id": ["client-1"],
-            "subject_token": [_OIDC_TOKEN],
-        }
-    ]
-
-
-@posix_shell_only
-def test_zen_sign_in_logs_a_rejection_reason_and_exports_nothing(
-    tmp_path: Path,
-) -> None:
-    rejection = {"error": "invalid_grant", "error_description": "branch not trusted"}
-
-    result, github_env = _sign_in(
-        tmp_path, _SignInEndpoints(_OIDC_OK, (400, rejection))
-    )
-
-    assert result.returncode == 1
-    assert f"{_SIGN_IN_FAILED}token exchange:" in result.stderr
-    assert "branch not trusted" in result.stderr
-    assert github_env == ""
-
-
-@posix_shell_only
-def test_zen_sign_in_rejects_an_exchange_that_grants_no_key(tmp_path: Path) -> None:
-    result, github_env = _sign_in(
-        tmp_path, _SignInEndpoints(_OIDC_OK, (200, {"expires_in": 3600}))
-    )
-
-    assert result.returncode == 1
-    assert f"{_SIGN_IN_FAILED}token exchange returned no access_token" in result.stderr
-    assert github_env == ""
-
-
-@posix_shell_only
-def test_zen_sign_in_stops_before_the_exchange_without_an_oidc_token(
-    tmp_path: Path,
-) -> None:
-    endpoints = _SignInEndpoints((200, {}), _UNREACHED)
-
-    result, github_env = _sign_in(tmp_path, endpoints)
-
-    assert result.returncode == 1
-    assert f"{_SIGN_IN_FAILED}GitHub OIDC response has no token" in result.stderr
-    assert endpoints.exchanges == []
-    assert github_env == ""
-
-
-@posix_shell_only
-def test_zen_sign_in_logs_a_refused_oidc_request_and_skips_the_exchange(
-    tmp_path: Path,
-) -> None:
-    refusal = {"message": "Unable to get ACTIONS_ID_TOKEN_REQUEST_URL"}
-    endpoints = _SignInEndpoints((403, refusal), _UNREACHED)
-
-    result, github_env = _sign_in(tmp_path, endpoints)
-
-    assert result.returncode == 1
-    assert f"{_SIGN_IN_FAILED}GitHub OIDC request:" in result.stderr
-    assert refusal["message"] in result.stderr
-    assert endpoints.exchanges == []
-    assert github_env == ""

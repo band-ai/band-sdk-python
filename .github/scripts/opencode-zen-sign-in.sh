@@ -14,6 +14,7 @@ set -euo pipefail
 : "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?the job needs id-token: write}"
 : "${GITHUB_ENV:?GITHUB_ENV is required}"
 console_url="https://opencode.ai/console"
+request_timeout_s=30
 token_url="${OPENCODE_ZEN_TOKEN_URL:-$console_url/auth/oauth/token}"
 
 fail() {
@@ -21,21 +22,21 @@ fail() {
   exit 1
 }
 
-oidc_response=$(curl -sS --fail-with-body --max-time 30 \
+oidc_response=$(curl -sS --fail-with-body --max-time "$request_timeout_s" \
   --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
   "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$console_url") ||
   fail "GitHub OIDC request: $oidc_response"
 oidc=$(jq -er '.value // empty' <<<"$oidc_response") ||
   fail "GitHub OIDC response has no token"
 
-response=$(curl -sS --fail-with-body --max-time 30 "$token_url" \
+response=$(curl -sS --fail-with-body --max-time "$request_timeout_s" "$token_url" \
   -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
   -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
   -d client_id="$OPENCODE_ZEN_CLIENT_ID" \
   -d subject_token="$oidc") ||
   fail "token exchange: $response"
 token=$(jq -er '.access_token // empty' <<<"$response") ||
-  fail "token exchange returned no access_token"
+  fail "token exchange returned no access_token (keys: $(jq -c keys <<<"$response" 2>/dev/null || echo 'not JSON'))"
 
 echo "::add-mask::$token"
 echo "OpenCode Zen token expires_in=$(jq -r '.expires_in // "unknown"' <<<"$response")"
