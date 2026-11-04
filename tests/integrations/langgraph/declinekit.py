@@ -61,6 +61,7 @@ class DeclineTools(FakeAgentTools):
 
 
 CUSTOM = "customdecline"
+REASON = "FYI"
 SUCCESS = "settled"
 FAILURE = "decline rejected"
 
@@ -79,7 +80,7 @@ def tool_response(
 ) -> dict[str, Any]:
     return {
         "name": name,
-        "args": {"reason": "FYI"} if arguments is None else arguments,
+        "args": {"reason": REASON} if arguments is None else arguments,
         "id": call_id,
     }
 

@@ -15,6 +15,7 @@ from band.runtime.custom_tools import declared_effect, declares_turn_effect
 from band.runtime.tools import TurnEffect
 
 CUSTOM = "customdecline"
+REASON = "FYI"
 SUCCESS = "settled"
 FAILURE = "decline rejected"
 

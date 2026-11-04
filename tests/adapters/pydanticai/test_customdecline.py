@@ -21,6 +21,7 @@ from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.adapters.pydanticai.declinepeer import (
     CUSTOM,
     FAILURE,
+    REASON,
     SUCCESS,
     CustomDeclineInput,
     ScriptedModel,
@@ -44,7 +45,7 @@ class TestCustomDecline:
             calls.append(inp.reason)
             return SUCCESS
 
-        model = ScriptedModel([(CUSTOM, {"reason": "FYI"})], [(BandTool.NO_REPLY, {})])
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})], [(BandTool.NO_REPLY, {})])
         adapter = PydanticAIAdapter(
             llm=model.model, additional_tools=[register(decline)]
         )
@@ -58,7 +59,7 @@ class TestCustomDecline:
                 if isinstance(event, AgentRunResultEvent):
                     results.append(event.result)
         assert len(model.requests) == 1
-        assert calls == ["FYI"]
+        assert calls == [REASON]
         assert results[0].output is None
         assert [
             (part.tool_name, part.content, part.outcome)
@@ -79,7 +80,7 @@ class TestCustomDecline:
             calls.append(inp.reason)
             return output
 
-        model = ScriptedModel([(CUSTOM, {"reason": "FYI"})], [(BandTool.NO_REPLY, {})])
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})], [(BandTool.NO_REPLY, {})])
         adapter = PydanticAIAdapter(
             llm=model.model, additional_tools=[register(decline)], emit=Emit.TOOL_CALLS
         )
@@ -87,7 +88,7 @@ class TestCustomDecline:
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
         assert len(model.requests) == 2
-        assert calls == ["FYI"]
+        assert calls == [REASON]
         assert json.loads(events_of_type(tools, "tool_result")[0]["content"]) == {
             ToolEventKey.NAME: CUSTOM,
             ToolEventKey.OUTPUT: str(output),
@@ -104,7 +105,7 @@ class TestCustomDecline:
         async def decline(inp: CustomDeclineInput) -> str:
             raise ValueError(FAILURE)
 
-        model = ScriptedModel([(CUSTOM, {"reason": "FYI"})], [(BandTool.NO_REPLY, {})])
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})], [(BandTool.NO_REPLY, {})])
         adapter = PydanticAIAdapter(
             llm=model.model, additional_tools=[register(decline)]
         )
@@ -123,7 +124,7 @@ class TestCustomDecline:
         async def decline(inp: CustomDeclineInput) -> str:
             raise ModelRetry(FAILURE)
 
-        model = ScriptedModel([(CUSTOM, {"reason": "FYI"})], [(BandTool.NO_REPLY, {})])
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})], [(BandTool.NO_REPLY, {})])
         adapter = PydanticAIAdapter(
             llm=model.model, additional_tools=[register(decline)]
         )
@@ -150,7 +151,7 @@ class TestCustomDecline:
             calls.append(inp.reason)
             return SUCCESS
 
-        model = ScriptedModel([(CUSTOM, {"reason": "FYI"})], [(BandTool.NO_REPLY, {})])
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})], [(BandTool.NO_REPLY, {})])
         adapter = PydanticAIAdapter(
             llm=model.model, additional_tools=[register(decline)], emit=Emit.TOOL_CALLS
         )
@@ -169,7 +170,7 @@ class TestCustomDecline:
             replace(turn_input(next_tools), is_session_bootstrap=False)
         )
         assert len(model.requests) == 2
-        assert calls == ["FYI"]
+        assert calls == [REASON]
         assert next_tools.turn.replied
         assert [
             (part.tool_name, part.content)
@@ -190,7 +191,7 @@ class TestCustomDecline:
         async def decline(inp: CustomDeclineInput) -> str:
             return SUCCESS
 
-        model = ScriptedModel([(CUSTOM, {"reason": "FYI"})], [(BandTool.NO_REPLY, {})])
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})], [(BandTool.NO_REPLY, {})])
         adapter = PydanticAIAdapter(
             llm=model.model, additional_tools=[register(decline)]
         )
@@ -224,7 +225,7 @@ class TestCustomDecline:
             return sibling_output
 
         model = ScriptedModel(
-            [(CUSTOM, {"reason": "FYI"}), ("work", {})],
+            [(CUSTOM, {"reason": REASON}), ("work", {})],
             [(BandTool.NO_REPLY, {})],
             [(BandTool.NO_REPLY, {})],
         )
@@ -262,7 +263,7 @@ class TestCustomDecline:
             observed.append(tools.turn.replied)
             return SUCCESS
 
-        model = ScriptedModel([(CUSTOM, {"reason": "FYI"})], [("recover", {})], [])
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})], [("recover", {})], [])
         adapter = PydanticAIAdapter(
             llm=model.model,
             additional_tools=[register(decline), recover],
@@ -312,7 +313,7 @@ class TestCustomDecline:
         async def band_no_reply(reason: str) -> str:
             raise AssertionError("conflicting custom handler executed")
 
-        model = ScriptedModel([(BandTool.NO_REPLY, {"reason": "FYI"})])
+        model = ScriptedModel([(BandTool.NO_REPLY, {"reason": REASON})])
         adapter = PydanticAIAdapter(llm=model.model, additional_tools=[band_no_reply])
         with pytest.raises(UserError, match="Tool name conflicts"):
             await adapter.on_started("Bot", "Bot")
@@ -329,7 +330,7 @@ class TestCustomDecline:
         async def decline(inp: CustomDeclineInput) -> str:
             return SUCCESS
 
-        model = ScriptedModel([(CUSTOM, {"reason": "FYI"})], [(BandTool.NO_REPLY, {})])
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})], [(BandTool.NO_REPLY, {})])
         adapter = PydanticAIAdapter(
             llm=model.model, additional_tools=[register(decline)], emit=emit
         )

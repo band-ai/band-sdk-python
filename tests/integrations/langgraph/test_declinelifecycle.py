@@ -14,6 +14,7 @@ from band.runtime.tools import BandTool, TurnEffect
 from band.testing import FakeAgentTools, reported_failures
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input, user_message
 from tests.integrations.langgraph.declinekit import (
+    REASON,
     SUCCESS,
     CustomDeclineInput,
     ScriptedModel,
@@ -132,6 +133,6 @@ class TestDeclineLifecycle:
             replace(turn_input(next_tools), is_session_bootstrap=False)
         )
         assert model.requests == 2
-        assert executed == ["FYI"]
+        assert executed == [REASON]
         assert next_tools.turn.replied
         assert reported_failures(tools) == reported_failures(next_tools) == []

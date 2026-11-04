@@ -21,6 +21,7 @@ from tests.framework_conformance.turnprobes import ROOM_ID, turn_input, user_mes
 from tests.integrations.gemini.peer import (
     CUSTOM,
     FAILURE,
+    REASON,
     SUCCESS,
     WORK,
     CustomDeclineInput,
@@ -79,7 +80,7 @@ class TestDeclaredDecline:
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
         assert len(peer.requests) == expected_requests
-        assert executed == ["FYI"]
+        assert executed == [REASON]
         assert recorded_usage_payloads(tools) == [
             {
                 "input_tokens": 7 * len(peer.requests),
@@ -278,7 +279,7 @@ class TestDeclaredDecline:
             replace(turn_input(next_tools), is_session_bootstrap=False)
         )
         assert len(peer.requests) == 2
-        assert executed == ["FYI"]
+        assert executed == [REASON]
         assert next_tools.turn.replied
         assert reported_failures(next_tools) == []
 

@@ -10,6 +10,7 @@ import httpx2
 from pydantic import BaseModel
 
 CUSTOM = "customdecline"
+REASON = "FYI"
 SUCCESS = "settled"
 FAILURE = "decline rejected"
 
@@ -55,7 +56,7 @@ def call(
         "type": "tool_use",
         "id": call_id,
         "name": name,
-        "input": {"reason": "FYI"} if arguments is None else arguments,
+        "input": {"reason": REASON} if arguments is None else arguments,
     }
 
 

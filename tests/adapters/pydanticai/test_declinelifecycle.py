@@ -15,6 +15,7 @@ from band.runtime.tools import BandTool, TurnEffect
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.pydanticai.declinepeer import (
     CUSTOM,
+    REASON,
     SUCCESS,
     CustomDeclineInput,
     ScriptedModel,
@@ -40,7 +41,7 @@ class TestDeclineLifecycle:
             finally:
                 finished.set()
 
-        model = ScriptedModel([(CUSTOM, {"reason": "FYI"})], [(BandTool.NO_REPLY, {})])
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})], [(BandTool.NO_REPLY, {})])
         adapter = PydanticAIAdapter(
             llm=model.model, additional_tools=[register(decline)]
         )
@@ -80,7 +81,7 @@ class TestDeclineLifecycle:
             finally:
                 finished.set()
 
-        model = ScriptedModel([(CUSTOM, {"reason": "FYI"})])
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})])
         adapter = PydanticAIAdapter(
             llm=model.model, additional_tools=[register(decline)]
         )

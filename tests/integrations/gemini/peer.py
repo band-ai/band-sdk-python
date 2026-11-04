@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel
 
 CUSTOM = "customdecline"
+REASON = "FYI"
 SUCCESS = "settled"
 FAILURE = "decline rejected"
 
@@ -52,7 +53,7 @@ def call(
         "functionCall": {
             "id": call_id,
             "name": name,
-            "args": {"reason": "FYI"} if arguments is None else arguments,
+            "args": {"reason": REASON} if arguments is None else arguments,
         }
     }
 

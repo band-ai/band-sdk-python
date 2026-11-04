@@ -21,6 +21,7 @@ from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
 from tests.integrations.langgraph.declinekit import (
     CUSTOM,
     FAILURE,
+    REASON,
     SUCCESS,
     CustomDeclineInput,
     ScriptedModel,
@@ -80,7 +81,7 @@ class TestPortableDecline:
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
         assert model.requests == expected_requests
-        assert calls == ["FYI"]
+        assert calls == [REASON]
         expected_result = ToolMessage(
             content=expected_content,
             name=CUSTOM,
@@ -175,7 +176,7 @@ class TestPortableDecline:
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
         assert model.requests == 3
-        assert executed == ["FYI"]
+        assert executed == [REASON]
         assert tools.tool_calls == [
             {
                 "tool_name": BandTool.SEND_MESSAGE,
