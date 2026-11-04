@@ -194,6 +194,16 @@ DECLINED = {
 #: Raises one ask on a room's approvals.
 RaiseAsk = Callable[[RoomApprovals, AskFactory], Awaitable[None]]
 
+ASK_ID = "ask-1"
+
+
+def raise_permission(room: RoomApprovals, asks: AskFactory) -> Awaitable[None]:
+    return room.on_permission_asked(asks.permission(ASK_ID))
+
+
+def raise_question(room: RoomApprovals, asks: AskFactory) -> Awaitable[None]:
+    return room.on_question_asked(asks.question(ASK_ID))
+
 
 @dataclass(frozen=True)
 class ExpiryCase:
@@ -208,14 +218,14 @@ class ExpiryCase:
 EXPIRY_CASES = {
     "permission": ExpiryCase(
         operation="permission",
-        raise_ask=lambda room, asks: room.on_permission_asked(asks.permission("ask-1")),
+        raise_ask=raise_permission,
         sent=lambda client: [r["reply"] for r in client.permission_replies],
         expired_reply="reject",
     ),
     "question": ExpiryCase(
         operation="reject",
-        raise_ask=lambda room, asks: room.on_question_asked(asks.question("ask-1")),
+        raise_ask=raise_question,
         sent=declined_questions,
-        expired_reply="ask-1",
+        expired_reply=ASK_ID,
     ),
 }

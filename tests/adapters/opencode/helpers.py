@@ -773,3 +773,11 @@ def answered_questions(client: FakeOpencodeClient) -> list[tuple[str, list[list[
         for r in client.question_replies
         if not _is_decline(r)
     ]
+
+
+def replies_sent(client: FakeOpencodeClient) -> list[tuple[str, Any]]:
+    """Every reply OpenCode received, declines included, as (request id,
+    permission reply or question answers)."""
+    return [(r["permission_id"], r["reply"]) for r in client.permission_replies] + [
+        (r["request_id"], r["answers"]) for r in client.question_replies
+    ]

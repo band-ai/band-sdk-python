@@ -108,9 +108,8 @@ class RoomApprovals:
         self, registry: DecisionRegistry[PendingT], request_id: str
     ) -> DecisionEntry[PendingT] | None:
         """Claim an entry, releasing the human-wait clock if it was the last
-        one parked. ``None`` when another claimant (a reply or the expiry)
-        already holds it, or it's gone; either way the caller must not touch
-        it."""
+        one parked. ``None`` when another claimant already holds it, or it's
+        gone; either way the caller must not touch it."""
         if (entry := registry.try_claim(request_id)) is not None:
             self._release_if_idle()
         return entry

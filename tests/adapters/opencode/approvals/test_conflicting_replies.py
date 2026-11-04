@@ -9,16 +9,21 @@ import pytest
 from band.adapters.opencode import OpencodeAdapterConfig
 from band.adapters.opencode.approvals.wording import (
     APPROVAL_NO_LONGER_PENDING_TEMPLATE,
+    APPROVAL_TIMED_OUT_TEMPLATE,
     DECLINED_QUESTION_ANSWER,
     QUESTION_NO_LONGER_PENDING_TEMPLATE,
+    QUESTION_TIMED_OUT_TEMPLATE,
 )
-from band.testing import FakeAgentTools
-from tests.adapters.audiences import ROOM_MEMBERS
+from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.audiences import ALICE, BOB, ROOM_MEMBERS
 from tests.adapters.opencode.approvals.kit import (
+    ASK_ID,
     BlockingReplyClient,
     RaiseAsk,
     ReplyOperation,
     make_room_approvals,
+    raise_permission,
+    raise_question,
 )
 from tests.adapters.opencode.conftest import ParkRoom
 from tests.adapters.opencode.helpers import (
@@ -26,21 +31,17 @@ from tests.adapters.opencode.helpers import (
     PERMISSION_ASK,
     QUESTION_ASK,
     AskFactory,
-    FakeOpencodeClient,
     RawOpencodeEvent,
     notice_to,
+    replies_sent,
     room_reply,
     tools_protocol,
 )
 
-LOSER = "user-2"
 
-
-def replies_sent(client: FakeOpencodeClient) -> list[tuple[str, Any]]:
-    """Every reply OpenCode received, as (request id, reply or answers)."""
-    return [
-        (reply["permission_id"], reply["reply"]) for reply in client.permission_replies
-    ] + [(reply["request_id"], reply["answers"]) for reply in client.question_replies]
+def error_notices(tools: FakeAgentTools) -> list[str]:
+    """The content of every error event posted on ``tools``."""
+    return [event["content"] for event in events_of_type(tools, "error")]
 
 
 class TestConflictingReplies:
@@ -48,21 +49,21 @@ class TestConflictingReplies:
         ("raise_ask", "operation", "claim", "conflicting", "notice", "sent"),
         [
             pytest.param(
-                lambda room, asks: room.on_permission_asked(asks.permission("req-1")),
+                raise_permission,
                 "permission",
-                "approve req-1",
-                "reject req-1",
-                APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(request_id="req-1"),
-                [("req-1", "once")],
+                f"approve {ASK_ID}",
+                f"reject {ASK_ID}",
+                APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(request_id=ASK_ID),
+                [(ASK_ID, "once")],
                 id="permission",
             ),
             pytest.param(
-                lambda room, asks: room.on_question_asked(asks.question("q-1")),
+                raise_question,
                 "question",
                 "Alice",
-                "reject q-1",
-                QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1"),
-                [("q-1", [["Alice"]])],
+                f"reject {ASK_ID}",
+                QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id=ASK_ID),
+                [(ASK_ID, [["Alice"]])],
                 id="question",
             ),
         ],
@@ -86,27 +87,30 @@ class TestConflictingReplies:
         await raise_ask(approvals, asks)
         during, after = (FakeAgentTools(participants=ROOM_MEMBERS) for _ in range(2))
 
-        async with client.held(operation, approvals.try_handle_reply(claim, "user-1")):
+        async with client.held(
+            operation, approvals.try_handle_reply(claim, ALICE["id"])
+        ):
             assert await approvals.try_handle_reply(
-                conflicting, LOSER, tools_protocol(during)
+                conflicting, BOB["id"], tools_protocol(during)
             )
         assert await approvals.try_handle_reply(
-            conflicting, LOSER, tools_protocol(after)
+            conflicting, BOB["id"], tools_protocol(after)
         )
 
-        assert during.messages_sent == [notice_to(LOSER, notice)]
+        assert during.messages_sent == [notice_to(BOB["id"], notice)]
         assert after.messages_sent == during.messages_sent
         assert replies_sent(client) == sent
 
     @pytest.mark.looptime
     @pytest.mark.parametrize(
-        ("ask", "operation", "conflicting", "notice", "sent"),
+        ("ask", "operation", "conflicting", "notice", "timed_out", "sent"),
         [
             pytest.param(
                 PERMISSION_ASK,
                 "permission",
                 "approve req-1",
                 APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(request_id="req-1"),
+                APPROVAL_TIMED_OUT_TEMPLATE.format(request_id="req-1", reply="reject"),
                 [("req-1", "reject")],
                 id="permission",
             ),
@@ -115,6 +119,7 @@ class TestConflictingReplies:
                 "reject",
                 "reject q-1",
                 QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1"),
+                QUESTION_TIMED_OUT_TEMPLATE.format(request_id="q-1"),
                 [("q-1", [[DECLINED_QUESTION_ANSWER]])],
                 id="question",
             ),
@@ -128,6 +133,7 @@ class TestConflictingReplies:
         operation: ReplyOperation,
         conflicting: str,
         notice: str,
+        timed_out: str,
         sent: list[tuple[str, Any]],
     ) -> None:
         """An ask's wait expires and its timeout reply is still being sent when
@@ -149,9 +155,10 @@ class TestConflictingReplies:
 
         async with client.held(operation):
             assert await adapter.try_handle_control(
-                room_reply(conflicting, LOSER), tools_protocol(reply_tools)
+                room_reply(conflicting, BOB["id"]), tools_protocol(reply_tools)
             )
-        await tools.until(lambda: bool(tools.events_sent))
+        await tools.until(lambda: bool(error_notices(tools)))
 
-        assert reply_tools.messages_sent == [notice_to(LOSER, notice)]
+        assert error_notices(tools) == [timed_out]
+        assert reply_tools.messages_sent == [notice_to(BOB["id"], notice)]
         assert replies_sent(client) == sent
