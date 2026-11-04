@@ -75,6 +75,8 @@ AGENT_ID = "agent-123"
 ROOM_ID = "room-123"
 SENDER_ID = "user-1"
 EPOCH = datetime(2024, 1, 1, tzinfo=UTC)
+# A resync interval no test outlasts: only an explicit wake brings a pass.
+NO_PERIODIC_WAKE_S = 3600.0
 # The longest a test waits for something that must happen, and for a stop.
 WAIT_SECONDS = 5.0
 STOP_SECONDS = 2.0

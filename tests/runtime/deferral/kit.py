@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from band.core.exceptions import InputNotAccepted
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn_lifecycle import bind_turn_task
 from tests.runtime.helpers import ROOM_ID
 
 
@@ -61,6 +63,35 @@ class FailureThenBusyAdapter(ApprovalAdapter):
         self.failure_attempts += 1
         self.busy = True
         raise OSError("provider transport uncertainty")
+
+
+class EndsWhileRefusingAdapter(SimpleAdapter[Any]):
+    """A released turn that ends while the room is still refusing the next input."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.completed: list[str] = []
+        self._finish = asyncio.Event()
+        self._released: asyncio.Task[None] | None = None
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        released = self._released
+        if released is None:
+            tools.turn.detach()
+            self._released = asyncio.create_task(self._finish_turn(msg.id, tools))
+            bind_turn_task(tools, self._released)
+            return
+        if not released.done():
+            self._finish.set()
+            await asyncio.wait({released})
+            raise InputNotAccepted()
+        self.completed.append(msg.id)
+        tools.turn.settle()
+
+    async def _finish_turn(self, message_id: str, tools: Any) -> None:
+        await self._finish.wait()
+        self.completed.append(message_id)
+        tools.turn.settle()
 
 
 def envelope(message_id: str) -> dict[str, Any]:
