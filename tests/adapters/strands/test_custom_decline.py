@@ -16,7 +16,7 @@ from band.core.types import Emit
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
 from band.testing import FakeAgentTools, TextTurn, ToolTurn, failure_reports
-from tests.adapters.strands.declinepeer import DeclineModel, results
+from tests.adapters.strands.declinepeer import DeclineModel, NativeStatus, results
 from tests.adapters.strands.kit import SEND_TURN, _run_message, run_judged_turn
 
 
@@ -36,7 +36,7 @@ class TestCustomDecline:
             calls.append(note)
             return note
 
-        model = DeclineModel([ToolTurn("decline", {"note": "declined"})])
+        model = DeclineModel([ToolTurn("decline", {"note": "declined"}), TextTurn("")])
         adapter = StrandsAdapter(
             llm=model, additional_tools=[custom_decline_tools(decline)[kind]], emit=emit
         )
@@ -47,15 +47,19 @@ class TestCustomDecline:
 
         assert len(model.requests) == 1
         assert calls == ["declined"]
-        assert results(adapter._message_history["room-1"]) == [
+        assert tools.turn.replied
+        assert failure_reports(tools) == []
+
+        await _run_message(adapter, FakeAgentTools(), is_session_bootstrap=False)
+
+        assert len(model.requests) == 2
+        assert results(model.requests[1]) == [
             {
                 "toolUseId": "call-decline",
-                "status": "success",
+                "status": NativeStatus.SUCCESS,
                 "content": [{"text": "declined"}],
             }
         ]
-        assert tools.turn.replied
-        assert failure_reports(tools) == []
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind", ["portable", "native"])

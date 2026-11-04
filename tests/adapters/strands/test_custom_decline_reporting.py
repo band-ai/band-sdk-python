@@ -9,10 +9,12 @@ import pytest
 
 pytest.importorskip("strands", reason="strands extra not installed")
 
+from strands.types.tools import ToolResult
+
 from band.adapters.strands import StrandsAdapter
 from band.core.types import Emit
 from band.testing import FakeAgentTools, TextTurn, ToolTurn
-from tests.adapters.strands.declinepeer import DeclineModel, results
+from tests.adapters.strands.declinepeer import DeclineModel, NativeStatus, results
 from tests.adapters.strands.kit import _run_message
 
 
@@ -21,10 +23,32 @@ class TestCustomDeclineReporting:
     @pytest.mark.parametrize("kind", ["portable", "native"])
     @pytest.mark.parametrize("emit", [(), (Emit.TOOL_CALLS,)])
     @pytest.mark.parametrize(
-        ("output", "status", "replied", "requests"),
+        ("output", "expected", "replied", "requests"),
         [
-            ("declined", "success", True, 1),
-            ({"ok": False}, "error", False, 2),
+            (
+                "declined",
+                [
+                    {
+                        "toolUseId": "call-decline",
+                        "status": NativeStatus.SUCCESS,
+                        "content": [{"text": "declined"}],
+                    }
+                ],
+                True,
+                1,
+            ),
+            (
+                {"ok": False},
+                [
+                    {
+                        "toolUseId": "call-decline",
+                        "status": NativeStatus.ERROR,
+                        "content": [{"text": '{"ok": false}'}],
+                    }
+                ],
+                False,
+                2,
+            ),
         ],
     )
     async def test_failed_event_transport_preserves_status_and_stopping(
@@ -32,7 +56,7 @@ class TestCustomDeclineReporting:
         kind: str,
         emit: tuple[Emit, ...],
         output: Any,
-        status: str,
+        expected: list[ToolResult],
         replied: bool,
         requests: int,
         custom_decline_tools: Callable[..., Any],
@@ -40,7 +64,9 @@ class TestCustomDeclineReporting:
         async def decline(note: str) -> Any:
             return output
 
-        model = DeclineModel([ToolTurn("decline", {"note": "go"}), TextTurn("")])
+        model = DeclineModel(
+            [ToolTurn("decline", {"note": "go"}), TextTurn(""), TextTurn("")]
+        )
         adapter = StrandsAdapter(
             llm=model, additional_tools=[custom_decline_tools(decline)[kind]], emit=emit
         )
@@ -51,6 +77,10 @@ class TestCustomDeclineReporting:
         await _run_message(adapter, tools)
 
         assert len(model.requests) == requests
-        assert results(adapter._message_history["room-1"])[0]["status"] == status
         assert tools.turn.replied is replied
         assert tools.turn.complete is replied
+
+        await _run_message(adapter, FakeAgentTools(), is_session_bootstrap=False)
+
+        assert len(model.requests) == requests + 1
+        assert results(model.requests[requests]) == expected

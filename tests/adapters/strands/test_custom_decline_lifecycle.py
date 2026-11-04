@@ -21,7 +21,7 @@ from band.testing import (
     events_of_type,
     failure_reports,
 )
-from tests.adapters.strands.declinepeer import DeclineModel, results
+from tests.adapters.strands.declinepeer import DeclineModel, NativeStatus, results
 from tests.adapters.strands.kit import SEND_TURN, _run_message, run_judged_turn
 
 
@@ -53,6 +53,8 @@ class TestCustomDeclineLifecycle:
                 ),
                 SEND_TURN,
                 TextTurn(""),
+                TextTurn(""),
+                TextTurn(""),
             ]
         )
         adapter = StrandsAdapter(
@@ -75,14 +77,35 @@ class TestCustomDeclineLifecycle:
             await task
 
         assert len(model.requests) == 3
-        assert [
-            result["toolUseId"]
-            for result in results(adapter._message_history["room-1"])
-        ] == ["call-decline", "call-work"]
-        assert [
-            result["toolUseId"]
-            for result in results(adapter._message_history["room-2"])
-        ] == ["call-band_send_message"]
+        await _run_message(adapter, first, room_id="room-1", is_session_bootstrap=False)
+        await _run_message(
+            adapter, second, room_id="room-2", is_session_bootstrap=False
+        )
+
+        assert len(model.requests) == 5
+        assert results(model.requests[3]) == [
+            {
+                "toolUseId": "call-decline",
+                "status": NativeStatus.SUCCESS,
+                "content": [{"text": "declined"}],
+            },
+            {
+                "toolUseId": "call-work",
+                "status": NativeStatus.SUCCESS,
+                "content": [{"text": "worked"}],
+            },
+        ]
+        assert results(model.requests[4]) == [
+            {
+                "toolUseId": "call-band_send_message",
+                "status": NativeStatus.SUCCESS,
+                "content": [
+                    {
+                        "text": '{"id": "msg-0", "recipients": [{"handle": "tester", "id": "tester", "name": null}], "success": true}'
+                    }
+                ],
+            },
+        ]
         assert failure_reports(first) == failure_reports(second) == []
 
     @pytest.mark.asyncio

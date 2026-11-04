@@ -20,7 +20,7 @@ from band.testing import (
     events_of_type,
     failure_reports,
 )
-from tests.adapters.strands.declinepeer import DeclineModel, results
+from tests.adapters.strands.declinepeer import DeclineModel, NativeStatus, results
 from tests.adapters.strands.kit import SEND_TURN, _run_message, run_judged_turn
 
 
@@ -57,7 +57,7 @@ class TestCustomDeclineFailure:
 
         expected = {
             "toolUseId": "call-decline",
-            "status": "error",
+            "status": NativeStatus.ERROR,
             "content": [
                 {"text": output if isinstance(output, str) else json.dumps(output)}
             ],
@@ -99,7 +99,7 @@ class TestCustomDeclineFailure:
         await _run_message(adapter, tools)
 
         assert len(model.requests) == 2
-        assert results(model.requests[1])[0]["status"] == "error"
+        assert results(model.requests[1])[0]["status"] == NativeStatus.ERROR
         assert "refused" in results(model.requests[1])[0]["content"][0]["text"]
         assert not tools.turn.complete
         assert not tools.turn.replied
@@ -125,7 +125,7 @@ class TestCustomDeclineFailure:
         await run_judged_turn(adapter, tools)
 
         assert calls == []
-        assert results(model.requests[1])[0]["status"] == "error"
+        assert results(model.requests[1])[0]["status"] == NativeStatus.ERROR
         assert len(model.requests) == 3
         tools.assert_message_sent(content="hi", count=1)
 
@@ -134,11 +134,11 @@ class TestCustomDeclineFailure:
         ("output", "content"),
         [
             (
-                {"status": "error", "content": [{"text": "refused"}]},
+                {"status": NativeStatus.ERROR, "content": [{"text": "refused"}]},
                 [{"text": "refused"}],
             ),
             (
-                {"status": "success", "content": [{"json": {"ok": False}}]},
+                {"status": NativeStatus.SUCCESS, "content": [{"json": {"ok": False}}]},
                 [{"json": {"ok": False}}],
             ),
         ],
@@ -164,7 +164,7 @@ class TestCustomDeclineFailure:
         assert results(model.requests[1]) == [
             {
                 "toolUseId": "call-decline",
-                "status": "error",
+                "status": NativeStatus.ERROR,
                 "content": content,
             }
         ]

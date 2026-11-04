@@ -4,14 +4,22 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Sequence
 from copy import deepcopy
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel
 from strands.types.content import Messages
 from strands.types.streaming import StreamEvent
-from strands.types.tools import ToolSpec
+from strands.types.tools import ToolResult, ToolSpec
 
 from band.testing.strands import ScriptedStrandsModel, ScriptedTurn, ToolTurn
+
+
+class NativeStatus(StrEnum):
+    """Name the native Strands tool-result wire vocabulary for scripted cases."""
+
+    SUCCESS = "success"
+    ERROR = "error"
 
 
 class DeclineModel(ScriptedStrandsModel):
@@ -51,7 +59,7 @@ class DeclineModel(ScriptedStrandsModel):
         yield {"messageStop": {"stopReason": "tool_use"}}
 
 
-def results(messages: Messages) -> list[dict[str, Any]]:
+def results(messages: Messages) -> list[ToolResult]:
     """Project every completed native result, including status and content."""
     return [
         block["toolResult"]
