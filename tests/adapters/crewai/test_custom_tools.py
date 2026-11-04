@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 
@@ -13,6 +12,7 @@ from tests.adapters.crewai.kit import (
     echo_message,
     failing_tool,
 )
+from tests.crewaicontract import tool_result_data
 
 
 class TestCustomTools:
@@ -103,7 +103,7 @@ class TestCustomTools:
         with room_context("room-123"):
             result = echo_tool._run(message="Hello world")
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert "Echo: Hello world" in result_data["result"]
 
@@ -126,7 +126,7 @@ class TestCustomTools:
         with room_context("room-123"):
             result = calc_tool._run(operation="add", left=5.0, right=3.0)
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert "8.0" in result_data["result"]
 
@@ -149,7 +149,7 @@ class TestCustomTools:
         with room_context("room-123"):
             result = echo_tool._run(message="test")
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "error"
         assert "Service unavailable" in result_data["message"]
 
@@ -193,6 +193,6 @@ class TestCustomTools:
         # Call without setting context
         result = echo_tool._run(message="Hello!")
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "error"
         assert "No room context available" in result_data["message"]

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 
 from band.core.types import Capability
+from tests.crewaicontract import tool_result_data
 
 
 class TestContactToolExecution:
@@ -26,7 +26,7 @@ class TestContactToolExecution:
         with room_context("room-123"):
             result = list_contacts_tool._run(page=2, page_size=25)
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert result_data["data"][0]["handle"] == "@alice"
         mock_tools.list_contacts.assert_awaited_once_with(2, 25)
@@ -44,7 +44,7 @@ class TestContactToolExecution:
         with room_context("room-123"):
             result = add_contact_tool._run(handle="@alice", message="Hi Alice")
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert result_data["result_status"] == "pending"
         assert result_data["handle"] == "@alice"
@@ -63,7 +63,7 @@ class TestContactToolExecution:
         with room_context("room-123"):
             result = remove_contact_tool._run(handle="@alice", contact_id="contact-1")
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert result_data["result_status"] == "removed"
         mock_tools.remove_contact.assert_awaited_once_with("@alice", "contact-1")
@@ -85,7 +85,7 @@ class TestContactToolExecution:
                 page=3, page_size=10, sent_status="approved"
             )
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert result_data["data"]["received"][0]["id"] == "request-1"
         mock_tools.list_contact_requests.assert_awaited_once_with(3, 10, "approved")
@@ -109,7 +109,7 @@ class TestContactToolExecution:
                 request_id="request-1",
             )
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert result_data["result_status"] == "approved"
         assert result_data["id"] == "request-1"

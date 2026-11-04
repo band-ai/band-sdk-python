@@ -310,7 +310,7 @@ IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
 #                 verified against codex-cli's generated schema; whether
 #                 codex-rs accepts the data: URI isn't checkable from Python)
 #   pydantic_ai   test_pydantic_ai_adapter.py (messages.BinaryContent)
-#   crewai(_flow) test_crewai_tools.py (CrewAI's VISION_IMAGE: sentinel, parsed
+#   crewai(_flow) integrations/crewaitools/test_file_tools.py (CrewAI's VISION_IMAGE: sentinel, parsed
 #                 by StepExecutor; both adapters share one vision_sentinel())
 
 

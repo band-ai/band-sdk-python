@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.core.types import PlatformMessage
+from tests.crewaicontract import ToolFailure
 
 if TYPE_CHECKING:
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapterType
@@ -29,6 +30,7 @@ def crewai_mocks(monkeypatch):
     mock_crewai_module.Agent = MagicMock()
     mock_crewai_module.LLM = MagicMock()
     mock_crewai_tools_module.BaseTool = MockBaseTool
+    mock_crewai_tools_module.ToolFailure = ToolFailure
 
     # `_nest_asyncio_applied` is process-global. Any test running with a mocked
     # nest_asyncio can flip it True without anything actually being patched, which
