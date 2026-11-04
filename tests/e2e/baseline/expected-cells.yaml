@@ -539,8 +539,10 @@ smoke/matrix/test_missing_reply_reported.py::TestMissingReplyReported:
       adapters: [crewai_flow]
 smoke/matrix/test_no_reply.py::TestNoReply:
   test_an_fyi_ends_the_turn_through_band_no_reply:
-    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, opencode, pydantic_ai, strands]
+    pass: [agno, anthropic, antigravity_acp, claude_sdk, codex, copilot_acp, copilot_sdk, crewai, cursor_acp, gemini, google_adk, langgraph, letta, nooa, omp, omp_acp, pydantic_ai, strands]
     na:
+    - reason: 'free OpenCode Zen quota: live OpenCode runs only its core cells'
+      adapters: [opencode]
     - reason: "terminal echo flow with no Band tool loop \u2014 cannot decline through band_no_reply"
       adapters: [crewai_flow]
 smoke/matrix/test_noisy_room.py:
