@@ -632,7 +632,8 @@ the `dev` extra but are split out for isolation.
 | `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth |
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk, antigravity_acp | provider keys and the checksum-pinned Antigravity native bundle; split from `core` so Google rate-limit flakiness is isolated |
-| `backends` | `dev` | codex, opencode, copilot_acp, cursor_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), the `copilot` CLI (`Dep.COPILOT_CLI` + `Dep.ANTHROPIC` — Anthropic BYOK; optional `GITHUB_TOKEN` for the Copilot-hosted smokes), and Cursor `agent` CLI (`CURSOR_API_KEY` in CI; local `agent login` also works) |
+| `backends` | `dev` | codex, copilot_acp, cursor_acp | the CLI coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), the `copilot` CLI (`Dep.COPILOT_CLI` + `Dep.ANTHROPIC` — Anthropic BYOK; optional `GITHUB_TOKEN` for the Copilot-hosted smokes), and Cursor `agent` CLI (`CURSOR_API_KEY` in CI; local `agent login` also works) |
+| `opencode` | `dev` | opencode | a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`) on the free Zen model; CI signs in through GitHub OIDC; runs only the `matrix_only` core cells (why: below) |
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 | `parlant` | `dev-parlant` | *(none — parlant is a bespoke smoke, not a registered matrix adapter; pinned via `@lane(Lane.PARLANT)`)* | provider keys; isolated venv (parlant's `griffe`/`griffelib` transitive deps collide with pydantic_ai's — `pyproject.toml [tool.uv] conflicts`); no server setup — the smoke spins up its own in-process Parlant server |
 
@@ -647,10 +648,11 @@ E2E_TESTS_ENABLED=true BAND_E2E_LANE=backends uv run pytest \
   tests/e2e/baseline/ -k cursor_acp -v -s --no-cov
 ```
 
-`backends` folds codex + opencode into one job (both install `dev`, differ only in
+`backends` folds the coding-agent CLIs into one job (all install `dev`, differ only in
 the backend their job stands up) so a job-per-backend isn't needed; the cost is that
-one backend failing to come up can redden the other's cells (the per-adapter report
-still shows which). `google` gets its own lane so Google free-tier rate-limit
+one backend failing to come up can redden the others' cells (the per-adapter report
+still shows which). `opencode` stands alone because CI's OIDC-issued Zen token lasts
+one hour and the free quota is shared, so its lane stays short. `google` gets its own lane so Google free-tier rate-limit
 flakiness is isolated; `letta` stands alone for the live Letta server its job stands up;
 `parlant` stands alone because its own venv can't share a resolved environment with
 `pydantic_ai` (unlike every other split above, this one is a packaging conflict, not
@@ -687,7 +689,7 @@ schedulable as-is.
 **Run locally:**
 
 ```bash
-uv sync --extra dev            # the core/google/backends/letta venv
+uv sync --extra dev            # the core/google/backends/opencode/letta venv
 BAND_E2E_LANE=core E2E_TESTS_ENABLED=true \
   uv run pytest tests/e2e/baseline/ -v -s --no-cov
 

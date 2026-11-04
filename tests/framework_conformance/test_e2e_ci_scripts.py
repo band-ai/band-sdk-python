@@ -23,6 +23,7 @@ from types import ModuleType
 
 import pytest
 
+from tests.framework_conformance.ciscriptkit import posix_shell_only
 from tests.paths import CI_SCRIPTS, REPO_ROOT
 
 _EMIT_LANE_MATRIX = CI_SCRIPTS / "emit-lane-matrix.py"
@@ -30,17 +31,6 @@ _RUN_BASELINE_E2E = CI_SCRIPTS / "run-baseline-e2e.sh"
 _READ_MENTIONS = CI_SCRIPTS / "read-integrations-mentions.sh"
 _RECORD_BACKENDS_ENVIRONMENT = CI_SCRIPTS / "record-backends-environment.py"
 _ROSTER = Path(".github") / "integrations-team.txt"
-
-# POSIX-shell only. On Windows, `shutil.which("bash")` finds System32\bash.exe —
-# the WSL launcher, not a shell — which on a runner with no WSL distro installed
-# prints a UTF-16 "no installed distributions" notice and exits 1. So a
-# which()-based guard does not skip, it just fails confusingly. The script under
-# test only ever runs in the ubuntu-only `mark-baseline` job anyway, so a POSIX
-# shell is its real contract.
-posix_shell_only = pytest.mark.skipif(
-    sys.platform == "win32" or shutil.which("bash") is None,
-    reason="needs a POSIX bash (Windows `bash` is the WSL launcher)",
-)
 
 
 def _run_baseline(

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Install + start the OpenCode server for the `backends` e2e lane.
+# Install + start the OpenCode server for the `opencode` e2e lane.
 #
-# Reads OPENCODE_ZEN_API_KEY (job env, the Zen provider key) and
+# Reads OPENCODE_ZEN_API_KEY (the Zen provider key, exported to $GITHUB_ENV by
+# opencode-zen-sign-in.sh) and
 # OPENCODE_SERVE_LOG (job env, the checkout-relative server log path), and exports
 # OPENCODE_BASE_URL / E2E_OPENCODE_BASH_ASKS of the running server to later steps
 # via $GITHUB_ENV.

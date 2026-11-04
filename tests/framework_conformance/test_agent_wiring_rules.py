@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 from typing import cast
 from unittest.mock import patch
@@ -14,9 +15,16 @@ from tests.e2e.baseline.agents import (
     WithAdapters,
     per_adapter,
 )
+from tests.e2e.baseline.scorecard import MANIFEST_PATH, load_manifest
 from tests.e2e.baseline.toolkit import adapters as adapters_module
-from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
+from tests.e2e.baseline.toolkit.adapters import Adapter, AdapterSpec, spec_for, specs
 from tests.framework_conformance.wiringitems import FakeItem, wiring_error_reason
+
+
+def _function_name(test: str) -> str:
+    """The test function a manifest cell names, its parameter ids stripped."""
+    return test.rsplit("::", 1)[-1].split("[", 1)[0]
+
 
 # --- e2e_pending allowlist ----------------------------------------------------------------
 
@@ -191,3 +199,27 @@ class TestAgentWiringRules:
             "reason in the registration's e2e_pending string, and file the "
             "live-lane follow-up."
         )
+
+    @pytest.mark.parametrize(
+        "spec",
+        [spec for spec in specs() if spec.matrix_only is not None],
+        ids=lambda spec: str(spec.id),
+    )
+    def test_matrix_only_allowlist_is_exactly_the_adapters_live_cells(
+        self, spec: AdapterSpec
+    ) -> None:
+        """A renamed, deleted, or no-longer-selecting test can't silently cost the
+        adapter a live cell, and a same-named test elsewhere can't add one.
+
+        The manifest is the collected suite (``test_expected_manifest_matches_
+        collected_baseline`` keeps it so), so its passing cells are what runs.
+        """
+        assert spec.matrix_only is not None
+        # A multiset: the allowlist is keyed by bare name, so a same-named test in
+        # another module would otherwise hide behind an allowlisted one.
+        live = Counter(
+            _function_name(cell.test)
+            for cell in load_manifest(MANIFEST_PATH)
+            if cell.adapter == spec.id and cell.status == "pass"
+        )
+        assert live == Counter(spec.matrix_only.tests)

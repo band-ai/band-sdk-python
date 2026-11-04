@@ -31,7 +31,7 @@ decorators and the handle from one place.
 from __future__ import annotations
 
 from collections.abc import Callable, Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import ClassVar, Self
 
 import pytest
@@ -324,12 +324,33 @@ def per_adapter(
     )
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:
-        fn = pytest.mark.parametrize("adapter_id", params, indirect=True)(fn)
+        limited = _matrix_only_exclusions(params, fn.__name__)
+        limited_ids = {e.adapter for e in limited}
+        cells = [p for p in params if p.values[0] not in limited_ids]
+        if not cells:
+            raise ValueError(
+                f"@per_adapter on {fn.__name__} left no adapters after their "
+                "matrix_only allowlists; add the test to one or drop the decorator"
+            )
+        marker = replace(build, exclude=(*excluded, *limited))
+        fn = pytest.mark.parametrize("adapter_id", cells, indirect=True)(fn)
         # `agent` / `cell` reach `adapter_id` only dynamically (getfixturevalue), which
         # the static fixture closure can't see — so indirect parametrize alone errors at
         # collection ("function uses no fixture 'adapter_id'"). usefixtures pins the
         # parametrized name into the closure for every @per_adapter test.
         fn = pytest.mark.usefixtures("adapter_id")(fn)
-        return getattr(pytest.mark, PER_ADAPTER_MARKER)(build)(fn)
+        return getattr(pytest.mark, PER_ADAPTER_MARKER)(marker)(fn)
 
     return decorate
+
+
+def _matrix_only_exclusions(
+    params: list[ParameterSet], test_name: str
+) -> tuple[ExcludedAdapter, ...]:
+    """N/A records for the selected adapters whose ``matrix_only`` omits ``test_name``."""
+    selected = (spec_for(param.values[0]) for param in params)
+    return tuple(
+        ExcludedAdapter(spec.id, spec.matrix_only.reason)
+        for spec in selected
+        if spec.matrix_only is not None and test_name not in spec.matrix_only.tests
+    )
