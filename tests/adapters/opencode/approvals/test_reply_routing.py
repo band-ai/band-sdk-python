@@ -65,6 +65,12 @@ class TestReplyRouting:
                 "reject q-1",
                 ("question reject", "q-1"),
             ),
+            pytest.param(
+                asks_with(permissions=("p-1",), questions=("q-1",)),
+                "reject p-1",
+                ("permission reject", "p-1"),
+                id="reject-naming-a-permission-while-a-question-waits",
+            ),
             (
                 asks_with(questions=("q-1",)),
                 "reject q-gone",
