@@ -2,53 +2,35 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
-
 import pytest
 
-from band.adapters.gemini import GeminiAdapter, GeminiAdapterConfig
+from band.adapters.gemini import GeminiAdapterConfig
 from band.core.exceptions import ToolRoundsExceededError
-from tests.adapters.gemini.kit import _response_with_function_call
+from band.runtime.tools import BandTool
+from band.testing import failure_reports
+from tests.adapters.genaikit import PlatformSchemaFakeTools, tool_call
+from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
 
 
 class TestMaxToolRounds:
     @pytest.mark.asyncio
-    async def test_raises_tool_rounds_exceeded_when_max_rounds_exceeded(
-        self, sample_message, mock_tools
+    async def test_model_still_calling_tools_fails_at_the_round_cap(
+        self, scripted_adapter
     ):
-        adapter = GeminiAdapter(GeminiAdapterConfig(max_tool_rounds=2))
-        await adapter.on_started("TestBot", "Test bot")
+        adapter = await scripted_adapter(
+            *(tool_call(BandTool.LOOKUP_PEERS, {}) for _ in range(3)),
+            config=GeminiAdapterConfig(max_tool_rounds=2),
+        )
+        tools = PlatformSchemaFakeTools()
 
-        # Always return a function call so the loop never terminates naturally
-        with (
-            patch.object(
-                adapter,
-                "_call_gemini",
-                AsyncMock(
-                    return_value=_response_with_function_call(
-                        "band_lookup_peers", {"page": "1"}, "call_1"
-                    )
-                ),
-            ),
-            pytest.raises(ToolRoundsExceededError) as raised,
-        ):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+        with pytest.raises(ToolRoundsExceededError) as raised:
+            await adapter.on_event(turn_input(tools))
 
         error = raised.value
+        assert adapter.client.aio.models.generate_content.await_count == 2
         assert (error.max_rounds, error.room_id, error.tool_sequence) == (
             2,
-            "room-123",
-            [["band_lookup_peers"]] * 2,
+            ROOM_ID,
+            [[BandTool.LOOKUP_PEERS]] * 2,
         )
-        # Exceeding max tool rounds is a reportable provider failure.
-        mock_tools.send_failure.assert_called_once()
-        failure = mock_tools.send_failure.call_args.args[0]
-        assert (failure.provider, failure.message) == ("gemini", str(error))
+        assert failure_reports(tools) == [("gemini", str(error))]

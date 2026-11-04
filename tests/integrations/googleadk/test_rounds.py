@@ -122,7 +122,7 @@ class TestToolRounds:
         await adapter.on_started("Agent", "An agent")
         tools = FakeAgentTools()
 
-        with pytest.raises(ToolRoundsExceededError):
+        with pytest.raises(ToolRoundsExceededError) as raised:
             await adapter.on_turn(
                 [], tools, [], None, None, is_session_bootstrap=True, room_id=ROOM_ID
             )
@@ -131,4 +131,4 @@ class TestToolRounds:
         )
 
         assert len(google_model.requests) == 4
-        assert len(failure_reports(tools)) == 1
+        assert failure_reports(tools) == [("google_adk", str(raised.value))]
