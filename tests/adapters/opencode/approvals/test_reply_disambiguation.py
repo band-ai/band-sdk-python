@@ -80,8 +80,8 @@ class TestReplyDisambiguation:
         asks: AskFactory,
         reply: str,
     ) -> None:
-        """A late reply to a question must not answer the permission still
-        pending beside it."""
+        """Guard: a late reply naming a question must never fall back to the
+        only pending permission, whatever its reply word."""
         client = FakeOpencodeClient()
         approvals = make_room_approvals(client)
         await approvals.on_permission_asked(asks.permission("req-1"))

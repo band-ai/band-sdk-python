@@ -10,6 +10,9 @@ from band.adapters.opencode.approvals.commands import (
     parse_permission_reply,
 )
 from band.adapters.opencode.approvals.pending import (
+    AskKind,
+    AskState,
+    NamedAsk,
     PendingAsks,
     PendingQuestion,
 )
@@ -42,14 +45,25 @@ class QuestionAnswer:
 class NamedQuestionGone:
     """A named reply for a question that no longer waits on one.
 
-    Also an unmatched ``reject <id>`` while a question is pending.
+    Also an unrecognized ``reject <id>`` while a question is held.
     """
 
     request_id: str
 
 
+@dataclass(frozen=True)
+class NamedQuestionGrant:
+    """``approve``/``always`` naming a question still waiting for its answer."""
+
+    request_id: str
+
+
 ReplyRoute: TypeAlias = (
-    PermissionReply | QuestionRejection | QuestionAnswer | NamedQuestionGone
+    PermissionReply
+    | QuestionRejection
+    | QuestionAnswer
+    | NamedQuestionGone
+    | NamedQuestionGrant
 )
 
 
@@ -67,77 +81,53 @@ def route_reply(asks: PendingAsks, content: str) -> ReplyRoute | None:
 
     approval = parse_permission_reply(command)
     if approval is not None:
-        if (gone := _question_gone(asks, approval)) is not None:
-            return gone
+        # A reject is the one command a question takes by id.
+        prefer = AskKind.QUESTION if approval.rejects else AskKind.PERMISSION
+        if approval.request_id is not None and (
+            named := asks.named_ask(approval.request_id, prefer=prefer)
+        ):
+            return _route_named(asks, approval, approval.request_id, named)
         if _permission_command_applies(asks, approval):
             return PermissionReply(approval)
+        if approval.rejects and approval.request_id is not None:
+            # An unrecognized id: feedback while a question is held, not a
+            # fresh prompt for the model.
+            return NamedQuestionGone(approval.request_id) if asks.questions else None
 
-    if (question := asks.resolve_question(command)) is not None:
-        if approval is not None and approval.rejects:
-            return QuestionRejection(question)
-        # Free text: strip only the delivery mention so an answer that
-        # legitimately begins with an @handle (naming a person) survives.
-        return QuestionAnswer(
-            question, strip_leading_mentions(raw, only_first=True).strip()
-        )
-
-    if (
-        approval is not None
-        and approval.rejects
-        and approval.request_id is not None
-        and asks.questions
-    ):
-        return NamedQuestionGone(approval.request_id)
-
-    return None
-
-
-def _question_gone(
-    asks: PendingAsks, approval: PermissionCommand
-) -> NamedQuestionGone | None:
-    """A named reply to a question that no longer waits on one.
-
-    The id, not the reply word, says which kind of ask it answers, so a late
-    ``approve <question-id>`` is not reported as an approval. A ``reject``
-    naming a question whose answer is in flight still reaches that question.
-    """
-    named = approval.request_id
-    if (
-        named is None
-        or named not in asks.known_question_ids
-        or named in asks.known_permission_ids
-        or asks.question_awaits_answer(named)
-        or (approval.rejects and named in asks.questions)
-    ):
+    if (oldest := asks.questions.oldest_unclaimed()) is None:
         return None
-    return NamedQuestionGone(named)
+    if approval is not None and approval.rejects:
+        return QuestionRejection(oldest.payload)
+    # Free text answers the oldest question still waiting. Strip only the
+    # delivery mention so an answer that begins with an @handle survives.
+    return QuestionAnswer(
+        oldest.payload, strip_leading_mentions(raw, only_first=True).strip()
+    )
+
+
+def _route_named(
+    asks: PendingAsks, approval: PermissionCommand, request_id: str, named: NamedAsk
+) -> ReplyRoute:
+    """Route a reply by the kind of ask its id names, not by its word."""
+    if named.kind is AskKind.PERMISSION:
+        return PermissionReply(approval)
+    if named.state is AskState.RESOLVED:
+        return NamedQuestionGone(request_id)
+    if approval.rejects:
+        return QuestionRejection(asks.questions[request_id])
+    if named.state is AskState.WAITING:
+        return NamedQuestionGrant(request_id)
+    return NamedQuestionGone(request_id)
 
 
 def _permission_command_applies(asks: PendingAsks, approval: PermissionCommand) -> bool:
-    """Whether a parsed approve/always/reject targets a permission.
+    """Whether a bare or unrecognized approve/always/reject targets a permission.
 
-    ``reject <id>`` is also the question-rejection grammar. A named id
-    that is a live or known question (and not a permission) must fall
-    through so the question route can run. ``approve`` / ``always`` are not
-    shared; those stay on the permission branch so they are not submitted as
-    free-text question answers.
+    An unrecognized id after ``approve``/``always`` while a question waits is
+    that question's free-text answer.
     """
-    named = approval.request_id
-    known_permission = named in asks.known_permission_ids
-    known_question = named in asks.known_question_ids
-    if (
-        named is not None
-        and approval.grants
-        and named not in asks.permissions
-        and not known_permission
-        and not known_question
-        and asks.questions.has_unclaimed()
-    ):
-        return False
-    if named is not None and approval.rejects and named in asks.questions:
-        return False
     if approval.grants:
-        return asks.parked_on_human() or (
-            named is not None and (known_permission or known_question)
-        )
-    return asks.permissions.has_unclaimed() or (named is not None and known_permission)
+        if approval.request_id is not None and asks.questions.has_unclaimed():
+            return False
+        return asks.parked_on_human()
+    return asks.permissions.has_unclaimed()

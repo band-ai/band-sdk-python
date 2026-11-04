@@ -43,8 +43,12 @@ def asks_with(
     questions: tuple[str, ...] = (),
     known_permissions: frozenset[str] = frozenset(),
     known_questions: frozenset[str] = frozenset(),
+    in_flight: tuple[str, ...] = (),
 ) -> PendingAsks:
-    """Asks holding the named open requests, plus ids that were asked and resolved."""
+    """Asks holding the named open requests, plus ids that were asked and resolved.
+
+    ``in_flight`` names held asks whose reply is already being sent.
+    """
     asks = PendingAsks(set(known_permissions), set(known_questions))
     for request_id in permissions:
         pending = PendingPermission(request_id, "bash", ["ls"])
@@ -56,6 +60,11 @@ def asks_with(
         )
         asks.questions.register_keyed(pending_question, key=request_id)
         asks.known_question_ids.add(request_id)
+    for request_id in in_flight:
+        registry = (
+            asks.permissions if request_id in asks.permissions else asks.questions
+        )
+        assert registry.try_claim(request_id) is not None
     return asks
 
 

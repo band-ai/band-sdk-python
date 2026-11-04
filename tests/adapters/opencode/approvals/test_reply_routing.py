@@ -6,6 +6,7 @@ from band.adapters.opencode.approvals.commands import PermissionCommand
 from band.adapters.opencode.approvals.pending import PendingAsks
 from band.adapters.opencode.approvals.router import (
     NamedQuestionGone,
+    NamedQuestionGrant,
     PermissionReply,
     QuestionAnswer,
     QuestionRejection,
@@ -28,6 +29,8 @@ def outline(route: ReplyRoute | None) -> tuple[str, str | None] | None:
             return (f"question answer {question.request_id}", text)
         case NamedQuestionGone(request_id):
             return ("question gone", request_id)
+        case NamedQuestionGrant(request_id):
+            return ("question grant", request_id)
 
 
 class TestReplyRouting:
@@ -91,6 +94,64 @@ class TestReplyRouting:
     )
     def test_message_goes_to_the_ask_it_answers(
         self, asks: PendingAsks, content: str, expected: tuple[str, str | None] | None
+    ) -> None:
+        assert outline(route_reply(asks, content)) == expected
+
+    @pytest.mark.parametrize(
+        ("asks", "content", "expected"),
+        [
+            pytest.param(
+                asks_with(permissions=("p-1",), in_flight=("p-1",)),
+                "approve p-1",
+                ("permission once", "p-1"),
+                id="permission-in-flight-approve",
+            ),
+            pytest.param(
+                asks_with(permissions=("p-1",), in_flight=("p-1",)),
+                "reject p-1",
+                ("permission reject", "p-1"),
+                id="permission-in-flight-reject",
+            ),
+            pytest.param(
+                asks_with(known_permissions=frozenset({"p-old"})),
+                "reject p-old",
+                ("permission reject", "p-old"),
+                id="permission-resolved-reject",
+            ),
+            pytest.param(
+                asks_with(questions=("q-1",)),
+                "approve q-1",
+                ("question grant", "q-1"),
+                id="question-waiting-approve",
+            ),
+            pytest.param(
+                asks_with(permissions=("p-1",), questions=("q-1",)),
+                "always q-1",
+                ("question grant", "q-1"),
+                id="question-waiting-always-with-a-permission-waiting",
+            ),
+            pytest.param(
+                asks_with(questions=("q-1",), in_flight=("q-1",)),
+                "reject q-1",
+                ("question reject", "q-1"),
+                id="question-in-flight-reject",
+            ),
+            pytest.param(
+                asks_with(permissions=("p-1",), questions=("q-1",), in_flight=("q-1",)),
+                "approve q-1",
+                ("question gone", "q-1"),
+                id="question-in-flight-approve-with-a-permission-waiting",
+            ),
+            pytest.param(
+                asks_with(known_questions=frozenset({"q-old"})),
+                "always q-old",
+                ("question gone", "q-old"),
+                id="question-resolved-always",
+            ),
+        ],
+    )
+    def test_a_named_id_routes_by_the_kind_and_state_of_its_ask(
+        self, asks: PendingAsks, content: str, expected: tuple[str, str | None]
     ) -> None:
         assert outline(route_reply(asks, content)) == expected
 
