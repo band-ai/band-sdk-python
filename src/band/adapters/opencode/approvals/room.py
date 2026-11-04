@@ -108,9 +108,8 @@ class RoomApprovals:
         self, registry: DecisionRegistry[PendingT], request_id: str
     ) -> DecisionEntry[PendingT] | None:
         """Claim an entry, releasing the human-wait clock if it was the last
-        one parked. ``None`` when it's already claimed or gone -- a
-        redelivery, or another reply already in flight for it -- either way
-        the caller must not touch it."""
+        one parked. ``None`` when another claimant already holds it, or it's
+        gone; either way the caller must not touch it."""
         if (entry := registry.try_claim(request_id)) is not None:
             self._release_if_idle()
         return entry
@@ -122,6 +121,31 @@ class RoomApprovals:
         registry.forget(entry)
         entry.payload.activity.close()
         self._release_if_idle()
+
+    async def _answer(
+        self,
+        registry: DecisionRegistry[PendingT],
+        request_id: str,
+        send: Callable[[DecisionEntry[PendingT]], Awaitable[bool]],
+        *,
+        answered: str,
+        not_pending: str,
+        mentions: list[dict[str, str]],
+        tools: AgentToolsProtocol | None,
+    ) -> None:
+        """Answer an ask for a room reply, or tell its sender it lost the ask.
+
+        A reply that loses the claim is still consumed, so its sender must
+        hear why nothing happened.
+        """
+        if (entry := self._claim(registry, request_id)) is None:
+            await self._notify_room(not_pending, mentions, tools)
+            return
+        await self._complete_claimed(
+            entry,
+            partial(send, entry),
+            partial(self._notify_room, answered, mentions),
+        )
 
     async def _complete_claimed(
         self,
@@ -308,7 +332,7 @@ class RoomApprovals:
             case PermissionReply(approval):
                 await self._handle_permission_reply(approval, mentions, tools)
             case QuestionRejection(question):
-                await self._handle_question_rejection(question, mentions)
+                await self._handle_question_rejection(question, mentions, tools)
             case QuestionAnswer(question, text):
                 await self._handle_question_answer(question, text, mentions, tools)
             case NamedQuestionGone(request_id):
@@ -354,18 +378,19 @@ class RoomApprovals:
             await self._notify_room(hint, mentions, tools)
             return
         if pending is not None:
-            if (entry := self._claim(asks.permissions, pending.request_id)) is not None:
-                await self._complete_claimed(
-                    entry,
-                    partial(self._send_permission_reply, entry, approval.reply),
-                    partial(
-                        self._notify_room,
-                        APPROVAL_HANDLED_TEMPLATE.format(
-                            request_id=pending.request_id, reply=approval.reply
-                        ),
-                        mentions,
-                    ),
-                )
+            await self._answer(
+                asks.permissions,
+                pending.request_id,
+                partial(self._send_permission_reply, reply=approval.reply),
+                answered=APPROVAL_HANDLED_TEMPLATE.format(
+                    request_id=pending.request_id, reply=approval.reply
+                ),
+                not_pending=APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(
+                    request_id=pending.request_id
+                ),
+                mentions=mentions,
+                tools=tools,
+            )
             return
         # A named id that matches no permission still held (resolved, or not
         # recognized while another permission waits): feedback, not a fresh
@@ -387,34 +412,35 @@ class RoomApprovals:
         if answers is None:
             await self._notify_room(QUESTION_ANSWERS_NEEDED, mentions, tools)
             return
-        if (
-            entry := self._claim(self._asks.questions, question.request_id)
-        ) is not None:
-            await self._complete_claimed(
-                entry,
-                partial(self._send_question_reply, entry, answers),
-                partial(
-                    self._notify_room,
-                    QUESTION_ANSWERED_TEMPLATE.format(request_id=question.request_id),
-                    mentions,
-                ),
-            )
+        await self._answer(
+            self._asks.questions,
+            question.request_id,
+            partial(self._send_question_reply, answers=answers),
+            answered=QUESTION_ANSWERED_TEMPLATE.format(request_id=question.request_id),
+            not_pending=QUESTION_NO_LONGER_PENDING_TEMPLATE.format(
+                request_id=question.request_id
+            ),
+            mentions=mentions,
+            tools=tools,
+        )
 
     async def _handle_question_rejection(
-        self, question: PendingQuestion, mentions: list[dict[str, str]]
+        self,
+        question: PendingQuestion,
+        mentions: list[dict[str, str]],
+        tools: AgentToolsProtocol | None,
     ) -> None:
-        if (
-            entry := self._claim(self._asks.questions, question.request_id)
-        ) is not None:
-            await self._complete_claimed(
-                entry,
-                partial(self._send_question_reject, entry),
-                partial(
-                    self._notify_room,
-                    QUESTION_REJECTED_TEMPLATE.format(request_id=question.request_id),
-                    mentions,
-                ),
-            )
+        await self._answer(
+            self._asks.questions,
+            question.request_id,
+            self._send_question_reject,
+            answered=QUESTION_REJECTED_TEMPLATE.format(request_id=question.request_id),
+            not_pending=QUESTION_NO_LONGER_PENDING_TEMPLATE.format(
+                request_id=question.request_id
+            ),
+            mentions=mentions,
+            tools=tools,
+        )
 
     async def _notify_originators(
         self, text: str, pending: PendingPermission | PendingQuestion

@@ -11,7 +11,10 @@ import asyncio
 import pytest
 
 from band.adapters.opencode import OpencodeAdapterConfig
-from band.adapters.opencode.approvals.wording import REJECTED_PERMISSION_FEEDBACK
+from band.adapters.opencode.approvals.wording import (
+    APPROVAL_NO_LONGER_PENDING_TEMPLATE,
+    REJECTED_PERMISSION_FEEDBACK,
+)
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.conftest import ParkRoom
@@ -26,6 +29,7 @@ from tests.adapters.opencode.helpers import (
     client_asking,
     declined_questions,
     handle_control,
+    notice_to,
     room_reply,
     time_passes,
     tools_protocol,
@@ -154,6 +158,9 @@ class TestControlRecognition:
     async def test_a_claimed_request_is_resolved_once_whoever_else_replies(
         self, park_room: ParkRoom
     ) -> None:
+        """Two people approve the same ask: OpenCode gets one reply, and the
+        reply that lost the claim is still consumed and told the ask is no
+        longer pending."""
         client = HeldPermissionReplyClient(prompt_event_sequences=[[PERMISSION_ASK]])
         adapter = await park_room(client)
         first, second = (
@@ -175,4 +182,8 @@ class TestControlRecognition:
         assert client.permission_replies == [
             {"permission_id": "req-1", "reply": "once"}
         ]
-        assert second_tools.messages_sent == []
+        assert second_tools.messages_sent == [
+            notice_to(
+                "user-3", APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(request_id="req-1")
+            )
+        ]

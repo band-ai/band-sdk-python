@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -103,8 +103,8 @@ class BlockingReplyClient(FakeOpencodeClient):
     before it reaches OpenCode -- so a test can interleave room traffic or
     teardown with it. Later requests pass straight through."""
 
-    def __init__(self, *operations: ReplyOperation) -> None:
-        super().__init__()
+    def __init__(self, *operations: ReplyOperation, **scripted: Any) -> None:
+        super().__init__(**scripted)
         self._gates = {operation: ReplyGate() for operation in operations}
 
     @asynccontextmanager
@@ -191,12 +191,26 @@ DECLINED = {
 }
 
 
+#: Raises one ask on a room's approvals.
+RaiseAsk = Callable[[RoomApprovals, AskFactory], Awaitable[None]]
+
+ASK_ID = "ask-1"
+
+
+def raise_permission(room: RoomApprovals, asks: AskFactory) -> Awaitable[None]:
+    return room.on_permission_asked(asks.permission(ASK_ID))
+
+
+def raise_question(room: RoomApprovals, asks: AskFactory) -> Awaitable[None]:
+    return room.on_question_asked(asks.question(ASK_ID))
+
+
 @dataclass(frozen=True)
 class ExpiryCase:
     """How one kind of ask is raised, and what its expiry sends OpenCode."""
 
     operation: ReplyOperation
-    raise_ask: Callable[[RoomApprovals, AskFactory], Awaitable[None]]
+    raise_ask: RaiseAsk
     sent: Callable[[FakeOpencodeClient], list[str]]
     expired_reply: str
 
@@ -204,14 +218,14 @@ class ExpiryCase:
 EXPIRY_CASES = {
     "permission": ExpiryCase(
         operation="permission",
-        raise_ask=lambda room, asks: room.on_permission_asked(asks.permission("ask-1")),
+        raise_ask=raise_permission,
         sent=lambda client: [r["reply"] for r in client.permission_replies],
         expired_reply="reject",
     ),
     "question": ExpiryCase(
         operation="reject",
-        raise_ask=lambda room, asks: room.on_question_asked(asks.question("ask-1")),
+        raise_ask=raise_question,
         sent=declined_questions,
-        expired_reply="ask-1",
+        expired_reply=ASK_ID,
     ),
 }

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, TypeAlias, cast
+from unittest.mock import ANY
 from uuid import uuid4
 
 import httpx
@@ -269,6 +270,11 @@ def event_session_error(session_id: str, message: str) -> RawOpencodeEvent:
             "error": {"name": "APIError", "data": {"message": message}},
         },
     }
+
+
+def notice_to(sender_id: str, content: str) -> dict[str, Any]:
+    """A room notice addressed to one sender, as ``FakeAgentTools`` records it."""
+    return {"id": ANY, "content": content, "mentions": [{"id": sender_id}]}
 
 
 def tools_protocol(tools: FakeAgentTools) -> AgentToolsProtocol:
@@ -766,4 +772,12 @@ def answered_questions(client: FakeOpencodeClient) -> list[tuple[str, list[list[
         (r["request_id"], r["answers"])
         for r in client.question_replies
         if not _is_decline(r)
+    ]
+
+
+def replies_sent(client: FakeOpencodeClient) -> list[tuple[str, Any]]:
+    """Every reply OpenCode received, declines included, as (request id,
+    permission reply or question answers)."""
+    return [(r["permission_id"], r["reply"]) for r in client.permission_replies] + [
+        (r["request_id"], r["answers"]) for r in client.question_replies
     ]
