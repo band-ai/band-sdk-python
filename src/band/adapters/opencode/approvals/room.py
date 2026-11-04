@@ -312,8 +312,6 @@ class RoomApprovals:
             case QuestionAnswer(question, text):
                 await self._handle_question_answer(question, text, mentions, tools)
             case NamedQuestionGone(request_id):
-                # A named question id that matched no pending question:
-                # feedback, not a fresh prompt for the model.
                 await self._notify_room(
                     QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id=request_id),
                     mentions,

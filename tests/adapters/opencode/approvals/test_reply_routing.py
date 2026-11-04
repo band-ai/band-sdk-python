@@ -76,14 +76,14 @@ class TestReplyRouting:
                 ("question gone", "q-old"),
             ),
             (
-                asks_with(known_questions=frozenset({"q-old"})),
-                "approve q-old",
-                ("question gone", "q-old"),
+                asks_with(questions=("q-1",), in_flight=("q-1",)),
+                "reject q-gone",
+                ("question gone", "q-gone"),
             ),
             (
-                asks_with(permissions=("p-1",), known_questions=frozenset({"q-old"})),
-                "reject q-old",
-                ("question gone", "q-old"),
+                asks_with(questions=("q-1",)),
+                "reject please",
+                ("question reject", "q-1"),
             ),
             (
                 asks_with(known_permissions=frozenset({"p-old"})),
@@ -144,9 +144,15 @@ class TestReplyRouting:
             ),
             pytest.param(
                 asks_with(known_questions=frozenset({"q-old"})),
-                "always q-old",
+                "approve q-old",
                 ("question gone", "q-old"),
-                id="question-resolved-always",
+                id="question-resolved-approve",
+            ),
+            pytest.param(
+                asks_with(permissions=("p-1",), known_questions=frozenset({"q-old"})),
+                "reject q-old",
+                ("question gone", "q-old"),
+                id="question-resolved-reject-with-a-permission-waiting",
             ),
         ],
     )

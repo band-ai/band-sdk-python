@@ -124,9 +124,7 @@ class PendingAsks:
         for kind in order:
             registry = held[kind]
             if request_id in registry:
-                waiting = any(
-                    entry.token == request_id for entry in registry.unclaimed()
-                )
+                waiting = registry.is_unclaimed(request_id)
                 return NamedAsk(
                     kind, AskState.WAITING if waiting else AskState.IN_FLIGHT
                 )

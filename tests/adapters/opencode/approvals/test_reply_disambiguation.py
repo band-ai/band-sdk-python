@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.opencode.approvals.wording import which_question_command_hint
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.approvals.kit import (
-    asks_with,
     make_room_approvals,
 )
 from tests.adapters.opencode.helpers import (
@@ -68,11 +66,13 @@ class TestReplyDisambiguation:
         assert await approvals.try_handle_reply("approve q-1", "user-1")
         assert client.question_replies == []
         assert client.permission_replies == []
-        assert tools.messages_sent[-1]["content"] == which_question_command_hint(
-            asks_with(questions=("q-1",)).questions
-        )
-        assert list(approvals._asks.permissions) == ["req-1"]
-        assert list(approvals._asks.questions) == ["q-1"]
+
+        assert await approvals.try_handle_reply("approve req-1", "user-1")
+        assert await approvals.try_handle_reply("blue", "user-1")
+        assert client.permission_replies == [
+            {"permission_id": "req-1", "reply": "once"}
+        ]
+        assert [reply["request_id"] for reply in client.question_replies] == ["q-1"]
 
     @pytest.mark.parametrize("reply", ["reject q-1", "approve q-1"])
     async def test_reply_naming_a_resolved_question_leaves_the_permission_pending(
