@@ -8,6 +8,7 @@ from typing import Any
 
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.outputs import ChatResult
+from pydantic import BaseModel
 
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
@@ -53,3 +54,27 @@ class DeclineTools(FakeAgentTools):
             case (DeclineFailure.FAILED_SIBLING, BandTool.GET_PARTICIPANTS):
                 raise RuntimeError("sibling rejected")
         return await super().execute_tool_call(tool_name, arguments)
+
+
+CUSTOM = "customdecline"
+SUCCESS = "settled"
+FAILURE = "decline rejected"
+
+
+class CustomDeclineInput(BaseModel):
+    """Settle an input without replying."""
+
+    reason: str
+
+
+def tool_response(
+    name: str = CUSTOM,
+    *,
+    arguments: dict[str, Any] | None = None,
+    call_id: str = "decline",
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "args": {"reason": "FYI"} if arguments is None else arguments,
+        "id": call_id,
+    }

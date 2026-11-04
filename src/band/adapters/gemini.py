@@ -47,6 +47,7 @@ from band.core.types import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
+    declared_effect,
     execute_custom_tool,
     find_custom_tool,
     format_validation_error,
@@ -55,11 +56,14 @@ from band.runtime.custom_tools import (
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    TurnEffect,
     decode_image_blocks,
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
+    turn_effect,
 )
+from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +297,7 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                     break
                 tool_sequence.append([call.name or "" for call in function_calls])
 
-                tool_response_parts = await self._process_function_calls(
+                tool_response_parts, declined = await self._process_function_calls(
                     function_calls=function_calls,
                     tools=tools,
                 )
@@ -303,6 +307,8 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                     )
 
                 tool_rounds += 1
+                if declined:
+                    break
         finally:
             # No-op unless Emit.USAGE is on; best-effort, never raises.
             await self.emit_usage(tools, turn_usage)
@@ -534,9 +540,11 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
         self,
         function_calls: list[types.FunctionCall],
         tools: AgentToolsProtocol,
-    ) -> list[types.Part]:
-        """Execute model function calls and return function_response parts."""
+    ) -> tuple[list[types.Part], bool]:
+        """Retain every function response and stop only a successful decline batch."""
         tool_response_parts: list[types.Part] = []
+        declined = False
+        failed = False
 
         for index, function_call in enumerate(function_calls):
             tool_name = function_call.name or ""
@@ -567,8 +575,16 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                     result = await execute_custom_tool(
                         custom_tool, tool_input, tools=tools
                     )
+                    succeeded = not is_failed_tool_output(result)
+                    effect = declared_effect(custom_tool[1]) or TurnEffect.OBSERVE
                 else:
-                    result = await tools.execute_tool_call(tool_name, tool_input)
+                    outcome = await tools.execute_tool_call_structured(
+                        tool_name, tool_input
+                    )
+                    result = outcome.value
+                    succeeded = outcome.ok
+                    effect = turn_effect(tool_name)
+                declined = declined or (succeeded and effect.ends_turn)
                 if is_image_passthrough_result(tool_name, result):
                     response_parts = _image_function_response_parts(result)
                     result_str = image_block_placeholder(len(response_parts))
@@ -578,7 +594,7 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                         if not isinstance(result, str)
                         else result
                     )
-                is_error = False
+                is_error = not succeeded
             except ValidationError as exc:
                 errors = format_validation_error(exc)
                 result_str = f"Invalid arguments for {tool_name}: {errors}"
@@ -588,6 +604,7 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                 result_str = f"Error: {e}"
                 is_error = True
                 logger.exception("Tool %s failed", tool_name)
+            failed = failed or is_error
             if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
@@ -618,4 +635,4 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                 )
             )
 
-        return tool_response_parts
+        return tool_response_parts, declined and not failed

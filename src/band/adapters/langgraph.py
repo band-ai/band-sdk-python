@@ -30,13 +30,16 @@ from band.core.types import (
 )
 from band.integrations.langgraph import langchain_tools
 from band.integrations.langgraph.activity import LangChainToolEvent, observe_tool_event
+from band.runtime.custom_tools import declared_effect, get_custom_tool_name
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.toolactivity import end_activity
 from band.runtime.tools import (
     BandTool,
+    TurnEffect,
     image_block_placeholder,
     redact_tool_call_args,
+    turn_effect,
 )
 
 if TYPE_CHECKING:
@@ -203,11 +206,20 @@ class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
                 checkpointer = InMemorySaver()
 
             def factory(turn_tools: list[Any]) -> Pregel:
+                effects = {tool.name: turn_effect(tool.name) for tool in turn_tools}
+                for tool in self.additional_tools:
+                    if isinstance(tool, tuple):
+                        effects[get_custom_tool_name(tool[0])] = (
+                            declared_effect(tool[1]) or TurnEffect.OBSERVE
+                        )
+                    else:
+                        # Native declarations are outside the portable-tool contract.
+                        effects[tool.name] = TurnEffect.OBSERVE
                 return create_agent(
                     model=llm,
                     tools=turn_tools,
                     checkpointer=checkpointer,
-                    middleware=[DeclineMiddleware()],
+                    middleware=[DeclineMiddleware(effects)],
                 )
 
             graph_factory = factory

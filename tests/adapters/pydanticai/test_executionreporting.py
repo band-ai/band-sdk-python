@@ -128,7 +128,7 @@ class TestExecutionReporting:
 
         # Verify send_event was called with tool_result
         mock_tools.send_event.assert_any_call(
-            content='{"name": "band_send_message", "output": "Message sent successfully", "tool_call_id": "call-123"}',
+            content='{"name": "band_send_message", "output": "Message sent successfully", "tool_call_id": "call-123", "is_error": false}',
             message_type="tool_result",
         )
 
@@ -170,7 +170,7 @@ class TestExecutionReporting:
         )
 
         mock_tools.send_event.assert_any_call(
-            content='{"name": "band_read_room_file", "output": "<1 image content block(s)>", "tool_call_id": "call-1"}',
+            content='{"name": "band_read_room_file", "output": "<1 image content block(s)>", "tool_call_id": "call-1", "is_error": false}',
             message_type="tool_result",
         )
 
