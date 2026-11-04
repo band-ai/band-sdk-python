@@ -370,6 +370,8 @@ def test_cli_version_reports_not_found_and_timeout(
 _OIDC_TOKEN = "github-oidc-jwt"
 _ZEN_KEY = "zen-short-lived-key"
 _OIDC_OK = (200, {"value": _OIDC_TOKEN})
+_UNREACHED = (500, {})
+_SIGN_IN_FAILED = "OpenCode Zen sign-in failed: "
 
 
 @dataclass
@@ -378,6 +380,7 @@ class _SignInEndpoints:
 
     oidc: tuple[int, dict[str, object]]
     exchange: tuple[int, dict[str, object]]
+    oidc_requests: list[tuple[str, str | None]] = field(default_factory=list)
     exchanges: list[dict[str, list[str]]] = field(default_factory=list)
 
 
@@ -385,6 +388,9 @@ class _SignInEndpoints:
 def _serving(endpoints: _SignInEndpoints) -> Iterator[str]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            endpoints.oidc_requests.append(
+                (self.path, self.headers.get("Authorization"))
+            )
             self._reply(endpoints.oidc)
 
         def do_POST(self) -> None:
@@ -453,11 +459,17 @@ def test_zen_sign_in_masks_and_exports_a_granted_key(tmp_path: Path) -> None:
         "OpenCode Zen token expires_in=3600",
     ]
     assert github_env == f"OPENCODE_ZEN_API_KEY={_ZEN_KEY}\n"
-    [exchange] = endpoints.exchanges
-    assert (exchange["subject_token"], exchange["client_id"]) == (
-        [_OIDC_TOKEN],
-        ["client-1"],
-    )
+    assert endpoints.oidc_requests == [
+        ("/oidc?v=1&audience=https://opencode.ai/console", "Bearer request-token")
+    ]
+    assert endpoints.exchanges == [
+        {
+            "grant_type": ["urn:ietf:params:oauth:grant-type:token-exchange"],
+            "subject_token_type": ["urn:ietf:params:oauth:token-type:jwt"],
+            "client_id": ["client-1"],
+            "subject_token": [_OIDC_TOKEN],
+        }
+    ]
 
 
 @posix_shell_only
@@ -470,8 +482,8 @@ def test_zen_sign_in_logs_a_rejection_reason_and_exports_nothing(
         tmp_path, _SignInEndpoints(_OIDC_OK, (400, rejection))
     )
 
-    assert result.returncode != 0
-    assert "OpenCode Zen sign-in failed: token exchange:" in result.stderr
+    assert result.returncode == 1
+    assert f"{_SIGN_IN_FAILED}token exchange:" in result.stderr
     assert "branch not trusted" in result.stderr
     assert github_env == ""
 
@@ -482,8 +494,8 @@ def test_zen_sign_in_rejects_an_exchange_that_grants_no_key(tmp_path: Path) -> N
         tmp_path, _SignInEndpoints(_OIDC_OK, (200, {"expires_in": 3600}))
     )
 
-    assert result.returncode != 0
-    assert "token exchange returned no access_token" in result.stderr
+    assert result.returncode == 1
+    assert f"{_SIGN_IN_FAILED}token exchange returned no access_token" in result.stderr
     assert github_env == ""
 
 
@@ -491,11 +503,27 @@ def test_zen_sign_in_rejects_an_exchange_that_grants_no_key(tmp_path: Path) -> N
 def test_zen_sign_in_stops_before_the_exchange_without_an_oidc_token(
     tmp_path: Path,
 ) -> None:
-    endpoints = _SignInEndpoints((200, {}), (200, {"access_token": _ZEN_KEY}))
+    endpoints = _SignInEndpoints((200, {}), _UNREACHED)
 
     result, github_env = _sign_in(tmp_path, endpoints)
 
-    assert result.returncode != 0
-    assert "GitHub OIDC response has no token" in result.stderr
+    assert result.returncode == 1
+    assert f"{_SIGN_IN_FAILED}GitHub OIDC response has no token" in result.stderr
+    assert endpoints.exchanges == []
+    assert github_env == ""
+
+
+@posix_shell_only
+def test_zen_sign_in_logs_a_refused_oidc_request_and_skips_the_exchange(
+    tmp_path: Path,
+) -> None:
+    refusal = {"message": "Unable to get ACTIONS_ID_TOKEN_REQUEST_URL"}
+    endpoints = _SignInEndpoints((403, refusal), _UNREACHED)
+
+    result, github_env = _sign_in(tmp_path, endpoints)
+
+    assert result.returncode == 1
+    assert f"{_SIGN_IN_FAILED}GitHub OIDC request:" in result.stderr
+    assert refusal["message"] in result.stderr
     assert endpoints.exchanges == []
     assert github_env == ""

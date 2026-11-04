@@ -35,13 +35,13 @@ name: E2E (baseline)
 #                  so it gets its own `dev-crewai` extra; see pyproject [tool.uv]).
 # - google       — gemini/google_adk/antigravity_acp (own lane so rate-limit flakiness is
 #                  isolated from core; shares the `dev` extra).
-# - backends     — the CLI/server coding agents in one job (on the `dev` extra):
+# - backends     — the CLI coding agents in one job (on the `dev` extra):
 #                  CodexAdapter (codex CLI) + the codex-acp e2e, CopilotACPAdapter
 #                  (copilot CLI over ACP; Anthropic BYOK), and CursorACPAdapter
 #                  (agent CLI over ACP; Cursor API key).
 # - opencode     — OpencodeAdapter against a local `opencode serve` on the free
-#                  Zen model (`dev` extra). Own short lane: its OIDC-issued Zen
-#                  token lasts one hour, and its free quota is shared.
+#                  Zen model (`dev` extra). Own short lane; why: the "CI lanes"
+#                  section of tests/e2e/baseline/README.md.
 # - letta        — LettaAdapter against a self-hosted Letta server (docker). The
 #                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
 #                  inside the pytest process; the container reaches it back via
@@ -176,8 +176,9 @@ jobs:
       contents: read
       id-token: write
     # A leg making progress across many live cells needs more time than a single
-    # turn. A stuck leg still ends red at this cap.
-    timeout-minutes: 240
+    # turn. A stuck leg still ends red at this cap. The opencode leg is capped at
+    # its one-hour Zen token, so a stall ends as a timeout, not as auth failures.
+    timeout-minutes: ${{ matrix.lane == 'opencode' && 60 || 240 }}
     # Keep diagnostic runs on separate branches from cancelling each other.
     concurrency:
       group: e2e-baseline-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.os }}-${{ inputs.first_attempt_diagnostics && github.ref || 'shared' }}

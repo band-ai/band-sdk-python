@@ -195,9 +195,10 @@ Locally, do the equivalent:
 
 ## opencode lane — a local OpenCode server
 
-OpenCode has its own short lane: CI signs in to OpenCode Zen through GitHub OIDC for a
-one-hour token, and the free Zen quota is shared, so live OpenCode runs only its
-`matrix_only` core cells. **`.github/scripts/setup-opencode.sh`** (gated on
+OpenCode has its own short lane (why: `tests/e2e/baseline/README.md`, "CI lanes"), and
+live OpenCode runs only its `matrix_only` core cells. CI signs in to OpenCode Zen
+through GitHub OIDC; the console credential trusts only the branches listed there, so a
+dispatch from any other branch fails at "Sign in to OpenCode Zen" until its ref is added. **`.github/scripts/setup-opencode.sh`** (gated on
 `if: matrix.lane == 'opencode'`) is the source of truth; it exports
 `OPENCODE_BASE_URL` / `E2E_OPENCODE_BASH_ASKS` via `$GITHUB_ENV` (CI-only). Locally:
 

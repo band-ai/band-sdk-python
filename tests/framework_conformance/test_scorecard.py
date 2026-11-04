@@ -52,8 +52,14 @@ from tests.framework_conformance.scorecardkit import (
 )
 from tests.paths import REPO_ROOT
 
-_OPENCODE_LIVE = spec_for(Adapter.OPENCODE).matrix_only
-assert _OPENCODE_LIVE is not None
+
+@pytest.fixture
+def opencode_live() -> MatrixAllowlist:
+    """OpenCode's real live allowlist, which these tests exercise ``per_adapter`` with."""
+    allowlist = spec_for(Adapter.OPENCODE).matrix_only
+    if allowlist is None:
+        pytest.fail("OpenCode no longer registers a matrix_only allowlist")
+    return allowlist
 
 
 def _opencode_matrix_test(name: str) -> Callable[..., object]:
@@ -76,7 +82,9 @@ class TestScorecard:
         with pytest.raises(ValueError, match="non-empty reason"):
             ExcludedAdapter(Adapter.CREWAI, reason)
 
-    def test_per_adapter_excludes_cell_but_carries_reason(self) -> None:
+    def test_per_adapter_excludes_cell_but_carries_reason(
+        self, opencode_live: MatrixAllowlist
+    ) -> None:
         @per_adapter(exclude=[ExcludedAdapter(Adapter.CREWAI, "cumulative usage")])
         def fn() -> None: ...
 
@@ -84,18 +92,20 @@ class TestScorecard:
         # fn is not on OpenCode's live allowlist, so OpenCode's quota N/A joins it.
         assert _per_adapter_marker(fn).exclude == (
             ExcludedAdapter(Adapter.CREWAI, "cumulative usage"),
-            ExcludedAdapter(Adapter.OPENCODE, _OPENCODE_LIVE.reason),
+            ExcludedAdapter(Adapter.OPENCODE, opencode_live.reason),
         )
 
-    def test_matrix_only_adapter_runs_only_its_allowlisted_tests(self) -> None:
-        listed = _opencode_matrix_test(min(_OPENCODE_LIVE.tests))
+    def test_matrix_only_adapter_runs_only_its_allowlisted_tests(
+        self, opencode_live: MatrixAllowlist
+    ) -> None:
+        listed = _opencode_matrix_test(min(opencode_live.tests))
         unlisted = _opencode_matrix_test("test_not_on_the_allowlist")
 
         assert str(Adapter.OPENCODE) in _parametrized_adapter_ids(listed)
         assert _per_adapter_marker(listed).exclude == ()
         assert str(Adapter.OPENCODE) not in _parametrized_adapter_ids(unlisted)
         assert _per_adapter_marker(unlisted).exclude == (
-            ExcludedAdapter(Adapter.OPENCODE, _OPENCODE_LIVE.reason),
+            ExcludedAdapter(Adapter.OPENCODE, opencode_live.reason),
         )
 
     def test_matrix_only_cannot_leave_a_test_without_adapters(self) -> None:

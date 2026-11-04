@@ -13,8 +13,8 @@ set -euo pipefail
 : "${ACTIONS_ID_TOKEN_REQUEST_URL:?the job needs id-token: write}"
 : "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?the job needs id-token: write}"
 : "${GITHUB_ENV:?GITHUB_ENV is required}"
-audience="https://opencode.ai/console"
-token_url="${OPENCODE_ZEN_TOKEN_URL:-https://opencode.ai/console/auth/oauth/token}"
+console_url="https://opencode.ai/console"
+token_url="${OPENCODE_ZEN_TOKEN_URL:-$console_url/auth/oauth/token}"
 
 fail() {
   echo "OpenCode Zen sign-in failed: $1" >&2
@@ -23,7 +23,7 @@ fail() {
 
 oidc_response=$(curl -sS --fail-with-body --max-time 30 \
   --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-  "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$audience") ||
+  "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$console_url") ||
   fail "GitHub OIDC request: $oidc_response"
 oidc=$(jq -er '.value // empty' <<<"$oidc_response") ||
   fail "GitHub OIDC response has no token"

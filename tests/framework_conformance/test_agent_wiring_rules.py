@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 from typing import cast
 from unittest.mock import patch
@@ -214,9 +215,11 @@ class TestAgentWiringRules:
         collected_baseline`` keeps it so), so its passing cells are what runs.
         """
         assert spec.matrix_only is not None
-        live = {
+        # A multiset: the allowlist is keyed by bare name, so a same-named test in
+        # another module would otherwise hide behind an allowlisted one.
+        live = Counter(
             _function_name(cell.test)
             for cell in load_manifest(MANIFEST_PATH)
             if cell.adapter == spec.id and cell.status == "pass"
-        }
-        assert live == spec.matrix_only.tests
+        )
+        assert live == Counter(spec.matrix_only.tests)
