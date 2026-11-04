@@ -166,9 +166,8 @@ class Backends(BaseSettings):
     opencode_base_url: str = ""  # OPENCODE_BASE_URL (a running `opencode serve`)
     # Our own Anthropic key (ANTHROPIC_API_KEY), which the serve's config reads.
     opencode_provider_id: str = "anthropic"  # OPENCODE_PROVIDER_ID
-    # In OpenCode's model catalogue (/config/providers) since well before the
-    # version setup-opencode.sh pins. Overridable via OPENCODE_MODEL_ID.
-    opencode_model_id: str = "claude-haiku-4-5"  # OPENCODE_MODEL_ID
+    # In the /config/providers catalogue of the version setup-opencode.sh pins.
+    opencode_model_id: str = ANTHROPIC_MODEL  # OPENCODE_MODEL_ID
     # Whether the serve behind opencode_base_url gates its `bash` tool to `ask`.
     # Only the server's own permission rules decide when it raises a
     # `permission.asked`, so the manual-approval smoke has no way to provoke one
