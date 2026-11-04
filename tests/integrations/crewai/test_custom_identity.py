@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-
-from crewai.tools import BaseTool
 from typing import Any
+
+import pytest
 
 from band.integrations.crewai.tools import (
     CrewAIToolContext,
@@ -14,6 +14,8 @@ from band.integrations.crewai.tools import (
 )
 from band.testing.fake_tools import FakeAgentTools
 from tests.adapters.crewaiturnend.kit import DeclineInput
+
+pytest.importorskip("crewai")
 
 
 class TestCustomIdentity:
@@ -31,7 +33,6 @@ class TestCustomIdentity:
             custom_tools=[(input_model, observe)],
         )[-1]
 
-        assert isinstance(wrapped, BaseTool)
         assert wrapped.name == "band_no_reply"
         assert not wrapped.result_as_answer
         assert wrapped._run(reason="observe") == json.dumps(

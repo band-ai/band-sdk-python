@@ -199,7 +199,8 @@ jobs:
           tests/adapters/crewaiworker/test_flow_admission.py \
           tests/adapters/crewaiworker/test_parallel_settlement.py \
           tests/integrations/test_crewai_flow_real_sdk.py \
-          tests/integrations/test_crewai_real_tools.py \
+          tests/integrations/crewai/realtools/test_build.py \
+          tests/integrations/crewai/realtools/test_memory_validation.py \
           tests/integrations/crewai/completion/test_blank_completion.py \
           tests/integrations/crewai/activity/test_execution.py \
           tests/integrations/crewai/activity/test_send_event.py \
