@@ -72,7 +72,7 @@ class TestReplyDisambiguation:
         assert client.permission_replies == [
             {"permission_id": "req-1", "reply": "once"}
         ]
-        assert [reply["request_id"] for reply in client.question_replies] == ["q-1"]
+        assert client.question_replies == [{"request_id": "q-1", "answers": [["blue"]]}]
 
     @pytest.mark.parametrize("reply", ["reject q-1", "approve q-1"])
     async def test_reply_naming_a_resolved_question_leaves_the_permission_pending(
@@ -165,6 +165,19 @@ class TestReplyDisambiguation:
         assert await approvals.try_handle_reply(f"reject {shared}", "user-1")
         assert declined_questions(client) == [shared]
         assert client.permission_replies == []
+
+    async def test_reject_please_rejects_the_only_pending_question(
+        self, asks: AskFactory
+    ) -> None:
+        """A trailing "please" names no id, so with only a question pending the
+        reply rejects it rather than reaching the model as a prompt."""
+        client = FakeOpencodeClient()
+        approvals = make_room_approvals(client)
+        await approvals.on_question_asked(asks.question("q-1"))
+
+        assert approvals.recognizes_reply("reject please")
+        assert await approvals.try_handle_reply("reject please", "user-1")
+        assert declined_questions(client) == ["q-1"]
 
     async def test_named_reject_of_a_never_asked_question_is_not_consumed(self) -> None:
         client = FakeOpencodeClient()

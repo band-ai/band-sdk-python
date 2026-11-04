@@ -168,9 +168,8 @@ class TestReplyFeedback:
     async def test_a_grant_naming_a_question_being_answered_says_it_is_no_longer_pending(
         self, asks: AskFactory, permissions: tuple[str, ...]
     ) -> None:
-        """Once a question's answer is in flight, nothing is waiting on it: the
-        reply must not be told to answer it, nor be steered away from approving
-        a permission that is still pending."""
+        """Once a question's answer is in flight, nothing is waiting on it, so
+        the reply must not be told to answer it."""
         client = BlockingReplyClient("question")
         reply_tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(
@@ -190,10 +189,22 @@ class TestReplyFeedback:
         assert [m["content"] for m in reply_tools.messages_sent] == [
             QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1")
         ]
-        for request_id in permissions:
-            assert await approvals.try_handle_reply(
-                f"approve {request_id}", ALICE["id"]
-            )
-        assert client.permission_replies == [
-            {"permission_id": request_id, "reply": "once"} for request_id in permissions
-        ]
+
+    async def test_a_grant_naming_a_question_being_answered_leaves_the_permission_approvable(
+        self, asks: AskFactory
+    ) -> None:
+        """The grant must not be applied to the permission waiting beside the
+        in-flight question; that permission still takes its own approval."""
+        client = BlockingReplyClient("question")
+        approvals = make_room_approvals(client)
+        await approvals.on_permission_asked(asks.permission("p-1"))
+        await approvals.on_question_asked(asks.question("q-1"))
+
+        async with client.held(
+            "question", approvals.try_handle_reply("blue", ALICE["id"])
+        ):
+            assert await approvals.try_handle_reply("approve q-1", ALICE["id"])
+            assert client.permission_replies == []
+
+        assert await approvals.try_handle_reply("approve p-1", ALICE["id"])
+        assert client.permission_replies == [{"permission_id": "p-1", "reply": "once"}]

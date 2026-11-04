@@ -65,7 +65,7 @@ class AnsweringRoom:
         assert dict(self.registry) == self.expected
         assert self.registry.has_claimed() == bool(self.expected)
         assert not self.registry.has_unclaimed()
-        assert not any(self.registry.is_unclaimed(token) for token in self.expected)
+        assert [t for t in self.expected if self.registry.is_unclaimed(t)] == []
 
     async def close(self) -> None:
         for answer in self.answers:

@@ -75,15 +75,17 @@ class TestReplyRouting:
                 "reject q-old",
                 ("question gone", "q-old"),
             ),
-            (
+            pytest.param(
                 asks_with(questions=("q-1",), in_flight=("q-1",)),
                 "reject q-gone",
                 ("question gone", "q-gone"),
+                id="unrecognized-reject-while-a-question-is-in-flight",
             ),
-            (
+            pytest.param(
                 asks_with(questions=("q-1",)),
                 "reject please",
                 ("question reject", "q-1"),
+                id="reject-please-rejects-the-oldest-question",
             ),
             (
                 asks_with(known_permissions=frozenset({"p-old"})),
