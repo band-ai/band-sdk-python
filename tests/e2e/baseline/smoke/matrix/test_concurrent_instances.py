@@ -60,12 +60,12 @@ BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=INSTANCES)
         )
     ],
 )
-# Diagnosed live via the adapter's turn-phase logs: under K concurrent turns on
-# one shared serve + a throttled free model, a session's terminal event
-# (session.idle) can arrive AFTER the adapter's 300s turn budget -- the turn is
-# aborted with an error and the late reply is lost. That is genuine backend
-# non-completion (rerun-worthy infra transience), distinct from the healthy-slow
-# case the widened barrier below covers; it is not an adapter bug.
+# Diagnosed live via the adapter's turn-phase logs, when OpenCode still ran on a
+# throttled free model: under K concurrent turns on one shared serve, a session's
+# terminal event (session.idle) can arrive AFTER the adapter's 300s turn budget --
+# the turn is aborted with an error and the late reply is lost. That is genuine
+# backend non-completion (rerun-worthy infra transience), distinct from the
+# healthy-slow case the widened barrier below covers; it is not an adapter bug.
 @flaky_infra("shared serve may delay a turn's terminal event past the 300s budget")
 @pytest.mark.timeout(extra=BUDGET.extra_s)  # three concurrent boots + three turns
 @pytest.mark.asyncio(loop_scope="session")
@@ -101,14 +101,14 @@ async def test_concurrent_same_adapter_instances_each_reply(
             # itself the proof that all K instances co-resided and each replied.
             #
             # Widen the per-reply deadline: this fires K turns at once, and the
-            # backend lanes (codex/opencode) funnel them through one shared serve
-            # against a throttled free model, so a healthy turn can legitimately
-            # take longer than the default single-turn deadline, and the default
-            # tripped the barrier on a turn that was still running (spurious "no
-            # reply"). ``slow_turn_budget`` sizes each barrier at the adapters' own
-            # turn budget -- past which no reply can still be coming -- and sets the
-            # marker's ``extra`` above all K, so a genuine stall reports the stalled
-            # turn rather than a phase-less pytest-timeout kill. Fast adapters reply
+            # backend lanes (codex/opencode) funnel them through one shared serve,
+            # so a healthy turn can legitimately take longer than the default
+            # single-turn deadline, and the default tripped the barrier on a turn
+            # that was still running (spurious "no reply"). ``slow_turn_budget``
+            # sizes each barrier at the adapters' own turn budget -- past which no
+            # reply can still be coming -- and sets the marker's ``extra`` above all
+            # K, so a genuine stall reports the stalled turn rather than a
+            # phase-less pytest-timeout kill. Fast adapters reply
             # well within this: it raises only the failure ceiling, never latency.
             for instance, mid, marker in zip(instances, mids, markers, strict=True):
                 replies = await capture.wait_for_reply(
