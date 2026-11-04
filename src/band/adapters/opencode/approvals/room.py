@@ -281,12 +281,21 @@ class RoomApprovals:
         """Recognize a reply without claiming an ask or posting."""
         return route_reply(self._asks, content) is not None
 
-    async def try_handle_reply(self, content: str, sender_id: str | None) -> bool:
+    async def try_handle_reply(
+        self,
+        content: str,
+        sender_id: str | None,
+        tools: AgentToolsProtocol | None = None,
+    ) -> bool:
         """Consume a room message iff it answers the pending ask.
 
         Returns True when the message was a permission/question reply (the
         adapter must then NOT forward it to OpenCode as a prompt). Recheck
         pending state here: earlier recognition reserves no ask.
+
+        ``tools`` belong to the reply's own delivery. Feedback that resolves no
+        live ask posts there: the asking turn may have ended, and its tools can
+        no longer post.
         """
         # Mention the sender of THIS control message, not the turn mentions --
         # those belong to whichever turn is currently open (_begin_turn), which
@@ -296,22 +305,26 @@ class RoomApprovals:
             case None:
                 return False
             case PermissionReply(approval):
-                await self._handle_permission_reply(approval, mentions)
+                await self._handle_permission_reply(approval, mentions, tools)
             case QuestionRejection(question):
                 await self._handle_question_rejection(question, mentions)
             case QuestionAnswer(question, text):
-                await self._handle_question_answer(question, text, mentions)
+                await self._handle_question_answer(question, text, mentions, tools)
             case NamedQuestionGone(request_id):
                 # A named question id that matched no pending question:
                 # feedback, not a fresh prompt for the model.
                 await self._notify_room(
                     QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id=request_id),
                     mentions,
+                    tools,
                 )
         return True
 
     async def _handle_permission_reply(
-        self, approval: PermissionCommand, mentions: list[dict[str, str]]
+        self,
+        approval: PermissionCommand,
+        mentions: list[dict[str, str]],
+        tools: AgentToolsProtocol | None,
     ) -> None:
         asks = self._asks
         if (
@@ -321,7 +334,9 @@ class RoomApprovals:
             and asks.questions.has_unclaimed()
         ):
             await self._notify_room(
-                which_dual_reject_hint(asks.permissions, asks.questions), mentions
+                which_dual_reject_hint(asks.permissions, asks.questions),
+                mentions,
+                tools,
             )
             return
         pending = asks.resolve_permission(approval.request_id)
@@ -332,7 +347,7 @@ class RoomApprovals:
                 hint = which_question_command_hint(asks.questions)
             else:
                 hint = which_permission_hint(asks.permissions)
-            await self._notify_room(hint, mentions)
+            await self._notify_room(hint, mentions, tools)
             return
         if pending is not None:
             if (entry := self._claim(asks.permissions, pending.request_id)) is not None:
@@ -358,7 +373,7 @@ class RoomApprovals:
             and not asks.permissions.has_unclaimed()
         ):
             await self._notify_room(
-                which_question_command_hint(asks.questions), mentions
+                which_question_command_hint(asks.questions), mentions, tools
             )
         else:
             await self._notify_room(
@@ -366,14 +381,19 @@ class RoomApprovals:
                     request_id=approval.request_id
                 ),
                 mentions,
+                tools,
             )
 
     async def _handle_question_answer(
-        self, question: PendingQuestion, text: str, mentions: list[dict[str, str]]
+        self,
+        question: PendingQuestion,
+        text: str,
+        mentions: list[dict[str, str]],
+        tools: AgentToolsProtocol | None,
     ) -> None:
         answers = parse_question_answers(text, len(question.questions))
         if answers is None:
-            await self._notify_room(QUESTION_ANSWERS_NEEDED, mentions)
+            await self._notify_room(QUESTION_ANSWERS_NEEDED, mentions, tools)
             return
         if (
             entry := self._claim(self._asks.questions, question.request_id)
@@ -452,10 +472,10 @@ class RoomApprovals:
         mentions: list[dict[str, str]],
         tools: AgentToolsProtocol | None = None,
     ) -> None:
-        """Post an adapter notice best-effort.
+        """Post an adapter notice best-effort, on ``tools`` or else the open turn's.
 
-        A notice, never the turn's reply: it posts on the in-flight turn's
-        tools, and counting it would stop that turn relaying the model's answer.
+        A notice, never the turn's reply: counting it would stop the open turn
+        relaying the model's answer.
 
         A send failure must never strand the turn or crash the SSE event loop:
         the platform requires at least one mention, so a sender-less turn (no

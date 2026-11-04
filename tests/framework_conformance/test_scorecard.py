@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -36,7 +35,6 @@ from tests.e2e.baseline.scorecard import (
     outcome_row,
     to_markdown,
 )
-from tests.e2e.baseline.toolkit.adapters import MatrixAllowlist, spec_for
 from tests.e2e.baseline.toolkit.deps import Lane
 from tests.framework_conformance.scorecardkit import (
     _ADAPTER_A,
@@ -51,24 +49,6 @@ from tests.framework_conformance.scorecardkit import (
     lanes_without_an_installable_adapter,
 )
 from tests.paths import REPO_ROOT
-
-
-@pytest.fixture
-def opencode_live() -> MatrixAllowlist:
-    """OpenCode's real live allowlist, which these tests exercise ``per_adapter`` with."""
-    allowlist = spec_for(Adapter.OPENCODE).matrix_only
-    if allowlist is None:
-        pytest.fail("OpenCode no longer registers a matrix_only allowlist")
-    return allowlist
-
-
-def _opencode_matrix_test(name: str) -> Callable[..., object]:
-    """A two-adapter matrix test named ``name``, so OpenCode's allowlist decides its cell."""
-
-    def fn() -> None: ...
-
-    fn.__name__ = name
-    return per_adapter(Adapter.OPENCODE, Adapter.AGNO)(fn)
 
 
 class TestScorecard:
@@ -94,39 +74,6 @@ class TestScorecard:
         assert _per_adapter_marker(fn).exclude == (
             ExcludedAdapter(Adapter.CREWAI, "cumulative usage"),
         )
-
-    def test_matrix_only_adapter_runs_only_its_allowlisted_tests(
-        self, opencode_live: MatrixAllowlist
-    ) -> None:
-        listed = _opencode_matrix_test(min(opencode_live.tests))
-        unlisted = _opencode_matrix_test("test_not_on_the_allowlist")
-
-        assert str(Adapter.OPENCODE) in _parametrized_adapter_ids(listed)
-        assert _per_adapter_marker(listed).exclude == ()
-        assert str(Adapter.OPENCODE) not in _parametrized_adapter_ids(unlisted)
-        assert _per_adapter_marker(unlisted).exclude == (
-            ExcludedAdapter(Adapter.OPENCODE, opencode_live.reason),
-        )
-
-    def test_matrix_only_cannot_leave_a_test_without_adapters(self) -> None:
-        def test_not_on_the_allowlist() -> None: ...
-
-        with pytest.raises(ValueError, match="no adapters"):
-            per_adapter(Adapter.OPENCODE)(test_not_on_the_allowlist)
-
-    @pytest.mark.parametrize(
-        ("tests", "reason"),
-        [
-            (frozenset(), "quota"),
-            (frozenset({"test_x"}), ""),
-            (frozenset({"test_x"}), "  "),
-        ],
-    )
-    def test_matrix_allowlist_needs_tests_and_a_reason(
-        self, tests: frozenset[str], reason: str
-    ) -> None:
-        with pytest.raises(ValueError, match="at least one test and a reason"):
-            MatrixAllowlist(tests, reason)
 
     def test_per_adapter_rejects_unregistered_exclusion(self) -> None:
         # Adapter is a StrEnum, so a plain unregistered string is an unknown id.

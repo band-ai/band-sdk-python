@@ -695,12 +695,14 @@ async def approve(adapter: OpencodeAdapter) -> FakeAgentTools:
     return approver_tools
 
 
+#: The notice an ``event_permission`` ask for ``PERMISSION_ID`` posts.
+ASK_REQUESTED_NOTICE = APPROVAL_REQUESTED_TEMPLATE.format(
+    permission="bash", patterns="rm -rf tmp", request_id=PERMISSION_ID
+)
 #: The notices a ``parked_turn_client`` turn posts to the room by the time
 #: ``approve`` has handled its ask.
 APPROVED_ASK_NOTICES = [
-    APPROVAL_REQUESTED_TEMPLATE.format(
-        permission="bash", patterns="rm -rf tmp", request_id=PERMISSION_ID
-    ),
+    ASK_REQUESTED_NOTICE,
     APPROVAL_HANDLED_TEMPLATE.format(request_id=PERMISSION_ID, reply="once"),
 ]
 

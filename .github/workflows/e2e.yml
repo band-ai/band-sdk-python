@@ -39,9 +39,8 @@ name: E2E (baseline)
 #                  CodexAdapter (codex CLI) + the codex-acp e2e, CopilotACPAdapter
 #                  (copilot CLI over ACP; Anthropic BYOK), and CursorACPAdapter
 #                  (agent CLI over ACP; Cursor API key).
-# - opencode     — OpencodeAdapter against a local `opencode serve` on the free
-#                  Zen model (`dev` extra). Own short lane; why: the "CI lanes"
-#                  section of tests/e2e/baseline/README.md.
+# - opencode     — OpencodeAdapter against a local `opencode serve` on Anthropic
+#                  (`dev` extra). Own lane for the server its job stands up.
 # - letta        — LettaAdapter against a self-hosted Letta server (docker). The
 #                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
 #                  inside the pytest process; the container reaches it back via
@@ -171,14 +170,6 @@ jobs:
     name: e2e (${{ matrix.lane }} / ${{ matrix.os }})
     needs: lanes
     runs-on: ${{ matrix.runner }}
-    # id-token: the OpenCode Zen sign-in below exchanges the job's OIDC token.
-    # Permissions are per job, not per matrix leg, so every lane gets it. That is
-    # deliberate: the repo's publish trust policies are pinned to their own
-    # workflow files, so these tokens can't publish, and splitting the opencode
-    # lane out would duplicate this whole job.
-    permissions:
-      contents: read
-      id-token: write
     # A leg making progress across many live cells needs more time than a single
     # turn. A stuck leg still ends red at this cap.
     timeout-minutes: 240
@@ -306,15 +297,6 @@ jobs:
     - name: Install Bun and OMP (omp, omp_acp)
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-omp.sh
-
-    # A short-lived Zen key from the job's OIDC token (no stored secret to expire).
-    # The console credential trusts only the branches it lists.
-    - name: Sign in to OpenCode Zen (opencode)
-      if: matrix.lane == 'opencode'
-      env:
-        # The console credential's public client id, not a secret.
-        OPENCODE_ZEN_CLIENT_ID: sk_33331c61-1b4c-4d5e-b239-39e7dd87a346
-      run: bash .github/scripts/opencode-zen-sign-in.sh
 
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'opencode'

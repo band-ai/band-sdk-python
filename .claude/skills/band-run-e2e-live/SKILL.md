@@ -80,7 +80,7 @@ with `@lane(Lane.X)` (that's a `band-write-e2e-test` concern).
 | `google` | dev | gemini, google_adk (split out for rate-limit isolation) | GOOGLE/GEMINI key |
 | `crewai` | **dev-crewai** | crewai, crewai_flow | OPENAI key |
 | `backends` | dev | codex, copilot_acp, cursor_acp, omp_acp | see gotchas below |
-| `opencode` | dev | opencode (live runs only its `matrix_only` core cells) | a running `opencode serve` on the free Zen model — see "opencode lane" below |
+| `opencode` | dev | opencode | a running `opencode serve` on Anthropic (ANTHROPIC key) — see "opencode lane" below |
 | `letta` | dev | letta (matrix fan; Linux-only in CI) | docker Letta server + OPENAI key — see "letta lane" below |
 | `strands` | **dev-strands-nooa** | strands | OPENAI key |
 | `nooa` | **dev-strands-nooa** | nooa | ANTHROPIC key; Python 3.12–3.13 on POSIX; Linux-only in CI |
@@ -195,11 +195,8 @@ Locally, do the equivalent:
 
 ## opencode lane — a local OpenCode server
 
-OpenCode has its own short lane (why: `tests/e2e/baseline/README.md`, "CI lanes"), and
-live OpenCode runs only its `matrix_only` core cells. CI signs in to OpenCode Zen
-through GitHub OIDC. Its OpenCode console credential trusts only the branches listed on
-that credential, so a dispatch from any other branch fails at "Sign in to OpenCode Zen"
-until its ref is added there. **`.github/scripts/setup-opencode.sh`** (gated on
+OpenCode has its own lane for the server its job stands up, and runs on Anthropic with
+our own key. **`.github/scripts/setup-opencode.sh`** (gated on
 `if: matrix.lane == 'opencode'`) is the source of truth; it exports
 `OPENCODE_BASE_URL` / `E2E_OPENCODE_BASH_ASKS` via `$GITHUB_ENV` (CI-only). Locally:
 
@@ -207,7 +204,7 @@ until its ref is added there. **`.github/scripts/setup-opencode.sh`** (gated on
   config JSON, but put `opencode.json` only in this run's disposable server
   working directory (the script verifies this placement across platforms).
   Do not overwrite `~/.config/opencode/opencode.json`. Load
-  `OPENCODE_ZEN_API_KEY` from `.env.test` into the server process, start it
+  `ANTHROPIC_API_KEY` from `.env.test` into the server process, start it
   from that directory on a free loopback port, and track its process handle
   and log. Poll `/global/health` with a bounded deadline before testing;
   terminate and await the owned server during cleanup.

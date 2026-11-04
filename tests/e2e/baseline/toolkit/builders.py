@@ -32,7 +32,6 @@ from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
     Adapter,
-    MatrixAllowlist,
     _custom_tool_defs,
     _reject_tools,
     adapter,
@@ -543,34 +542,12 @@ def _build_codex(
     return adapter
 
 
-# The free OpenCode Zen tier runs out partway through the full matrix, failing
-# every later cell, so live OpenCode keeps these core cells and unit tests cover
-# the rest. The FYI no-reply cell is left out: the free model sometimes answers
-# an FYI in text instead of declining, and the turn-outcome probes already cover
-# OpenCode's decline path.
-_OPENCODE_LIVE_CELLS = MatrixAllowlist(
-    tests=frozenset(
-        {
-            "test_build_adapter_constructs_each",
-            "test_per_adapter_replies",
-            "test_recalls_within_session",
-            "test_a_question_decline_lets_the_model_continue",
-            "test_a_question_is_answered_in_free_text_from_the_room",
-            "test_a_crashed_server_is_re_registered_with_live_serve",
-            "test_a_reply_survives_a_crashed_band_mcp_server",
-            "test_pending_approval_reports_permission_and_clears",
-        }
-    ),
-    reason="free OpenCode Zen quota: live OpenCode runs only its core cells",
-)
-
-
 @adapter(
     Adapter.OPENCODE,
-    requires=[Dep.OPENCODE_SERVER],
+    # The serve reads this key for its `anthropic` provider (setup-opencode.sh).
+    requires=[Dep.OPENCODE_SERVER, Dep.ANTHROPIC],
     supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
-    matrix_only=_OPENCODE_LIVE_CELLS,
 )
 def _build_opencode(
     s: BaselineSettings,
