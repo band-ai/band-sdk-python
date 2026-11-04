@@ -19,6 +19,8 @@ from band.runtime.tools.agent import AgentTools
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     ASK_DEADLINE_S,
+    ASK_REQUESTED_NOTICE,
+    PERMISSION_ID,
     FakeOpencodeClient,
     event_permission,
     make_platform_message,
@@ -32,10 +34,10 @@ from tests.runtime.helpers import AGENT_ID, ALICE, rest_client_over
 from tests.runtime.scheduler.driver import attempt_delivery
 
 ROOM_ID = "room-1"
-PERMISSION_ID = "perm-1"
 ASK_ID = "ask"
 LATE_ID = "late"
 NEXT_ID = "next"
+DECLINED_ANSWER = "Declined."
 NEXT_ANSWER = "Next."
 
 
@@ -52,7 +54,9 @@ class TestLateReplyThroughTheRuntime:
                 [event_permission("sess-1", PERMISSION_ID)],
                 model_answer("m2", NEXT_ANSWER),
             ],
-            reply_permission_events={PERMISSION_ID: model_answer("m1", "Declined.")},
+            reply_permission_events={
+                PERMISSION_ID: model_answer("m1", DECLINED_ANSWER)
+            },
         )
         adapter = make_adapter(
             client,
@@ -97,7 +101,8 @@ class TestLateReplyThroughTheRuntime:
                 )
                 await turn_finished(await room_turn(adapter))
                 assert [r["reply"] for r in client.permission_replies] == ["reject"]
-                asked = list(platform.room_messages)
+                asked = [ASK_REQUESTED_NOTICE, DECLINED_ANSWER]
+                assert platform.room_messages == asked
 
                 await attempt_delivery(
                     execution,
