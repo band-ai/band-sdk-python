@@ -223,14 +223,16 @@ async def _probe_gemini() -> bool:
 
     adapter = GeminiAdapter()
     tools = MagicMock()
-    tools.execute_tool_call = AsyncMock(return_value=_IMAGE_RESULT)
+    tools.execute_tool_call_structured = AsyncMock(
+        return_value=ToolCallOutcome(value=_IMAGE_RESULT, ok=True)
+    )
     function_calls = [
         types.FunctionCall(
             name=BandTool.READ_ROOM_FILE, args={"file_id": "file-1"}, id="c1"
         )
     ]
 
-    parts = await adapter._process_function_calls(function_calls, tools)
+    parts, _declined = await adapter._process_function_calls(function_calls, tools)
 
     function_response = parts[0].function_response
     if function_response is None or not function_response.parts:
