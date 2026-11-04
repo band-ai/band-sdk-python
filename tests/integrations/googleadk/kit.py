@@ -19,6 +19,10 @@ from tests.adapters.genaikit import PlatformSchemaFakeTools, text_reply
 
 DECLINED = "Silence selected"
 FOLLOWUP = "Unexpected followup"
+DECLINE_REJECTED = "Decline rejected"
+WORK_REJECTED = "Work rejected"
+HANDLER_UNAVAILABLE = "Handler unavailable"
+HANDLER_REJECTED = "Handler rejected"
 
 
 class DeclineInput(BaseModel):
@@ -114,4 +118,4 @@ class FailedPlatformTools(PlatformSchemaFakeTools):
     ) -> ToolCallOutcome:
         assert tool_name == BandTool.NO_REPLY
         self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
-        return ToolCallOutcome(value="Decline rejected", ok=False)
+        return ToolCallOutcome(value=DECLINE_REJECTED, ok=False)

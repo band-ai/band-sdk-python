@@ -15,7 +15,11 @@ from band.runtime.tools.types import BandTool, TurnEffect
 from band.testing import FakeAgentTools, failure_reports
 from tests.framework_conformance.turnprobes import turn_input
 from tests.integrations.googleadk.kit import (
+    DECLINE_REJECTED,
     DECLINED,
+    HANDLER_REJECTED,
+    HANDLER_UNAVAILABLE,
+    WORK_REJECTED,
     DeclineInput,
     FailedPlatformTools,
     GoogleModelPeer,
@@ -70,7 +74,7 @@ class TestFailures:
         self, google_model: GoogleModelPeer
     ) -> None:
         async def fail(args: WorkInput) -> str:
-            raise ValueError("Work rejected")
+            raise ValueError(WORK_REJECTED)
 
         google_model.responses.extend(
             [batch(("decline", {}), ("work", {})), batch(("decline", {}))]
@@ -85,14 +89,28 @@ class TestFailures:
         assert len(google_model.requests) == 2
         assert model_results(google_model.requests[1]) == [
             ("decline", {"result": DECLINED}),
-            ("work", {"ok": False, "error": "Work rejected"}),
+            ("work", {"ok": False, "error": WORK_REJECTED}),
         ]
-        assert result_payloads(tools)[1] == {
-            "name": "work",
-            "output": str({"ok": False, "error": "Work rejected"}),
-            "tool_call_id": ANY,
-            "is_error": True,
-        }
+        assert result_payloads(tools) == [
+            {
+                "name": "decline",
+                "output": str({"result": DECLINED}),
+                "tool_call_id": ANY,
+                "is_error": False,
+            },
+            {
+                "name": "work",
+                "output": str({"ok": False, "error": WORK_REJECTED}),
+                "tool_call_id": ANY,
+                "is_error": True,
+            },
+            {
+                "name": "decline",
+                "output": str({"result": DECLINED}),
+                "tool_call_id": ANY,
+                "is_error": False,
+            },
+        ]
 
     async def test_validation_failure_does_not_execute_the_declared_handler(
         self, google_model: GoogleModelPeer
@@ -129,10 +147,20 @@ class TestFailures:
         ]
 
     @pytest.mark.parametrize(
-        "error", [RuntimeError("Handler unavailable"), ValueError("Handler rejected")]
+        ("error", "expected_error"),
+        [
+            (
+                RuntimeError(HANDLER_UNAVAILABLE),
+                {"ok": False, "error": f"Error executing work: {HANDLER_UNAVAILABLE}"},
+            ),
+            (ValueError(HANDLER_REJECTED), {"ok": False, "error": HANDLER_REJECTED}),
+        ],
     )
     async def test_exception_before_decline_success_remains_recoverable(
-        self, google_model: GoogleModelPeer, error: Exception
+        self,
+        google_model: GoogleModelPeer,
+        error: Exception,
+        expected_error: dict[str, Any],
     ) -> None:
         async def fail(args: WorkInput) -> str:
             raise error
@@ -143,10 +171,25 @@ class TestFailures:
             additional_tools=[(WorkInput, fail), (DeclineInput, decline)]
         )
         await adapter.on_started("Agent", "An agent")
-        await adapter.on_event(turn_input(FakeAgentTools()))
+        tools = FakeAgentTools()
+        await adapter.on_event(turn_input(tools))
 
         assert len(google_model.requests) == 2
-        assert model_results(google_model.requests[1])[0][1]["ok"] is False
+        assert model_results(google_model.requests[1]) == [("work", expected_error)]
+        assert result_payloads(tools) == [
+            {
+                "name": "work",
+                "output": str(expected_error),
+                "tool_call_id": ANY,
+                "is_error": True,
+            },
+            {
+                "name": "decline",
+                "output": str({"result": DECLINED}),
+                "tool_call_id": ANY,
+                "is_error": False,
+            },
+        ]
 
     async def test_unknown_native_sibling_is_not_hidden_by_decline(
         self, google_model: GoogleModelPeer
@@ -188,11 +231,19 @@ class TestFailures:
 
         assert len(google_model.requests) == 2
         assert model_results(google_model.requests[1]) == [
-            (BandTool.NO_REPLY, {"ok": False, "error": "Decline rejected"})
+            (BandTool.NO_REPLY, {"ok": False, "error": DECLINE_REJECTED})
         ]
-        assert result_payloads(tools)[0] == {
-            "name": BandTool.NO_REPLY,
-            "output": str({"ok": False, "error": "Decline rejected"}),
-            "tool_call_id": ANY,
-            "is_error": True,
-        }
+        assert result_payloads(tools) == [
+            {
+                "name": BandTool.NO_REPLY,
+                "output": str({"ok": False, "error": DECLINE_REJECTED}),
+                "tool_call_id": ANY,
+                "is_error": True,
+            },
+            {
+                "name": "decline",
+                "output": str({"result": DECLINED}),
+                "tool_call_id": ANY,
+                "is_error": False,
+            },
+        ]
