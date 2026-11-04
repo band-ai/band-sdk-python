@@ -1347,7 +1347,9 @@ class ExecutionContext:
         owner.task.add_done_callback(
             lambda _: self._finish_activity(scope, resource=owner)
         )
-        owner.task.add_done_callback(partial(self._resume_after_turn, scope))
+        if owner.role is TaskRole.SCOPE:
+            # Admission waits on the turn itself, never on its resources.
+            owner.task.add_done_callback(partial(self._resume_after_turn, scope))
         if scope.reports_activity and scope not in self._scopes and not scope.aborted:
             self._retain_activity_completion(
                 asyncio.create_task(self._acquire_activity(scope))
@@ -1361,7 +1363,7 @@ class ExecutionContext:
         """
         if scope.settled:
             logger.debug(
-                "ExecutionContext %s: released turn ended; retrying held input",
+                "ExecutionContext %s: released turn ended; requesting a resync",
                 self.room_id,
             )
             self.scheduler.request_resync()

@@ -12,6 +12,7 @@ from tests.runtime.activityownership.kit import (
     deliver_event,
     recognizes_control,
 )
+from tests.runtime.conftest import Waiting
 from tests.runtime.helpers import IDLE, KEEP_ALIVE, LifecyclePlatform
 
 
@@ -50,13 +51,21 @@ class TestControlProbe:
             on_message_control=consume_control,
             is_message_control=recognizes_control,
         )
-        await deliver_event(ctx, make_message_event(msg_id="owner"))
+        # The owner's worker outlives its delivery, so its end wakes the room's
+        # consumer; the control is served through that real consumer.
+        await ctx.start()
+        await ctx.on_event(make_message_event(msg_id="owner"))
+        await Waiting.until(lambda: activity_platform.marked("processed") == ["owner"])
         idle_report_gate.release.clear()
         handler.release.set()
         await idle_report_gate.entered.wait()
 
-        await deliver_event(ctx, make_message_event(msg_id=CONTROL_MESSAGE_ID))
-        assert activity_platform.marked("processed") == ["owner", CONTROL_MESSAGE_ID]
+        await ctx.on_event(make_message_event(msg_id=CONTROL_MESSAGE_ID))
+        await Waiting.until(
+            lambda: (
+                activity_platform.marked("processed") == ["owner", CONTROL_MESSAGE_ID]
+            )
+        )
 
         idle_report_gate.release.set()
         await ctx._join_activity_completion()
