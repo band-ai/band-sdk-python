@@ -71,6 +71,12 @@ class TestCrewAIJobCoverage:
             Path("tests/adapters/test_crewai_flow_phase3.py"),
             Path("tests/adapters/crewai/test_batch_history.py"),
             Path("tests/adapters/crewaiturnend/test_turn_ending.py"),
+            Path("tests/adapters/crewaiturnend/test_custom_batch.py"),
+            Path("tests/adapters/crewaiturnend/test_custom_decline.py"),
+            Path("tests/adapters/crewaiturnend/test_flow_continuation.py"),
+            Path("tests/adapters/crewaiturnend/test_native_failure_policy.py"),
+            Path("tests/adapters/crewaiturnend/test_retained_adapter.py"),
+
             Path("tests/adapters/crewaiworker/test_native_settlement.py"),
             Path("tests/adapters/crewaiworker/test_flow_admission.py"),
             Path("tests/adapters/crewaiworker/test_parallel_settlement.py"),
@@ -79,6 +85,10 @@ class TestCrewAIJobCoverage:
             Path("tests/integrations/crewai/completion/test_blank_completion.py"),
             Path("tests/integrations/crewai/activity/test_execution.py"),
             Path("tests/integrations/crewai/activity/test_send_event.py"),
+            Path("tests/integrations/crewai/test_custom_identity.py"),
+            Path("tests/integrations/crewai/test_dependency_contract.py"),
+            Path("tests/integrations/crewai/test_failure_boundary.py"),
+
             Path("tests/test_capability_gating_e2e.py"),
             Path("tests/framework_conformance/test_files_image_passthrough_matrix.py"),
         }

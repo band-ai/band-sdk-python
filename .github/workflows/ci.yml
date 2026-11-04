@@ -190,6 +190,11 @@ jobs:
           tests/adapters/test_crewai_flow_phase3.py \
           tests/adapters/crewai/test_batch_history.py \
           tests/adapters/crewaiturnend/test_turn_ending.py \
+          tests/adapters/crewaiturnend/test_custom_batch.py \
+          tests/adapters/crewaiturnend/test_custom_decline.py \
+          tests/adapters/crewaiturnend/test_flow_continuation.py \
+          tests/adapters/crewaiturnend/test_native_failure_policy.py \
+          tests/adapters/crewaiturnend/test_retained_adapter.py \
           tests/adapters/crewaiworker/test_native_settlement.py \
           tests/adapters/crewaiworker/test_flow_admission.py \
           tests/adapters/crewaiworker/test_parallel_settlement.py \
@@ -198,6 +203,9 @@ jobs:
           tests/integrations/crewai/completion/test_blank_completion.py \
           tests/integrations/crewai/activity/test_execution.py \
           tests/integrations/crewai/activity/test_send_event.py \
+          tests/integrations/crewai/test_custom_identity.py \
+          tests/integrations/crewai/test_dependency_contract.py \
+          tests/integrations/crewai/test_failure_boundary.py \
           tests/test_capability_gating_e2e.py \
           tests/framework_conformance/test_files_image_passthrough_matrix.py \
           tests/framework_conformance/ -k crewai
