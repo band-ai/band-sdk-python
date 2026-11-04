@@ -11,7 +11,7 @@ import pytest
 from pydantic import create_model
 
 from band.adapters.google_adk import GoogleADKAdapter
-from band.core.types import Emit
+from band.core.types import Emit, ToolEventKey
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools.types import BandTool, TurnEffect
 from band.testing import FakeAgentTools, failure_reports
@@ -45,10 +45,10 @@ class TestDecline:
         assert failure_reports(tools) == []
         assert result_payloads(tools) == [
             {
-                "name": "decline",
-                "output": str({"result": DECLINED}),
-                "tool_call_id": ANY,
-                "is_error": False,
+                ToolEventKey.NAME: "decline",
+                ToolEventKey.OUTPUT: str({"result": DECLINED}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: False,
             }
         ]
 
@@ -97,16 +97,16 @@ class TestDecline:
         assert len(google_model.requests) == 1
         assert result_payloads(tools) == [
             {
-                "name": "decline",
-                "output": str({"result": DECLINED}),
-                "tool_call_id": ANY,
-                "is_error": False,
+                ToolEventKey.NAME: "decline",
+                ToolEventKey.OUTPUT: str({"result": DECLINED}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: False,
             },
             {
-                "name": "work",
-                "output": str({"result": '{"value": 2}'}),
-                "tool_call_id": ANY,
-                "is_error": False,
+                ToolEventKey.NAME: "work",
+                ToolEventKey.OUTPUT: str({"result": '{"value": 2}'}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: False,
             },
         ]
 

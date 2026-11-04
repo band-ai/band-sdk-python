@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from band.adapters.google_adk import GoogleADKAdapter
 from band.core.exceptions import RoomClosingError
+from band.core.types import ToolEventKey
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools.types import BandTool, TurnEffect
 from band.testing import FakeAgentTools, failure_reports
@@ -56,16 +57,16 @@ class TestFailures:
         ]
         assert result_payloads(tools) == [
             {
-                "name": "decline",
-                "output": str({"ok": False, "error": failed}),
-                "tool_call_id": ANY,
-                "is_error": True,
+                ToolEventKey.NAME: "decline",
+                ToolEventKey.OUTPUT: str({"ok": False, "error": failed}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: True,
             },
             {
-                "name": "decline",
-                "output": str({"result": DECLINED}),
-                "tool_call_id": ANY,
-                "is_error": False,
+                ToolEventKey.NAME: "decline",
+                ToolEventKey.OUTPUT: str({"result": DECLINED}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: False,
             },
         ]
         assert failure_reports(tools) == []
@@ -93,22 +94,22 @@ class TestFailures:
         ]
         assert result_payloads(tools) == [
             {
-                "name": "decline",
-                "output": str({"result": DECLINED}),
-                "tool_call_id": ANY,
-                "is_error": False,
+                ToolEventKey.NAME: "decline",
+                ToolEventKey.OUTPUT: str({"result": DECLINED}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: False,
             },
             {
-                "name": "work",
-                "output": str({"ok": False, "error": WORK_REJECTED}),
-                "tool_call_id": ANY,
-                "is_error": True,
+                ToolEventKey.NAME: "work",
+                ToolEventKey.OUTPUT: str({"ok": False, "error": WORK_REJECTED}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: True,
             },
             {
-                "name": "decline",
-                "output": str({"result": DECLINED}),
-                "tool_call_id": ANY,
-                "is_error": False,
+                ToolEventKey.NAME: "decline",
+                ToolEventKey.OUTPUT: str({"result": DECLINED}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: False,
             },
         ]
 
@@ -178,16 +179,16 @@ class TestFailures:
         assert model_results(google_model.requests[1]) == [("work", expected_error)]
         assert result_payloads(tools) == [
             {
-                "name": "work",
-                "output": str(expected_error),
-                "tool_call_id": ANY,
-                "is_error": True,
+                ToolEventKey.NAME: "work",
+                ToolEventKey.OUTPUT: str(expected_error),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: True,
             },
             {
-                "name": "decline",
-                "output": str({"result": DECLINED}),
-                "tool_call_id": ANY,
-                "is_error": False,
+                ToolEventKey.NAME: "decline",
+                ToolEventKey.OUTPUT: str({"result": DECLINED}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: False,
             },
         ]
 
@@ -235,15 +236,15 @@ class TestFailures:
         ]
         assert result_payloads(tools) == [
             {
-                "name": BandTool.NO_REPLY,
-                "output": str({"ok": False, "error": DECLINE_REJECTED}),
-                "tool_call_id": ANY,
-                "is_error": True,
+                ToolEventKey.NAME: BandTool.NO_REPLY,
+                ToolEventKey.OUTPUT: str({"ok": False, "error": DECLINE_REJECTED}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: True,
             },
             {
-                "name": "decline",
-                "output": str({"result": DECLINED}),
-                "tool_call_id": ANY,
-                "is_error": False,
+                ToolEventKey.NAME: "decline",
+                ToolEventKey.OUTPUT: str({"result": DECLINED}),
+                ToolEventKey.TOOL_CALL_ID: ANY,
+                ToolEventKey.IS_ERROR: False,
             },
         ]

@@ -11,6 +11,7 @@ from typing import Any
 from google.genai import types
 from pydantic import BaseModel
 
+from band.core.types import MessageType
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools.schema import ToolCallOutcome
 from band.runtime.tools.types import BandTool, TurnEffect
@@ -94,7 +95,8 @@ class GatedWork:
 def result_payloads(tools: FakeAgentTools) -> list[dict[str, Any]]:
     """Read emitted native tool results."""
     return [
-        json.loads(event["content"]) for event in events_of_type(tools, "tool_result")
+        json.loads(event["content"])
+        for event in events_of_type(tools, MessageType.TOOL_RESULT)
     ]
 
 
