@@ -128,6 +128,7 @@ class RoomApprovals:
         registry: DecisionRegistry[PendingT],
         request_id: str,
         send: Callable[[DecisionEntry[PendingT]], Awaitable[bool]],
+        *,
         answered: str,
         not_pending: str,
         mentions: list[dict[str, str]],
@@ -384,12 +385,12 @@ class RoomApprovals:
                 asks.permissions,
                 pending.request_id,
                 partial(self._send_permission_reply, reply=approval.reply),
-                APPROVAL_HANDLED_TEMPLATE.format(
+                answered=APPROVAL_HANDLED_TEMPLATE.format(
                     request_id=pending.request_id, reply=approval.reply
                 ),
-                APPROVAL_NO_LONGER_PENDING_TEMPLATE,
-                mentions,
-                tools,
+                not_pending=APPROVAL_NO_LONGER_PENDING_TEMPLATE,
+                mentions=mentions,
+                tools=tools,
             )
             return
         # A named id that matches no permission still held (resolved, or not
@@ -416,10 +417,10 @@ class RoomApprovals:
             self._asks.questions,
             question.request_id,
             partial(self._send_question_reply, answers=answers),
-            QUESTION_ANSWERED_TEMPLATE.format(request_id=question.request_id),
-            QUESTION_NO_LONGER_PENDING_TEMPLATE,
-            mentions,
-            tools,
+            answered=QUESTION_ANSWERED_TEMPLATE.format(request_id=question.request_id),
+            not_pending=QUESTION_NO_LONGER_PENDING_TEMPLATE,
+            mentions=mentions,
+            tools=tools,
         )
 
     async def _handle_question_rejection(
@@ -432,10 +433,10 @@ class RoomApprovals:
             self._asks.questions,
             question.request_id,
             self._send_question_reject,
-            QUESTION_REJECTED_TEMPLATE.format(request_id=question.request_id),
-            QUESTION_NO_LONGER_PENDING_TEMPLATE,
-            mentions,
-            tools,
+            answered=QUESTION_REJECTED_TEMPLATE.format(request_id=question.request_id),
+            not_pending=QUESTION_NO_LONGER_PENDING_TEMPLATE,
+            mentions=mentions,
+            tools=tools,
         )
 
     async def _notify_originators(
