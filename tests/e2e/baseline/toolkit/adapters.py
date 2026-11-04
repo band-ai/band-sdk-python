@@ -87,22 +87,6 @@ AdapterBuilder = Callable[..., SimpleAdapter[Any]]
 
 
 @dataclass(frozen=True)
-class MatrixAllowlist:
-    """The only ``@per_adapter`` tests an adapter runs; every other one is N/A for ``reason``.
-
-    For an adapter whose live budget can't carry the full matrix (e.g. a free-tier
-    model quota). ``tests`` are test function names; unit tests cover the rest.
-    """
-
-    tests: frozenset[str]
-    reason: str
-
-    def __post_init__(self) -> None:
-        if not self.tests or not self.reason.strip():
-            raise ValueError("MatrixAllowlist needs at least one test and a reason")
-
-
-@dataclass(frozen=True)
 class AdapterSpec:
     """A registered adapter: its id, requirements, capabilities, and builder.
 
@@ -130,9 +114,6 @@ class AdapterSpec:
     (crewai_flow) or delegate tools to an external process / MCP server (codex,
     opencode, letta) set it ``False`` and are excluded from the tool-loop matrix
     (``specs(runs_tool_loop=True)``); flip one to ``True`` the day it is proven.
-
-    ``matrix_only`` limits the adapter to an allowlist of ``@per_adapter`` tests
-    (see :class:`MatrixAllowlist`); ``None`` (the default) runs the full matrix.
     """
 
     id: Adapter
@@ -141,7 +122,6 @@ class AdapterSpec:
     build: AdapterBuilder = field(compare=False)
     e2e_pending: str | None = None
     runs_tool_loop: bool = True
-    matrix_only: MatrixAllowlist | None = None
 
     @property
     def supports_batch_input(self) -> bool:
@@ -160,7 +140,6 @@ def adapter(
     supports: Iterable[Capability] = (),
     e2e_pending: str | None = None,
     runs_tool_loop: bool = True,
-    matrix_only: MatrixAllowlist | None = None,
 ) -> Callable[[AdapterBuilder], AdapterBuilder]:
     """Register ``name``'s builder in the matrix registry.
 
@@ -169,8 +148,7 @@ def adapter(
     ``e2e_pending`` takes the reason the adapter is registered but not live; it
     keeps the adapter's CI lane defined while running no cells (see
     ``AdapterSpec``). ``runs_tool_loop=False`` excludes the adapter from the
-    custom-tool matrix (see ``AdapterSpec``). ``matrix_only`` limits it to an
-    allowlist of ``@per_adapter`` tests (see ``MatrixAllowlist``).
+    custom-tool matrix (see ``AdapterSpec``).
     """
 
     def register(build: AdapterBuilder) -> AdapterBuilder:
@@ -183,7 +161,6 @@ def adapter(
             build=build,
             e2e_pending=e2e_pending,
             runs_tool_loop=runs_tool_loop,
-            matrix_only=matrix_only,
         )
         return build
 

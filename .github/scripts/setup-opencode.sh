@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Install + start the OpenCode server for the `opencode` e2e lane.
 #
-# Reads OPENCODE_ZEN_API_KEY (the Zen provider key, exported to $GITHUB_ENV by
-# opencode-zen-sign-in.sh) and
+# Reads ANTHROPIC_API_KEY (job env, the provider key) and
 # OPENCODE_SERVE_LOG (job env, the checkout-relative server log path), and exports
 # OPENCODE_BASE_URL / E2E_OPENCODE_BASH_ASKS of the running server to later steps
 # via $GITHUB_ENV.
@@ -14,15 +13,14 @@ OPENCODE_VERSION="${OPENCODE_VERSION:-1.18.4}"
 
 npm install -g "opencode-ai@${OPENCODE_VERSION}"
 
-# The unsecured localhost server reads the Zen key via the {env:...} substitution.
-# Free-tier account, so the config pins free models (incl. the small/title model)
-# to avoid paid calls.
+# The unsecured localhost server reads the key via the {env:...} substitution.
+# small_model keeps session titling on the same model instead of OpenCode's default.
 read -r -d '' OPENCODE_CONFIG_JSON <<'JSON' || true
 {
   "$schema": "https://opencode.ai/config.json",
-  "small_model": "opencode/mimo-v2.6-flash-free",
+  "small_model": "anthropic/claude-haiku-4-5",
   "provider": {
-    "opencode": { "options": { "apiKey": "{env:OPENCODE_ZEN_API_KEY}" } }
+    "anthropic": { "options": { "apiKey": "{env:ANTHROPIC_API_KEY}" } }
   },
   "permission": {
     "bash": "ask"
@@ -31,7 +29,7 @@ read -r -d '' OPENCODE_CONFIG_JSON <<'JSON' || true
 JSON
 
 # Serve from an empty throwaway dir: opencode is a coding agent with shell/read/grep
-# tools, so in the repo checkout a weak free model wanders into the source instead of
+# tools, so in the repo checkout a model can wander into the source instead of
 # replying. An empty cwd keeps it on task.
 workdir="$(mktemp -d)"
 # The server's own loop, permission and session records explain a turn the
