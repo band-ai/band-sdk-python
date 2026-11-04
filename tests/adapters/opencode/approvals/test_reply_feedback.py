@@ -81,6 +81,48 @@ class TestReplyFeedback:
                 QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1"),
                 id="question-gone",
             ),
+            pytest.param(
+                ONE_QUESTION,
+                ("reject q-1",),
+                "approve q-1",
+                QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1"),
+                id="late-approve-of-a-question",
+            ),
+            pytest.param(
+                ONE_QUESTION,
+                ("reject q-1",),
+                "always q-1",
+                QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1"),
+                id="late-always-of-a-question",
+            ),
+            pytest.param(
+                BOTH,
+                ("reject q-1",),
+                "reject q-1",
+                QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1"),
+                id="late-reject-of-a-question-with-a-permission-pending",
+            ),
+            pytest.param(
+                BOTH,
+                ("reject q-1",),
+                "approve q-1",
+                QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1"),
+                id="late-approve-of-a-question-with-a-permission-pending",
+            ),
+            pytest.param(
+                BOTH,
+                (),
+                "approve q-1",
+                which_question_command_hint(BOTH.questions),
+                id="question-command-hint-with-a-permission-pending",
+            ),
+            pytest.param(
+                ONE_PERMISSION,
+                ("approve p-1",),
+                "approve p-1",
+                APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(request_id="p-1"),
+                id="late-approve-of-a-permission",
+            ),
         ],
     )
     async def test_feedback_lands_on_the_replys_tools_not_the_turns(

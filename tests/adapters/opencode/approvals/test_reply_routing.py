@@ -73,6 +73,16 @@ class TestReplyRouting:
                 ("question gone", "q-old"),
             ),
             (
+                asks_with(known_questions=frozenset({"q-old"})),
+                "approve q-old",
+                ("question gone", "q-old"),
+            ),
+            (
+                asks_with(permissions=("p-1",), known_questions=frozenset({"q-old"})),
+                "reject q-old",
+                ("question gone", "q-old"),
+            ),
+            (
                 asks_with(known_permissions=frozenset({"p-old"})),
                 "approve p-old",
                 ("permission once", "p-old"),

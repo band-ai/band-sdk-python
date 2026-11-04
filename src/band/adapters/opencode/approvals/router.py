@@ -40,7 +40,7 @@ class QuestionAnswer:
 
 @dataclass(frozen=True)
 class NamedQuestionGone:
-    """``reject <id>`` for a question that is no longer pending."""
+    """A reply naming a question that is no longer pending, whatever its word."""
 
     request_id: str
 
@@ -63,8 +63,11 @@ def route_reply(asks: PendingAsks, content: str) -> ReplyRoute | None:
     command = strip_leading_mentions(raw).strip()
 
     approval = parse_permission_reply(command)
-    if approval and _permission_command_applies(asks, approval):
-        return PermissionReply(approval)
+    if approval is not None:
+        if (gone := _resolved_question(asks, approval)) is not None:
+            return gone
+        if _permission_command_applies(asks, approval):
+            return PermissionReply(approval)
 
     if (question := asks.resolve_question(command)) is not None:
         if approval is not None and approval.rejects:
@@ -79,11 +82,30 @@ def route_reply(asks: PendingAsks, content: str) -> ReplyRoute | None:
         approval is not None
         and approval.rejects
         and approval.request_id is not None
-        and (asks.questions or approval.request_id in asks.known_question_ids)
+        and asks.questions
     ):
         return NamedQuestionGone(approval.request_id)
 
     return None
+
+
+def _resolved_question(
+    asks: PendingAsks, approval: PermissionCommand
+) -> NamedQuestionGone | None:
+    """A reply naming a question that was asked and is no longer held.
+
+    The id, not the reply word, says which kind of ask it answers, so a late
+    ``approve <question-id>`` is not reported as an approval.
+    """
+    named = approval.request_id
+    if (
+        named is None
+        or named not in asks.known_question_ids
+        or named in asks.known_permission_ids
+        or named in asks.questions
+    ):
+        return None
+    return NamedQuestionGone(named)
 
 
 def _permission_command_applies(asks: PendingAsks, approval: PermissionCommand) -> bool:

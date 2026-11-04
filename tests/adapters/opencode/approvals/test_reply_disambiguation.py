@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
+from band.adapters.opencode.approvals.wording import which_question_command_hint
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.approvals.kit import (
+    asks_with,
     make_room_approvals,
 )
 from tests.adapters.opencode.helpers import (
@@ -64,9 +68,33 @@ class TestReplyDisambiguation:
         assert await approvals.try_handle_reply("approve q-1", "user-1")
         assert client.question_replies == []
         assert client.permission_replies == []
-        assert "no longer pending" in tools.messages_sent[-1]["content"]
+        assert tools.messages_sent[-1]["content"] == which_question_command_hint(
+            asks_with(questions=("q-1",)).questions
+        )
         assert list(approvals._asks.permissions) == ["req-1"]
         assert list(approvals._asks.questions) == ["q-1"]
+
+    @pytest.mark.parametrize("reply", ["reject q-1", "approve q-1"])
+    async def test_reply_naming_a_resolved_question_leaves_the_permission_pending(
+        self,
+        asks: AskFactory,
+        reply: str,
+    ) -> None:
+        """A late reply to a question must not answer the permission still
+        pending beside it."""
+        client = FakeOpencodeClient()
+        approvals = make_room_approvals(client)
+        await approvals.on_permission_asked(asks.permission("req-1"))
+        await approvals.on_question_asked(asks.question("q-1"))
+        assert await approvals.try_handle_reply("reject q-1", "user-1")
+
+        assert await approvals.try_handle_reply(reply, "user-1")
+        assert client.permission_replies == []
+
+        assert await approvals.try_handle_reply("approve req-1", "user-1")
+        assert client.permission_replies == [
+            {"permission_id": "req-1", "reply": "once"}
+        ]
 
     async def test_approve_question_id_with_only_a_question_pending(
         self,

@@ -366,12 +366,7 @@ class RoomApprovals:
         # A named permission id that matches nothing currently pending
         # (already resolved, or another permission is pending instead):
         # feedback, not a fresh prompt for the model.
-        if (
-            approval.grants
-            and approval.request_id in asks.questions
-            and approval.request_id not in asks.permissions
-            and not asks.permissions.has_unclaimed()
-        ):
+        if approval.grants and approval.request_id in asks.questions:
             await self._notify_room(
                 which_question_command_hint(asks.questions), mentions, tools
             )
