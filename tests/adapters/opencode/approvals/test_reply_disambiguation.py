@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.approvals.kit import (
@@ -64,9 +66,35 @@ class TestReplyDisambiguation:
         assert await approvals.try_handle_reply("approve q-1", "user-1")
         assert client.question_replies == []
         assert client.permission_replies == []
-        assert "no longer pending" in tools.messages_sent[-1]["content"]
-        assert list(approvals._asks.permissions) == ["req-1"]
-        assert list(approvals._asks.questions) == ["q-1"]
+
+        assert await approvals.try_handle_reply("approve req-1", "user-1")
+        assert await approvals.try_handle_reply("blue", "user-1")
+        assert client.permission_replies == [
+            {"permission_id": "req-1", "reply": "once"}
+        ]
+        assert client.question_replies == [{"request_id": "q-1", "answers": [["blue"]]}]
+
+    @pytest.mark.parametrize("reply", ["reject q-1", "approve q-1"])
+    async def test_reply_naming_a_resolved_question_leaves_the_permission_pending(
+        self,
+        asks: AskFactory,
+        reply: str,
+    ) -> None:
+        """Guard: a late reply naming a question must never fall back to the
+        only pending permission, whatever its reply word."""
+        client = FakeOpencodeClient()
+        approvals = make_room_approvals(client)
+        await approvals.on_permission_asked(asks.permission("req-1"))
+        await approvals.on_question_asked(asks.question("q-1"))
+        assert await approvals.try_handle_reply("reject q-1", "user-1")
+
+        assert await approvals.try_handle_reply(reply, "user-1")
+        assert client.permission_replies == []
+
+        assert await approvals.try_handle_reply("approve req-1", "user-1")
+        assert client.permission_replies == [
+            {"permission_id": "req-1", "reply": "once"}
+        ]
 
     async def test_approve_question_id_with_only_a_question_pending(
         self,
@@ -137,6 +165,19 @@ class TestReplyDisambiguation:
         assert await approvals.try_handle_reply(f"reject {shared}", "user-1")
         assert declined_questions(client) == [shared]
         assert client.permission_replies == []
+
+    async def test_reject_please_rejects_the_only_pending_question(
+        self, asks: AskFactory
+    ) -> None:
+        """A trailing "please" names no id, so with only a question pending the
+        reply rejects it rather than reaching the model as a prompt."""
+        client = FakeOpencodeClient()
+        approvals = make_room_approvals(client)
+        await approvals.on_question_asked(asks.question("q-1"))
+
+        assert approvals.recognizes_reply("reject please")
+        assert await approvals.try_handle_reply("reject please", "user-1")
+        assert declined_questions(client) == ["q-1"]
 
     async def test_named_reject_of_a_never_asked_question_is_not_consumed(self) -> None:
         client = FakeOpencodeClient()

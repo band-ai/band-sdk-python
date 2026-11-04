@@ -27,6 +27,7 @@ from band.adapters.opencode.approvals.pending import (
 from band.adapters.opencode.approvals.ports import ApprovalPorts
 from band.adapters.opencode.approvals.router import (
     NamedQuestionGone,
+    NamedQuestionGrant,
     PermissionReply,
     QuestionAnswer,
     QuestionRejection,
@@ -311,12 +312,15 @@ class RoomApprovals:
             case QuestionAnswer(question, text):
                 await self._handle_question_answer(question, text, mentions, tools)
             case NamedQuestionGone(request_id):
-                # A named question id that matched no pending question:
-                # feedback, not a fresh prompt for the model.
                 await self._notify_room(
                     QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id=request_id),
                     mentions,
                     tools,
+                )
+            case NamedQuestionGrant():
+                # Questions take an answer or a reject, never an approval.
+                await self._notify_room(
+                    which_question_command_hint(self._asks.questions), mentions, tools
                 )
         return True
 
@@ -363,26 +367,14 @@ class RoomApprovals:
                     ),
                 )
             return
-        # A named permission id that matches nothing currently pending
-        # (already resolved, or another permission is pending instead):
-        # feedback, not a fresh prompt for the model.
-        if (
-            approval.grants
-            and approval.request_id in asks.questions
-            and approval.request_id not in asks.permissions
-            and not asks.permissions.has_unclaimed()
-        ):
-            await self._notify_room(
-                which_question_command_hint(asks.questions), mentions, tools
-            )
-        else:
-            await self._notify_room(
-                APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(
-                    request_id=approval.request_id
-                ),
-                mentions,
-                tools,
-            )
+        # A named id that matches no permission still held (resolved, or not
+        # recognized while another permission waits): feedback, not a fresh
+        # prompt for the model.
+        await self._notify_room(
+            APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(request_id=approval.request_id),
+            mentions,
+            tools,
+        )
 
     async def _handle_question_answer(
         self,

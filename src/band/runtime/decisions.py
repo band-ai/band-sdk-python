@@ -142,6 +142,10 @@ class DecisionRegistry(Mapping[str, T]):
         """Entries still awaiting an answer -- what a room should see as pending."""
         return self._entries_for(self._core.unclaimed())
 
+    def is_unclaimed(self, token: str) -> bool:
+        """Whether ``token`` is held and still awaiting an answer."""
+        return token in self._core.unclaimed()
+
     def unclaimed_count(self) -> int:
         return self._core.unclaimed_count()
 

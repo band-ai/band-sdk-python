@@ -4,7 +4,6 @@ import pytest
 
 from band.adapters.opencode.approvals.commands import (
     PermissionCommand,
-    is_question_rejection,
     parse_permission_reply,
     parse_question_answers,
 )
@@ -43,10 +42,3 @@ class TestReplyGrammar:
         self, content: str, question_count: int, expected: list[list[str]] | None
     ) -> None:
         assert parse_question_answers(content, question_count) == expected
-
-    @pytest.mark.parametrize(
-        ("command", "rejects"),
-        [("reject", True), ("/REJECT q-1", True), ("approve q-1", False), ("", False)],
-    )
-    def test_question_rejection(self, command: str, rejects: bool) -> None:
-        assert is_question_rejection(command) is rejects
