@@ -34,6 +34,9 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.crewai.catalog import (
+    ENVELOPE_ERROR,
+    ENVELOPE_STATUS_KEY,
+    ENVELOPE_SUCCESS,
     PLATFORM_TOOLS,
     Invocation,
     ToolSpec,
@@ -92,7 +95,7 @@ def _execute_tool(
         return ToolFailure(
             message=json.dumps(
                 {
-                    "status": "error",
+                    ENVELOPE_STATUS_KEY: ENVELOPE_ERROR,
                     "message": "No room context available - tool called outside message handling",
                 }
             ),
@@ -124,7 +127,9 @@ def _execute_tool(
             if tool_name not in EVENT_TOOL_NAMES:
                 await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return ToolFailure(
-                message=json.dumps({"status": "error", "message": error_msg}),
+                message=json.dumps(
+                    {ENVELOPE_STATUS_KEY: ENVELOPE_ERROR, "message": error_msg}
+                ),
                 code=None,
             )
 
@@ -150,7 +155,7 @@ def _note_successful_post(
     if tool_name != BandTool.SEND_MESSAGE or not isinstance(result, str):
         return
     try:
-        if json.loads(result).get("status") != "success":
+        if json.loads(result).get(ENVELOPE_STATUS_KEY) != ENVELOPE_SUCCESS:
             return
     except (json.JSONDecodeError, AttributeError, TypeError):
         return
@@ -244,7 +249,12 @@ def _custom_tool(
                 failed = is_failed_tool_output(result)
                 await reporter.report_result(tools, tool_name, result, is_error=failed)
                 envelope = json.dumps(
-                    {"status": "error" if failed else "success", "result": result},
+                    {
+                        ENVELOPE_STATUS_KEY: ENVELOPE_ERROR
+                        if failed
+                        else ENVELOPE_SUCCESS,
+                        "result": result,
+                    },
                     default=str,
                 )
                 return ToolFailure(message=envelope, code=None) if failed else envelope
