@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -103,8 +103,8 @@ class BlockingReplyClient(FakeOpencodeClient):
     before it reaches OpenCode -- so a test can interleave room traffic or
     teardown with it. Later requests pass straight through."""
 
-    def __init__(self, *operations: ReplyOperation) -> None:
-        super().__init__()
+    def __init__(self, *operations: ReplyOperation, **scripted: Any) -> None:
+        super().__init__(**scripted)
         self._gates = {operation: ReplyGate() for operation in operations}
 
     @asynccontextmanager
