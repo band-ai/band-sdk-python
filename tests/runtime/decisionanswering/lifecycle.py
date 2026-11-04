@@ -39,6 +39,7 @@ class AnsweringRoom:
                     assert registered is None
                 else:
                     assert registered is not None
+                    assert self.registry.is_unclaimed(token)
                     assert self.registry.try_claim(token) is registered.entry
                     future = asyncio.get_running_loop().create_future()
                     future.set_result(self.sequence)
@@ -64,6 +65,7 @@ class AnsweringRoom:
         assert dict(self.registry) == self.expected
         assert self.registry.has_claimed() == bool(self.expected)
         assert not self.registry.has_unclaimed()
+        assert not any(self.registry.is_unclaimed(token) for token in self.expected)
 
     async def close(self) -> None:
         for answer in self.answers:

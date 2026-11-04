@@ -190,4 +190,10 @@ class TestReplyFeedback:
         assert [m["content"] for m in reply_tools.messages_sent] == [
             QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1")
         ]
-        assert client.permission_replies == []
+        for request_id in permissions:
+            assert await approvals.try_handle_reply(
+                f"approve {request_id}", ALICE["id"]
+            )
+        assert client.permission_replies == [
+            {"permission_id": request_id, "reply": "once"} for request_id in permissions
+        ]

@@ -5,12 +5,18 @@ import asyncio
 import pytest
 
 from band.adapters.opencode import OpencodeAdapterConfig
+from band.adapters.opencode.approvals.wording import (
+    APPROVAL_NO_LONGER_PENDING_TEMPLATE,
+    QUESTION_NO_LONGER_PENDING_TEMPLATE,
+)
 from band.integrations.opencode import ApprovalReply, parse_opencode_event
 from band.integrations.opencode.types import OpencodeSessionState
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
+    RawOpencodeEvent,
     event_permission,
+    event_question,
     event_session_idle,
     make_platform_message,
     room_turn,
@@ -95,16 +101,39 @@ class TestApprovalLifetime:
         ]
         await adapter.on_cleanup("room-1")
 
+    @pytest.mark.parametrize(
+        ("asked", "request_id", "answer", "notice"),
+        [
+            pytest.param(
+                event_permission("sess-1", "perm-1"),
+                "perm-1",
+                "approve perm-1",
+                APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(request_id="perm-1"),
+                id="permission",
+            ),
+            pytest.param(
+                event_question("sess-1", "q-1", "Which?"),
+                "q-1",
+                "blue",
+                QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1"),
+                id="question",
+            ),
+        ],
+    )
     async def test_stale_approval_id_survives_a_later_turn(
-        self, make_adapter, tools
+        self,
+        make_adapter,
+        tools,
+        asked: RawOpencodeEvent,
+        request_id: str,
+        answer: str,
+        notice: str,
     ) -> None:
         """Room-scoped known ids must outlive `_begin_turn`'s RoomApprovals
-        rebuild so `approve <old-id>` is feedback, not a new prompt."""
+        rebuild, so `approve <old-id>` is feedback naming the ask's kind, not a
+        new prompt."""
         fake_client = FakeOpencodeClient(
-            prompt_event_sequences=[
-                [event_permission("sess-1", "perm-1")],
-                [event_session_idle("sess-1")],
-            ],
+            prompt_event_sequences=[[asked], [event_session_idle("sess-1")]],
         )
         adapter = make_adapter(fake_client)
 
@@ -121,7 +150,7 @@ class TestApprovalLifetime:
         )
         await deliver_message(
             adapter,
-            make_platform_message(content="approve perm-1"),
+            make_platform_message(content=answer),
             tools_protocol(tools),
             OpencodeSessionState(),
             participants_msg=None,
@@ -147,7 +176,7 @@ class TestApprovalLifetime:
 
         await deliver_message(
             adapter,
-            make_platform_message(content="approve perm-1"),
+            make_platform_message(content=f"approve {request_id}"),
             tools_protocol(tools),
             OpencodeSessionState(),
             participants_msg=None,
@@ -157,9 +186,7 @@ class TestApprovalLifetime:
         )
 
         assert len(fake_client.prompt_calls) == 2
-        assert any(
-            "no longer pending" in message["content"] for message in tools.messages_sent
-        )
+        assert tools.messages_sent[-1]["content"] == notice
         await adapter.on_cleanup("room-1")
 
     @pytest.mark.looptime(resolution=binary_clock_resolution())

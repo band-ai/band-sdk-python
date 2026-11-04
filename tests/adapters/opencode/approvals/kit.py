@@ -64,7 +64,8 @@ def asks_with(
         registry = (
             asks.permissions if request_id in asks.permissions else asks.questions
         )
-        assert registry.try_claim(request_id) is not None
+        claimed = registry.try_claim(request_id)
+        assert claimed is not None
     return asks
 
 
