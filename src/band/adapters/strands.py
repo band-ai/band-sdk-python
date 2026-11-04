@@ -230,19 +230,14 @@ def _registered_name(tool: StrandsCustomTool) -> str:
 def _custom_tool_effects(
     custom_tools: list[StrandsCustomTool],
 ) -> dict[str, TurnEffect]:
-    """Validate custom tool names and collect the native tools' declared effects.
-
-    A portable ``(InputModel, handler)`` tool records its own effect through
-    ``execute_custom_tool``.
-    """
+    """Validate exact registered names and collect custom stopping effects."""
     names = [_registered_name(tool) for tool in custom_tools]
     # Strands' registry is last-wins.
     reject_conflicting_tool_names(names)
 
     return declared_effects(
-        (name, tool)
+        (name, tool[1] if isinstance(tool, tuple) else tool)
         for name, tool in zip(names, custom_tools, strict=True)
-        if not isinstance(tool, tuple)
     )
 
 
@@ -314,7 +309,7 @@ class CustomToolBridge(StrandsToolBridge):
                 ok=False,
             )
             return
-        yield _tool_result(tool_use, value=result, ok=True)
+        yield _tool_result(tool_use, value=result, ok=not is_failed_tool_output(result))
 
 
 class PlatformToolBridge(StrandsToolBridge):
@@ -420,6 +415,8 @@ class BandTurnHooks(HookProvider):
         if token := self._native_calls.pop(event.tool_use["toolUseId"], None):
             await end_activity(self._tools, token)
         name = event.tool_use["name"]
+        if name in self._native_names and _custom_tool_failed(event.result):
+            event.result["status"] = "error"
         output = _result_text(event.result)
         succeeded = event.result.get("status") == "success" and not band_tool_errored(
             name, output
@@ -437,17 +434,18 @@ class BandTurnHooks(HookProvider):
             ToolEventKey.IS_ERROR: not succeeded,
         }
         call.update(result_payload)
-        if succeeded and name in ALL_TOOL_NAMES and turn_effect(name).ends_turn:
-            # Strands stops after recording every result in the current tool batch.
-            event.invocation_state["request_state"]["stop_event_loop"] = True
-        # Native Strands tools run outside execute_custom_tool, so their
-        # declared effect is recorded here.
-        if (
-            succeeded
-            and (effect := self._custom_effects.get(name))
-            and not _custom_tool_failed(event.result)
-        ):
-            self._tools.turn.record(effect)
+        effect = (
+            turn_effect(name)
+            if name in ALL_TOOL_NAMES
+            else self._custom_effects.get(name, TurnEffect.OBSERVE)
+        )
+        if succeeded:
+            if effect.ends_turn:
+                # Strands records every concurrent sibling result before stopping.
+                event.invocation_state["request_state"]["stop_event_loop"] = True
+            # Portable tools record their own effect through execute_custom_tool.
+            if name in self._native_names:
+                self._tools.turn.record(effect)
         if not self._emit_execution:
             return
         await self._emit_event(
