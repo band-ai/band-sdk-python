@@ -36,10 +36,12 @@ name: E2E (baseline)
 # - google       — gemini/google_adk/antigravity_acp (own lane so rate-limit flakiness is
 #                  isolated from core; shares the `dev` extra).
 # - backends     — the CLI/server coding agents in one job (on the `dev` extra):
-#                  CodexAdapter (codex CLI) + the codex-acp e2e, OpencodeAdapter
-#                  (local `opencode serve`, Zen free model), CopilotACPAdapter
+#                  CodexAdapter (codex CLI) + the codex-acp e2e, CopilotACPAdapter
 #                  (copilot CLI over ACP; Anthropic BYOK), and CursorACPAdapter
 #                  (agent CLI over ACP; Cursor API key).
+# - opencode     — OpencodeAdapter against a local `opencode serve` on the free
+#                  Zen model (`dev` extra). Own short lane: its OIDC-issued Zen
+#                  token lasts one hour, and its free quota is shared.
 # - letta        — LettaAdapter against a self-hosted Letta server (docker). The
 #                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
 #                  inside the pytest process; the container reaches it back via
@@ -79,6 +81,7 @@ on:
           - crewai
           - google
           - backends
+          - opencode
           - letta
           - strands
           - nooa
@@ -223,7 +226,7 @@ jobs:
       # copilot_acp matrix cell runs Anthropic BYOK and ignores this.
       GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
       # Where setup-opencode.sh points `opencode serve`'s log, and what the
-      # backends lane uploads.
+      # opencode lane uploads.
       OPENCODE_SERVE_LOG: artifacts/opencode-serve.log
       # Each lane writes one first-attempt test×adapter scorecard. The final job
       # checks it against the expected-cell manifest.
@@ -236,11 +239,11 @@ jobs:
       uses: ./.github/actions/setup-e2e
 
     # --- Backend setup: each step is gated to the lane whose server/CLI it stands
-    # up (the `backends` lane co-runs codex, opencode, and copilot_acp; letta is its
-    # own lane). ---
+    # up (the `backends` lane co-runs codex, copilot_acp and cursor_acp; opencode and
+    # letta are their own lanes). ---
 
     - name: Set up Node (codex, opencode)
-      if: matrix.lane == 'backends'
+      if: matrix.lane == 'backends' || matrix.lane == 'opencode'
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
         node-version: '20'
@@ -304,7 +307,7 @@ jobs:
     # expire). The console credential trusts only the branches it lists; client_id
     # is public.
     - name: Sign in to OpenCode Zen (opencode)
-      if: matrix.lane == 'backends'
+      if: matrix.lane == 'opencode'
       env:
         AUDIENCE: https://opencode.ai/console
         CLIENT_ID: sk_33331c61-1b4c-4d5e-b239-39e7dd87a346
@@ -326,7 +329,7 @@ jobs:
         echo "OPENCODE_ZEN_API_KEY=$token" >> "$GITHUB_ENV"
 
     - name: Install + start the OpenCode server (opencode)
-      if: matrix.lane == 'backends'
+      if: matrix.lane == 'opencode'
       run: bash .github/scripts/setup-opencode.sh
 
     # The Letta server runs in docker with a host-gateway alias so it can call
@@ -399,7 +402,7 @@ jobs:
       run: uv run python .github/scripts/record-backends-environment.py
 
     - name: Upload the OpenCode server log (opencode)
-      if: always() && matrix.lane == 'backends'
+      if: always() && matrix.lane == 'opencode'
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: opencode-serve-${{ matrix.os }}

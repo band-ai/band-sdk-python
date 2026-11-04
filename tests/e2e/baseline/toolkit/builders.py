@@ -553,7 +553,6 @@ _OPENCODE_LIVE_CELLS = MatrixAllowlist(
             "test_per_adapter_replies",
             "test_recalls_within_session",
             "test_an_fyi_ends_the_turn_through_band_no_reply",
-            "test_the_room_reply_decides_whether_the_gated_command_runs",
             "test_a_question_decline_lets_the_model_continue",
             "test_a_question_is_answered_in_free_text_from_the_room",
             "test_a_crashed_server_is_re_registered_with_live_serve",

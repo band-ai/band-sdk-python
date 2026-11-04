@@ -86,6 +86,7 @@ class Lane(StrEnum):
     CORE = "core"
     CREWAI = "crewai"
     BACKENDS = "backends"
+    OPENCODE = "opencode"
     GOOGLE = "google"
     LETTA = "letta"
     NOOA = "nooa"
@@ -120,6 +121,9 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     Lane.CORE: Extra.DEV,
     Lane.CREWAI: Extra.DEV_CREWAI,
     Lane.BACKENDS: Extra.DEV,
+    # OpenCode signs in for a one-hour Zen token and spends a free-tier quota, so
+    # it runs in its own short lane, split out of ``backends``.
+    Lane.OPENCODE: Extra.DEV,
     # The Google adapters (gemini/google_adk) share the ``dev`` extra but run in
     # their own lane so their free-tier rate-limit flakiness is isolated from the
     # rest of the provider-key adapters (and can be run/keyed separately).
@@ -435,7 +439,7 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.OPENCODE_SERVER: DepSpec(
         lambda s: bool(s.backends.opencode_base_url),
         "OPENCODE_BASE_URL not set (a running OpenCode server is required)",
-        lane=Lane.BACKENDS,
+        lane=Lane.OPENCODE,
     ),
     # The serve -- not the adapter's approval_mode -- decides when a permission is
     # asked, so the manual-relay smoke needs a serve whose rules gate `bash` to
@@ -449,7 +453,7 @@ _DEPS: dict[Dep, DepSpec] = {
         "E2E_OPENCODE_BASH_ASKS=true must declare that OPENCODE_BASE_URL's serve "
         'gates `bash` to `ask` (permission rule {"bash": "ask"}, as '
         ".github/scripts/setup-opencode.sh configures)",
-        lane=Lane.BACKENDS,
+        lane=Lane.OPENCODE,
     ),
     Dep.LETTA: DepSpec(
         _letta_available,
