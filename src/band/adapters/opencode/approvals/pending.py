@@ -75,6 +75,11 @@ class PendingAsks:
         for entry in (*self.permissions.cancel_all(), *self.questions.cancel_all()):
             entry.payload.activity.close()
 
+    def question_awaits_answer(self, request_id: str) -> bool:
+        """Whether the named question is still waiting on a human: neither
+        resolved nor with its answer already in flight."""
+        return any(entry.token == request_id for entry in self.questions.unclaimed())
+
     def resolve_permission(self, request_id: str | None) -> PendingPermission | None:
         """The ask a reply targets: the named one, else the only one still
         awaiting an answer."""

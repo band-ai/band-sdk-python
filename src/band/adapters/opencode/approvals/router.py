@@ -40,7 +40,10 @@ class QuestionAnswer:
 
 @dataclass(frozen=True)
 class NamedQuestionGone:
-    """A reply naming a question that is no longer pending, whatever its word."""
+    """A named reply for a question that no longer waits on one.
+
+    Also an unmatched ``reject <id>`` while a question is pending.
+    """
 
     request_id: str
 
@@ -64,7 +67,7 @@ def route_reply(asks: PendingAsks, content: str) -> ReplyRoute | None:
 
     approval = parse_permission_reply(command)
     if approval is not None:
-        if (gone := _resolved_question(asks, approval)) is not None:
+        if (gone := _question_gone(asks, approval)) is not None:
             return gone
         if _permission_command_applies(asks, approval):
             return PermissionReply(approval)
@@ -89,20 +92,22 @@ def route_reply(asks: PendingAsks, content: str) -> ReplyRoute | None:
     return None
 
 
-def _resolved_question(
+def _question_gone(
     asks: PendingAsks, approval: PermissionCommand
 ) -> NamedQuestionGone | None:
-    """A reply naming a question that was asked and is no longer held.
+    """A named reply to a question that no longer waits on one.
 
     The id, not the reply word, says which kind of ask it answers, so a late
-    ``approve <question-id>`` is not reported as an approval.
+    ``approve <question-id>`` is not reported as an approval. A ``reject``
+    naming a question whose answer is in flight still reaches that question.
     """
     named = approval.request_id
     if (
         named is None
         or named not in asks.known_question_ids
         or named in asks.known_permission_ids
-        or named in asks.questions
+        or asks.question_awaits_answer(named)
+        or (approval.rejects and named in asks.questions)
     ):
         return None
     return NamedQuestionGone(named)

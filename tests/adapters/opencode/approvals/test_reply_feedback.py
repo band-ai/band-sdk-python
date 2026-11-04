@@ -15,7 +15,11 @@ from band.adapters.opencode.approvals.wording import (
 )
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ALICE, ROOM_MEMBERS
-from tests.adapters.opencode.approvals.kit import asks_with, make_room_approvals
+from tests.adapters.opencode.approvals.kit import (
+    BlockingReplyClient,
+    asks_with,
+    make_room_approvals,
+)
 from tests.adapters.opencode.helpers import (
     AskFactory,
     FakeOpencodeClient,
@@ -153,3 +157,37 @@ class TestReplyFeedback:
             (notice, [{"id": ALICE["id"]}])
         ]
         assert turn_tools.messages_sent == turn_posts
+
+    @pytest.mark.parametrize(
+        "asked",
+        [
+            pytest.param(ONE_QUESTION, id="question-only"),
+            pytest.param(BOTH, id="with-a-permission-pending"),
+        ],
+    )
+    async def test_a_grant_naming_a_question_being_answered_says_it_is_no_longer_pending(
+        self, asks: AskFactory, asked: PendingAsks
+    ) -> None:
+        """Once a question's answer is in flight, nothing is waiting on it: the
+        reply must not be told to answer it, nor be steered away from approving
+        a permission that is still pending."""
+        client = BlockingReplyClient("question")
+        reply_tools = FakeAgentTools(participants=ROOM_MEMBERS)
+        approvals = make_room_approvals(
+            client, tools=FakeAgentTools(participants=ROOM_MEMBERS)
+        )
+        for request_id in asked.permissions:
+            await approvals.on_permission_asked(asks.permission(request_id))
+        await approvals.on_question_asked(asks.question("q-1"))
+
+        async with client.held(
+            "question", approvals.try_handle_reply("blue", ALICE["id"])
+        ):
+            assert await approvals.try_handle_reply(
+                "approve q-1", ALICE["id"], tools_protocol(reply_tools)
+            )
+
+        assert [m["content"] for m in reply_tools.messages_sent] == [
+            QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id="q-1")
+        ]
+        assert client.permission_replies == []
