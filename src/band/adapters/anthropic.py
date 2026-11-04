@@ -31,16 +31,18 @@ from band.core.types import (
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
+    declared_effect,
     execute_custom_tool,
     find_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
-    BandTool,
+    TurnEffect,
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
+    turn_effect,
 )
 from band.runtime.tools.schema import is_failed_tool_output
 
@@ -348,10 +350,9 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                 # in processing until the input handler returns.
                 if declined:
                     logger.info(
-                        "Room %s: %s settled the turn after request %s; "
+                        "Room %s: decline settled the turn after request %s; "
                         "not sending a follow-up",
                         room_id,
-                        BandTool.NO_REPLY,
                         call_index,
                     )
                     break
@@ -460,7 +461,7 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
 
         Returns:
             Tool-result blocks for the next API call, and whether a
-            successful ``band_no_reply`` settled this response. That is true
+            successful decline settled this response. That is true
             only when the decline itself succeeded and every sibling did too.
             ``turn.replied`` is also true after ``band_send_message``, so it
             cannot stand in for this call's own outcome.
@@ -509,13 +510,15 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                         custom_tool, tool_input, tools=tools
                     )
                     succeeded = not is_failed_tool_output(result)
+                    effect = declared_effect(custom_tool[1]) or TurnEffect.OBSERVE
                 else:
                     outcome = await tools.execute_tool_call_structured(
                         tool_name, tool_input
                     )
                     result = outcome.value
                     succeeded = outcome.ok
-                if succeeded and tool_name == BandTool.NO_REPLY:
+                    effect = turn_effect(tool_name)
+                if succeeded and effect.ends_turn:
                     declined = True
                 if not succeeded:
                     failed = True
@@ -528,7 +531,7 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                         if not isinstance(result, str)
                         else result
                     )
-                is_error = False
+                is_error = not succeeded
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 failed = True
                 content = result_str = f"Error: {e}"
@@ -545,6 +548,7 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                                 ToolEventKey.NAME: tool_name,
                                 ToolEventKey.OUTPUT: result_str,
                                 ToolEventKey.TOOL_CALL_ID: tool_use_id,
+                                ToolEventKey.IS_ERROR: is_error,
                             }
                         ),
                         message_type="tool_result",

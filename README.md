@@ -559,6 +559,25 @@ adapter = LangGraphAdapter(
 )
 ```
 
+#### Custom decline tools
+
+Decorate a custom handler with `declares_turn_effect(TurnEffect.DECLINE)` from
+`band.runtime.custom_tools` (`TurnEffect` is in `band.runtime.tools`) when its
+successful result means this input needs no reply. Anthropic, Gemini, Pydantic AI,
+and the simple `LangGraphAdapter(llm=...)` portable-tool path finish the complete
+tool batch, retain its results, and skip the next model request only when every
+call succeeded. Other effects, including `ACT` and `REPLY`, allow the loop to
+continue. This ends the inner model loop; caller-owned graphs and outer
+orchestration still decide what to do next.
+
+Recognized failed outputs and recoverable framework errors keep the next model
+step available. Pydantic AI preserves its native exception policy: ordinary
+handler exceptions propagate, while validation errors, `ModelRetry`, and
+`ToolFailed` follow native recovery. LangGraph's portable wrappers expose handled
+errors as native error tool results. Ready-made LangChain tools keep their own
+native behavior; their declarations do not enroll them in Band's decline
+middleware, and the middleware is not installed on supplied graphs or factories.
+
 #### Emit Telemetry
 
 Emit controls adapter-level telemetry: events the adapter publishes when it observes tool calls, reasoning, or turn lifecycle changes. This is separate from the model's own ability to send events: `band_send_event` is a chat tool available to the LLM, so the agent can still send `thought`, `error`, or `task` events organically based on its prompt and judgment, regardless of emit settings.

@@ -12,9 +12,11 @@ import asyncio
 import inspect
 import json
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
+from functools import partial
 from time import monotonic
+from types import MappingProxyType
 from typing import Any, ClassVar, get_origin, get_type_hints
 
 from band_sdk_core import AgentFailure
@@ -80,6 +82,7 @@ from band.core.types import (
 from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
 from band.runtime.custom_tools import (
     CustomToolDef,
+    declared_effect,
     declared_effects,
     get_custom_tool_name,
     invoke_validated_custom_tool,
@@ -92,9 +95,10 @@ from band.runtime.toolactivity import (
     tool_activity,
 )
 from band.runtime.tools import (
-    BandTool,
+    TurnEffect,
     image_block_placeholder,
     redact_tool_call_args,
+    turn_effect,
 )
 from band.runtime.tools.schema import is_failed_tool_output
 
@@ -162,7 +166,13 @@ def _model_request_error(
     raise error
 
 
-def _explicit_decline_is_terminal(request: ModelRequest) -> bool:
+def _tool_return_succeeded(part: ToolReturnPart) -> bool:
+    return part.outcome == "success" and not is_failed_tool_output(part.content)
+
+
+def _explicit_decline_is_terminal(
+    request: ModelRequest, effects: Mapping[str, TurnEffect]
+) -> bool:
     """A current-run decline ends the loop when every tool result in its batch succeeded."""
     declined = False
     for part in request.parts:
@@ -170,9 +180,9 @@ def _explicit_decline_is_terminal(request: ModelRequest) -> bool:
             return False
         if not isinstance(part, ToolReturnPart):
             continue
-        if part.outcome != "success" or is_failed_tool_output(part.content):
+        if not _tool_return_succeeded(part):
             return False
-        if part.tool_name == BandTool.NO_REPLY:
+        if effects.get(part.tool_name, turn_effect(part.tool_name)).ends_turn:
             declined = True
     return declined
 
@@ -182,6 +192,7 @@ async def _finish_explicit_decline_after_tools(
     *,
     node: AgentNode[Any],
     result: NodeResult[Any],
+    effects: Mapping[str, TurnEffect],
 ) -> NodeResult[Any]:
     """End the run after a terminal decline without scheduling another model step.
 
@@ -191,7 +202,7 @@ async def _finish_explicit_decline_after_tools(
     step entirely.
     """
     if isinstance(result, ModelRequestNode) and _explicit_decline_is_terminal(
-        result.request
+        result.request, effects
     ):
         ctx.messages.append(result.request)
         return End(FinalResult(None))
@@ -199,7 +210,10 @@ async def _finish_explicit_decline_after_tools(
 
 
 def _finish_explicit_decline(
-    ctx: RunContext[AgentToolsProtocol], request_context: ModelRequestContext
+    ctx: RunContext[AgentToolsProtocol],
+    request_context: ModelRequestContext,
+    *,
+    effects: Mapping[str, TurnEffect],
 ) -> ModelRequestContext:
     """Finish after a successful current-run decline whose tool batch succeeded."""
     if not request_context.messages:
@@ -208,7 +222,7 @@ def _finish_explicit_decline(
     if (
         isinstance(request, ModelRequest)
         and request.run_id == ctx.run_id
-        and _explicit_decline_is_terminal(request)
+        and _explicit_decline_is_terminal(request, effects)
     ):
         raise SkipModelRequest(ModelResponse(parts=[]))
     return request_context
@@ -358,6 +372,22 @@ def _takes_run_context(fn: Callable[..., Any]) -> bool:
     return annotation is RunContext or get_origin(annotation) is RunContext
 
 
+def _registered_tool_effects(
+    tools: Sequence[CustomToolDef | Callable[..., Any]],
+) -> Mapping[str, TurnEffect]:
+    """Capture declarations before portable wrappers take over effect recording."""
+    effects: dict[str, TurnEffect] = {}
+    for tool in tools:
+        if isinstance(tool, tuple):
+            input_model, handler = tool
+            name = get_custom_tool_name(input_model)
+        else:
+            handler = tool
+            name = handler.__name__
+        effects[name] = declared_effect(handler) or TurnEffect.OBSERVE
+    return MappingProxyType(effects)
+
+
 class PydanticAIAdapterConfig(BaseAdapterConfig):
     """Settings for a Pydantic AI agent.
 
@@ -463,6 +493,7 @@ class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
         self._custom_effects = declared_effects(
             (fn.__name__, fn) for fn in self._custom_tools
         )
+        self._stopping_effects = _registered_tool_effects(additional_tools or [])
 
     # --- Adapted from BandPydanticAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -518,8 +549,13 @@ class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
             capabilities=[
                 Hooks(
                     tool_execute=report_tool_execution,
-                    before_model_request=_finish_explicit_decline,
-                    after_node_run=_finish_explicit_decline_after_tools,
+                    before_model_request=partial(
+                        _finish_explicit_decline, effects=self._stopping_effects
+                    ),
+                    after_node_run=partial(
+                        _finish_explicit_decline_after_tools,
+                        effects=self._stopping_effects,
+                    ),
                 ),
                 # Strip content:null responses on every request, including mid-run
                 # ones the storage filter can't reach (see the function docstring).
@@ -691,20 +727,14 @@ class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
                     elif isinstance(event, FunctionToolResultEvent):
                         tool_succeeded = isinstance(
                             event.part, ToolReturnPart
-                        ) and not is_failed_tool_output(event.part.content)
+                        ) and _tool_return_succeeded(event.part)
                         _log_native_progress(
                             "tool_succeeded" if tool_succeeded else "tool_failed",
                             events=event_count,
                             tool=event.part.tool_name,
                         )
                         tool_result_count += 1
-                        if isinstance(event.part, RetryPromptPart) or (
-                            isinstance(event.part, ToolReturnPart)
-                            and (
-                                event.part.outcome != "success"
-                                or is_failed_tool_output(event.part.content)
-                            )
-                        ):
+                        if not tool_succeeded:
                             failed_tool_result_count += 1
                         # Native custom tools run outside execute_custom_tool, so
                         # their declared effect is recorded here.
@@ -737,6 +767,7 @@ class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
                                             ToolEventKey.NAME: event.part.tool_name,
                                             ToolEventKey.OUTPUT: str(output),
                                             ToolEventKey.TOOL_CALL_ID: event.tool_call_id,
+                                            ToolEventKey.IS_ERROR: not tool_succeeded,
                                         }
                                     ),
                                     message_type="tool_result",

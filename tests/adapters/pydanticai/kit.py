@@ -91,9 +91,9 @@ def make_stream_events(
         if tool_results:
             for tool_name, output, tool_call_id in tool_results:
                 event = MagicMock(spec=FunctionToolResultEvent)
-                event.part = MagicMock()
-                event.part.tool_name = tool_name  # tool_name is on the part, not event
-                event.part.content = output
+                event.part = ToolReturnPart(
+                    tool_name=tool_name, content=output, tool_call_id=tool_call_id
+                )
                 event.tool_call_id = tool_call_id
                 yield event
 

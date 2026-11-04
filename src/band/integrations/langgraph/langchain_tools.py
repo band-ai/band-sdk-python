@@ -7,14 +7,21 @@ LangChain's StructuredTool format for use with LangGraph.
 
 from __future__ import annotations
 
+import json
 import logging
 import warnings
 from typing import Any
 
-from langchain_core.messages import ImageContentBlock
-from langchain_core.tools import StructuredTool
+from langchain_core.messages import ImageContentBlock, ToolMessage
+from langchain_core.tools import StructuredTool, ToolException
 
-from band.core.exceptions import BandToolError
+from band.core.exceptions import (
+    BandToolError,
+    CleanupIncompleteError,
+    InputNotAccepted,
+    RoomExecutionStoppedError,
+    TerminalProviderFailure,
+)
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
@@ -32,8 +39,28 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     iter_tool_definitions,
 )
+from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
+
+PASSTHROUGH_TOOL_ERRORS = (
+    InputNotAccepted,
+    RoomExecutionStoppedError,
+    CleanupIncompleteError,
+    TerminalProviderFailure,
+    ToolException,
+)
+
+
+def failed_result(message: ToolMessage) -> bool:
+    """Identify native error status and recognized failed output."""
+    content = message.content
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except ValueError:
+            pass
+    return message.status != "success" or is_failed_tool_output(content)
 
 
 def _with_capability(
@@ -128,18 +155,24 @@ def agent_tools_to_langchain(
         ) -> Any:
             try:
                 result = await tools.execute_tool_call(_tool_name, kwargs)
+                if is_failed_tool_output(result):
+                    raise ToolException(str(result))
                 if is_image_passthrough_result(_tool_name, result):
                     return _image_content_blocks(result)
                 return result
+            except PASSTHROUGH_TOOL_ERRORS:
+                raise
             except (BandToolError, ValueError) as e:
-                return str(e)
+                raise ToolException(str(e)) from e
             except Exception:
                 # Tool errors feed back into the LLM transcript and may be
                 # relayed to chat. Keep the message generic; the full
                 # traceback (with paths, DB strings, tokens, etc.) only
                 # lives in the agent log.
                 logger.exception("Error executing platform tool %s", _tool_name)
-                return f"Error executing {_tool_name}: see agent logs."
+                raise ToolException(
+                    f"Error executing {_tool_name}: see agent logs."
+                ) from None
 
         def validation_error_message(
             error: Any,
@@ -158,6 +191,7 @@ def agent_tools_to_langchain(
                 description=description,
                 args_schema=definition.input_model,
                 handle_validation_error=validation_error_message,
+                handle_tool_error=True,
                 metadata={WRAPPED_TOOL_ACTIVITY: True},
             )
         )
@@ -184,15 +218,20 @@ def custom_tool_def_to_langchain(
 
     async def execute_custom(**kwargs: Any) -> Any:
         try:
-            return await execute_custom_tool(tool_def, kwargs, tools=tools)
+            result = await execute_custom_tool(tool_def, kwargs, tools=tools)
+        except PASSTHROUGH_TOOL_ERRORS:
+            raise
         except ValueError as e:
             # Bad-argument / validation errors feed back to the LLM to retry.
-            return str(e)
+            raise ToolException(str(e)) from e
         except Exception:
             # Keep the message generic; the full traceback (paths, secrets)
             # only lives in the agent log — see agent_tools_to_langchain.
             logger.exception("Error executing custom tool %s", name)
-            return f"Error executing {name}: see agent logs."
+            raise ToolException(f"Error executing {name}: see agent logs.") from None
+        if is_failed_tool_output(result):
+            raise ToolException(str(result))
+        return result
 
     def on_validation_error(error: Any) -> str:
         # Schema validation runs before the coroutine; feed bad args back to the
@@ -209,5 +248,6 @@ def custom_tool_def_to_langchain(
         description=description,
         args_schema=input_model,
         handle_validation_error=on_validation_error,
+        handle_tool_error=True,
         metadata={WRAPPED_TOOL_ACTIVITY: True},
     )
