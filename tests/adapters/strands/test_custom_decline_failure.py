@@ -10,6 +10,8 @@ import pytest
 
 pytest.importorskip("strands", reason="strands extra not installed")
 
+from strands.types.tools import ToolResult
+
 from band.adapters.strands import StrandsAdapter
 from band.converters.strands import StrandsHistoryConverter
 from band.core.types import MessageType
@@ -23,6 +25,8 @@ from band.testing import (
 from tests.adapters.strands.declinepeer import DeclineModel, NativeStatus, results
 from tests.adapters.strands.kit import SEND_TURN, _run_message, run_judged_turn
 
+REJECTION_NOTE = "refused"
+
 
 class TestCustomDeclineFailure:
     @pytest.mark.asyncio
@@ -30,9 +34,9 @@ class TestCustomDeclineFailure:
     @pytest.mark.parametrize(
         "output",
         [
-            {"ok": False, "error": "refused"},
-            "Error: refused",
-            "Error executing decline: refused",
+            {"ok": False, "error": REJECTION_NOTE},
+            f"Error: {REJECTION_NOTE}",
+            f"Error executing decline: {REJECTION_NOTE}",
         ],
     )
     async def test_failed_return_recovers_with_truthful_history_and_events(
@@ -82,14 +86,47 @@ class TestCustomDeclineFailure:
         assert failure_reports(tools) == []
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("kind", ["portable", "native"])
+    @pytest.mark.parametrize(
+        ("kind", "expected"),
+        [
+            (
+                "portable",
+                [
+                    {
+                        "toolUseId": "call-decline",
+                        "status": NativeStatus.ERROR,
+                        "content": [
+                            {
+                                "text": f"Error executing tool 'decline': {REJECTION_NOTE}"
+                            }
+                        ],
+                    }
+                ],
+            ),
+            (
+                "native",
+                [
+                    {
+                        "toolUseId": "call-decline",
+                        "status": NativeStatus.ERROR,
+                        "content": [{"text": f"Error: {REJECTION_NOTE}"}],
+                    }
+                ],
+            ),
+        ],
+    )
     async def test_handler_exception_is_recoverable_without_decline(
-        self, kind: str, custom_decline_tools: Callable[..., Any]
+        self,
+        kind: str,
+        expected: list[ToolResult],
+        custom_decline_tools: Callable[..., Any],
     ) -> None:
         async def fail(note: str) -> str:
             raise ValueError(note)
 
-        model = DeclineModel([ToolTurn("decline", {"note": "refused"}), TextTurn("")])
+        model = DeclineModel(
+            [ToolTurn("decline", {"note": REJECTION_NOTE}), TextTurn("")]
+        )
         adapter = StrandsAdapter(
             llm=model, additional_tools=[custom_decline_tools(fail)[kind]]
         )
@@ -99,15 +136,54 @@ class TestCustomDeclineFailure:
         await _run_message(adapter, tools)
 
         assert len(model.requests) == 2
-        assert results(model.requests[1])[0]["status"] == NativeStatus.ERROR
-        assert "refused" in results(model.requests[1])[0]["content"][0]["text"]
+        assert results(model.requests[1]) == expected
         assert not tools.turn.complete
         assert not tools.turn.replied
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("kind", ["portable", "native"])
+    @pytest.mark.parametrize(
+        ("kind", "expected"),
+        [
+            (
+                "portable",
+                [
+                    {
+                        "toolUseId": "call-decline",
+                        "status": NativeStatus.ERROR,
+                        "content": [
+                            {
+                                "text": "Error executing tool 'decline': Invalid arguments for decline: note: Field required"
+                            }
+                        ],
+                    }
+                ],
+            ),
+            (
+                "native",
+                [
+                    {
+                        "toolUseId": "call-decline",
+                        "status": NativeStatus.ERROR,
+                        "content": [
+                            {
+                                "text": (
+                                    "Error: Validation failed for input parameters: 1 validation error for NativeTool\n"
+                                    "note\n"
+                                    "  Field required [type=missing, input_value={}, input_type=dict]\n"
+                                    "    For further information visit https://errors.pydantic.dev/2.12/v/missing"
+                                )
+                            }
+                        ],
+                    }
+                ],
+            ),
+        ],
+    )
     async def test_invalid_arguments_never_invoke_the_decline(
-        self, kind: str, custom_decline_tools: Callable[..., Any]
+        self,
+        kind: str,
+        expected: list[ToolResult],
+        custom_decline_tools: Callable[..., Any],
     ) -> None:
         calls: list[str] = []
 
@@ -125,7 +201,7 @@ class TestCustomDeclineFailure:
         await run_judged_turn(adapter, tools)
 
         assert calls == []
-        assert results(model.requests[1])[0]["status"] == NativeStatus.ERROR
+        assert results(model.requests[1]) == expected
         assert len(model.requests) == 3
         tools.assert_message_sent(content="hi", count=1)
 
@@ -134,8 +210,8 @@ class TestCustomDeclineFailure:
         ("output", "content"),
         [
             (
-                {"status": NativeStatus.ERROR, "content": [{"text": "refused"}]},
-                [{"text": "refused"}],
+                {"status": NativeStatus.ERROR, "content": [{"text": REJECTION_NOTE}]},
+                [{"text": REJECTION_NOTE}],
             ),
             (
                 {"status": NativeStatus.SUCCESS, "content": [{"json": {"ok": False}}]},
@@ -152,7 +228,9 @@ class TestCustomDeclineFailure:
         async def fail(note: str) -> dict[str, Any]:
             return output
 
-        model = DeclineModel([ToolTurn("decline", {"note": "refused"}), TextTurn("")])
+        model = DeclineModel(
+            [ToolTurn("decline", {"note": REJECTION_NOTE}), TextTurn("")]
+        )
         adapter = StrandsAdapter(
             llm=model, additional_tools=[custom_decline_tools(fail)["native"]]
         )
