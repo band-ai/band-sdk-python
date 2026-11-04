@@ -22,10 +22,13 @@ always be loaded from YAML or JSON with ``XAdapterConfig.model_validate(data)``.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Final
 
 from pydantic import BaseModel, ConfigDict
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Model calls one turn of an SDK-driven tool loop may make before it fails.
+DEFAULT_MAX_TOOL_ROUNDS: Final[int] = 20
 
 
 class BaseAdapterConfig(BaseModel):

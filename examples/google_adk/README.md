@@ -13,6 +13,12 @@ Set `GoogleADKAdapterConfig(max_retries=0)` for one HTTP attempt per request.
 The frozen config accepts budgets from `0` through `10` inclusive
 (`GOOGLE_ADK_MAX_GENERATION_RETRIES`).
 
+`GoogleADKAdapterConfig.max_tool_rounds` defaults to `20`, the same cap as
+`GeminiAdapterConfig.max_tool_rounds`: a turn may make at most that many model
+calls. A model still requesting tools after the last one fails the turn with
+`Exceeded max tool rounds`. Before this cap, ADK's own limit of 500 model calls
+was the only bound; raise `max_tool_rounds` for legitimately long tool chains.
+
 Native HTTP retries run inside one test attempt. They do not rescue a failed
 test or guarantee provider availability. First-attempt E2E accounting keeps
 exhausted errors, missing cells and required skips red.

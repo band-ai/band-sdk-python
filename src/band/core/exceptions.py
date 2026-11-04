@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
 
 from band_sdk_core import AgentFailure
@@ -131,6 +131,21 @@ class ProviderRunError(BandError):
     def session_lost(cls) -> ProviderRunError:
         """Signal a provider session failure after its callbacks were revoked."""
         return cls("session_lost")
+
+
+class ToolRoundsExceededError(BandError, RuntimeError):
+    """A turn's model kept requesting tools past its adapter's
+    ``max_tool_rounds``. Actionable by the adapter: report it, then raise it so
+    the turn is marked failed."""
+
+    def __init__(
+        self, max_rounds: int, room_id: str, tool_sequence: Sequence[Sequence[str]]
+    ) -> None:
+        self.tool_sequence = [list(names) for names in tool_sequence]
+        super().__init__(
+            f"Exceeded max tool rounds ({max_rounds}) in room {room_id}; "
+            f"tool sequence: {self.tool_sequence}"
+        )
 
 
 class RoomExecutionStoppedError(BandError):
