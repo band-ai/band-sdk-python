@@ -62,3 +62,12 @@ WORK = "work"
 
 class WorkInput(BaseModel):
     """Do companion work in the current batch."""
+
+
+def tool_results(request: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        part["functionResponse"]
+        for message in request["contents"]
+        for part in message["parts"]
+        if "functionResponse" in part
+    ]

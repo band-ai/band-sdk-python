@@ -166,6 +166,10 @@ def _model_request_error(
     raise error
 
 
+def _tool_return_succeeded(part: ToolReturnPart) -> bool:
+    return part.outcome == "success" and not is_failed_tool_output(part.content)
+
+
 def _explicit_decline_is_terminal(
     request: ModelRequest, effects: Mapping[str, TurnEffect]
 ) -> bool:
@@ -176,7 +180,7 @@ def _explicit_decline_is_terminal(
             return False
         if not isinstance(part, ToolReturnPart):
             continue
-        if part.outcome != "success" or is_failed_tool_output(part.content):
+        if not _tool_return_succeeded(part):
             return False
         if effects.get(part.tool_name, turn_effect(part.tool_name)).ends_turn:
             declined = True
@@ -721,24 +725,16 @@ class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
                             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                                 logger.warning("Failed to send tool_call event: %s", e)
                     elif isinstance(event, FunctionToolResultEvent):
-                        tool_succeeded = (
-                            isinstance(event.part, ToolReturnPart)
-                            and event.part.outcome == "success"
-                            and not is_failed_tool_output(event.part.content)
-                        )
+                        tool_succeeded = isinstance(
+                            event.part, ToolReturnPart
+                        ) and _tool_return_succeeded(event.part)
                         _log_native_progress(
                             "tool_succeeded" if tool_succeeded else "tool_failed",
                             events=event_count,
                             tool=event.part.tool_name,
                         )
                         tool_result_count += 1
-                        if isinstance(event.part, RetryPromptPart) or (
-                            isinstance(event.part, ToolReturnPart)
-                            and (
-                                event.part.outcome != "success"
-                                or is_failed_tool_output(event.part.content)
-                            )
-                        ):
+                        if not tool_succeeded:
                             failed_tool_result_count += 1
                         # Native custom tools run outside execute_custom_tool, so
                         # their declared effect is recorded here.

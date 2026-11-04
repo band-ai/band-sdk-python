@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from copy import deepcopy
 from enum import StrEnum
 from typing import Any
 
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import BaseMessage, ToolMessage
 from langchain_core.outputs import ChatResult
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
@@ -23,11 +25,13 @@ class DeclineFailure(StrEnum):
 
 class ScriptedModel(GenericFakeChatModel):
     requests: int = 0
+    inputs: list[list[BaseMessage]] = Field(default_factory=list)
 
     def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> ScriptedModel:
         return self
 
     def _generate(self, *args: Any, **kwargs: Any) -> ChatResult:
+        self.inputs.append(deepcopy(args[0]))
         self.requests += 1
         return super()._generate(*args, **kwargs)
 
@@ -78,3 +82,11 @@ def tool_response(
         "args": {"reason": "FYI"} if arguments is None else arguments,
         "id": call_id,
     }
+
+
+def tool_results(messages: list[BaseMessage]) -> list[tuple[str | None, str, Any, str]]:
+    return [
+        (message.name, message.tool_call_id, message.content, message.status)
+        for message in messages
+        if isinstance(message, ToolMessage)
+    ]

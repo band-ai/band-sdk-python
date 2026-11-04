@@ -27,13 +27,39 @@ from tests.integrations.anthropic.peer import (
     MessagesPeer,
     WorkInput,
     call,
+    tool_results,
 )
+
+SIBLING_SUCCESS = {
+    "type": "tool_result",
+    "tool_use_id": "work",
+    "content": SUCCESS,
+    "is_error": False,
+}
+SIBLING_FAILURE = {
+    "type": "tool_result",
+    "tool_use_id": "work",
+    "content": '{"ok": false}',
+    "is_error": True,
+}
 
 
 class TestDeclaredDecline:
-    @pytest.mark.parametrize("output", [SUCCESS, {"ok": False}, "Error: declined"])
+    @pytest.mark.parametrize(
+        ("output", "expected_requests", "serialized", "failed"),
+        [
+            (SUCCESS, 1, SUCCESS, False),
+            ({"ok": False}, 2, '{"ok": false}', True),
+            ("Error: declined", 2, "Error: declined", True),
+        ],
+    )
     async def test_result_identity_controls_the_next_request(
-        self, anthropic_peer: tuple[MessagesPeer, AsyncAnthropic], output: Any
+        self,
+        anthropic_peer: tuple[MessagesPeer, AsyncAnthropic],
+        output: Any,
+        expected_requests: int,
+        serialized: str,
+        failed: bool,
     ) -> None:
         peer, client = anthropic_peer
         executed = []
@@ -52,12 +78,11 @@ class TestDeclaredDecline:
         adapter.client = client
         await adapter.on_started("Bot", "Bot")
         peer.responses.extend(
-            [[call()], [call(BandTool.NO_REPLY)], [{"type": "text", "text": "done"}]]
+            [[call()], [call(BandTool.NO_REPLY)], [call(BandTool.NO_REPLY)]]
         )
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
-        failed = output != SUCCESS
-        assert len(peer.requests) == (2 if failed else 1)
+        assert len(peer.requests) == expected_requests
         assert executed == ["FYI"]
         assert recorded_usage_payloads(tools) == [
             {
@@ -71,21 +96,37 @@ class TestDeclaredDecline:
         results = events_of_type(tools, "tool_result")
         assert json.loads(results[0]["content"]) == {
             ToolEventKey.NAME: CUSTOM,
-            ToolEventKey.OUTPUT: output if isinstance(output, str) else '{"ok": false}',
+            ToolEventKey.OUTPUT: serialized,
             ToolEventKey.TOOL_CALL_ID: "decline",
             ToolEventKey.IS_ERROR: failed,
         }
-        history_result = adapter._message_history[tools.room_id][2]["content"][0]
-        assert history_result == {
-            "type": "tool_result",
-            "tool_use_id": "decline",
-            "content": output if isinstance(output, str) else '{"ok": false}',
-            "is_error": failed,
-        }
+        next_tools = FakeAgentTools(room_id=ROOM_ID)
+        await adapter.on_event(
+            replace(turn_input(next_tools), is_session_bootstrap=False)
+        )
+        assert tool_results(peer.requests[1]) == [
+            {
+                "type": "tool_result",
+                "tool_use_id": "decline",
+                "content": serialized,
+                "is_error": failed,
+            }
+        ]
 
-    @pytest.mark.parametrize("effect", list(TurnEffect))
+    @pytest.mark.parametrize(
+        ("effect", "expected_requests"),
+        [
+            (TurnEffect.DECLINE, 1),
+            (TurnEffect.OBSERVE, 2),
+            (TurnEffect.ACT, 2),
+            (TurnEffect.REPLY, 2),
+        ],
+    )
     async def test_other_effects_continue(
-        self, anthropic_peer: tuple[MessagesPeer, AsyncAnthropic], effect: TurnEffect
+        self,
+        anthropic_peer: tuple[MessagesPeer, AsyncAnthropic],
+        effect: TurnEffect,
+        expected_requests: int,
     ) -> None:
         peer, client = anthropic_peer
 
@@ -104,13 +145,17 @@ class TestDeclaredDecline:
             [[call()], [call(BandTool.NO_REPLY)], [{"type": "text", "text": "done"}]]
         )
         await adapter.on_event(turn_input(FakeAgentTools(room_id=ROOM_ID)))
-        assert len(peer.requests) == (1 if effect.ends_turn else 2)
+        assert len(peer.requests) == expected_requests
 
-    @pytest.mark.parametrize("arguments", [{"reason": 42}, {"reason": FAILURE}])
+    @pytest.mark.parametrize(
+        ("arguments", "expected_executed"),
+        [({"reason": 42}, []), ({"reason": FAILURE}, [FAILURE])],
+    )
     async def test_invalid_or_raised_decline_recovers(
         self,
         anthropic_peer: tuple[MessagesPeer, AsyncAnthropic],
         arguments: dict[str, Any],
+        expected_executed: list[str],
     ) -> None:
         peer, client = anthropic_peer
         executed = []
@@ -130,12 +175,19 @@ class TestDeclaredDecline:
         peer.responses.extend([[call(arguments=arguments)], [call(BandTool.NO_REPLY)]])
         await adapter.on_event(turn_input(FakeAgentTools(room_id=ROOM_ID)))
         assert len(peer.requests) == 2
-        assert executed == ([FAILURE] if arguments["reason"] == FAILURE else [])
+        assert executed == expected_executed
         assert peer.requests[1]["messages"][2]["content"][0]["is_error"] is True
 
-    @pytest.mark.parametrize("sibling_output", [SUCCESS, {"ok": False}])
+    @pytest.mark.parametrize(
+        ("sibling_output", "expected_requests", "expected_result"),
+        [(SUCCESS, 1, SIBLING_SUCCESS), ({"ok": False}, 2, SIBLING_FAILURE)],
+    )
     async def test_batch_keeps_all_results_and_failed_sibling_recovery(
-        self, anthropic_peer: tuple[MessagesPeer, AsyncAnthropic], sibling_output: Any
+        self,
+        anthropic_peer: tuple[MessagesPeer, AsyncAnthropic],
+        sibling_output: Any,
+        expected_requests: int,
+        expected_result: dict[str, Any],
     ) -> None:
         peer, client = anthropic_peer
         executed = []
@@ -160,17 +212,26 @@ class TestDeclaredDecline:
             [
                 [call(), call(WORK, arguments={}, call_id="work")],
                 [call(BandTool.NO_REPLY)],
+                [call(BandTool.NO_REPLY)],
             ]
         )
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
         assert executed == [CUSTOM, WORK]
-        assert len(peer.requests) == (1 if sibling_output == SUCCESS else 2)
+        assert len(peer.requests) == expected_requests
         assert reported_failures(tools) == []
-        results = adapter._message_history[ROOM_ID][2]["content"]
-        assert [(result["tool_use_id"], result["is_error"]) for result in results] == [
-            ("decline", False),
-            ("work", sibling_output != SUCCESS),
+        next_tools = FakeAgentTools(room_id=ROOM_ID)
+        await adapter.on_event(
+            replace(turn_input(next_tools), is_session_bootstrap=False)
+        )
+        assert tool_results(peer.requests[1]) == [
+            {
+                "type": "tool_result",
+                "tool_use_id": "decline",
+                "content": SUCCESS,
+                "is_error": False,
+            },
+            expected_result,
         ]
 
     async def test_custom_winner_does_not_inherit_platform_decline(

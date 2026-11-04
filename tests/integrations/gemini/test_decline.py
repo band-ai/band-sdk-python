@@ -27,13 +27,36 @@ from tests.integrations.gemini.peer import (
     GeneratePeer,
     WorkInput,
     call,
+    tool_results,
 )
+
+SIBLING_SUCCESS = {"id": "work", "name": WORK, "response": {"output": SUCCESS}}
+SIBLING_FAILURE = {"id": "work", "name": WORK, "response": {"error": '{"ok": false}'}}
 
 
 class TestDeclaredDecline:
-    @pytest.mark.parametrize("output", [SUCCESS, {"ok": False}, "Error: declined"])
+    @pytest.mark.parametrize(
+        ("output", "expected_requests", "serialized", "failed", "expected_response"),
+        [
+            (SUCCESS, 1, SUCCESS, False, {"output": SUCCESS}),
+            ({"ok": False}, 2, '{"ok": false}', True, {"error": '{"ok": false}'}),
+            (
+                "Error: declined",
+                2,
+                "Error: declined",
+                True,
+                {"error": "Error: declined"},
+            ),
+        ],
+    )
     async def test_result_identity_controls_the_next_request(
-        self, gemini_peer: tuple[GeneratePeer, genai.Client], output: Any
+        self,
+        gemini_peer: tuple[GeneratePeer, genai.Client],
+        output: Any,
+        expected_requests: int,
+        serialized: str,
+        failed: bool,
+        expected_response: dict[str, str],
     ) -> None:
         peer, client = gemini_peer
         executed = []
@@ -50,11 +73,12 @@ class TestDeclaredDecline:
         )
         adapter.client = client
         await adapter.on_started("Bot", "Bot")
-        peer.responses.extend([[call()], [call(BandTool.NO_REPLY)], [{"text": "done"}]])
+        peer.responses.extend(
+            [[call()], [call(BandTool.NO_REPLY)], [call(BandTool.NO_REPLY)]]
+        )
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
-        failed = output != SUCCESS
-        assert len(peer.requests) == (2 if failed else 1)
+        assert len(peer.requests) == expected_requests
         assert executed == ["FYI"]
         assert recorded_usage_payloads(tools) == [
             {
@@ -68,21 +92,36 @@ class TestDeclaredDecline:
         results = events_of_type(tools, "tool_result")
         assert json.loads(results[0]["content"]) == {
             ToolEventKey.NAME: CUSTOM,
-            ToolEventKey.OUTPUT: output if isinstance(output, str) else '{"ok": false}',
+            ToolEventKey.OUTPUT: serialized,
             ToolEventKey.TOOL_CALL_ID: "decline",
             ToolEventKey.IS_ERROR: failed,
         }
-        response = adapter._message_history[tools.room_id][2].parts[0].function_response
-        assert response.name == CUSTOM
-        assert response.response == {
-            "error" if failed else "output": output
-            if isinstance(output, str)
-            else '{"ok": false}'
-        }
+        next_tools = FakeAgentTools(room_id=ROOM_ID)
+        await adapter.on_event(
+            replace(turn_input(next_tools), is_session_bootstrap=False)
+        )
+        assert tool_results(peer.requests[1]) == [
+            {
+                "id": "decline",
+                "name": CUSTOM,
+                "response": expected_response,
+            }
+        ]
 
-    @pytest.mark.parametrize("effect", list(TurnEffect))
+    @pytest.mark.parametrize(
+        ("effect", "expected_requests"),
+        [
+            (TurnEffect.DECLINE, 1),
+            (TurnEffect.OBSERVE, 2),
+            (TurnEffect.ACT, 2),
+            (TurnEffect.REPLY, 2),
+        ],
+    )
     async def test_other_effects_continue(
-        self, gemini_peer: tuple[GeneratePeer, genai.Client], effect: TurnEffect
+        self,
+        gemini_peer: tuple[GeneratePeer, genai.Client],
+        effect: TurnEffect,
+        expected_requests: int,
     ) -> None:
         peer, client = gemini_peer
 
@@ -98,11 +137,17 @@ class TestDeclaredDecline:
         await adapter.on_started("Bot", "Bot")
         peer.responses.extend([[call()], [call(BandTool.NO_REPLY)], [{"text": "done"}]])
         await adapter.on_event(turn_input(FakeAgentTools(room_id=ROOM_ID)))
-        assert len(peer.requests) == (1 if effect.ends_turn else 2)
+        assert len(peer.requests) == expected_requests
 
-    @pytest.mark.parametrize("arguments", [{"reason": 42}, {"reason": FAILURE}])
+    @pytest.mark.parametrize(
+        ("arguments", "expected_executed"),
+        [({"reason": 42}, []), ({"reason": FAILURE}, [FAILURE])],
+    )
     async def test_invalid_or_raised_decline_recovers(
-        self, gemini_peer: tuple[GeneratePeer, genai.Client], arguments: dict[str, Any]
+        self,
+        gemini_peer: tuple[GeneratePeer, genai.Client],
+        arguments: dict[str, Any],
+        expected_executed: list[str],
     ) -> None:
         peer, client = gemini_peer
         executed = []
@@ -121,7 +166,7 @@ class TestDeclaredDecline:
         peer.responses.extend([[call(arguments=arguments)], [call(BandTool.NO_REPLY)]])
         await adapter.on_event(turn_input(FakeAgentTools(room_id=ROOM_ID)))
         assert len(peer.requests) == 2
-        assert executed == ([FAILURE] if arguments["reason"] == FAILURE else [])
+        assert executed == expected_executed
         assert (
             "error"
             in peer.requests[1]["contents"][2]["parts"][0]["functionResponse"][
@@ -129,9 +174,16 @@ class TestDeclaredDecline:
             ]
         )
 
-    @pytest.mark.parametrize("sibling_output", [SUCCESS, {"ok": False}])
+    @pytest.mark.parametrize(
+        ("sibling_output", "expected_requests", "expected_result"),
+        [(SUCCESS, 1, SIBLING_SUCCESS), ({"ok": False}, 2, SIBLING_FAILURE)],
+    )
     async def test_batch_keeps_all_results_and_failed_sibling_recovery(
-        self, gemini_peer: tuple[GeneratePeer, genai.Client], sibling_output: Any
+        self,
+        gemini_peer: tuple[GeneratePeer, genai.Client],
+        sibling_output: Any,
+        expected_requests: int,
+        expected_result: dict[str, Any],
     ) -> None:
         peer, client = gemini_peer
         executed = []
@@ -155,25 +207,21 @@ class TestDeclaredDecline:
             [
                 [call(), call(WORK, arguments={}, call_id="work")],
                 [call(BandTool.NO_REPLY)],
+                [call(BandTool.NO_REPLY)],
             ]
         )
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
         assert executed == [CUSTOM, WORK]
-        assert len(peer.requests) == (1 if sibling_output == SUCCESS else 2)
+        assert len(peer.requests) == expected_requests
         assert reported_failures(tools) == []
-        results = adapter._message_history[ROOM_ID][2].parts
-        assert [
-            (result.function_response.id, result.function_response.response)
-            for result in results
-        ] == [
-            ("decline", {"output": SUCCESS}),
-            (
-                "work",
-                {"output": SUCCESS}
-                if sibling_output == SUCCESS
-                else {"error": '{"ok": false}'},
-            ),
+        next_tools = FakeAgentTools(room_id=ROOM_ID)
+        await adapter.on_event(
+            replace(turn_input(next_tools), is_session_bootstrap=False)
+        )
+        assert tool_results(peer.requests[1]) == [
+            {"id": "decline", "name": CUSTOM, "response": {"output": SUCCESS}},
+            expected_result,
         ]
 
     async def test_custom_winner_does_not_inherit_platform_decline(

@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from pydantic import BaseModel
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
 from band.runtime.custom_tools import declared_effect, declares_turn_effect
@@ -62,3 +62,12 @@ class ScriptedModel:
             }
         else:
             yield ""
+
+
+def tool_results(messages: list[ModelMessage]) -> list[tuple[str, str, Any, str]]:
+    return [
+        (part.tool_name, part.tool_call_id, part.content, part.outcome)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]

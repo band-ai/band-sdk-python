@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 from unittest.mock import ANY
 
@@ -24,13 +25,32 @@ from tests.integrations.langgraph.declinekit import (
     CustomDeclineInput,
     ScriptedModel,
     tool_response,
+    tool_results,
 )
 
 
 class TestPortableDecline:
-    @pytest.mark.parametrize("output", [SUCCESS, {"ok": False}, "Error: declined"])
+    @pytest.mark.parametrize(
+        (
+            "output",
+            "expected_requests",
+            "expected_status",
+            "expected_error",
+            "expected_content",
+        ),
+        [
+            (SUCCESS, 1, "success", False, SUCCESS),
+            ({"ok": False}, 2, "error", True, "{'ok': False}"),
+            ("Error: declined", 2, "error", True, "Error: declined"),
+        ],
+    )
     async def test_outcome_controls_native_stop_and_error_history(
-        self, output: Any
+        self,
+        output: Any,
+        expected_requests: int,
+        expected_status: str,
+        expected_error: bool,
+        expected_content: str,
     ) -> None:
         calls = []
 
@@ -46,6 +66,9 @@ class TestPortableDecline:
                     AIMessage(
                         content="", tool_calls=[tool_response(BandTool.NO_REPLY)]
                     ),
+                    AIMessage(
+                        content="", tool_calls=[tool_response(BandTool.NO_REPLY)]
+                    ),
                 ]
             ),
             disable_streaming=True,
@@ -56,28 +79,26 @@ class TestPortableDecline:
         await adapter.on_started("Bot", "Bot")
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
-        assert model.requests == (1 if output == SUCCESS else 2)
+        assert model.requests == expected_requests
         assert calls == ["FYI"]
-        state = await adapter._simple_checkpointer.aget(
-            {"configurable": {"thread_id": ROOM_ID}}
-        )
-        results = [
-            message
-            for message in state["channel_values"]["messages"]
-            if isinstance(message, ToolMessage)
-        ]
         expected_result = ToolMessage(
-            content=str(output),
+            content=expected_content,
             name=CUSTOM,
             tool_call_id="decline",
-            status="success" if output == SUCCESS else "error",
+            status=expected_status,
         )
-        assert results[0].status == expected_result.status
+        next_tools = FakeAgentTools(room_id=ROOM_ID)
+        await adapter.on_event(
+            replace(turn_input(next_tools), is_session_bootstrap=False)
+        )
+        assert tool_results(model.inputs[1]) == [
+            (CUSTOM, "decline", expected_content, expected_status)
+        ]
         assert json.loads(events_of_type(tools, "tool_result")[0]["content"]) == {
             ToolEventKey.NAME: CUSTOM,
             ToolEventKey.OUTPUT: str(expected_result),
             ToolEventKey.TOOL_CALL_ID: ANY,
-            ToolEventKey.IS_ERROR: output != SUCCESS,
+            ToolEventKey.IS_ERROR: expected_error,
         }
         assert reported_failures(tools) == []
 
@@ -105,15 +126,7 @@ class TestPortableDecline:
         )
         await adapter.on_started("Bot", "Bot")
         await adapter.on_event(turn_input(FakeAgentTools(room_id=ROOM_ID)))
-        state = await adapter._simple_checkpointer.aget(
-            {"configurable": {"thread_id": ROOM_ID}}
-        )
-        results = [
-            message
-            for message in state["channel_values"]["messages"]
-            if isinstance(message, ToolMessage)
-        ]
-        assert (results[0].status, results[0].content) == ("error", FAILURE)
+        assert tool_results(model.inputs[1]) == [(CUSTOM, "decline", FAILURE, "error")]
         assert model.requests == 2
 
     @pytest.mark.parametrize("shadowed", [BandTool.NO_REPLY, CUSTOM])
@@ -199,9 +212,12 @@ class TestPortableDecline:
         await adapter.on_event(turn_input(FakeAgentTools(room_id=ROOM_ID)))
         assert model.requests == 2
 
-    @pytest.mark.parametrize("sibling_output", [SUCCESS, {"ok": False}])
+    @pytest.mark.parametrize(
+        ("sibling_output", "expected_requests", "expected_content"),
+        [(SUCCESS, 1, SUCCESS), ({"ok": False}, 2, '{"ok": false}')],
+    )
     async def test_batch_retains_siblings_before_success_or_recovery(
-        self, sibling_output: Any
+        self, sibling_output: Any, expected_requests: int, expected_content: str
     ) -> None:
         completed = []
 
@@ -230,6 +246,9 @@ class TestPortableDecline:
                     AIMessage(
                         content="", tool_calls=[tool_response(BandTool.NO_REPLY)]
                     ),
+                    AIMessage(
+                        content="", tool_calls=[tool_response(BandTool.NO_REPLY)]
+                    ),
                 ]
             ),
             disable_streaming=True,
@@ -240,20 +259,16 @@ class TestPortableDecline:
         await adapter.on_started("Bot", "Bot")
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
-        state = await adapter._simple_checkpointer.aget(
-            {"configurable": {"thread_id": ROOM_ID}}
+        assert model.requests == expected_requests
+        next_tools = FakeAgentTools(room_id=ROOM_ID)
+        await adapter.on_event(
+            replace(turn_input(next_tools), is_session_bootstrap=False)
         )
-        results = [
-            message
-            for message in state["channel_values"]["messages"]
-            if isinstance(message, ToolMessage)
-        ]
-        assert [(result.name, result.content) for result in results][:2] == [
-            (CUSTOM, SUCCESS),
-            ("work", SUCCESS if sibling_output == SUCCESS else '{"ok": false}'),
+        assert tool_results(model.inputs[1]) == [
+            (CUSTOM, "decline", SUCCESS, "success"),
+            ("work", "work", expected_content, "success"),
         ]
         assert sorted(completed) == sorted([CUSTOM, "work"])
-        assert model.requests == (1 if sibling_output == SUCCESS else 2)
 
     @pytest.mark.parametrize(
         "error", [InputNotAccepted("not accepted"), RoomExecutionStoppedError(ROOM_ID)]
@@ -305,16 +320,14 @@ class TestPortableDecline:
         await adapter.on_started("Bot", "Bot")
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
-        state = await adapter._simple_checkpointer.aget(
-            {"configurable": {"thread_id": ROOM_ID}}
-        )
-        results = [
-            message
-            for message in state["channel_values"]["messages"]
-            if isinstance(message, ToolMessage)
+        assert tool_results(model.inputs[1]) == [
+            (
+                CUSTOM,
+                "decline",
+                "Invalid arguments for customdecline: reason: Input should be a valid string",
+                "error",
+            )
         ]
-        assert results[0].status == "error"
-        assert "Invalid arguments for customdecline" in results[0].content
         assert executed == []
         assert model.requests == 2
 

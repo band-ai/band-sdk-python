@@ -26,6 +26,7 @@ from tests.adapters.pydanticai.declinepeer import (
     ScriptedModel,
     native_registration,
     portable_registration,
+    tool_results,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
 
@@ -200,9 +201,16 @@ class TestCustomDecline:
         assert reported_failures(tools) == []
 
     @pytest.mark.parametrize("register", [portable_registration, native_registration])
-    @pytest.mark.parametrize("sibling_output", [SUCCESS, {"ok": False}])
+    @pytest.mark.parametrize(
+        ("sibling_output", "expected_requests", "expected_content"),
+        [(SUCCESS, 1, SUCCESS), ({"ok": False}, 2, {"ok": False})],
+    )
     async def test_all_sibling_results_precede_the_stop_decision(
-        self, register: Callable[..., Any], sibling_output: Any
+        self,
+        register: Callable[..., Any],
+        sibling_output: Any,
+        expected_requests: int,
+        expected_content: Any,
     ) -> None:
         completed = []
 
@@ -216,7 +224,9 @@ class TestCustomDecline:
             return sibling_output
 
         model = ScriptedModel(
-            [(CUSTOM, {"reason": "FYI"}), ("work", {})], [(BandTool.NO_REPLY, {})]
+            [(CUSTOM, {"reason": "FYI"}), ("work", {})],
+            [(BandTool.NO_REPLY, {})],
+            [(BandTool.NO_REPLY, {})],
         )
         adapter = PydanticAIAdapter(
             llm=model.model, additional_tools=[register(decline), work]
@@ -225,13 +235,15 @@ class TestCustomDecline:
         tools = FakeAgentTools(room_id=ROOM_ID)
         await adapter.on_event(turn_input(tools))
         assert sorted(completed) == sorted([CUSTOM, "work"])
-        assert len(model.requests) == (1 if sibling_output == SUCCESS else 2)
-        assert [
-            (part.tool_name, part.content)
-            for message in adapter._message_history[ROOM_ID]
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ][:2] == [(CUSTOM, SUCCESS), ("work", sibling_output)]
+        assert len(model.requests) == expected_requests
+        next_tools = FakeAgentTools(room_id=ROOM_ID)
+        await adapter.on_event(
+            replace(turn_input(next_tools), is_session_bootstrap=False)
+        )
+        assert tool_results(model.requests[1]) == [
+            (CUSTOM, "call-1-0", SUCCESS, "success"),
+            ("work", "call-1-1", expected_content, "success"),
+        ]
         assert reported_failures(tools) == []
 
     @pytest.mark.parametrize("register", [portable_registration, native_registration])
