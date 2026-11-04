@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
 
-from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.adapters.opencode.approvals.room import RoomApprovals
+from band.adapters.opencode import OpencodeAdapterConfig
 from band.adapters.opencode.approvals.wording import (
     APPROVAL_NO_LONGER_PENDING_TEMPLATE,
     DECLINED_QUESTION_ANSWER,
@@ -18,9 +16,11 @@ from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.approvals.kit import (
     BlockingReplyClient,
+    RaiseAsk,
     ReplyOperation,
     make_room_approvals,
 )
+from tests.adapters.opencode.conftest import ParkRoom
 from tests.adapters.opencode.helpers import (
     ASK_DEADLINE_S,
     PERMISSION_ASK,
@@ -29,14 +29,11 @@ from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
     RawOpencodeEvent,
     notice_to,
-    park_turn,
     room_reply,
     tools_protocol,
 )
 
 LOSER = "user-2"
-
-RaiseAsk = Callable[[RoomApprovals, AskFactory], Awaitable[None]]
 
 
 def replies_sent(client: FakeOpencodeClient) -> list[tuple[str, Any]]:
@@ -70,7 +67,7 @@ class TestConflictingReplies:
             ),
         ],
     )
-    async def test_a_named_reply_to_an_ask_another_reply_holds_is_told_so(
+    async def test_a_named_reply_to_a_held_ask_gets_the_same_notice_as_after_it_lands(
         self,
         asks: AskFactory,
         raise_ask: RaiseAsk,
@@ -125,6 +122,8 @@ class TestConflictingReplies:
     )
     async def test_a_named_reply_during_its_expiry_is_told_so(
         self,
+        park_room: ParkRoom,
+        tools: FakeAgentTools,
         ask: RawOpencodeEvent,
         operation: ReplyOperation,
         conflicting: str,
@@ -136,7 +135,8 @@ class TestConflictingReplies:
         the sender, on the control's own delivery, that the ask is no longer
         pending; OpenCode gets only the timeout reply."""
         client = BlockingReplyClient(operation, prompt_event_sequences=[[ask]])
-        adapter = OpencodeAdapter(
+        adapter = await park_room(
+            client,
             config=OpencodeAdapterConfig(
                 approval_mode="manual",
                 approval_wait_timeout_s=ASK_DEADLINE_S,
@@ -144,19 +144,14 @@ class TestConflictingReplies:
                 question_mode="manual",
                 question_wait_timeout_s=ASK_DEADLINE_S,
             ),
-            client_factory=lambda _config: client,
         )
-        turn_tools = FakeAgentTools(participants=ROOM_MEMBERS)
         reply_tools = FakeAgentTools(participants=ROOM_MEMBERS)
-        await park_turn(adapter, turn_tools)
 
         async with client.held(operation):
             assert await adapter.try_handle_control(
                 room_reply(conflicting, LOSER), tools_protocol(reply_tools)
             )
-        await turn_tools.until(lambda: bool(turn_tools.events_sent))
+        await tools.until(lambda: bool(tools.events_sent))
 
         assert reply_tools.messages_sent == [notice_to(LOSER, notice)]
         assert replies_sent(client) == sent
-
-        await adapter.on_cleanup("room-1")

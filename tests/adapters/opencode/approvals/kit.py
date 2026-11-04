@@ -191,12 +191,16 @@ DECLINED = {
 }
 
 
+#: Raises one ask on a room's approvals.
+RaiseAsk = Callable[[RoomApprovals, AskFactory], Awaitable[None]]
+
+
 @dataclass(frozen=True)
 class ExpiryCase:
     """How one kind of ask is raised, and what its expiry sends OpenCode."""
 
     operation: ReplyOperation
-    raise_ask: Callable[[RoomApprovals, AskFactory], Awaitable[None]]
+    raise_ask: RaiseAsk
     sent: Callable[[FakeOpencodeClient], list[str]]
     expired_reply: str
 

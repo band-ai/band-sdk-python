@@ -140,9 +140,7 @@ class RoomApprovals:
         hear why nothing happened.
         """
         if (entry := self._claim(registry, request_id)) is None:
-            await self._notify_room(
-                not_pending.format(request_id=request_id), mentions, tools
-            )
+            await self._notify_room(not_pending, mentions, tools)
             return
         await self._complete_claimed(
             entry,
@@ -388,7 +386,9 @@ class RoomApprovals:
                 answered=APPROVAL_HANDLED_TEMPLATE.format(
                     request_id=pending.request_id, reply=approval.reply
                 ),
-                not_pending=APPROVAL_NO_LONGER_PENDING_TEMPLATE,
+                not_pending=APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(
+                    request_id=pending.request_id
+                ),
                 mentions=mentions,
                 tools=tools,
             )
@@ -418,7 +418,9 @@ class RoomApprovals:
             question.request_id,
             partial(self._send_question_reply, answers=answers),
             answered=QUESTION_ANSWERED_TEMPLATE.format(request_id=question.request_id),
-            not_pending=QUESTION_NO_LONGER_PENDING_TEMPLATE,
+            not_pending=QUESTION_NO_LONGER_PENDING_TEMPLATE.format(
+                request_id=question.request_id
+            ),
             mentions=mentions,
             tools=tools,
         )
@@ -434,7 +436,9 @@ class RoomApprovals:
             question.request_id,
             self._send_question_reject,
             answered=QUESTION_REJECTED_TEMPLATE.format(request_id=question.request_id),
-            not_pending=QUESTION_NO_LONGER_PENDING_TEMPLATE,
+            not_pending=QUESTION_NO_LONGER_PENDING_TEMPLATE.format(
+                request_id=question.request_id
+            ),
             mentions=mentions,
             tools=tools,
         )
