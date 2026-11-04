@@ -60,9 +60,9 @@ class TestLateReplyThroughTheRuntime:
     async def test_a_reply_after_the_approval_expired_is_told_it_is_gone(
         self, make_adapter: Callable[..., OpencodeAdapter]
     ) -> None:
-        """INT-1991: once the asking turn has ended, its tools can no longer
-        post. The late reply is answered on its own delivery, so the notice
-        lands and the room keeps handling messages."""
+        """Once the asking turn has ended, its tools can no longer post. The
+        late reply is answered on its own delivery, so the notice lands and
+        the room keeps handling messages."""
         client = FakeOpencodeClient(
             prompt_event_sequences=[[event_permission("sess-1", PERMISSION_ID)]],
             reply_permission_events={PERMISSION_ID: model_answer("m1", "Declined.")},
