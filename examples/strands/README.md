@@ -68,7 +68,7 @@ Providers beyond `openai` need their own Strands extra (e.g.
 | `01_basic_agent.py` | Minimal agent: a model plus `custom_section` |
 | `02_custom_tools.py` | Portable `(InputModel, handler)` tools, memory + contact tools, execution/usage events |
 | `03_custom_instructions.py` | `system_prompt` full override and the messaging contract it must carry |
-| `04_native_tools.py` | Strands' own `@tool` functions, and `band_terminal` for a tool that ends the turn |
+| `04_native_tools.py` | Strands' own `@tool` functions, and `band_terminal` for a tool that counts as work |
 | `05_bedrock_model.py` | Amazon Bedrock, via the bare model id and via `BedrockModel` |
 | `06_tom_agent.py` / `07_jerry_agent.py` | Two Strands peers talking to each other in one room |
 
@@ -93,6 +93,14 @@ The adapter registers the Band platform tools itself; a custom tool may not reus
 one of their names. Band owns per-room history: the transcript is converted into
 Strands `Message` dicts, seeded into a fresh `Agent` per turn, and read back after
 it. With context hydration enabled, a restart reloads that history from the room.
+
+Custom tools can declare `TurnEffect.DECLINE` with `declares_turn_effect` on
+both portable handlers and native Strands tools. A successful decline stops the
+current model loop after every concurrent sibling finishes and its result enters
+history, including failed siblings. A failed decline remains an error and allows
+the model to recover. `ACT`, `REPLY`, and legacy `band_terminal=True` count toward
+the turn outcome but allow further model steps. Each new room turn gets fresh
+stopping state; this does not cancel caller orchestration or other rooms.
 
 ## Running
 

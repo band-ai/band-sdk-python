@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any
 
@@ -17,11 +18,14 @@ if TYPE_CHECKING or find_spec("strands") is not None:
     from strands import tool as strands_tool
 
     from band.adapters.strands import StrandsAdapter
+    from band.runtime.custom_tools import declares_turn_effect
+    from band.runtime.tools import TurnEffect
     from band.testing.strands import ScriptedStrandsModel, ScriptedTurn
     from tests.adapters.strands.activitypeer import (
         HeldFollowupModel,
         NativeActivityTurn,
     )
+    from tests.adapters.strands.declinepeer import DeclineInput
     from tests.adapters.strands.kit import ROOM, _run_message
 
 
@@ -80,3 +84,45 @@ async def native_activity_turn(
     finally:
         turn.cancel()
         await asyncio.gather(turn, return_exceptions=True)
+
+
+@pytest.fixture
+def custom_decline_tools() -> Callable[..., dict[str, Any]]:
+    """Build equivalent portable/native declarations around a supplied handler."""
+
+    def build(
+        handler: Callable[[str], Awaitable[Any]],
+        effect: TurnEffect = TurnEffect.DECLINE,
+    ) -> dict[str, Any]:
+        @declares_turn_effect(effect)
+        async def portable(args: DeclineInput) -> Any:
+            return await handler(args.note)
+
+        @declares_turn_effect(effect)
+        @strands_tool(name="decline")
+        async def native(note: str) -> Any:
+            """Decline a request with a note."""
+            return await handler(note)
+
+        return {"portable": (DeclineInput, portable), "native": native}
+
+    return build
+
+
+@pytest.fixture
+def running_strands_turn() -> Callable[
+    [Coroutine[Any, Any, None]], AbstractAsyncContextManager[asyncio.Task[None]]
+]:
+    """Await confirmed cancellation of every started turn, including failed tests."""
+
+    @asynccontextmanager
+    async def run(turn: Coroutine[Any, Any, None]) -> AsyncIterator[asyncio.Task[None]]:
+        task = asyncio.create_task(turn)
+        try:
+            yield task
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    return run

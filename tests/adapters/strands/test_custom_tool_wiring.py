@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import partial
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 pytest.importorskip("strands", reason="strands extra not installed")
 
@@ -96,3 +96,35 @@ class TestCustomToolWiring:
         )
 
         assert adapter._custom_effects == {"native_finish": TurnEffect.ACT}
+
+    def test_portable_decline_may_not_shadow_platform_name(self) -> None:
+        platform_named_input = create_model("band_no_replyInput", reason=(str, ...))
+
+        async def decline(args: BaseModel) -> str:
+            return str(args.model_dump()["reason"])
+
+        with pytest.raises(ValueError, match="band_no_reply"):
+            StrandsAdapter(
+                StrandsAdapterConfig(model="m"),
+                additional_tools=[(platform_named_input, decline)],
+            )
+
+    def test_native_may_not_shadow_portable_registered_name(self) -> None:
+        class LookupInput(BaseModel):
+            """Look up a code."""
+
+            code: str
+
+        async def portable(args: LookupInput) -> str:
+            return args.code
+
+        @strands_tool(name="lookup")
+        def native(code: str) -> str:
+            """Look up a code natively."""
+            return code
+
+        with pytest.raises(ValueError, match="unique.*lookup"):
+            StrandsAdapter(
+                StrandsAdapterConfig(model="m"),
+                additional_tools=[(LookupInput, portable), native],
+            )
