@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import httpx
 import pytest
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
@@ -28,32 +27,16 @@ from tests.adapters.opencode.helpers import (
     turn_finished,
 )
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import message_content
-from tests.runtime.helpers import (
-    AGENT_ID,
-    ALICE,
-    PostingPlatform,
-    is_message_post,
-    rest_client_over,
-)
+from tests.runtime.activityownership.kit import ActivityPlatform
+from tests.runtime.helpers import AGENT_ID, ALICE, rest_client_over
 from tests.runtime.scheduler.driver import attempt_delivery
 
 ROOM_ID = "room-1"
 PERMISSION_ID = "perm-1"
+ASK_ID = "ask"
+LATE_ID = "late"
+NEXT_ID = "next"
 NEXT_ANSWER = "Next."
-
-
-class RoomPosts(PostingPlatform):
-    """Records the content of every message the room receives."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.messages: list[str] = []
-
-    def answer(self, request: httpx.Request) -> httpx.Response:
-        if is_message_post(request):
-            self.messages.append(message_content(request))
-        return super().answer(request)
 
 
 class TestLateReplyThroughTheRuntime:
@@ -77,7 +60,7 @@ class TestLateReplyThroughTheRuntime:
             config=OpencodeAdapterConfig(approval_wait_timeout_s=ASK_DEADLINE_S),
         )
         await adapter.on_started("OpenCode Agent", "A coding agent")
-        platform = RoomPosts()
+        platform = ActivityPlatform()
 
         async def handle(ctx: ExecutionContext, event: MessageEvent) -> None:
             await deliver_message(
@@ -91,7 +74,7 @@ class TestLateReplyThroughTheRuntime:
                 OpencodeSessionState(),
                 None,
                 None,
-                is_session_bootstrap=event.payload.id == "ask",
+                is_session_bootstrap=event.payload.id == ASK_ID,
                 room_id=ctx.room_id,
             )
 
@@ -108,17 +91,19 @@ class TestLateReplyThroughTheRuntime:
             try:
                 await attempt_delivery(
                     execution,
-                    make_message_event(room_id=ROOM_ID, msg_id="ask", content="run it"),
+                    make_message_event(
+                        room_id=ROOM_ID, msg_id=ASK_ID, content="run it"
+                    ),
                 )
                 await turn_finished(await room_turn(adapter))
                 assert [r["reply"] for r in client.permission_replies] == ["reject"]
-                asked = list(platform.messages)
+                asked = list(platform.room_messages)
 
                 await attempt_delivery(
                     execution,
                     make_message_event(
                         room_id=ROOM_ID,
-                        msg_id="late",
+                        msg_id=LATE_ID,
                         content=f"approve {PERMISSION_ID}",
                     ),
                 )
@@ -126,16 +111,20 @@ class TestLateReplyThroughTheRuntime:
                 gone = APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(
                     request_id=PERMISSION_ID
                 )
-                assert platform.messages == [*asked, gone]
-                assert len(client.permission_replies) == 1
+                assert platform.room_messages == [*asked, gone]
+                assert [r["reply"] for r in client.permission_replies] == ["reject"]
 
                 await attempt_delivery(
                     execution,
-                    make_message_event(room_id=ROOM_ID, msg_id="next", content="go on"),
+                    make_message_event(
+                        room_id=ROOM_ID, msg_id=NEXT_ID, content="go on"
+                    ),
                 )
 
                 assert len(client.prompt_calls) == 2
-                assert platform.messages[-1] == NEXT_ANSWER
+                assert platform.room_messages == [*asked, gone, NEXT_ANSWER]
+                assert [r["reply"] for r in client.permission_replies] == ["reject"]
+                assert platform.marked("processed") == [ASK_ID, LATE_ID, NEXT_ID]
             finally:
                 await adapter.on_cleanup(ROOM_ID)
                 await execution.stop()

@@ -11,6 +11,9 @@ set -euo pipefail
 # behaviour change lands as an unrelated-looking lane failure. Bump deliberately.
 OPENCODE_VERSION="${OPENCODE_VERSION:-1.18.4}"
 
+# Fail here, not at every cell's first model call: the serve starts without it.
+: "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required for the opencode serve}"
+
 npm install -g "opencode-ai@${OPENCODE_VERSION}"
 
 # The unsecured localhost server reads the key via the {env:...} substitution.

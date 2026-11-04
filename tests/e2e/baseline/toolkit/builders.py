@@ -544,7 +544,8 @@ def _build_codex(
 
 @adapter(
     Adapter.OPENCODE,
-    requires=[Dep.OPENCODE_SERVER],
+    # The serve reads this key for its `anthropic` provider (setup-opencode.sh).
+    requires=[Dep.OPENCODE_SERVER, Dep.ANTHROPIC],
     supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
 )

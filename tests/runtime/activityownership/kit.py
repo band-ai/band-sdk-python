@@ -134,7 +134,8 @@ class ActivityPlatform(PostingPlatform):
     def answer(self, request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path.endswith("/events"):
             event = json.loads(request.content)["event"]
-            if event["message_type"] == "error":
+            # A plain error notice (e.g. an approval timeout) carries no failure.
+            if event["message_type"] == "error" and event.get("metadata"):
                 self.failures.append(event["metadata"]["failure"])
         if is_message_post(request):
             self.posts.append(request.url.path.rsplit("/", 1)[-1])
