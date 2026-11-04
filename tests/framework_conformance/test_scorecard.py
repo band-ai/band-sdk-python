@@ -63,12 +63,17 @@ class TestScorecard:
             ExcludedAdapter(Adapter.CREWAI, reason)
 
     def test_per_adapter_excludes_cell_but_carries_reason(self) -> None:
-        @per_adapter(exclude=[ExcludedAdapter(Adapter.CREWAI, "cumulative usage")])
+        @per_adapter(
+            Adapter.CREWAI,
+            Adapter.AGNO,
+            exclude=[ExcludedAdapter(Adapter.CREWAI, "cumulative usage")],
+        )
         def fn() -> None: ...
 
-        assert str(Adapter.CREWAI) not in _parametrized_adapter_ids(fn)
-        payload = _per_adapter_marker(fn)
-        assert payload.exclude == (ExcludedAdapter(Adapter.CREWAI, "cumulative usage"),)
+        assert _parametrized_adapter_ids(fn) == [str(Adapter.AGNO)]
+        assert _per_adapter_marker(fn).exclude == (
+            ExcludedAdapter(Adapter.CREWAI, "cumulative usage"),
+        )
 
     def test_per_adapter_rejects_unregistered_exclusion(self) -> None:
         # Adapter is a StrEnum, so a plain unregistered string is an unknown id.

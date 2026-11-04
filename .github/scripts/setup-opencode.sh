@@ -14,7 +14,8 @@ OPENCODE_VERSION="${OPENCODE_VERSION:-1.18.4}"
 npm install -g "opencode-ai@${OPENCODE_VERSION}"
 
 # The unsecured localhost server reads the key via the {env:...} substitution.
-# small_model keeps session titling on a cheap model of the same provider.
+# small_model keeps session titling on a cheap model of the same provider:
+# band.core.defaultmodels.ANTHROPIC_SMALL_MODEL (the JSON is not expanded).
 read -r -d '' OPENCODE_CONFIG_JSON <<'JSON' || true
 {
   "$schema": "https://opencode.ai/config.json",

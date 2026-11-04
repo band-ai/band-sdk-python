@@ -40,6 +40,7 @@ from tests.runtime.scheduler.driver import attempt_delivery
 
 ROOM_ID = "room-1"
 PERMISSION_ID = "perm-1"
+NEXT_ANSWER = "Next."
 
 
 class RoomPosts(PostingPlatform):
@@ -64,7 +65,10 @@ class TestLateReplyThroughTheRuntime:
         late reply is answered on its own delivery, so the notice lands and
         the room keeps handling messages."""
         client = FakeOpencodeClient(
-            prompt_event_sequences=[[event_permission("sess-1", PERMISSION_ID)]],
+            prompt_event_sequences=[
+                [event_permission("sess-1", PERMISSION_ID)],
+                model_answer("m2", NEXT_ANSWER),
+            ],
             reply_permission_events={PERMISSION_ID: model_answer("m1", "Declined.")},
         )
         adapter = make_adapter(
@@ -108,6 +112,7 @@ class TestLateReplyThroughTheRuntime:
                 )
                 await turn_finished(await room_turn(adapter))
                 assert [r["reply"] for r in client.permission_replies] == ["reject"]
+                asked = list(platform.messages)
 
                 await attempt_delivery(
                     execution,
@@ -121,9 +126,16 @@ class TestLateReplyThroughTheRuntime:
                 gone = APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(
                     request_id=PERMISSION_ID
                 )
-                assert any(gone in message for message in platform.messages)
+                assert platform.messages == [*asked, gone]
                 assert len(client.permission_replies) == 1
-                assert len(client.prompt_calls) == 1
+
+                await attempt_delivery(
+                    execution,
+                    make_message_event(room_id=ROOM_ID, msg_id="next", content="go on"),
+                )
+
+                assert len(client.prompt_calls) == 2
+                assert platform.messages[-1] == NEXT_ANSWER
             finally:
                 await adapter.on_cleanup(ROOM_ID)
                 await execution.stop()
