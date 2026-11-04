@@ -7,12 +7,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from band.adapters.gemini import GeminiAdapter, GeminiAdapterConfig
+from band.core.exceptions import ToolRoundsExceededError
 from tests.adapters.gemini.kit import _response_with_function_call
 
 
 class TestMaxToolRounds:
     @pytest.mark.asyncio
-    async def test_raises_runtime_error_when_max_rounds_exceeded(
+    async def test_raises_tool_rounds_exceeded_when_max_rounds_exceeded(
         self, sample_message, mock_tools
     ):
         adapter = GeminiAdapter(GeminiAdapterConfig(max_tool_rounds=2))
@@ -29,7 +30,7 @@ class TestMaxToolRounds:
                     )
                 ),
             ),
-            pytest.raises(RuntimeError, match="Exceeded max tool rounds"),
+            pytest.raises(ToolRoundsExceededError) as raised,
         ):
             await adapter.on_message(
                 msg=sample_message,
@@ -41,8 +42,13 @@ class TestMaxToolRounds:
                 room_id="room-123",
             )
 
+        error = raised.value
+        assert (error.max_rounds, error.room_id, error.tool_sequence) == (
+            2,
+            "room-123",
+            [["band_lookup_peers"]] * 2,
+        )
         # Exceeding max tool rounds is a reportable provider failure.
         mock_tools.send_failure.assert_called_once()
         failure = mock_tools.send_failure.call_args.args[0]
-        assert failure.provider == "gemini"
-        assert "Exceeded max tool rounds" in failure.message
+        assert (failure.provider, failure.message) == ("gemini", str(error))

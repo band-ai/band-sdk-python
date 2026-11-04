@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from band.core.types import Capability, Emit
@@ -45,6 +47,18 @@ class TestInitialization:
     def test_max_retries_rejects_out_of_range_budgets(self, value: int, match: str):
         with pytest.raises(ValueError, match=match):
             GoogleADKAdapterConfig(max_retries=value)
+
+    @pytest.mark.parametrize(
+        ("value", "match"),
+        [
+            (0, "max_tool_rounds\n  Input should be greater than 0"),
+            (sys.maxsize, "max_tool_rounds\n  Input should be less than"),
+        ],
+        ids=["zero", "adk-rejected"],
+    )
+    def test_max_tool_rounds_rejects_caps_adk_cannot_run(self, value: int, match: str):
+        with pytest.raises(ValueError, match=match):
+            GoogleADKAdapterConfig(max_tool_rounds=value)
 
     def test_execution_reporting_default(self):
         """Should default emit to everything the adapter supports."""

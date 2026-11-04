@@ -141,6 +141,8 @@ class ToolRoundsExceededError(BandError, RuntimeError):
     def __init__(
         self, max_rounds: int, room_id: str, tool_sequence: Sequence[Sequence[str]]
     ) -> None:
+        self.max_rounds = max_rounds
+        self.room_id = room_id
         self.tool_sequence = [list(names) for names in tool_sequence]
         super().__init__(
             f"Exceeded max tool rounds ({max_rounds}) in room {room_id}; "

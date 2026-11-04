@@ -12,6 +12,7 @@ import functools
 import json
 import logging
 import re
+import sys
 import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
@@ -409,7 +410,8 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
     model: str = GEMINI_MODEL
     system_prompt: str | None = None
     custom_section: str | None = None
-    max_tool_rounds: PositiveInt = DEFAULT_MAX_TOOL_ROUNDS
+    # ADK's RunConfig rejects ``sys.maxsize`` as ``max_llm_calls``.
+    max_tool_rounds: int = Field(default=DEFAULT_MAX_TOOL_ROUNDS, gt=0, lt=sys.maxsize)
     max_retries: int = Field(
         default=2,
         ge=0,
@@ -705,8 +707,9 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
             # the loop into one per-turn TurnUsage.
             final_response_text = ""
             model_failure: ProviderRunError | None = None
-            # ADK refuses the model call past max_llm_calls; a decline stop
-            # bypasses its call before ADK counts it.
+            # ADK refuses the model call past max_llm_calls. A landed decline
+            # answers the next request in before_model_callback, which runs
+            # before ADK counts the call, so a decline never uses up the cap.
             async for event in runner.run_async(
                 user_id=room_id,
                 session_id=session_id,
@@ -747,7 +750,6 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
             error = ToolRoundsExceededError(
                 self.config.max_tool_rounds, room_id, tool_sequence
             )
-            logger.warning("%s", error)
             await tools.send_failure(AgentFailure(_PROVIDER, str(error)))
             raise error from exc
         except Exception as e:
