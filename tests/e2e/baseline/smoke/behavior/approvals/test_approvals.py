@@ -5,7 +5,7 @@ import pytest
 from band.adapters.opencode.approvals.commands import PermissionReplyWord
 from band.client.streaming import DeliveryStatus
 from band.runtime.sessionconfig import SessionConfig
-from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.behavior.approvals.kit import (
     ASKING,
     BUDGET,
@@ -43,7 +43,7 @@ class TestApprovals:
     @per_adapter(
         Adapter.CLAUDE_SDK, Adapter.CODEX, Adapter.CURSOR_ACP, Adapter.OPENCODE
     )
-    @pytest.mark.parametrize("outcome", [Outcome.APPROVE, Outcome.DECLINE])
+    @pytest.mark.parametrize("outcome", list(Outcome))
     @pytest.mark.timeout(extra=BUDGET.extra_s)
     @pytest.mark.asyncio(loop_scope="session")
     async def test_the_room_reply_decides_whether_the_gated_command_runs(
@@ -53,7 +53,8 @@ class TestApprovals:
         user_ops: UserOps,
         reply_capture: CaptureFactory,
     ) -> None:
-        """Approve runs the command and decline doesn't."""
+        """Approve runs the command, decline and an expired wait don't; a reply sent
+        after the wait expired is told the ask is gone, and still runs nothing."""
         marker = unique_marker("approval")
         done = unique_marker("closed")
         async with approval_room(
@@ -69,7 +70,10 @@ class TestApprovals:
             [request] = await room.requests(1)
             after_request = room.capture.messages.snapshot()
 
-            await room.decide(outcome, request)
+            if outcome is not Outcome.TIMEOUT:
+                await room.decide(outcome, request)
+            else:
+                room.expect_timeout(request)
             await room.closed(
                 room.dialect.notice(outcome, request),
                 since=after_request,
@@ -81,59 +85,16 @@ class TestApprovals:
                 ),
             )
 
+            if outcome is Outcome.TIMEOUT:
+                late = await room.say(room.dialect.reply(Outcome.APPROVE, request))
+                await room.shown(room.dialect.late_notice(request).text, since=late)
+                approved = room.dialect.notice(Outcome.APPROVE, request).text
+                assert not any(approved in said for said in room.said_since(late))
+
             if outcome is Outcome.APPROVE:
                 assert written_lines(target) == [marker]
             else:
                 assert not target.exists(), f"{outcome} still ran the gated command"
-
-    @per_adapter(
-        Adapter.CLAUDE_SDK,
-        Adapter.CODEX,
-        Adapter.CURSOR_ACP,
-        exclude=[
-            ExcludedAdapter(
-                Adapter.OPENCODE,
-                "INT-1991: the room stops handling messages after an approval wait expires",
-            )
-        ],
-    )
-    @pytest.mark.timeout(extra=BUDGET.extra_s)
-    @pytest.mark.asyncio(loop_scope="session")
-    async def test_an_expired_wait_runs_nothing_and_a_late_reply_is_told_so(
-        self,
-        cell: AdapterCell,
-        user_ops: UserOps,
-        reply_capture: CaptureFactory,
-    ) -> None:
-        """An unanswered ask expires without running the command; a reply sent after
-        it expired is told the ask is gone, and still runs nothing."""
-        marker = unique_marker("approval")
-        done = unique_marker("closed")
-        async with approval_room(
-            cell,
-            user_ops,
-            reply_capture,
-            label=str(Outcome.TIMEOUT),
-            budget=BUDGET,
-            wait_timeout_s=_wait_timeout_s(Outcome.TIMEOUT),
-        ) as (room, workdir):
-            target = workdir / "approval.txt"
-            await room.say(command_request(marker, target, done=done))
-            [request] = await room.requests(1)
-            after_request = room.capture.messages.snapshot()
-
-            room.expect_timeout(request)
-            await room.closed(
-                room.dialect.notice(Outcome.TIMEOUT, request),
-                since=after_request,
-                closing_reply=done,
-            )
-
-            late = await room.say(room.dialect.reply(Outcome.APPROVE, request))
-            await room.shown(room.dialect.late_notice(request).text, since=late)
-            approved = room.dialect.notice(Outcome.APPROVE, request).text
-            assert not any(approved in said for said in room.said_since(late))
-            assert not target.exists(), "an expired wait still ran the gated command"
 
     @per_adapter(
         Adapter.CLAUDE_SDK, Adapter.CODEX, Adapter.CURSOR_ACP, Adapter.OPENCODE

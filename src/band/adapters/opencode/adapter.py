@@ -479,7 +479,9 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         self, msg: PlatformMessage, tools: AgentToolsProtocol
     ) -> bool:
         room_state = await self._get_or_create_room_state(msg.room_id)
-        if not await room_state.approvals.try_handle_reply(msg.content, msg.sender_id):
+        if not await room_state.approvals.try_handle_reply(
+            msg.content, msg.sender_id, tools
+        ):
             return False
         tools.turn.settle()
         return True

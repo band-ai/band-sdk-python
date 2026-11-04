@@ -17,6 +17,11 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # The model could still decline through band_no_reply, so the turn can't be
 # made silent; the verdict rows in test_turn_outcome.py cover these adapters.
 IGNORES_EXCLUDE_TOOLS = "ignores exclude_tools, so band_no_reply stays callable"
+# These post the model's final text as the reply, so the turn is silent only if
+# the model writes none; test_turn_outcome.py covers their missing-reply rule.
+RELAYS_FINAL_TEXT = (
+    "relays the model's final text, so an empty turn can't be scripted reliably"
+)
 CREWAI_FLOW_NO_SILENCE = (
     "terminal echo flow with no Band tool loop — cannot script a silent turn"
 )
@@ -29,9 +34,9 @@ class TestMissingReplyReported:
             exclude_tools={BandTool.SEND_MESSAGE, BandTool.NO_REPLY}
         ),
         exclude=[
-            ExcludedAdapter(
-                Adapter.COPILOT_SDK,
-                "relays the model's final text, so an empty turn can't be scripted reliably",
+            *(
+                ExcludedAdapter(adapter, RELAYS_FINAL_TEXT)
+                for adapter in (Adapter.COPILOT_SDK, Adapter.LETTA, Adapter.OPENCODE)
             ),
             ExcludedAdapter(Adapter.CREWAI_FLOW, CREWAI_FLOW_NO_SILENCE),
             *(
