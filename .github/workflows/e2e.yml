@@ -172,6 +172,10 @@ jobs:
     needs: lanes
     runs-on: ${{ matrix.runner }}
     # id-token: the OpenCode Zen sign-in below exchanges the job's OIDC token.
+    # Permissions are per job, not per matrix leg, so every lane gets it. That is
+    # deliberate: the repo's publish trust policies are pinned to their own
+    # workflow files, so these tokens can't publish, and splitting the opencode
+    # lane out would duplicate this whole job.
     permissions:
       contents: read
       id-token: write

@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests.framework_conformance.ciscriptkit import (
     OIDC_OK,
+    OIDC_REQUEST_TOKEN,
     OIDC_TOKEN,
     SIGN_IN_FAILED,
     UNREACHED,
+    ZEN_CLIENT_ID,
     ZEN_KEY,
     SignInEndpoints,
     posix_shell_only,
@@ -32,13 +36,16 @@ class TestOpencodeZenSignIn:
         ]
         assert github_env == f"OPENCODE_ZEN_API_KEY={ZEN_KEY}\n"
         assert endpoints.oidc_requests == [
-            ("/oidc?v=1&audience=https://opencode.ai/console", "Bearer request-token")
+            (
+                "/oidc?v=1&audience=https://opencode.ai/console",
+                f"Bearer {OIDC_REQUEST_TOKEN}",
+            )
         ]
         assert endpoints.exchanges == [
             {
                 "grant_type": ["urn:ietf:params:oauth:grant-type:token-exchange"],
                 "subject_token_type": ["urn:ietf:params:oauth:token-type:jwt"],
-                "client_id": ["client-1"],
+                "client_id": [ZEN_CLIENT_ID],
                 "subject_token": [OIDC_TOKEN],
             }
         ]
@@ -58,14 +65,18 @@ class TestOpencodeZenSignIn:
         assert "branch not trusted" in result.stderr
         assert github_env == ""
 
-    def test_rejects_an_exchange_that_grants_no_key(self, tmp_path: Path) -> None:
-        result, github_env = sign_in(
-            tmp_path, SignInEndpoints(OIDC_OK, (200, {"expires_in": 3600}))
-        )
+    @pytest.mark.parametrize(
+        ("body", "keys"),
+        [({"expires_in": 3600}, '["expires_in"]'), ("<html>busy</html>", "not JSON")],
+    )
+    def test_rejects_an_exchange_that_grants_no_key(
+        self, tmp_path: Path, body: dict[str, object] | str, keys: str
+    ) -> None:
+        result, github_env = sign_in(tmp_path, SignInEndpoints(OIDC_OK, (200, body)))
 
         assert result.returncode == 1
         assert (
-            f'{SIGN_IN_FAILED}token exchange returned no access_token (keys: ["expires_in"])'
+            f"{SIGN_IN_FAILED}token exchange returned no access_token (keys: {keys})"
             in result.stderr
         )
         assert github_env == ""

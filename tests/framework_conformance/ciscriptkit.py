@@ -33,6 +33,8 @@ posix_shell_only = pytest.mark.skipif(
 ZEN_SIGN_IN = CI_SCRIPTS / "opencode-zen-sign-in.sh"
 OIDC_TOKEN = "github-oidc-jwt"
 ZEN_KEY = "zen-short-lived-key"
+ZEN_CLIENT_ID = "client-1"
+OIDC_REQUEST_TOKEN = "request-token"
 OIDC_OK = (200, {"value": OIDC_TOKEN})
 UNREACHED = (500, {})
 SIGN_IN_FAILED = "OpenCode Zen sign-in failed: "
@@ -43,7 +45,7 @@ class SignInEndpoints:
     """A local stand-in for GitHub's OIDC endpoint and the Zen token exchange."""
 
     oidc: tuple[int, dict[str, object]]
-    exchange: tuple[int, dict[str, object]]
+    exchange: tuple[int, dict[str, object] | str]
     oidc_requests: list[tuple[str, str | None]] = field(default_factory=list)
     exchanges: list[dict[str, list[str]]] = field(default_factory=list)
 
@@ -62,9 +64,11 @@ def _serving(endpoints: SignInEndpoints) -> Iterator[str]:
             endpoints.exchanges.append(parse_qs(body))
             self._reply(endpoints.exchange)
 
-        def _reply(self, reply: tuple[int, dict[str, object]]) -> None:
+        def _reply(self, reply: tuple[int, dict[str, object] | str]) -> None:
             status, payload = reply
-            data = json.dumps(payload).encode()
+            data = (
+                payload if isinstance(payload, str) else json.dumps(payload)
+            ).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
@@ -96,9 +100,9 @@ def sign_in(
             ["bash", str(ZEN_SIGN_IN)],
             env={
                 "PATH": os.environ["PATH"],
-                "OPENCODE_ZEN_CLIENT_ID": "client-1",
+                "OPENCODE_ZEN_CLIENT_ID": ZEN_CLIENT_ID,
                 "ACTIONS_ID_TOKEN_REQUEST_URL": f"{base}/oidc?v=1",
-                "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
+                "ACTIONS_ID_TOKEN_REQUEST_TOKEN": OIDC_REQUEST_TOKEN,
                 "OPENCODE_ZEN_TOKEN_URL": f"{base}/token",
                 "GITHUB_ENV": str(github_env),
             },

@@ -121,8 +121,8 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     Lane.CORE: Extra.DEV,
     Lane.CREWAI: Extra.DEV_CREWAI,
     Lane.BACKENDS: Extra.DEV,
-    # OpenCode signs in for a one-hour Zen token and spends a free-tier quota, so
-    # it runs in its own short lane, split out of ``backends``.
+    # Its own short lane, split out of ``backends``; why: the "CI lanes" section of
+    # tests/e2e/baseline/README.md.
     Lane.OPENCODE: Extra.DEV,
     # The Google adapters (gemini/google_adk) share the ``dev`` extra but run in
     # their own lane so their free-tier rate-limit flakiness is isolated from the

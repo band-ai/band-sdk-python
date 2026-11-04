@@ -82,17 +82,17 @@ class TestScorecard:
         with pytest.raises(ValueError, match="non-empty reason"):
             ExcludedAdapter(Adapter.CREWAI, reason)
 
-    def test_per_adapter_excludes_cell_but_carries_reason(
-        self, opencode_live: MatrixAllowlist
-    ) -> None:
-        @per_adapter(exclude=[ExcludedAdapter(Adapter.CREWAI, "cumulative usage")])
+    def test_per_adapter_excludes_cell_but_carries_reason(self) -> None:
+        @per_adapter(
+            Adapter.CREWAI,
+            Adapter.AGNO,
+            exclude=[ExcludedAdapter(Adapter.CREWAI, "cumulative usage")],
+        )
         def fn() -> None: ...
 
-        assert str(Adapter.CREWAI) not in _parametrized_adapter_ids(fn)
-        # fn is not on OpenCode's live allowlist, so OpenCode's quota N/A joins it.
+        assert _parametrized_adapter_ids(fn) == [str(Adapter.AGNO)]
         assert _per_adapter_marker(fn).exclude == (
             ExcludedAdapter(Adapter.CREWAI, "cumulative usage"),
-            ExcludedAdapter(Adapter.OPENCODE, opencode_live.reason),
         )
 
     def test_matrix_only_adapter_runs_only_its_allowlisted_tests(
