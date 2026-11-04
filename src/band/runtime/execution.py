@@ -1347,26 +1347,24 @@ class ExecutionContext:
         owner.task.add_done_callback(
             lambda _: self._finish_activity(scope, resource=owner)
         )
-        if owner.role is TaskRole.SCOPE:
-            owner.task.add_done_callback(partial(self._resume_after_turn, scope))
+        owner.task.add_done_callback(partial(self._resume_after_turn, scope))
         if scope.reports_activity and scope not in self._scopes and not scope.aborted:
             self._retain_activity_completion(
                 asyncio.create_task(self._acquire_activity(scope))
             )
 
     def _resume_after_turn(self, scope: TurnScope, _: asyncio.Task[Any]) -> None:
-        """Retry input refused while a turn outlived its delivery, now that it ended.
+        """Retry input the room refused while this turn outlived its delivery.
 
-        A turn that ends before its handler returns finds its scope unsettled:
-        nothing waits behind it. A refusal is recorded only inside a pass, so
-        one still running may be recording a refusal of input this end frees.
+        A turn that ends before its handler returns finds its scope unsettled,
+        so nothing was refused behind it.
         """
-        scheduler = self.scheduler
-        waiting = (
-            scheduler.deferred_id is not None or scheduler.current_pass is not None
-        )
-        if scope.settled and waiting and not self.is_closing:
-            scheduler.request_resync()
+        if scope.settled:
+            logger.debug(
+                "ExecutionContext %s: released turn ended; retrying held input",
+                self.room_id,
+            )
+            self.scheduler.request_resync()
 
     def _retain_activity_completion(self, task: asyncio.Task[None]) -> None:
         self._activity_completion = task

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from band.platform.link import BandLink
-from band.runtime.sessionconfig import SessionConfig
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.deferral.kit import EndsWhileRefusingAdapter
 from tests.runtime.helpers import (
     AGENT_ID,
-    NO_PERIODIC_WAKE_S,
     LifecyclePlatform,
+    no_periodic_wake_config,
     rest_client_over,
     run_through,
 )
@@ -27,12 +26,7 @@ class TestReleasedTurnEnd:
             ctx = run_through(
                 adapter,
                 link,
-                config=SessionConfig(
-                    enable_context_hydration=False,
-                    enable_working_state=False,
-                    idle_resync_seconds=NO_PERIODIC_WAKE_S,
-                    idle_resync_max_seconds=NO_PERIODIC_WAKE_S,
-                ),
+                config=no_periodic_wake_config(),
             )
             await ctx.start()
             try:

@@ -14,7 +14,6 @@ from band.platform.event import ReconnectedEvent
 from band.platform.link import BandLink
 from band.runtime.control import apply_control
 from band.runtime.execution import ExecutionContext
-from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools import BandTool
 from tests.adapters.codex.kit import (
     PATIENT_APPROVAL_S,
@@ -34,7 +33,7 @@ from tests.adapters.lifecycle.runtime import ReplyingPlatform
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import (
     AGENT_ID,
-    NO_PERIODIC_WAKE_S,
+    no_periodic_wake_config,
     rest_client_over,
     run_through,
 )
@@ -107,6 +106,16 @@ class CodexRoomUnderTest:
         )
         await wait_for_condition(lambda: self.idle)
 
+    async def hold_missed(self, *message_ids: str) -> None:
+        """Send ordinary messages the socket missed, refused by a reconnect's pass."""
+        for message_id in message_ids:
+            self.platform.add_message(message_id, content=f"and {message_id}")
+        await self.ctx.on_event(ReconnectedEvent())
+        await wait_for_condition(
+            lambda: self.ctx.scheduler.deferred_id == message_ids[0]
+        )
+        await wait_for_condition(lambda: self.idle)
+
     def end_turn(self) -> None:
         self.client.script(*answered_turn("turn-2"), *answered_turn("turn-3"))
         self.client.emit_turn(RELEASED_TURN, turn_completed(RELEASED_TURN))
@@ -134,12 +143,7 @@ async def codex_scheduled() -> AsyncIterator[
             ctx = run_through(
                 adapter,
                 link,
-                config=SessionConfig(
-                    enable_context_hydration=False,
-                    enable_working_state=False,
-                    idle_resync_seconds=NO_PERIODIC_WAKE_S,
-                    idle_resync_max_seconds=NO_PERIODIC_WAKE_S,
-                ),
+                config=no_periodic_wake_config(),
             )
             await ctx.start()
             opened.append(room := CodexRoomUnderTest(platform, adapter, client, ctx))
@@ -170,14 +174,21 @@ class TestWorkAfterReleasedTurn:
 
         await room.processes("ask", "approve", *HELD)
         assert room.platform.marked("failed") == []
-        assert room.turn_starts == 3
+        assert room.turn_starts == 1 + len(HELD)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "hold",
+        [CodexRoomUnderTest.hold, CodexRoomUnderTest.hold_missed],
+        ids=["delivered", "missed by the socket"],
+    )
     async def test_a_control_in_the_window_is_answered_while_ordinary_work_waits(
-        self, room: CodexRoomUnderTest
+        self,
+        room: CodexRoomUnderTest,
+        hold: Callable[..., Awaitable[None]],
     ) -> None:
         await room.open_window()
-        await room.hold(*HELD)
+        await hold(room, *HELD)
 
         await room.deliver("status", f"/{CodexCommand.STATUS}")
         await room.processes("ask", "approve", "status")
@@ -221,7 +232,7 @@ class TestWorkAfterReleasedTurn:
         room.end_turn()
 
         await room.processes("ask", "approve", *HELD)
-        assert room.turn_starts == 3
+        assert room.turn_starts == 1 + len(HELD)
 
     @pytest.mark.asyncio
     async def test_a_turn_that_never_released_the_room_requests_no_extra_pass(

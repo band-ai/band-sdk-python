@@ -36,9 +36,16 @@ def recognizes_control(ctx: ExecutionContext, event: MessageEvent) -> bool:
 
 
 async def deliver_event(ctx: ExecutionContext, event: PlatformEvent) -> None:
-    """Run queued input through the consumer's production scheduling pass."""
+    """Run queued input through the consumer's production scheduling pass.
+
+    The consumer serves a resync requested before the input first, in queue order.
+    """
+    scheduler = ctx.scheduler
+    if scheduler.pending_resync is not None:
+        scheduler.pending_resync = None
+        await scheduler.run_pass(recovery=True)
     await ctx.on_event(event)
-    await ctx.scheduler.run_pass()
+    await scheduler.run_pass()
 
 
 def message_content(request: httpx.Request) -> str:
