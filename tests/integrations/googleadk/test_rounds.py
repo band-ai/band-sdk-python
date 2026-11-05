@@ -84,7 +84,7 @@ class TestToolRounds:
     @pytest.mark.parametrize(
         "last",
         [text_reply(FOLLOWUP), batch(("decline", {}))],
-        ids=["text", "decline"],
+        ids=["text", "decline-bypass-uncounted"],
     )
     async def test_last_allowed_model_call_can_still_end_the_turn(
         self, google_model: GoogleModelPeer, last: types.GenerateContentResponse

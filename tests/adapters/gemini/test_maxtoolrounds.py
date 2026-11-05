@@ -27,6 +27,7 @@ class TestMaxToolRounds:
             await adapter.on_event(turn_input(tools))
 
         error = raised.value
+        assert isinstance(error, RuntimeError)
         assert adapter.client.aio.models.generate_content.await_count == 2
         assert (error.max_rounds, error.room_id, error.tool_sequence) == (
             2,

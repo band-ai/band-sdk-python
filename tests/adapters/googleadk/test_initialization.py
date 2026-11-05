@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 import pytest
+from google.adk.agents.run_config import RunConfig
 
 from band.core.types import Capability, Emit
 from tests.adapters.googleadk.bridge import GoogleADKAdapter, GoogleADKAdapterConfig
@@ -54,11 +55,20 @@ class TestInitialization:
             (0, "max_tool_rounds\n  Input should be greater than 0"),
             (sys.maxsize, "max_tool_rounds\n  Input should be less than"),
         ],
-        ids=["zero", "adk-rejected"],
+        ids=["unbounded", "adk-rejected"],
     )
-    def test_max_tool_rounds_rejects_caps_adk_cannot_run(self, value: int, match: str):
+    def test_max_tool_rounds_rejects_unbounded_or_adk_invalid_caps(
+        self, value: int, match: str
+    ):
         with pytest.raises(ValueError, match=match):
             GoogleADKAdapterConfig(max_tool_rounds=value)
+
+    def test_largest_accepted_cap_is_a_valid_adk_run_config(self):
+        config = GoogleADKAdapterConfig(max_tool_rounds=sys.maxsize - 1)
+
+        assert RunConfig(max_llm_calls=config.max_tool_rounds).max_llm_calls == (
+            sys.maxsize - 1
+        )
 
     def test_execution_reporting_default(self):
         """Should default emit to everything the adapter supports."""
