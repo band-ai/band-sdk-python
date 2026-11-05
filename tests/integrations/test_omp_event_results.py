@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import JsonValue, ValidationError
 
-from band.integrations.ompwire import OmpEvent, OmpEventType
+from band.integrations.ompwire import OmpContentKind, OmpEvent, OmpEventType
 
 
 class TestOmpEventResults:
@@ -64,7 +64,7 @@ class TestOmpEventResults:
                 "firstKeptEntryId": "kept-entry",
                 "tokensBefore": 120000,
             },
-            {"content": [{"type": "text"}]},
+            {"content": [{"type": OmpContentKind.TEXT}]},
             {"content": "not content blocks"},
         ],
     )
@@ -86,6 +86,10 @@ class TestOmpEventResults:
             OmpEvent.model_validate(
                 {
                     "type": OmpEventType.AUTO_COMPACTION_END,
-                    "result": {"content": [{"type": "text", "text": "tool output"}]},
+                    "result": {
+                        "content": [
+                            {"type": OmpContentKind.TEXT, "text": "tool output"}
+                        ]
+                    },
                 }
             )
