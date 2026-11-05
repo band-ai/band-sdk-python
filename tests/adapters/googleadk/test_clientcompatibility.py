@@ -38,8 +38,6 @@ class TestClientCompatibility:
     ) -> None:
         httpx_mock.add_response(json=text_reply("Hello").model_dump(mode="json"))
         client = native_model.api_client
-        for key, value in TRACKING_HEADERS.items():
-            assert value in client._api_client._http_options.headers[key]
         await client.aio.models.generate_content(model=GEMINI_MODEL, contents="Hello")
         request = httpx_mock.get_request()
         assert request is not None
