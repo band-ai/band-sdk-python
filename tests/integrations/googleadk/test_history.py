@@ -123,9 +123,10 @@ class TestHistory:
     ) -> None:
         first = user_message("FIRST-ASK-MARKER")
         second = replace(first, id="second", content="SECOND-ASK-MARKER")
+        unfinished_answer = "UNFINISHED-ANSWER"
         partial = batch(("work", {}))
         partial.candidates[0].content.parts.insert(
-            0, types.Part.from_text(text="UNFINISHED-ANSWER")
+            0, types.Part.from_text(text=unfinished_answer)
         )
         google_model.responses.extend(
             [partial, no_candidates(), batch(("decline", {}))]
@@ -144,7 +145,7 @@ class TestHistory:
 
         text = request_text(google_model.requests[-1])
         assert text.count(first.content) == 1
-        assert "UNFINISHED-ANSWER" not in text
+        assert unfinished_answer not in text
 
     async def test_successful_batch_and_reply_stay_ordered_and_room_local(
         self, google_model: GoogleModelPeer
@@ -156,9 +157,10 @@ class TestHistory:
         other = replace(
             first, id="other", room_id="other-room", content="OTHER-ROOM-MARKER"
         )
+        completed_answer = "COMPLETED-ANSWER"
         google_model.responses.extend(
             [
-                text_reply("COMPLETED-ANSWER"),
+                text_reply(completed_answer),
                 text_reply("OTHER-ANSWER"),
                 text_reply("DONE"),
             ]
@@ -198,7 +200,7 @@ class TestHistory:
         assert request_text(google_model.requests[-1]) == (
             "[Previous conversation context]\n"
             f"{first.format_for_llm()}\n{repeated.format_for_llm()}\n"
-            "[Agent]: COMPLETED-ANSWER\n[End of previous context]\n\n\n"
+            f"[Agent]: {completed_answer}\n[End of previous context]\n\n\n"
             f"{format_current_inputs([second])}"
         )
 

@@ -15,6 +15,7 @@ import re
 import sys
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
 import httpx
@@ -89,6 +90,15 @@ _DECLARATION_CANDIDATES: tuple[str, ...] = (
     "_get_declaration",  # google-adk 1.x (current internal API)
     "get_declaration",  # likely public rename candidate
 )
+
+
+@dataclass(frozen=True)
+class TurnPrompt:
+    """Carry rendered input and transcript sizes for orchestration diagnostics."""
+
+    text: str
+    original_transcript_chars: int
+    retained_transcript_chars: int
 
 
 def _redacted_function_response_output(tool_name: str, response: Any) -> str:
@@ -625,6 +635,14 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
             self._room_history[room_id], messages, participants_msg, contacts_msg
         )
         self._remember_inputs(room_id, messages)
+        if prompt.retained_transcript_chars < prompt.original_transcript_chars:
+            logger.warning(
+                "Room %s: Transcript truncated from %d to %d chars "
+                "to stay within token budget",
+                room_id,
+                prompt.original_transcript_chars,
+                prompt.retained_transcript_chars,
+            )
         if participants_msg:
             logger.info("Room %s: Participants updated", room_id)
         if contacts_msg:
@@ -659,7 +677,7 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
 
             user_content = types.Content(
                 role="user",
-                parts=[types.Part.from_text(text=prompt)],
+                parts=[types.Part.from_text(text=prompt.text)],
             )
 
             # Run the ADK agent - it handles the full tool loop. Usage is
@@ -745,13 +763,14 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
         messages: Sequence[PlatformMessage],
         participants_msg: str | None,
         contacts_msg: str | None,
-    ) -> str:
+    ) -> TurnPrompt:
         """Render bounded context and current inputs without changing history."""
         current_ids = set(ids_of(messages))
         context = [entry for entry in history if entry.get("id") not in current_ids]
         transcript = self._format_history_transcript(
             context[-self.config.max_history_messages :]
         )
+        original_transcript_chars = len(transcript)
         parts: list[str] = []
         if transcript:
             if len(transcript) > self.config.max_transcript_chars:
@@ -769,7 +788,11 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
         if contacts_msg:
             parts.append(f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
         parts.append(format_current_inputs(messages))
-        return "\n".join(parts)
+        return TurnPrompt(
+            text="\n".join(parts),
+            original_transcript_chars=original_transcript_chars,
+            retained_transcript_chars=len(transcript),
+        )
 
     def _remember_inputs(
         self, room_id: str, messages: Sequence[PlatformMessage]
