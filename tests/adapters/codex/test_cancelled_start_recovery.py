@@ -32,6 +32,7 @@ from tests.runtime.helpers import (
     ROOM_ID as RUNTIME_ROOM_ID,
 )
 from tests.runtime.scheduler.driver import attempt_delivery
+from tests.toolkit.tasks import background
 
 
 class TestCancelledStartRecovery:
@@ -54,17 +55,19 @@ class TestCancelledStartRecovery:
                     await attempt_delivery(ctx, peer.event("seed"))
                     is TurnOutcome.ADVANCED
                 )
-                working = asyncio.create_task(
+                async with background(
                     send_bootstrap(room.adapter, room_id=RUNTIME_ROOM_ID)
-                )
-                await until(
-                    lambda: len(client.params_of(CodexRequestMethod.TURN_START)) == 2,
-                    failure="second turn did not start",
-                )
-                client.refuse_close = True
-                working.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await working
+                ) as working:
+                    await until(
+                        lambda: (
+                            len(client.params_of(CodexRequestMethod.TURN_START)) == 2
+                        ),
+                        failure="second turn did not start",
+                    )
+                    client.refuse_close = True
+                    working.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await working
                 await room.adapter.backend_turns.drain()
                 peer.add_message("pending")
                 event = peer.event("pending")
@@ -96,14 +99,14 @@ class TestCancelledStartRecovery:
         try:
             await room.send("seed")
             client.turn_start_released.clear()
-            turn = asyncio.create_task(room.send("start unknown work"))
-            await until(
-                lambda: len(client.params_of(CodexRequestMethod.TURN_START)) == 2,
-                failure="second start never reached provider",
-            )
-            turn.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await turn
+            async with background(room.send("start unknown work")) as turn:
+                await until(
+                    lambda: len(client.params_of(CodexRequestMethod.TURN_START)) == 2,
+                    failure="second start never reached provider",
+                )
+                turn.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await turn
             await client.close_finished.wait()
             assert client.closes == 1
             assert client.params_of(CodexRequestMethod.TURN_INTERRUPT) == []

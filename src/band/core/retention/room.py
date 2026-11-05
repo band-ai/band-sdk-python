@@ -264,10 +264,7 @@ class RetainedRoom:
         """Observe confirmed physical release without extending a caller's wait."""
         if generation > self._generation:
             raise ValueError("Cannot observe a future residency")
-        if generation < self._generation or self._state in (
-            Residency.SUSPENDED,
-            Residency.CLOSED,
-        ):
+        if self._released(generation):
             asyncio.get_running_loop().call_soon(callback)
         else:
             self._release_callbacks.add(callback)
@@ -275,6 +272,12 @@ class RetainedRoom:
     def remove_release_callback(self, callback: Callable[[], None]) -> None:
         """Detach an observation; already queued callbacks must fence their owner."""
         self._release_callbacks.discard(callback)
+
+    def _released(self, generation: int) -> bool:
+        return generation < self._generation or self._state in (
+            Residency.SUSPENDED,
+            Residency.CLOSED,
+        )
 
     async def wait_released(self, *, generation: int) -> None:
         """Join a requested residency retirement without acquiring a successor.
@@ -303,10 +306,7 @@ class RetainedRoom:
 
     async def _wait_released(self, generation: int) -> None:
         for _ in range(MAX_SETTLE_STEPS):
-            if generation < self._generation or self._state in (
-                Residency.SUSPENDED,
-                Residency.CLOSED,
-            ):
+            if self._released(generation):
                 return
             if self.closing:
                 if (disposal := self._begin_disposal()) is not None:
