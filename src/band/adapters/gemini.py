@@ -31,9 +31,9 @@ except ImportError as e:
     ) from e
 
 from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
-from band.core.adapterconfig import BaseAdapterConfig
+from band.core.adapterconfig import DEFAULT_MAX_TOOL_ROUNDS, BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
-from band.core.exceptions import ProviderRunError
+from band.core.exceptions import ProviderRunError, ToolRoundsExceededError
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import sanitize_tool_schema
@@ -146,7 +146,7 @@ class GeminiAdapterConfig(BaseAdapterConfig):
     include_base_instructions: bool = True
     max_output_tokens: PositiveInt | None = None
     temperature: float | None = None
-    max_tool_rounds: PositiveInt = 20
+    max_tool_rounds: PositiveInt = DEFAULT_MAX_TOOL_ROUNDS
     max_retries: NonNegativeInt = 2
     retry_base_delay_s: NonNegativeFloat = 1.0
     max_history_messages: PositiveInt = 200
@@ -269,12 +269,11 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
         try:
             while True:
                 if tool_rounds >= self.config.max_tool_rounds:
-                    message = (
-                        f"Exceeded max tool rounds ({self.config.max_tool_rounds}) "
-                        f"in room {room_id}; tool sequence: {tool_sequence}"
+                    error = ToolRoundsExceededError(
+                        self.config.max_tool_rounds, room_id, tool_sequence
                     )
-                    await tools.send_failure(AgentFailure(_PROVIDER, message))
-                    raise RuntimeError(message)
+                    await tools.send_failure(AgentFailure(_PROVIDER, str(error)))
+                    raise error
 
                 try:
                     response = await self._call_gemini(

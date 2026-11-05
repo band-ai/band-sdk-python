@@ -12,16 +12,18 @@ import functools
 import json
 import logging
 import re
+import sys
 import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
 import httpx
+from band_sdk_core import AgentFailure
 from pydantic import Field, PositiveInt, ValidationError
 from typing_extensions import Unpack
 
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
-from band.core.adapterconfig import BaseAdapterConfig
+from band.core.adapterconfig import DEFAULT_MAX_TOOL_ROUNDS, BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
 from band.core.exceptions import (
     CleanupIncompleteError,
@@ -29,6 +31,7 @@ from band.core.exceptions import (
     ProviderRunError,
     RoomExecutionStoppedError,
     TerminalProviderFailure,
+    ToolRoundsExceededError,
 )
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import BatchInputAdapter
@@ -74,6 +77,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _APP_NAME = "band"
+_PROVIDER = "google_adk"
 
 # Extra HTTP attempts per generation request (total attempts = max_retries + 1).
 GOOGLE_ADK_MAX_GENERATION_RETRIES: Final[int] = 10
@@ -393,6 +397,7 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
         model: Gemini model name passed to the ADK agent.
         system_prompt: Replaces the rendered Band system prompt entirely.
         custom_section: Extra instructions appended to the rendered prompt.
+        max_tool_rounds: Model calls a single turn may make before it fails.
         max_retries: Extra HTTP attempts per provider generation request;
             never retries a tool or turn. Zero disables recovery. Capped at
             :data:`GOOGLE_ADK_MAX_GENERATION_RETRIES`.
@@ -405,6 +410,8 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
     model: str = GEMINI_MODEL
     system_prompt: str | None = None
     custom_section: str | None = None
+    # ADK's RunConfig rejects ``sys.maxsize`` as ``max_llm_calls``.
+    max_tool_rounds: int = Field(default=DEFAULT_MAX_TOOL_ROUNDS, gt=0, lt=sys.maxsize)
     max_retries: int = Field(
         default=2,
         ge=0,
@@ -591,6 +598,12 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
         LLM calls, tool execution, and conversation management.
         """
         _, _, _, _, types = _require_adk()
+        from google.adk.agents.invocation_context import (  # noqa: PLC0415 -- optional google_adk extra
+            LlmCallsLimitExceededError,
+        )
+        from google.adk.agents.run_config import (  # noqa: PLC0415 -- optional google_adk extra
+            RunConfig,
+        )
 
         message_ids = ids_of(messages)
         logger.debug("Handling messages %s in room %s", message_ids, room_id)
@@ -611,6 +624,7 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
         # Per-turn usage, summed across the event stream below. Initialized
         # outside the try so the finally can emit whatever accumulated.
         turn_usage = TurnUsage()
+        tool_sequence: list[list[str]] = []
         # None until the try's construction succeeds, so the finally's close()
         # has nothing to do if runner construction itself is what failed.
         runner: InMemoryRunner | None = None
@@ -693,11 +707,17 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
             # the loop into one per-turn TurnUsage.
             final_response_text = ""
             model_failure: ProviderRunError | None = None
+            # ADK refuses the model call past max_llm_calls. A landed decline
+            # answers the next request in before_model_callback, which runs
+            # before ADK counts the call, so a decline never uses up the cap.
             async for event in runner.run_async(
                 user_id=room_id,
                 session_id=session_id,
                 new_message=user_content,
+                run_config=RunConfig(max_llm_calls=self.config.max_tool_rounds),
             ):
+                if function_calls := event.get_function_calls():
+                    tool_sequence.append([call.name or "" for call in function_calls])
                 if Emit.USAGE in self.features.emit:
                     turn_usage = turn_usage + self._usage_from_event(event)
 
@@ -726,9 +746,15 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
                     )
             if model_failure is not None:
                 raise model_failure
+        except LlmCallsLimitExceededError as exc:
+            error = ToolRoundsExceededError(
+                self.config.max_tool_rounds, room_id, tool_sequence
+            )
+            await tools.send_failure(AgentFailure(_PROVIDER, str(error)))
+            raise error from exc
         except Exception as e:
             logger.exception("Error running ADK agent in room %s", room_id)
-            await tools.send_failure(generic_provider_failure("google_adk", e))
+            await tools.send_failure(generic_provider_failure(_PROVIDER, e))
             raise
         finally:
             # Emit before close so a close() failure can't drop the usage, but

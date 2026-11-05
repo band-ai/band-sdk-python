@@ -77,6 +77,11 @@ class WorkInput(BaseModel):
     value: int = 1
 
 
+async def reject(args: WorkInput) -> str:
+    """Fail an ordinary sibling tool every time."""
+    raise ValueError(WORK_REJECTED)
+
+
 class GatedWork:
     """Hold a real handler at entry until its owner releases it."""
 
