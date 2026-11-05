@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Itera
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import partial
 from inspect import getattr_static
 from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeVar
 
@@ -290,6 +291,14 @@ class UnconfirmedStop(Generic[H]):
     ready: asyncio.Future[None]
     reported: bool = False
     recovery: tuple[RetainedRoom, int] | None = None
+    release_callback: Callable[[], None] | None = None
+
+    def detach_release(self) -> None:
+        """Remove the recovery observation when this stop loses authority."""
+        if self.recovery is not None and self.release_callback is not None:
+            retained, _ = self.recovery
+            retained.remove_release_callback(self.release_callback)
+        self.release_callback = None
 
 
 class BackendTurns(Generic[H]):
@@ -421,6 +430,7 @@ class BackendTurns(Generic[H]):
         stop = self._unconfirmed.get(room_id)
         if stop is not None and stop.handle is handle:
             del self._unconfirmed[room_id]
+            stop.detach_release()
             stop.ready.set_result(None)
 
     def recovering(
@@ -428,8 +438,28 @@ class BackendTurns(Generic[H]):
     ) -> None:
         """Keep a stopped process's existing release owner in the admission path."""
         stop = self._unconfirmed_stop(room_id, handle)
+        if stop.handle is not handle:
+            return
+        stop.detach_release()
         stop.recovery = retained, generation
+        stop.release_callback = partial(
+            self._released, room_id, stop, retained, generation
+        )
+        retained.add_release_callback(stop.release_callback, generation=generation)
         retained.recover(generation=generation, reason="Backend turn interrupted")
+
+    def _released(
+        self,
+        room_id: str,
+        stop: UnconfirmedStop[H],
+        retained: RetainedRoom,
+        generation: int,
+    ) -> None:
+        if self._unconfirmed.get(room_id) is stop and stop.recovery == (
+            retained,
+            generation,
+        ):
+            self.confirm_stopped(room_id, stop.handle)
 
     def confirm_disposed(self, room_id: str) -> None:
         """Forget recovery only after its owner confirms the final physical release."""

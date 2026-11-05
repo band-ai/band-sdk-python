@@ -100,8 +100,11 @@ class BackendModel:
         assert self.handle is not None
         if self.recovering:
             self.resident.fail_close = False
-            await self.turns.require_admission("room", self.tools)
+            await self.resident.room.wait_released(
+                generation=self.resident.room.generation
+            )
             assert not self.resident.live
+            assert self.ready is not None and self.ready.done()
         else:
             self.turns.confirm_stopped("room", self.handle)
         self.blocked = False

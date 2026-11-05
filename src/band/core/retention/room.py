@@ -108,6 +108,7 @@ class RetainedRoom:
         self._transition: asyncio.Task[None] | None = None
         self._disposal: asyncio.Task[None] | None = None
         self._cancelled_acquisition: asyncio.Task[None] | None = None
+        self._release_callbacks: set[Callable[[], None]] = set()
 
     @property
     def snapshot(self) -> RetentionSnapshot:
@@ -256,6 +257,24 @@ class RetainedRoom:
         self._schedule()
         self._start_requested_recovery()
         return True
+
+    def add_release_callback(
+        self, callback: Callable[[], None], *, generation: int
+    ) -> None:
+        """Observe confirmed physical release without extending a caller's wait."""
+        if generation > self._generation:
+            raise ValueError("Cannot observe a future residency")
+        if generation < self._generation or self._state in (
+            Residency.SUSPENDED,
+            Residency.CLOSED,
+        ):
+            asyncio.get_running_loop().call_soon(callback)
+        else:
+            self._release_callbacks.add(callback)
+
+    def remove_release_callback(self, callback: Callable[[], None]) -> None:
+        """Detach an observation; already queued callbacks must fence their owner."""
+        self._release_callbacks.discard(callback)
 
     async def wait_released(self, *, generation: int) -> None:
         """Join a requested residency retirement without acquiring a successor.
@@ -606,6 +625,10 @@ class RetainedRoom:
                 return False
 
     def _notify(self) -> None:
+        if self._state in (Residency.SUSPENDED, Residency.CLOSED):
+            callbacks, self._release_callbacks = self._release_callbacks, set()
+            for callback in callbacks:
+                asyncio.get_running_loop().call_soon(callback)
         settleable = not self._leases or self.closing
         _hold(self._settleable, settleable)
         _hold(self._drained, not self._accepted)

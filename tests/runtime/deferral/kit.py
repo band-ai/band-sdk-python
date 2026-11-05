@@ -7,7 +7,7 @@ from typing import Any
 
 from band.core.exceptions import InputNotAccepted
 from band.core.simple_adapter import SimpleAdapter
-from band.core.turn_lifecycle import bind_turn_task
+from band.core.turn_lifecycle import BackendTurns, bind_turn_task
 from tests.runtime.helpers import ROOM_ID
 
 
@@ -166,6 +166,25 @@ class GatedRefusalAdapter(SimpleAdapter[Any]):
         self.entered.set()
         await self.release.wait()
         raise InputNotAccepted(ready=self.blocker)
+
+
+class RecoveringAdapter(SimpleAdapter[Any]):
+    """Admit through the real backend owner before executing the input."""
+
+    def __init__(self, turns: BackendTurns[object]) -> None:
+        super().__init__()
+        self.turns = turns
+        self.refused = asyncio.Event()
+        self.completed: list[str] = []
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        try:
+            await self.turns.require_admission(ROOM_ID, tools)
+        except InputNotAccepted:
+            self.refused.set()
+            raise
+        self.completed.append(msg.id)
+        tools.turn.settle()
 
 
 async def callbacks_finished() -> None:

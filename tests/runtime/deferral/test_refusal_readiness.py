@@ -118,19 +118,23 @@ class TestRefusalReadiness:
             link = BandLink(agent_id=AGENT_ID, api_key="test-key")
             link.rest = rest
             ctx = run_through(adapter, link, config=no_periodic_wake_config())
-            await ctx.start()
-            peer.add_message("A")
-            await ctx.on_event(peer.event("A"))
-            await adapter.refused.wait()
-            await Waiting.suspended(ctx)
-            await ctx.stop()
-            replacement_blocker = asyncio.get_running_loop().create_future()
-            replacement_adapter = ReadinessAdapter(replacement_blocker)
-            replacement = run_through(
-                replacement_adapter, link, config=no_periodic_wake_config()
-            )
-            await replacement.start()
-            try:
+            async with AsyncExitStack() as cleanup:
+                cleanup.callback(blocker.cancel)
+                cleanup.push_async_callback(ctx.stop)
+                await ctx.start()
+                peer.add_message("A")
+                await ctx.on_event(peer.event("A"))
+                await adapter.refused.wait()
+                await Waiting.suspended(ctx)
+                await ctx.stop()
+                replacement_blocker = asyncio.get_running_loop().create_future()
+                replacement_adapter = ReadinessAdapter(replacement_blocker)
+                replacement = run_through(
+                    replacement_adapter, link, config=no_periodic_wake_config()
+                )
+                cleanup.callback(replacement_blocker.cancel)
+                cleanup.push_async_callback(replacement.stop)
+                await replacement.start()
                 await replacement_adapter.refused.wait()
                 blocker.set_result(None)
                 await callbacks_finished()
@@ -140,9 +144,6 @@ class TestRefusalReadiness:
                 replacement_blocker.set_result(None)
                 await wait_for_condition(lambda: peer.marked("processed") == ["A"])
                 assert replacement_adapter.completed == ["A"]
-            finally:
-                replacement_blocker.cancel()
-                await replacement.stop()
 
     async def test_already_queued_notification_cannot_wake_a_closing_execution(
         self,
