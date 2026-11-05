@@ -521,6 +521,7 @@ class ExecutionContext:
         self._closing = True
         for ready in self._readiness_observed:
             ready.remove_done_callback(self._input_may_be_ready)
+        self._readiness_observed.clear()
         if self._shutdown_task is None or self._shutdown_task.done():
             self._shutdown_task = asyncio.create_task(self._stop(timeout))
             self._shutdown_task.add_done_callback(task_failure)

@@ -625,7 +625,7 @@ class RetainedRoom:
                 return False
 
     def _notify(self) -> None:
-        if self._state in (Residency.SUSPENDED, Residency.CLOSED):
+        if self._released(self._generation):
             callbacks, self._release_callbacks = self._release_callbacks, set()
             for callback in callbacks:
                 asyncio.get_running_loop().call_soon(callback)

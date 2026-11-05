@@ -32,6 +32,63 @@ from tests.toolkit.tasks import background
 
 
 class TestRefusalReadiness:
+    async def test_restart_observes_the_same_pending_blocker_again(self) -> None:
+        peer = LifecyclePlatform()
+        blocker = asyncio.get_running_loop().create_future()
+        adapter = ReadinessAdapter(blocker)
+        async with rest_client_over(peer.answer) as rest:
+            link = BandLink(agent_id=AGENT_ID, api_key="test-key")
+            link.rest = rest
+            ctx = run_through(adapter, link, config=no_periodic_wake_config())
+            async with AsyncExitStack() as cleanup:
+                cleanup.callback(blocker.cancel)
+                cleanup.push_async_callback(ctx.stop)
+                await ctx.start()
+                peer.add_message("A")
+                await ctx.on_event(peer.event("A"))
+                await adapter.refused.wait()
+                await Waiting.suspended(ctx)
+                await ctx.stop()
+                adapter.refused.clear()
+                await ctx.start()
+                await adapter.refused.wait()
+                await Waiting.suspended(ctx)
+                assert adapter.attempts == 2
+
+                blocker.set_result(None)
+                await wait_for_condition(lambda: peer.marked("processed") == ["A"])
+                assert adapter.completed == ["A"]
+                assert peer.marked("failed") == []
+
+    async def test_restart_observes_a_completed_blocker_once_in_the_new_lifetime(
+        self,
+    ) -> None:
+        peer = LifecyclePlatform()
+        blocker = asyncio.get_running_loop().create_future()
+        blocker.set_result(None)
+        adapter = SettledRefusalAdapter(blocker)
+        async with rest_client_over(peer.answer) as rest:
+            link = BandLink(agent_id=AGENT_ID, api_key="test-key")
+            link.rest = rest
+            ctx = run_through(adapter, link, config=no_periodic_wake_config())
+            async with running_execution(ctx):
+                peer.add_message("A")
+                await ctx.on_event(peer.event("A"))
+                await adapter.attempted.get()
+                await adapter.attempted.get()
+                await callbacks_finished()
+                await Waiting.suspended(ctx)
+                assert adapter.attempts == 2
+
+                await ctx.stop()
+                await ctx.start()
+                await adapter.attempted.get()
+                await callbacks_finished()
+                await Waiting.suspended(ctx)
+                assert adapter.attempts == 4
+                assert peer.marked("processed") == []
+                assert peer.marked("failed") == []
+
     async def test_already_complete_blocker_wakes_once_without_retry_spin(self) -> None:
         peer = LifecyclePlatform()
         blocker = asyncio.get_running_loop().create_future()
