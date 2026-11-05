@@ -621,6 +621,8 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
             # Safety: ensure history exists even if not first message
             self._room_history[room_id] = []
 
+        previous_history = self._remember_inputs(room_id, messages)
+
         # Per-turn usage, summed across the event stream below. Initialized
         # outside the try so the finally can emit whatever accumulated.
         turn_usage = TurnUsage()
@@ -653,7 +655,7 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
 
             # Inject recent accumulated history as transcript for context.
             # Apply sliding window to avoid unbounded transcript growth.
-            room_history = self._room_history[room_id]
+            room_history = previous_history
             if room_history:
                 windowed = room_history[-self.config.max_history_messages :]
                 transcript = self._format_history_transcript(windowed)
@@ -769,27 +771,46 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
                     finally:
                         await cast(Any, runner.agent).model.aclose()
 
-        # Accumulate message history for future transcript injection, one
-        # entry per original in the converter's own ``[name]: content`` shape.
-        self._room_history[room_id].extend(
-            {"role": "user", "content": message.format_for_llm()}
-            for message in messages
-        )
+        # Failed runs keep their inputs, but not unfinished model output.
         if final_response_text:
             self._room_history[room_id].append(
                 {"role": "model", "content": final_response_text}
             )
 
-        # Trim accumulated history to prevent unbounded memory growth.
-        # Keep twice the window so the sliding window in the next call
-        # still has a full page of messages to work with.
-        trim_threshold = self.config.max_history_messages * 2
-        if len(self._room_history[room_id]) > trim_threshold:
+        self._trim_history(room_id)
+
+        logger.debug("Messages %s processed successfully", message_ids)
+
+    def _remember_inputs(
+        self, room_id: str, messages: Sequence[PlatformMessage]
+    ) -> GoogleADKMessages:
+        """Retain new inputs once and return context excluding retried inputs."""
+        room_history = self._room_history[room_id]
+        current_ids = set(ids_of(messages))
+        previous_history = [
+            entry for entry in room_history if entry.get("id") not in current_ids
+        ]
+        remembered_ids = {entry.get("id") for entry in room_history}
+        for message in messages:
+            if message.id not in remembered_ids:
+                room_history.append(
+                    {
+                        "id": message.id,
+                        "role": "user",
+                        "content": message.format_for_llm(),
+                    }
+                )
+                remembered_ids.add(message.id)
+        self._trim_history(room_id)
+        return previous_history
+
+    def _trim_history(self, room_id: str) -> None:
+        """Bound retained inputs even when provider execution fails."""
+        # Keep twice the window so the next turn still has a full page.
+        if len(self._room_history[room_id]) > self.config.max_history_messages * 2:
             self._room_history[room_id] = self._room_history[room_id][
                 -self.config.max_history_messages :
             ]
-
-        logger.debug("Messages %s processed successfully", message_ids)
 
     @staticmethod
     def _usage_from_event(event: Any) -> TurnUsage:
