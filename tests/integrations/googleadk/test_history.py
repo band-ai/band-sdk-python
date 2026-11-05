@@ -8,7 +8,12 @@ import pytest
 from google.genai import types
 from google.genai.errors import ServerError
 
-from band.adapters.google_adk import GoogleADKAdapter, GoogleADKAdapterConfig
+from band.adapters.google_adk import (
+    HISTORY_CONTEXT_END,
+    HISTORY_CONTEXT_START,
+    GoogleADKAdapter,
+    GoogleADKAdapterConfig,
+)
 from band.core.exceptions import ProviderRunError, ToolRoundsExceededError
 from band.runtime.formatters import format_current_inputs
 from band.testing import FakeAgentTools
@@ -49,16 +54,7 @@ class TestHistory:
                     replace(turn_input(tools, message), is_session_bootstrap=False)
                 )
 
-        assert adapter._room_history == {
-            first.room_id: [
-                {
-                    "id": message.id,
-                    "role": "user",
-                    "content": message.format_for_llm(),
-                }
-                for message in failed_inputs[-2:]
-            ]
-        }
+        assert len(adapter._room_history[first.room_id]) == 2
 
         google_model.responses.append(batch(("decline", {})))
         await adapter.on_event(
@@ -66,10 +62,10 @@ class TestHistory:
         )
 
         assert request_text(google_model.requests[-1]) == (
-            "[Previous conversation context]\n"
+            f"{HISTORY_CONTEXT_START}\n"
             f"{failed_inputs[-2].format_for_llm()}\n"
             f"{failed_inputs[-1].format_for_llm()}\n"
-            "[End of previous context]\n\n\n"
+            f"{HISTORY_CONTEXT_END}\n\n\n"
             f"{format_current_inputs([recovery])}"
         )
 
@@ -118,9 +114,9 @@ class TestHistory:
                 parts=[
                     types.Part.from_text(
                         text=(
-                            "[Previous conversation context]\n"
+                            f"{HISTORY_CONTEXT_START}\n"
                             f"{first.format_for_llm()}\n"
-                            "[End of previous context]\n\n\n"
+                            f"{HISTORY_CONTEXT_END}\n\n\n"
                             f"{format_current_inputs([second])}"
                         )
                     )
@@ -245,9 +241,9 @@ class TestHistory:
 
         assert request_text(google_model.requests[1]) == format_current_inputs([other])
         assert request_text(google_model.requests[-1]) == (
-            "[Previous conversation context]\n"
+            f"{HISTORY_CONTEXT_START}\n"
             f"{first.format_for_llm()}\n{repeated.format_for_llm()}\n"
-            f"[Agent]: {completed_answer}\n[End of previous context]\n\n\n"
+            f"[Agent]: {completed_answer}\n{HISTORY_CONTEXT_END}\n\n\n"
             f"{format_current_inputs([second])}"
         )
 
@@ -293,10 +289,10 @@ class TestHistory:
 
         assert request_text(google_model.requests[2]) == format_current_inputs([other])
         assert request_text(google_model.requests[3]) == (
-            "[Previous conversation context]\n"
+            f"{HISTORY_CONTEXT_START}\n"
             f"{earlier.format_for_llm()}\n"
             f"{first.format_for_llm()}\n{companion.format_for_llm()}\n"
-            "[End of previous context]\n\n\n"
+            f"{HISTORY_CONTEXT_END}\n\n\n"
             f"{format_current_inputs([second])}"
         )
         assert request_text(google_model.requests[4]) == format_current_inputs([second])

@@ -7,7 +7,12 @@ from dataclasses import replace
 
 import pytest
 
-from band.adapters.google_adk import GoogleADKAdapter, GoogleADKAdapterConfig
+from band.adapters.google_adk import (
+    HISTORY_CONTEXT_END,
+    HISTORY_CONTEXT_START,
+    GoogleADKAdapter,
+    GoogleADKAdapterConfig,
+)
 from band.runtime.formatters import format_current_inputs
 from band.testing import FakeAgentTools
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input, user_message
@@ -74,8 +79,8 @@ class TestTranscript:
             )
 
         assert request_text(google_model.requests[-1]) == (
-            f"[Previous conversation context]\n{expected_context}\n"
-            "[End of previous context]\n\n\n"
+            f"{HISTORY_CONTEXT_START}\n{expected_context}\n"
+            f"{HISTORY_CONTEXT_END}\n\n\n"
             f"{format_current_inputs([second])}"
         )
         assert [

@@ -5,6 +5,8 @@ from __future__ import annotations
 from copy import deepcopy
 
 from band.adapters.google_adk import (
+    HISTORY_CONTEXT_END,
+    HISTORY_CONTEXT_START,
     GoogleADKAdapter,
     GoogleADKAdapterConfig,
     TurnPrompt,
@@ -31,8 +33,8 @@ class TestPrompt:
         )
         expected = TurnPrompt(
             text=(
-                f"[Previous conversation context]\n{retained_context}\n"
-                "[End of previous context]\n\n\n"
+                f"{HISTORY_CONTEXT_START}\n{retained_context}\n"
+                f"{HISTORY_CONTEXT_END}\n\n\n"
                 f"{format_current_inputs([current])}"
             ),
             original_transcript_chars=len(f"{older_context}\n{recent_context}"),

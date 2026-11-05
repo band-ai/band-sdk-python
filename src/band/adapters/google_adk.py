@@ -80,6 +80,9 @@ logger = logging.getLogger(__name__)
 _APP_NAME = "band"
 _PROVIDER = "google_adk"
 
+HISTORY_CONTEXT_START: Final[str] = "[Previous conversation context]"
+HISTORY_CONTEXT_END: Final[str] = "[End of previous context]"
+
 # Extra HTTP attempts per generation request (total attempts = max_retries + 1).
 GOOGLE_ADK_MAX_GENERATION_RETRIES: Final[int] = 10
 
@@ -780,8 +783,7 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
                 if newline != -1:
                     transcript = transcript[newline + 1 :]
             parts.append(
-                f"[Previous conversation context]\n{transcript}\n"
-                f"[End of previous context]\n\n"
+                f"{HISTORY_CONTEXT_START}\n{transcript}\n{HISTORY_CONTEXT_END}\n\n"
             )
         if participants_msg:
             parts.append(f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
