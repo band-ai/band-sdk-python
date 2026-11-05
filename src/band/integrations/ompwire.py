@@ -12,6 +12,8 @@ from pydantic import (
     Field,
     JsonValue,
     RootModel,
+    ValidationInfo,
+    field_validator,
     model_validator,
 )
 
@@ -167,6 +169,16 @@ class OmpToolResult(OmpWireModel):
         return self
 
 
+class OmpCompactionResult(OmpWireModel):
+    """Project the checkpoint returned by native context compaction."""
+
+    summary: str
+    firstKeptEntryId: str
+    tokensBefore: int
+    shortSummary: str | None = None
+    details: JsonValue = None
+
+
 class OmpAssistantEvent(OmpWireModel):
     type: str
     delta: str | None = None
@@ -183,7 +195,7 @@ class OmpEvent(OmpWireModel):
     toolCallId: str | None = None
     toolName: str | None = None
     args: JsonValue = None
-    result: OmpToolResult | None = None
+    result: OmpToolResult | OmpCompactionResult | None = None
     partialResult: JsonValue = None
     update: JsonValue = None
     isError: bool | None = None
@@ -191,6 +203,17 @@ class OmpEvent(OmpWireModel):
     isTerminal: bool | None = None
     yielded: bool | None = None
     awaitingAsyncWork: bool | None = None
+
+    @field_validator("result", mode="before")
+    @classmethod
+    def validate_result(
+        cls, value: object, info: ValidationInfo
+    ) -> OmpToolResult | OmpCompactionResult | None:
+        if value is None:
+            return None
+        if info.data.get("type") == OmpEventType.AUTO_COMPACTION_END:
+            return OmpCompactionResult.model_validate(value)
+        return OmpToolResult.model_validate(value)
 
     @model_validator(mode="after")
     def validate_event(self) -> OmpEvent:

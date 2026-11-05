@@ -13,6 +13,7 @@ from band.integrations.ompwire import (
     OmpEvent,
     OmpEventType,
     OmpState,
+    OmpToolResult,
 )
 from tests.integrations.omppeers.base import (
     COMPLETE,
@@ -52,7 +53,7 @@ class TestPromptNarrationAndResults:
             "read",
             {"path": "note.txt"},
         )
-        assert tool_end.result is not None
+        assert isinstance(tool_end.result, OmpToolResult)
         assert tool_end.result.content[0].text == "note"
         assert tool_end.result.details == {"lines": 1}
         assert tool_end.isError is False
