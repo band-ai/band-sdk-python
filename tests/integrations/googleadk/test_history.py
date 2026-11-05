@@ -26,6 +26,53 @@ from tests.integrations.googleadk.kit import (
 
 
 class TestHistory:
+    async def test_failed_inputs_stay_bounded_and_recover_with_recent_context(
+        self, google_model: GoogleModelPeer
+    ) -> None:
+        first = user_message("FAILED-ASK-0")
+        failed_inputs = [
+            replace(first, id=f"failed-{index}", content=f"FAILED-ASK-{index}")
+            for index in range(5)
+        ]
+        recovery = replace(first, id="recovery", content="RECOVERY-ASK")
+        adapter = GoogleADKAdapter(
+            GoogleADKAdapterConfig(max_history_messages=2),
+            additional_tools=[(DeclineInput, decline)],
+        )
+        await adapter.on_started("Agent", "An agent")
+        tools = FakeAgentTools()
+        google_model.responses.extend(no_candidates() for _ in failed_inputs)
+
+        for message in failed_inputs:
+            with pytest.raises(ProviderRunError):
+                await adapter.on_event(
+                    replace(turn_input(tools, message), is_session_bootstrap=False)
+                )
+
+        assert adapter._room_history == {
+            first.room_id: [
+                {
+                    "id": message.id,
+                    "role": "user",
+                    "content": message.format_for_llm(),
+                }
+                for message in failed_inputs[-2:]
+            ]
+        }
+
+        google_model.responses.append(batch(("decline", {})))
+        await adapter.on_event(
+            replace(turn_input(tools, recovery), is_session_bootstrap=False)
+        )
+
+        assert request_text(google_model.requests[-1]) == (
+            "[Previous conversation context]\n"
+            f"{failed_inputs[-2].format_for_llm()}\n"
+            f"{failed_inputs[-1].format_for_llm()}\n"
+            "[End of previous context]\n\n\n"
+            f"{format_current_inputs([recovery])}"
+        )
+
     @pytest.mark.parametrize(
         ("responses", "error"),
         [
