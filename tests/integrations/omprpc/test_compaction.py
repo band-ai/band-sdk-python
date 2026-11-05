@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from band.integrations.ompwire import OmpEventType, OmpState
-from tests.integrations.omppeers.base import COMPLETE
+from tests.integrations.omppeers.base import COMPLETE, ROLLOVER_SUMMARY
 from tests.integrations.omprpc.events import (
     EventRecorder,
     follow_up_texts,
@@ -26,10 +26,11 @@ class TestCompactionResults:
             await record_prompt(client, observer)
             compaction = await observer.wait_for(OmpEventType.AUTO_COMPACTION_END)
             assert compaction.result is not None
-            assert compaction.result.model_dump(exclude_none=True) == {
-                "summary": "<context-window-rollover>Continue from the notebook.</context-window-rollover>",
+            assert compaction.result.model_dump() == {
+                "summary": ROLLOVER_SUMMARY,
                 "firstKeptEntryId": "kept-entry",
                 "tokensBefore": 120000,
+                "shortSummary": None,
                 "details": {"kind": "experimental-context-rollover", "version": 1},
             }
             assert observer.assistant_texts == [COMPLETE]

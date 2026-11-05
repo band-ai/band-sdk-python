@@ -24,6 +24,7 @@ from tests.integrations.ompframes import (
 from tests.integrations.omppeers.base import (
     BACKGROUND_COMPLETE,
     COMPLETE,
+    ROLLOVER_SUMMARY,
     YIELDED,
     RpcPeer,
 )
@@ -285,7 +286,7 @@ class TransportPeer(RpcPeer):
                 "type": OmpEventType.AUTO_COMPACTION_END,
                 "action": "context-full",
                 "result": {
-                    "summary": "<context-window-rollover>Continue from the notebook.</context-window-rollover>",
+                    "summary": ROLLOVER_SUMMARY,
                     "firstKeptEntryId": "kept-entry",
                     "tokensBefore": 120000,
                     "details": {"kind": "experimental-context-rollover", "version": 1},

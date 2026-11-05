@@ -9,6 +9,21 @@ from band.integrations.ompwire import OmpEvent, OmpEventType
 
 
 class TestOmpEventResults:
+    @pytest.mark.parametrize("result_fields", [{}, {"result": None}])
+    def test_aborted_compaction_accepts_an_omitted_or_null_result(
+        self, result_fields: dict[str, JsonValue]
+    ) -> None:
+        event = OmpEvent.model_validate(
+            {
+                "type": OmpEventType.AUTO_COMPACTION_END,
+                "aborted": True,
+                "willRetry": False,
+                **result_fields,
+            }
+        )
+
+        assert event.result is None
+
     @pytest.mark.parametrize(
         "details", [None, {"kind": "experimental-context-rollover", "version": 1}]
     )

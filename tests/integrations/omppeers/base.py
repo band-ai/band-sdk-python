@@ -26,6 +26,9 @@ COMPLETE = "complete"
 YIELDED = "yielded"
 BACKGROUND_COMPLETE = "background complete"
 FOLLOW_UP_PROMPT = "second"
+ROLLOVER_SUMMARY = (
+    "<context-window-rollover>Continue from the notebook.</context-window-rollover>"
+)
 # The native session every peer reports in its state.
 PEER_SESSION_ID = "session-local"
 PEER_SESSION_FILE = "/local/session.jsonl"
