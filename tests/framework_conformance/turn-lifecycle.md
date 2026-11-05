@@ -1,8 +1,8 @@
 # Turn lifecycle coverage
 
 The canonical traces are TL1–TL12 in SDK Core's
-`crates/core/docs/turn-lifecycle.md`. Python exercises them through its existing
-native fixtures; Core owns the outcome and complete-round policies, while
+`crates/core/README.md#sdk-conformance-traces`. Python exercises them through its
+existing native fixtures; Core owns the outcome and complete-round policies, while
 `ExecutionContext`, `BackendTurns`, retained rooms and adapters own async work.
 
 | Trace | Python boundary and evidence |
