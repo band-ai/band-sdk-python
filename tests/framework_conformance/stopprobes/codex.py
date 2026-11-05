@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from dataclasses import replace
 
 from band.adapters.codex import CodexAdapter
@@ -13,6 +14,7 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.testing.fake_tools import FakeAgentTools
 from band.testing.platform import platform_connection_stub
+from tests.adapters.codex.kit import CountingCloseClient
 from tests.adapters.codexturns import FakeCodexClient, make_codex_adapter
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
@@ -25,6 +27,7 @@ from tests.framework_conformance.stopprobes import (
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input, user_message
 from tests.runtime.runtimecontrol.kit import control_payload, never_executes
+from tests.toolkit.tasks import background
 
 SLOW_ROOMS = ["room-slow-1", "room-slow-2"]
 
@@ -66,16 +69,32 @@ async def end_running_turn(mode: ControlMode) -> list[str]:
 
 
 async def stop_while_turn_starts(mode: ControlMode) -> list[str]:
-    """A stop that lands before turn/start answers still interrupts that turn."""
-    adapter, client = await started()
+    """Interrupt a revealed turn while physical retirement is still pending."""
+    client = CountingCloseClient(events=[], hold=True)
+    adapter = make_codex_adapter(client)
     client.turn_start_released.clear()
-    turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
-    await wait_until(lambda: bool(client.params_of(CodexRequestMethod.TURN_START)))
-    await cancel_turn(turn)
-    await adapter.on_interrupt(ROOM_ID, mode)
-    client.turn_start_released.set()
-    await adapter.backend_turns.drain()
-    return interrupts(client)
+    async with AsyncExitStack() as cleanup:
+        cleanup.push_async_callback(adapter.on_cleanup, ROOM_ID)
+        await adapter.on_started("Agent", "A coding agent")
+        turn = await cleanup.enter_async_context(
+            background(adapter.on_event(turn_input(FakeAgentTools())))
+        )
+        cleanup.callback(client.turn_start_released.set)
+        cleanup.callback(client.finish_close.set)
+        await wait_until(lambda: bool(client.params_of(CodexRequestMethod.TURN_START)))
+        await cancel_turn(turn)
+        await adapter.on_interrupt(ROOM_ID, mode)
+        await client.closing.wait()
+        client.turn_start_released.set()
+        await adapter.backend_turns.drain()
+        recorded = interrupts(client)
+        ready = adapter.backend_turns.blocker(ROOM_ID)
+        assert ready is not None
+        client.finish_close.set()
+        await client.close_finished.wait()
+        await asyncio.shield(ready)
+        assert adapter.backend_turns.blocker(ROOM_ID) is None
+        return recorded
 
 
 async def next_turn_after_stop() -> list[str]:
