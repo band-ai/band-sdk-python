@@ -9,6 +9,7 @@ from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.runtime import Runtime
 
+from band.core.turn import RoundOutcome
 from band.integrations.langgraph.langchain_tools import failed_result
 from band.runtime.tools import TurnEffect
 
@@ -26,10 +27,13 @@ def terminal_decline(
         expected = {call["id"] for call in message.tool_calls}
         if {result.tool_call_id for result in batch} != expected:
             return False
-        return not any(failed_result(result) for result in batch) and any(
-            effects.get(result.name or "", TurnEffect.OBSERVE).ends_turn
-            for result in batch
-        )
+        outcome = RoundOutcome()
+        for result in batch:
+            outcome.record(
+                effects.get(result.name or "", TurnEffect.OBSERVE),
+                not failed_result(result),
+            )
+        return outcome.should_stop(complete=True)
     return False
 
 

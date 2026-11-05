@@ -11,6 +11,14 @@ from band.core.turn_lifecycle import bind_turn_task
 from tests.runtime.helpers import ROOM_ID
 
 
+def complete_blocker(blocker: asyncio.Future[None]) -> None:
+    blocker.set_result(None)
+
+
+def cancel_blocker(blocker: asyncio.Future[None]) -> None:
+    blocker.cancel()
+
+
 class ApprovalAdapter(SimpleAdapter[Any]):
     """A detached turn owns its tools until its approval is consumed."""
 
@@ -108,3 +116,36 @@ def envelope(message_id: str) -> dict[str, Any]:
             "updated_at": "2026-01-01T00:00:00Z",
         },
     }
+
+
+class ReadinessAdapter(SimpleAdapter[Any]):
+    """Refuse input against externally controlled, successive backend blockers."""
+
+    def __init__(self, *blockers: asyncio.Future[None]) -> None:
+        super().__init__()
+        self.blockers = list(blockers)
+        self.attempts = 0
+        self.completed: list[str] = []
+        self.refused = asyncio.Event()
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        self.attempts += 1
+        blocker = next((item for item in self.blockers if not item.done()), None)
+        if blocker is not None:
+            self.refused.set()
+            raise InputNotAccepted(ready=blocker)
+        self.completed.append(msg.id)
+        tools.turn.settle()
+
+
+class SettledRefusalAdapter(SimpleAdapter[Any]):
+    """A custom adapter repeatedly returns the same already-complete blocker."""
+
+    def __init__(self, blocker: asyncio.Future[None]) -> None:
+        super().__init__()
+        self.blocker = blocker
+        self.attempts = 0
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        self.attempts += 1
+        raise InputNotAccepted(ready=self.blocker)

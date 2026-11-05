@@ -47,6 +47,9 @@ class ResyncRequest:
 
     type = "_resync"
 
+    def __init__(self, *, lift_write_backoff: bool = True) -> None:
+        self.lift_write_backoff = lift_write_backoff
+
 
 class ResyncOutcome(Enum):
     EMPTY = "empty"
@@ -159,9 +162,15 @@ class Scheduler:
 
     def request_resync(self) -> None:
         self.owner.delivery.lift_write_backoff()
+        self.request_recovery(lift_write_backoff=True)
+
+    def request_recovery(self, *, lift_write_backoff: bool = False) -> None:
+        """Reconsider deferred input without changing unrelated write deadlines."""
         if self.pending_resync is None:
-            self.pending_resync = ResyncRequest()
+            self.pending_resync = ResyncRequest(lift_write_backoff=lift_write_backoff)
             self.queue.put_nowait(self.pending_resync)
+        elif lift_write_backoff:
+            self.pending_resync.lift_write_backoff = True
 
     def reset_interval(self) -> None:
         if self.schedule.due_at is None:
@@ -310,7 +319,9 @@ class Scheduler:
                 if isinstance(event, ResyncRequest):
                     if event is self.pending_resync:
                         self.pending_resync = None
-                        await self.run_pass(recovery=True)
+                        await self.run_pass(
+                            recovery=True, lift_write_backoff=event.lift_write_backoff
+                        )
                 else:
                     self.receive(event)
                     await self.run_pass()
@@ -330,8 +341,10 @@ class Scheduler:
             ):
                 self.current_pass.resumed_retries.add(identity)
 
-    async def run_pass(self, *, recovery: bool = False) -> ResyncOutcome:
-        if recovery:
+    async def run_pass(
+        self, *, recovery: bool = False, lift_write_backoff: bool = True
+    ) -> ResyncOutcome:
+        if recovery and lift_write_backoff:
             self.owner.delivery.lift_write_backoff()
         self.handled_work = False
         self.scan_cursor = None

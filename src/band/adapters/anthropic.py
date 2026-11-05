@@ -19,6 +19,7 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import BatchInputAdapter
+from band.core.turn import RoundOutcome
 from band.core.types import (
     Capability,
     Emit,
@@ -467,8 +468,7 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
             cannot stand in for this call's own outcome.
         """
         tool_results = []
-        declined = False
-        failed = False
+        outcome_record = RoundOutcome()
 
         for block in response.content:
             if not isinstance(block, ToolUseBlock):
@@ -518,10 +518,7 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                     result = outcome.value
                     succeeded = outcome.ok
                     effect = turn_effect(tool_name)
-                if succeeded and effect.ends_turn:
-                    declined = True
-                if not succeeded:
-                    failed = True
+                outcome_record.record(effect, succeeded)
                 if is_image_passthrough_result(tool_name, result):
                     content = _image_tool_result_content(result)
                     result_str = image_block_placeholder(len(content))
@@ -533,7 +530,7 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                     )
                 is_error = not succeeded
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                failed = True
+                outcome_record.record(TurnEffect.OBSERVE, False)
                 content = result_str = f"Error: {e}"
                 is_error = True
                 logger.error("Tool %s failed: %s", tool_name, e)
@@ -568,4 +565,4 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                 }
             )
 
-        return tool_results, declined and not failed
+        return tool_results, outcome_record.should_stop(complete=True)

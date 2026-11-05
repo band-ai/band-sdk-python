@@ -60,6 +60,8 @@ async def end_running_turn(mode: ControlMode) -> list[str]:
     turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
     await wait_until(lambda: bool(client.params_of(CodexRequestMethod.TURN_START)))
     await end_turn(adapter, turn, ROOM_ID, mode)
+    await adapter.on_cleanup(ROOM_ID)
+    assert adapter.backend_turns.blocker(ROOM_ID) is None
     return interrupts(client)
 
 

@@ -73,7 +73,7 @@ from band.core.retention import (
 from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
-from band.core.turn import judge_detached_turn
+from band.core.turn import detached_turn
 from band.core.turn_lifecycle import (
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
@@ -1271,7 +1271,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         room_id: str,
     ) -> None:
         """Handle one turn over its original messages."""
-        await self._admit_turn(room_id, "Codex")
+        await self._admit_turn(room_id, "Codex", tools)
         room = self._room_client(room_id)
         self._active_room.set(room_id)
         # A local command is always a turn of its own (see is_control_message).
@@ -1342,8 +1342,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     command=command,
                 ):
                     return
-                async with room.retained.use(
-                    prepare=partial(room.retain_system_context, contacts_msg)
+                async with (
+                    room.retained.use(
+                        prepare=partial(room.retain_system_context, contacts_msg)
+                    ),
+                    detached_turn(tools, room_id=room.room_id),
                 ):
                     try:
                         await self._serve_turn(
@@ -1567,7 +1570,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             native_messages=result.native_messages,
             duration_s=_time.perf_counter() - turn_start,
         )
-        await judge_detached_turn(tools, room_id=room_id)
 
     async def _emit_turn_started(
         self,
@@ -2361,10 +2363,19 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
 
     async def _interrupt_codex_turn(self, turn: CodexTurn) -> None:
-        await turn.client.request(
-            CodexRequestMethod.TURN_INTERRUPT,
-            {"threadId": turn.thread_id, "turnId": turn.turn_id},
-        )
+        try:
+            await turn.client.request(
+                CodexRequestMethod.TURN_INTERRUPT,
+                {"threadId": turn.thread_id, "turnId": turn.turn_id},
+            )
+        finally:
+            # An interrupt response does not prove native tool work has stopped.
+            for room in self._room_clients.values():
+                if room.client is turn.client:
+                    self.backend_turns.recovering(
+                        room.room_id, turn, room.retained, generation=room.generation
+                    )
+                    break
 
     @asynccontextmanager
     async def _native_turn(
@@ -2383,6 +2394,13 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         try:
             yield native
         except asyncio.CancelledError:
+            # A cancelled start may never reveal a handle to interrupt.
+            self.backend_turns.recovering(
+                room.room_id,
+                CodexTurn(native.client, native.thread_id or "", native.turn_id or ""),
+                room.retained,
+                generation=native.generation,
+            )
             if native.owner.failure is not None:
                 raise native.owner.failure from None
             raise
@@ -2490,6 +2508,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         room.pending_system_context.clear()
         if self._room_clients.get(room_id) is room:
             del self._room_clients[room_id]
+        self.backend_turns.confirm_disposed(room_id)
 
     def _forget_room_thread(self, room_id: str) -> str | None:
         """Drop the room's thread mapping and per-thread state; return the thread id."""

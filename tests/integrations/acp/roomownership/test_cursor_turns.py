@@ -130,6 +130,8 @@ class TestCursorTurns:
                 await session.send("next", tools=unwinding)
             cancelled.set()
             await accepted_work_finished(session.room())
+            # The worker can finish before its independent cancellation request.
+            await session.adapter.backend_turns.settled(DEFAULT_ROOM)
             busy = TranscriptTools()
             with pytest.raises(InputNotAccepted):
                 await session.send("next", tools=busy)

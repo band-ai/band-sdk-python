@@ -9,6 +9,7 @@ import pytest
 
 from band.adapters.opencode import OpencodeAdapter
 from band.converters.opencode import OPENCODE_RESUME_RECORD
+from band.core.exceptions import InputNotAccepted
 from band.core.types import MessageType
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import BOB, ROOM_MEMBERS
@@ -63,7 +64,7 @@ class TestOffBootstrapSeed:
         ],
         ids=["fetch-failed", "cutoff-unavailable"],
     )
-    async def test_a_prompt_sent_without_the_transcript_records_nothing(
+    async def test_missing_transcript_retains_input_until_history_is_available(
         self,
         make_adapter: Callable[..., OpencodeAdapter],
         fetch_error: Exception | None,
@@ -84,17 +85,17 @@ class TestOffBootstrapSeed:
         await adapter.on_event(
             room_input(room_tools(), history=TRANSCRIPT, bootstrap=True)
         )
-        await adapter.on_event(room_input(unreachable, history=[], bootstrap=False))
+        with pytest.raises(InputNotAccepted):
+            await adapter.on_event(room_input(unreachable, history=[], bootstrap=False))
         await adapter.on_event(room_input(retried, history=[], bootstrap=False))
 
         assert prompts(client) == [
             ("sess-1", True),
-            ("sess-2", False),
-            ("sess-3", True),
+            ("sess-2", True),
         ]
         assert OPENCODE_RESUME_RECORD.candidates(unreachable.events_sent) == {}
         assert OPENCODE_RESUME_RECORD.candidates(retried.events_sent) == {
-            ROOM_ID: "sess-3"
+            ROOM_ID: "sess-2"
         }
 
     async def test_the_replay_names_mentioned_participants_by_handle(

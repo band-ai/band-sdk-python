@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+from band.core.exceptions import InputNotAccepted
 from tests.runtime.parking.harness import (
     OTHER,
     RECONCILE_SECONDS,
@@ -18,6 +21,19 @@ INTERVALS = 2
 
 @pytest.mark.looptime
 class TestUnconfirmedPacing:
+    async def test_admission_readiness_preserves_the_terminal_write_deadline(
+        self, scenario: Cell, room_peer: RoomPeer, controlled_room: Harness
+    ) -> None:
+        await controlled_room.join_in_outage(scenario)
+        blocker = asyncio.get_running_loop().create_future()
+        controlled_room.execution.defer_delivery(
+            None, reason=InputNotAccepted(ready=blocker)
+        )
+        blocker.set_result(None)
+        await controlled_room.elapse(1)
+
+        assert room_peer.terminal_writes() == scenario.writes()
+
     async def test_the_first_attempt_is_the_only_write_before_the_interval_elapses(
         self, scenario: Cell, room_peer: RoomPeer, controlled_room: Harness
     ) -> None:

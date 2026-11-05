@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable, Sequence
 from enum import StrEnum
+from typing import Any
 
 from band_sdk_core import AgentFailure
 
@@ -106,6 +108,10 @@ class InputNotAccepted(BandError):
     Transport failures, timeouts and uncertain acceptance do not qualify.
     The host retains the input without reporting a failed turn.
     """
+
+    def __init__(self, *args: object, ready: asyncio.Future[Any] | None = None) -> None:
+        super().__init__(*args)
+        self.ready = ready
 
 
 class RoomClosingError(InputNotAccepted, RuntimeError):

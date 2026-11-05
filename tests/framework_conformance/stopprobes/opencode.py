@@ -6,9 +6,11 @@ import asyncio
 from typing import Any
 
 import looptime
+import pytest
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.client.streaming import ControlMode
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import BandTool
@@ -188,13 +190,21 @@ async def wind_down(adapter: OpencodeAdapter, turn: asyncio.Task[None]) -> None:
 
 
 async def next_message_waits_for_the_abort() -> list[str]:
-    """The next message prompts the session only after its abort has finished."""
+    """Input waits for independent terminal evidence after the abort request."""
     client = HoldingAbortClient(prompt_event_sequences=[[], []])
     adapter = await started(client)
     await stop_holding_abort(adapter, client, FakeAgentTools())
-    next_turn = deliver(adapter, FakeAgentTools())
-    await wait_until(lambda: waiting_on_stop(next_turn) or len(client.prompt_calls) > 1)
+    with pytest.raises(InputNotAccepted) as pending:
+        await deliver(adapter, FakeAgentTools())
     client.release.set()
+    assert pending.value.ready is not None
+    await pending.value.ready
+    with pytest.raises(InputNotAccepted) as uncertain:
+        await deliver(adapter, FakeAgentTools())
+    await stopped_turn_winds_down(client)
+    assert uncertain.value.ready is not None
+    await uncertain.value.ready
+    next_turn = deliver(adapter, FakeAgentTools())
     await wait_until(lambda: len(client.prompt_calls) == 2)
     recorded = list(client.journal)
     await wind_down(adapter, next_turn)
@@ -209,10 +219,8 @@ async def late_mcp_call_during_held_abort() -> list[str]:
         adapter = await started(client)
         stopped, replacement = FakeAgentTools(), FakeAgentTools()
         await stop_holding_abort(adapter, client, stopped)
-        next_turn = deliver(adapter, replacement)
-        await wait_until(
-            lambda: waiting_on_stop(next_turn) or len(client.prompt_calls) > 1
-        )
+        with pytest.raises(InputNotAccepted):
+            await deliver(adapter, replacement)
         await BandMCPCalls(starts).band_tool_call(
             BandTool.SEND_MESSAGE,
             {"content": LATE_CALL, "mentions": ["@alice"]},
@@ -229,6 +237,9 @@ async def late_mcp_call_during_held_abort() -> list[str]:
             ),
         ]
         client.release.set()
+        await adapter.backend_turns.drain()
+        await stopped_turn_winds_down(client)
+        next_turn = deliver(adapter, replacement)
         await wait_until(lambda: len(client.prompt_calls) == 2)
         await wind_down(adapter, next_turn)
         return landed

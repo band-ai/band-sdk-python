@@ -75,7 +75,14 @@ def serve(
         else 0
     )
     known_threads = {native_thread_id(number) for number in range(1, threads + 1)}
-    turns = 0
+    turns = (
+        sum(
+            json.loads(line).get("method") == CodexRequestMethod.TURN_START
+            for line in trace.read_text().splitlines()
+        )
+        if trace.exists()
+        else 0
+    )
     active: tuple[str, str] | None = None
     pending_call: str | None = None
     for line in sys.stdin:

@@ -9,12 +9,14 @@ import pytest
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.converters.opencode import OPENCODE_RESUME_RECORD
+from band.core.exceptions import InputNotAccepted
 from tests.adapters.opencode.helpers import (
     COMPUTE_BUDGET_S,
     PROMPT_REJECTED_STATUS,
     AnyHTTPStatusError,
     FakeOpencodeClient,
     event_session_error,
+    event_session_idle,
 )
 from tests.adapters.opencode.resume.kit import (
     ROOM_ID,
@@ -101,6 +103,12 @@ class TestFailedSeed:
             await adapter.watcher_started.wait()
             await clock.elapse(COMPUTE_BUDGET_S + 1)
             await turn
+        with pytest.raises(InputNotAccepted) as refused:
+            await adapter.on_event(room_input(retried, history=[], bootstrap=False))
+        assert prompts(client) == [("sess-1", True)]
+        await client.push_event(event_session_idle("sess-1"))
+        assert refused.value.ready is not None
+        await refused.value.ready
         await adapter.on_event(room_input(retried, history=[], bootstrap=False))
 
         assert prompts(client) == [("sess-1", True), ("sess-2", True)]

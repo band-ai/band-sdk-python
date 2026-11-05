@@ -10,6 +10,7 @@ from contextlib import contextmanager
 import pytest
 
 from band.adapters.claude_sdk import ROOM_MEMORY_HEADER, ClaudeSDKAdapterConfig
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import TurnResultAlreadyReported
 from band.runtime.formatters import format_history_for_llm
 from tests.adapters.claude_sdk.fakecli import EndTurn, Hold
@@ -205,16 +206,13 @@ class TestSessionSeeding:
         assert room.persisted_sessions == [session.session_id]
         assert room.chat == ["seeded now", "still here"]
 
-    async def test_a_reseed_without_the_history_is_not_recorded(
+    async def test_a_reseed_waits_until_the_room_history_is_available(
         self, claude_room: OpenRoom
     ) -> None:
-        """A turn whose history could not be fetched still answers, but leaves
-        its conversation unseeded: it is dropped, and a later turn's fresh
-        session carries the history."""
+        """Unavailable history retains input before any replacement query."""
         room = await claude_room()
         room.claude.script(
             [EndTurn(is_error=True, result="overloaded")],
-            [room.model_reply("answered without memory")],
             [room.model_reply("seeded now")],
         )
 
@@ -222,19 +220,19 @@ class TestSessionSeeding:
 
         with pytest.raises(TurnResultAlreadyReported):
             await room.send("hello", history=(said("Alice", FACT),))
-        with history_unreachable(room):
+        with history_unreachable(room), pytest.raises(InputNotAccepted):
             await room.send("again")
         assert room.persisted_sessions == []
+        assert len(room.claude.prompts) == 1
         await room.send("and again")
 
         *dropped, session = room.claude.sessions
-        _, unseeded, seeded = room.claude.prompts
-        assert room.claude.resumed == [None, None, None]
-        assert [cli.alive for cli in dropped] == [False, False]
-        assert ROOM_MEMORY_HEADER not in unseeded
+        _, seeded = room.claude.prompts
+        assert room.claude.resumed == [None, None]
+        assert [cli.alive for cli in dropped] == [False]
         assert seeded.startswith(f"{ROOM_MEMORY_HEADER}\n{REMEMBERED}\n\n")
         assert room.persisted_sessions == [session.session_id]
-        assert room.chat == ["answered without memory", "seeded now"]
+        assert room.chat == ["seeded now"]
 
     async def test_a_reseed_remembers_the_room_as_the_bootstrap_does(
         self, claude_room: OpenRoom

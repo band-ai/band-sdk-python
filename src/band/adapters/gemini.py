@@ -37,6 +37,7 @@ from band.core.exceptions import ProviderRunError, ToolRoundsExceededError
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import sanitize_tool_schema
+from band.core.turn import RoundOutcome
 from band.core.types import (
     Capability,
     Emit,
@@ -542,8 +543,7 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
     ) -> tuple[list[types.Part], bool]:
         """Retain every function response and stop only a successful decline batch."""
         tool_response_parts: list[types.Part] = []
-        declined = False
-        failed = False
+        outcome_record = RoundOutcome()
 
         for index, function_call in enumerate(function_calls):
             tool_name = function_call.name or ""
@@ -583,7 +583,7 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                     result = outcome.value
                     succeeded = outcome.ok
                     effect = turn_effect(tool_name)
-                declined = declined or (succeeded and effect.ends_turn)
+                outcome_record.record(effect, succeeded)
                 if is_image_passthrough_result(tool_name, result):
                     response_parts = _image_function_response_parts(result)
                     result_str = image_block_placeholder(len(response_parts))
@@ -603,7 +603,8 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                 result_str = f"Error: {e}"
                 is_error = True
                 logger.exception("Tool %s failed", tool_name)
-            failed = failed or is_error
+            if is_error:
+                outcome_record.record(TurnEffect.OBSERVE, False)
             if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
@@ -634,4 +635,4 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                 )
             )
 
-        return tool_response_parts, declined and not failed
+        return tool_response_parts, outcome_record.should_stop(complete=True)

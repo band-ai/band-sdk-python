@@ -17,6 +17,7 @@ from typing import (
     Protocol,
     runtime_checkable,
 )
+from weakref import WeakSet
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
 from band_sdk_core import (
@@ -343,6 +344,7 @@ class ExecutionContext:
         self.state = ExecutionState.STARTING
         self._is_running = False
         self._closing = False
+        self._readiness_observed: WeakSet[asyncio.Future[Any]] = WeakSet()
         self._process_loop_task: asyncio.Task[None] | None = None
         self._context_cache: ConversationContext | None = None
         self._context_hydrated = False
@@ -517,6 +519,8 @@ class ExecutionContext:
                 budget. It stays retained, and a later ``stop()`` settles it.
         """
         self._closing = True
+        for ready in self._readiness_observed:
+            ready.remove_done_callback(self._input_may_be_ready)
         if self._shutdown_task is None or self._shutdown_task.done():
             self._shutdown_task = asyncio.create_task(self._stop(timeout))
             self._shutdown_task.add_done_callback(task_failure)
@@ -1116,6 +1120,11 @@ class ExecutionContext:
     ) -> None:
         if message_id:
             self.scheduler.defer(message_id)
+        if (
+            ready := reason.ready
+        ) is not None and ready not in self._readiness_observed:
+            self._readiness_observed.add(ready)
+            ready.add_done_callback(self._input_may_be_ready)
         logger.debug(
             "ExecutionContext %s: Input %s not accepted (%s); "
             "keeping it pending for scheduler recovery",
@@ -1123,6 +1132,12 @@ class ExecutionContext:
             message_id or "synthetic",
             reason,
         )
+
+    def _input_may_be_ready(self, blocker: asyncio.Future[Any]) -> None:
+        if not blocker.cancelled():
+            blocker.exception()
+        if not self.is_closing:
+            self.scheduler.request_recovery()
 
     @property
     def handles_message_control(self) -> bool:
@@ -1348,7 +1363,6 @@ class ExecutionContext:
             lambda _: self._finish_activity(scope, resource=owner)
         )
         if owner.role is TaskRole.SCOPE:
-            # Admission waits on the turn itself, never on its resources.
             owner.task.add_done_callback(partial(self._resume_after_turn, scope))
         if scope.reports_activity and scope not in self._scopes and not scope.aborted:
             self._retain_activity_completion(
@@ -1356,17 +1370,9 @@ class ExecutionContext:
             )
 
     def _resume_after_turn(self, scope: TurnScope, _: asyncio.Task[Any]) -> None:
-        """Retry input the room refused while this turn outlived its delivery.
-
-        A turn that ends before its handler returns finds its scope unsettled,
-        so nothing was refused behind it.
-        """
-        if scope.settled:
-            logger.debug(
-                "ExecutionContext %s: released turn ended; requesting a resync",
-                self.room_id,
-            )
-            self.scheduler.request_resync()
+        """Preserve detached-scope notifications for legacy custom adapters."""
+        if scope.settled and not self.is_closing:
+            self.scheduler.request_recovery()
 
     def _retain_activity_completion(self, task: asyncio.Task[None]) -> None:
         self._activity_completion = task

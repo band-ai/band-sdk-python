@@ -22,7 +22,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
     generic_provider_failure,
 )
-from band.core.turn import judge_detached_turn
+from band.core.turn import detached_turn
 from band.core.turn_lifecycle import start_releasable_turn
 from band.core.types import (
     ApprovalMode,
@@ -34,6 +34,7 @@ from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
     ACPPermissionRequest,
+    ACPTurn,
     McpServerResolver,
 )
 from band.integrations.acp.client_profiles import (
@@ -211,6 +212,30 @@ def _detach(turn: CursorTurn) -> None:
 class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     """Band adapter for Cursor's native ACP stdio server."""
 
+    async def _cancel_agent_turn(self, turn: ACPTurn) -> None:
+        try:
+            await super()._cancel_agent_turn(turn)
+        finally:
+            # ACP cancellation alone does not confirm that native tools ended.
+            for room in self._rooms.values():
+                if room.runtime is turn.runtime:
+                    self.backend_turns.recovering(
+                        room.room_id, turn, room.retained, generation=room.generation
+                    )
+                    break
+
+    async def _fetch_replay(
+        self,
+        tools: AgentToolsProtocol,
+        *,
+        room_id: str,
+        messages: Sequence[PlatformMessage],
+    ) -> list[str]:
+        replay = await super()._fetch_replay(tools, room_id=room_id, messages=messages)
+        if replay is None:
+            raise InputNotAccepted("Room history is unavailable for session recovery")
+        return replay
+
     def __init__(
         self,
         config: CursorACPAdapterConfig | None = None,
@@ -299,14 +324,16 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         # A message never waits behind the room's turn: that turn may be parked
         # on a decision whose reply arrives after it, so the host keeps the
         # message and retries it once the room is free.
-        if room_id in self._turns:
-            raise InputNotAccepted("The room already has an active Cursor turn")
+        if active := self._turns.get(room_id):
+            raise InputNotAccepted(
+                "The room already has an active Cursor turn", ready=active.task
+            )
 
         # The turn runs detached for the same reason: on_turn returns the
         # moment a decision opens, while the task keeps the room's reservation
         # and lease through the turn's actual end.
         room = self._room(room_id)
-        await self.backend_turns.settled(room_id)
+        await self.backend_turns.require_admission(room_id, tools)
         loop = asyncio.get_running_loop()
         release: asyncio.Future[None] = loop.create_future()
         turn = CursorTurn(
@@ -395,6 +422,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             async with (
                 self._using_room(room, turn.tools) as runtime,
                 self._holding(turn),
+                detached_turn(turn.tools, room_id=room.room_id),
             ):
                 await self._prompt_room(
                     room,
@@ -411,7 +439,6 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                     if turn.closed or self._turns.get(room.room_id) is not turn:
                         raise asyncio.CancelledError
                     await finish_automatic_reply(turn.tools, None, mentions)
-                await judge_detached_turn(turn.tools, room_id=room.room_id)
         finally:
             _close_turn(turn)
             self._forget_turn(turn)
@@ -488,6 +515,10 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             _close_turn(turn)
         self._cancel_room_decisions(room_id)
         await super().on_cleanup(room_id)
+
+    async def _dispose_room(self, room: ACPRoom) -> None:
+        await super()._dispose_room(room)
+        self.backend_turns.confirm_disposed(room.room_id)
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
         """End the room's accepted turn, starting, prompting or parked.

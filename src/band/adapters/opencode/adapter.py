@@ -33,7 +33,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
 )
 from band.core.simple_adapter import BatchInputAdapter
-from band.core.turn import judge_detached_turn
+from band.core.turn import detached_turn
 from band.core.turn_lifecycle import BackendTurns, bind_turn_task
 from band.core.types import (
     AdapterFeatures,
@@ -351,7 +351,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
         self._rooms: dict[str, RoomState] = {}
         self._backend_turns = BackendTurns[TurnState](
-            self._stop_turn, provider=_PROVIDER
+            self._stop_turn, provider=_PROVIDER, requires_confirmation=True
         )
         self._room_by_session: dict[str, str] = {}
         self._state_lock = asyncio.Lock()
@@ -505,7 +505,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         room_state = await self._get_or_create_room_state(room_id)
         # The room's previous turn may still be aborting its session; nothing
         # of this turn is bound, and no prompt is sent, until that settles.
-        await self.backend_turns.settled(room_id)
+        await self.backend_turns.require_admission(room_id, tools)
 
         if self._client is None:
             agent_id = getattr(tools, "agent_id", None)
@@ -514,7 +514,10 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             )
 
         if room_state.turn and room_state.turn.running:
-            raise InputNotAccepted("The room already has an active OpenCode turn")
+            raise InputNotAccepted(
+                "The room already has an active OpenCode turn",
+                ready=room_state.turn.watcher,
+            )
 
         # MCP calls keep the active turn's tools until that turn finishes.
         room_state.tools = tools
@@ -596,6 +599,8 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             # user stopped. Cancelling it stops the session through backend_turns.
             if turn is not None and turn.watcher is not None:
                 turn.watcher.cancel()
+            raise
+        except InputNotAccepted:
             raise
         except httpx.HTTPStatusError as exc:
             logger.exception("OpenCode request failed for room %s", room_id)
@@ -1146,8 +1151,9 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 room_state.room_id,
                 exc_info=True,
             )
-            room_state.seed.carried = False
-            return None
+            raise InputNotAccepted(
+                "Room history is unavailable for session recovery"
+            ) from None
         return build_replay_messages(
             format_history_for_llm(raw, participants=tools.participants)
         )
@@ -1226,8 +1232,8 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             if completed:
                 room_state.seed.confirm()
             try:
-                await self._deliver_fallback_text(room_state.room_id, turn)
-                await judge_detached_turn(turn.tools, room_id=room_state.room_id)
+                async with detached_turn(turn.tools, room_id=room_state.room_id):
+                    await self._deliver_fallback_text(room_state.room_id, turn)
                 await self._emit_turn_usage(room_id, turn)
             except Exception:
                 logger.exception(
@@ -1362,6 +1368,11 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         self._release_turn_wait_for(turn)
 
     def _finish_turn(self, room_state: RoomState) -> None:
+        stopped = self.backend_turns.unconfirmed_handle(room_state.room_id)
+        if stopped is not None and stopped.session_id == room_state.session_id:
+            self.backend_turns.confirm_stopped(room_state.room_id, stopped)
+            if room_state.seed.replay_due:
+                self._forget_session(room_state)
         if room_state.turn is not None:
             self._resolve_turn(room_state.turn)
 
@@ -1385,7 +1396,10 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             if watcher is not None and watcher is not expected_task:
                 watcher.cancel()
             room_state.turn.approvals.cancel()
-            if room_state.seed.replay_due:
+            if (
+                room_state.seed.replay_due
+                and self.backend_turns.unconfirmed_handle(room_state.room_id) is None
+            ):
                 # The seeding prompt never completed, so the session is not
                 # resumable; it stays on the server, unused.
                 logger.info(

@@ -14,6 +14,16 @@ from tests.integrations.googleadk.callbacks import context, response
 
 
 class TestBatch:
+    def test_late_result_from_same_invocation_cannot_complete_a_new_round(self) -> None:
+        batch = DeclineBatch()
+        batch.after_model(context(), response("decline"))
+        previous = batch.capture()
+        batch.after_model(context(), response("decline"))
+        batch.completed(
+            "current", "decline", True, TurnEffect.DECLINE, round_outcome=previous
+        )
+        assert batch.before_model(context(), LlmRequest()) is None
+
     @pytest.mark.parametrize(
         "observed",
         [[], ["decline"], ["decline", "decline", "decline"], ["decline", "other"]],
