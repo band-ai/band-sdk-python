@@ -174,15 +174,10 @@ def _require_adk() -> tuple[type, type, type, type, Any]:
 
         @functools.cached_property
         def api_client(self) -> Client:
-            # ADK 1.10 exposes the tracking headers as a cached property;
-            # later releases in the supported range make it a method.
-            headers = self._tracking_headers
-            if callable(headers):
-                headers = headers()
             # aiohttp reconnects outside genai's configured attempt budget.
             return genai.Client(
                 http_options=genai.types.HttpOptions(
-                    headers=headers,
+                    headers=self._tracking_headers,
                     retry_options=self.retry_options,
                     httpx_async_client=self.httpx_client,
                 )

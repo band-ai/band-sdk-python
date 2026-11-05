@@ -80,8 +80,7 @@ async def google_http(
 
     with (
         patch.object(genai, "Client", create_client),
-        # Newer ADK imports Client lazily instead of at module level.
-        patch.object(_google_llm, "Client", create_client, create=True),
+        patch.object(_google_llm, "Client", create_client),
     ):
         try:
             yield peer
