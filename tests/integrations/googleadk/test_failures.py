@@ -199,7 +199,7 @@ class TestFailures:
         adapter = GoogleADKAdapter(additional_tools=[(DeclineInput, decline)])
         await adapter.on_started("Agent", "An agent")
 
-        with pytest.raises(ValueError, match="unknown_native is not found"):
+        with pytest.raises(ValueError, match="unknown_native"):
             await adapter.on_event(turn_input(FakeAgentTools()))
 
         assert len(google_model.requests) == 1

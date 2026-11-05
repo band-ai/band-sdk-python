@@ -187,13 +187,20 @@ def _require_adk() -> tuple[type, type, type, type, Any]:
 
         @functools.cached_property
         def api_client(self) -> Client:
+            tracking_headers = self._tracking_headers
+            if callable(tracking_headers):
+                tracking_headers = tracking_headers()
+            client_options: dict[str, Any] = {}
+            if self.model.startswith("projects/"):
+                client_options["vertexai"] = True
             # aiohttp reconnects outside genai's configured attempt budget.
             return genai.Client(
+                **client_options,
                 http_options=genai.types.HttpOptions(
-                    headers=self._tracking_headers,
+                    headers=tracking_headers,
                     retry_options=self.retry_options,
                     httpx_async_client=self.httpx_client,
-                )
+                ),
             )
 
         async def aclose(self) -> None:

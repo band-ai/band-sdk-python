@@ -17,7 +17,7 @@ from band.adapters.google_adk import (
 from band.core.exceptions import ProviderRunError, ToolRoundsExceededError
 from band.runtime.formatters import format_current_inputs
 from band.testing import FakeAgentTools
-from tests.adapters.genaikit import no_candidates, text_reply
+from tests.adapters.genaikit import prompt_blocked, text_reply
 from tests.framework_conformance.turnprobes import turn_input, user_message
 from tests.integrations.googleadk.kit import (
     DeclineInput,
@@ -46,7 +46,9 @@ class TestHistory:
         )
         await adapter.on_started("Agent", "An agent")
         tools = FakeAgentTools()
-        google_model.responses.extend(no_candidates() for _ in failed_inputs)
+        google_model.responses.extend(
+            prompt_blocked(types.BlockedReason.SAFETY) for _ in failed_inputs
+        )
 
         for message in failed_inputs:
             with pytest.raises(ProviderRunError):
@@ -76,7 +78,7 @@ class TestHistory:
                 [ServerError(503, {"error": {"message": "Provider unavailable"}})],
                 ServerError,
             ),
-            ([no_candidates()], ProviderRunError),
+            ([prompt_blocked(types.BlockedReason.SAFETY)], ProviderRunError),
             ([batch(("work", {}))], ToolRoundsExceededError),
         ],
         ids=["provider-exception", "model-error-event", "native-call-and-round-cap"],
@@ -134,8 +136,8 @@ class TestHistory:
         await adapter.on_started("Agent", "An agent")
         google_model.responses.extend(
             [
-                no_candidates(),
-                no_candidates(),
+                prompt_blocked(types.BlockedReason.SAFETY),
+                prompt_blocked(types.BlockedReason.SAFETY),
                 batch(("decline", {})),
                 batch(("decline", {})),
             ]
@@ -172,7 +174,11 @@ class TestHistory:
             0, types.Part.from_text(text=unfinished_answer)
         )
         google_model.responses.extend(
-            [partial, no_candidates(), batch(("decline", {}))]
+            [
+                partial,
+                prompt_blocked(types.BlockedReason.SAFETY),
+                batch(("decline", {})),
+            ]
         )
         adapter = GoogleADKAdapter(
             additional_tools=[(WorkInput, reject), (DeclineInput, decline)]
@@ -259,7 +265,7 @@ class TestHistory:
         google_model.responses.extend(
             [
                 batch(("decline", {})),
-                no_candidates(),
+                prompt_blocked(types.BlockedReason.SAFETY),
                 batch(("decline", {})),
                 batch(("decline", {})),
                 batch(("decline", {})),
