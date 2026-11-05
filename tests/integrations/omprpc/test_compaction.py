@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from band.integrations.ompwire import OmpEventType, OmpState
+from band.integrations.ompwire import OmpCommandName, OmpEventType, OmpState
 from tests.integrations.omppeers.base import COMPLETE, ROLLOVER_SUMMARY
 from tests.integrations.omprpc.events import (
     EventRecorder,
@@ -35,5 +35,7 @@ class TestCompactionResults:
             }
             assert observer.assistant_texts == [COMPLETE]
             assert await follow_up_texts(client) == [COMPLETE]
-            state = OmpState.model_validate(await client.request("get_state"))
+            state = OmpState.model_validate(
+                await client.request(OmpCommandName.GET_STATE)
+            )
             assert state.isSettled is True
