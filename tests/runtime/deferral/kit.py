@@ -145,7 +145,31 @@ class SettledRefusalAdapter(SimpleAdapter[Any]):
         super().__init__()
         self.blocker = blocker
         self.attempts = 0
+        self.attempted: asyncio.Queue[None] = asyncio.Queue()
 
     async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
         self.attempts += 1
+        self.attempted.put_nowait(None)
         raise InputNotAccepted(ready=self.blocker)
+
+
+class GatedRefusalAdapter(SimpleAdapter[Any]):
+    """Hold admission until shutdown has begun, then refuse without executing."""
+
+    def __init__(self, blocker: asyncio.Future[None]) -> None:
+        super().__init__()
+        self.blocker = blocker
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        self.entered.set()
+        await self.release.wait()
+        raise InputNotAccepted(ready=self.blocker)
+
+
+async def callbacks_finished() -> None:
+    """Pass the callbacks already queued on the event loop."""
+    reached = asyncio.Event()
+    asyncio.get_running_loop().call_soon(reached.set)
+    await reached.wait()

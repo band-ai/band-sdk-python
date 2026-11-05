@@ -9,6 +9,8 @@ from typing import Any
 
 from band_sdk_core import AgentFailure
 
+RECOVERY_HISTORY_UNAVAILABLE = "Room history is unavailable for session recovery"
+
 
 class BandError(Exception):
     """Base for all SDK exceptions."""

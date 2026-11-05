@@ -98,7 +98,11 @@ from band.core.delivery import (
     finish_automatic_reply,
     reraise_delivery_cause,
 )
-from band.core.exceptions import InputNotAccepted, TerminalProviderFailure
+from band.core.exceptions import (
+    RECOVERY_HISTORY_UNAVAILABLE,
+    InputNotAccepted,
+    TerminalProviderFailure,
+)
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -1252,9 +1256,7 @@ class ClaudeSDKAdapter(
                 room_id,
                 exc_info=True,
             )
-            raise InputNotAccepted(
-                "Room history is unavailable for session recovery"
-            ) from None
+            raise InputNotAccepted(RECOVERY_HISTORY_UNAVAILABLE) from None
         converter = cast(ClaudeSDKHistoryConverter, self.history_converter)
         return converter.convert(raw).text
 

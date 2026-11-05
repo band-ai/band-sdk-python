@@ -16,7 +16,7 @@ from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
 from band.core.delivery import automatic_mentions, finish_automatic_reply
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import RECOVERY_HISTORY_UNAVAILABLE, InputNotAccepted
 from band.core.protocols import (
     TURN_FAILURE_PROVIDER,
     AgentToolsProtocol,
@@ -233,7 +233,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     ) -> list[str]:
         replay = await super()._fetch_replay(tools, room_id=room_id, messages=messages)
         if replay is None:
-            raise InputNotAccepted("Room history is unavailable for session recovery")
+            raise InputNotAccepted(RECOVERY_HISTORY_UNAVAILABLE)
         return replay
 
     def __init__(

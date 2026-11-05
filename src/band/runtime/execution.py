@@ -1121,8 +1121,10 @@ class ExecutionContext:
         if message_id:
             self.scheduler.defer(message_id)
         if (
-            ready := reason.ready
-        ) is not None and ready not in self._readiness_observed:
+            not self.is_closing
+            and (ready := reason.ready) is not None
+            and ready not in self._readiness_observed
+        ):
             self._readiness_observed.add(ready)
             ready.add_done_callback(self._input_may_be_ready)
         logger.debug(

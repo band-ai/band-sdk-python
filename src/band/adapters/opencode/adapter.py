@@ -8,6 +8,7 @@ import json
 import logging
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, TypeAlias, TypeVar
 
@@ -26,7 +27,11 @@ from band.converters.opencode import (
 )
 from band.core.content import has_visible_content
 from band.core.delivery import automatic_mentions, finish_automatic_reply
-from band.core.exceptions import BandConnectionError, InputNotAccepted
+from band.core.exceptions import (
+    RECOVERY_HISTORY_UNAVAILABLE,
+    BandConnectionError,
+    InputNotAccepted,
+)
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -623,9 +628,14 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         room_state: RoomState | None = None
         should_shutdown = False
 
+        self.backend_turns.cancel(room_id)
         async with self._state_lock:
             room_state = self._rooms.pop(room_id, None)
-            if room_state and room_state.session_id:
+            if (
+                room_state
+                and room_state.session_id
+                and self.backend_turns.unconfirmed_handle(room_id) is None
+            ):
                 self._room_by_session.pop(room_state.session_id, None)
             should_shutdown = not self._rooms
 
@@ -639,6 +649,13 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         finally:
             if should_shutdown:
                 await self._shutdown_client()
+
+    async def cleanup_all(self) -> None:
+        """Release local resources without treating teardown as remote confirmation."""
+        async with AsyncExitStack() as cleanup:
+            cleanup.push_async_callback(self._shutdown_client, final=True)
+            for room in tuple(self._rooms):
+                cleanup.push_async_callback(self.on_cleanup, room)
 
     def _default_client_factory(
         self, config: OpencodeAdapterConfig
@@ -783,7 +800,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 status,
             )
 
-    async def _shutdown_client(self) -> None:
+    async def _shutdown_client(self, *, final: bool = False) -> None:
         # _register_mcp_backend registers under this same lock, so an
         # in-flight registration can't land after the disconnect below and
         # leave OpenCode pointing at the server this shutdown stops.
@@ -794,13 +811,20 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 # resources. A new room may arrive in that gap; keep the
                 # shared client registered for it and let that room's
                 # eventual cleanup own shutdown instead.
-                if self._rooms:
+                if self._rooms and not final:
                     return
-                event_task = self._event_task
                 client = self._client
                 mcp_backend = await self._mcp.detach(final=False)
-                self._event_task = None
-                self._client = None
+                awaiting_terminal = not final and any(
+                    self.backend_turns.unconfirmed_handle(room) is not None
+                    for room in self._room_by_session.values()
+                )
+                # A departed room owns no tools, but still needs independent
+                # stop evidence before it may safely rejoin.
+                event_task = None if awaiting_terminal else self._event_task
+                if not awaiting_terminal:
+                    self._event_task = None
+                    self._client = None
 
             registration = self._registration
             if registration is not None and registration.client is client:
@@ -822,14 +846,14 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         if mcp_backend is not None:
             await mcp_backend.stop()
 
-        if event_task is not None:
+        if event_task is not None and event_task is not asyncio.current_task():
             event_task.cancel()
             try:
                 await event_task
             except asyncio.CancelledError:
                 pass
 
-        if client is not None:
+        if client is not None and not awaiting_terminal:
             try:
                 await client.close()
             except Exception:
@@ -847,6 +871,8 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 async for raw_event in client.iter_events():
                     retry_delay = 1.0  # reset on successful event
                     await self._handle_event(parse_opencode_event(raw_event))
+                    if self._client is not client:
+                        return
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -860,6 +886,10 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
 
     async def _handle_event(self, event: OpencodeEvent) -> None:
         room_state = await self._room_state_for_session(event.session_id)
+        if isinstance(event, (SessionIdleEvent, SessionErrorEvent)):
+            self._confirm_session_stopped(event.session_id)
+            if room_state is None:
+                await self._shutdown_client()
         if room_state is None:
             return
 
@@ -936,7 +966,25 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
             room_id = self._room_by_session.get(session_id)
             if not room_id:
                 return None
-            return self._rooms.get(room_id)
+            state = self._rooms.get(room_id)
+            return state if state and state.session_id == session_id else None
+
+    def _confirm_session_stopped(self, session_id: str | None) -> None:
+        if session_id is None:
+            return
+        room_id = self._room_by_session.get(session_id)
+        if room_id is None:
+            return
+        state = self._rooms.get(room_id)
+        stopped = self.backend_turns.unconfirmed_handle(room_id)
+        turn = stopped or self.backend_turns.active_handle(room_id)
+        if turn is None or turn.session_id != session_id:
+            return
+        self.backend_turns.confirm_stopped(room_id, turn)
+        if state is None or state.session_id != session_id:
+            self._room_by_session.pop(session_id, None)
+        elif stopped is not None and state.seed.replay_due:
+            self._forget_session(state)
 
     async def _handle_message_update(
         self, room_state: RoomState, info: OpencodeMessageInfo | None
@@ -1151,9 +1199,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
                 room_state.room_id,
                 exc_info=True,
             )
-            raise InputNotAccepted(
-                "Room history is unavailable for session recovery"
-            ) from None
+            raise InputNotAccepted(RECOVERY_HISTORY_UNAVAILABLE) from None
         return build_replay_messages(
             format_history_for_llm(raw, participants=tools.participants)
         )
@@ -1368,11 +1414,6 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         self._release_turn_wait_for(turn)
 
     def _finish_turn(self, room_state: RoomState) -> None:
-        stopped = self.backend_turns.unconfirmed_handle(room_state.room_id)
-        if stopped is not None and stopped.session_id == room_state.session_id:
-            self.backend_turns.confirm_stopped(room_state.room_id, stopped)
-            if room_state.seed.replay_due:
-                self._forget_session(room_state)
         if room_state.turn is not None:
             self._resolve_turn(room_state.turn)
 
@@ -1394,6 +1435,7 @@ class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
         if room_state.turn is not None:
             watcher = room_state.turn.watcher
             if watcher is not None and watcher is not expected_task:
+                self.backend_turns.cancel(room_state.room_id)
                 watcher.cancel()
             room_state.turn.approvals.cancel()
             if (

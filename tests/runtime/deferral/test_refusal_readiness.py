@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import weakref
 from collections.abc import Callable
+from contextlib import AsyncExitStack
 
 import pytest
 
 from band.platform.link import BandLink
-from tests.runtime.conftest import wait_for_condition
+from tests.runtime.conftest import Waiting, wait_for_condition
 from tests.runtime.deferral.kit import (
+    GatedRefusalAdapter,
     ReadinessAdapter,
     SettledRefusalAdapter,
+    callbacks_finished,
     cancel_blocker,
     complete_blocker,
 )
@@ -23,25 +28,32 @@ from tests.runtime.helpers import (
     run_through,
     running_execution,
 )
-from tests.toolkit.timecontrol import controlled_clock
+from tests.toolkit.tasks import background
 
 
 class TestRefusalReadiness:
-    @pytest.mark.looptime
     async def test_already_complete_blocker_wakes_once_without_retry_spin(self) -> None:
         peer = LifecyclePlatform()
         blocker = asyncio.get_running_loop().create_future()
         blocker.set_result(None)
         adapter = SettledRefusalAdapter(blocker)
-        async with rest_client_over(peer.answer) as rest, controlled_clock() as clock:
+        async with rest_client_over(peer.answer) as rest:
             link = BandLink(agent_id=AGENT_ID, api_key="test-key")
             link.rest = rest
             ctx = run_through(adapter, link, config=no_periodic_wake_config())
             async with running_execution(ctx):
                 peer.add_message("A")
                 await ctx.on_event(peer.event("A"))
-                await clock.elapse(1)
+                await adapter.attempted.get()
+                await adapter.attempted.get()
+                await callbacks_finished()
+                await Waiting.suspended(ctx)
                 assert adapter.attempts == 2
+                await ctx.request_resync()
+                await adapter.attempted.get()
+                await callbacks_finished()
+                await Waiting.suspended(ctx)
+                assert adapter.attempts == 3
                 assert peer.marked("processed") == []
                 assert peer.marked("failed") == []
 
@@ -110,6 +122,7 @@ class TestRefusalReadiness:
             peer.add_message("A")
             await ctx.on_event(peer.event("A"))
             await adapter.refused.wait()
+            await Waiting.suspended(ctx)
             await ctx.stop()
             replacement_blocker = asyncio.get_running_loop().create_future()
             replacement_adapter = ReadinessAdapter(replacement_blocker)
@@ -120,7 +133,7 @@ class TestRefusalReadiness:
             try:
                 await replacement_adapter.refused.wait()
                 blocker.set_result(None)
-                await blocker
+                await callbacks_finished()
                 assert ctx.scheduler.pending_resync is None
                 assert adapter.completed == []
                 assert replacement_adapter.completed == []
@@ -130,3 +143,57 @@ class TestRefusalReadiness:
             finally:
                 replacement_blocker.cancel()
                 await replacement.stop()
+
+    async def test_already_queued_notification_cannot_wake_a_closing_execution(
+        self,
+    ) -> None:
+        peer = LifecyclePlatform()
+        blocker = asyncio.get_running_loop().create_future()
+        adapter = ReadinessAdapter(blocker)
+        async with rest_client_over(peer.answer) as rest:
+            link = BandLink(agent_id=AGENT_ID, api_key="test-key")
+            link.rest = rest
+            ctx = run_through(adapter, link, config=no_periodic_wake_config())
+            async with running_execution(ctx):
+                peer.add_message("A")
+                await ctx.on_event(peer.event("A"))
+                await adapter.refused.wait()
+                await Waiting.suspended(ctx)
+                blocker.set_result(None)
+                await ctx.stop()
+                await callbacks_finished()
+                assert ctx.scheduler.pending_resync is None
+                assert adapter.completed == []
+
+    async def test_refusal_during_graceful_drain_does_not_retain_the_execution(
+        self,
+    ) -> None:
+        peer = LifecyclePlatform()
+        blocker = asyncio.get_running_loop().create_future()
+        adapter = GatedRefusalAdapter(blocker)
+        async with rest_client_over(peer.answer) as rest:
+            link = BandLink(agent_id=AGENT_ID, api_key="test-key")
+            link.rest = rest
+            ctx = run_through(adapter, link, config=no_periodic_wake_config())
+            try:
+                async with AsyncExitStack() as cleanup:
+                    await ctx.start()
+                    cleanup.push_async_callback(ctx.stop)
+                    cleanup.callback(adapter.release.set)
+                    peer.add_message("A")
+                    await ctx.on_event(peer.event("A"))
+                    await adapter.entered.wait()
+                    async with background(ctx.stop(timeout=30)) as stopping:
+                        await callbacks_finished()
+                        assert ctx.is_closing and not stopping.done()
+                        adapter.release.set()
+                        assert await stopping
+                    # A second stop would remove a leaked observer and mask the bug.
+                    cleanup.pop_all()
+                retired = weakref.ref(ctx)
+                del ctx
+                gc.collect()
+                assert not blocker.done()
+                assert retired() is None
+            finally:
+                blocker.cancel()

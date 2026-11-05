@@ -14,6 +14,17 @@ from tests.runtime.helpers import ROOM_ID
 
 
 class TestBackendStopConfirmation:
+    async def test_terminal_confirmation_precedes_late_local_cancellation(self) -> None:
+        turns = BackendTurns(
+            RecordingCancel(), provider="test", requires_confirmation=True
+        )
+        handle = "backend-turn"
+        async with turns.running(ROOM_ID, handle):
+            turns.confirm_stopped(ROOM_ID, handle)
+            turns.cancel(ROOM_ID)
+        await turns.drain()
+        await turns.require_admission(ROOM_ID, FakeAgentTools())
+
     async def test_failed_reporting_keeps_input_pending_and_retries_the_report(
         self,
     ) -> None:

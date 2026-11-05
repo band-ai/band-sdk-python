@@ -415,6 +415,9 @@ class BackendTurns(Generic[H]):
 
     def confirm_stopped(self, room_id: str, handle: H) -> None:
         """Release only the stop belonging to this concrete provider operation."""
+        turn = self._turns.get(room_id)
+        if turn is not None and turn.handle is handle:
+            del self._turns[room_id]
         stop = self._unconfirmed.get(room_id)
         if stop is not None and stop.handle is handle:
             del self._unconfirmed[room_id]
@@ -424,11 +427,7 @@ class BackendTurns(Generic[H]):
         self, room_id: str, handle: H, retained: RetainedRoom, *, generation: int
     ) -> None:
         """Keep a stopped process's existing release owner in the admission path."""
-        stop = self._unconfirmed.get(room_id)
-        if stop is None:
-            stop = self._unconfirmed[room_id] = UnconfirmedStop(
-                handle, asyncio.get_running_loop().create_future()
-            )
+        stop = self._unconfirmed_stop(room_id, handle)
         stop.recovery = retained, generation
         retained.recover(generation=generation, reason="Backend turn interrupted")
 
@@ -456,11 +455,10 @@ class BackendTurns(Generic[H]):
                 retained.require_admission()
             try:
                 await retained.wait_released(generation=generation)
-            except Exception:
+            except Exception as error:  # noqa: BLE001 -- failed release keeps admission blocked
                 logger.warning(
-                    "Backend recovery remains blocked in room %s",
-                    room_id,
-                    exc_info=True,
+                    "Backend recovery remains blocked (%s)",
+                    type(error).__name__,
                 )
             else:
                 self.confirm_stopped(room_id, stop.handle)
@@ -473,11 +471,10 @@ class BackendTurns(Generic[H]):
                 result = await tools.send_failure(
                     AgentFailure(self._provider, backend_stop_unconfirmed_message())
                 )
-            except Exception:
+            except Exception as error:  # noqa: BLE001 -- reporting cannot release blocked work
                 logger.warning(
-                    "Could not report blocked backend in room %s",
-                    room_id,
-                    exc_info=True,
+                    "Could not report blocked backend (%s)",
+                    type(error).__name__,
                 )
             else:
                 stop.reported = not is_failed_tool_output(result)
@@ -500,11 +497,17 @@ class BackendTurns(Generic[H]):
             await asyncio.wait(set(self._stopping.values()))
 
     def _stop(self, room_id: str, handle: H) -> None:
-        if self._requires_confirmation and room_id not in self._unconfirmed:
-            self._unconfirmed[room_id] = UnconfirmedStop(
+        if self._requires_confirmation:
+            self._unconfirmed_stop(room_id, handle)
+        self._spawn_stop(room_id, self._cancel(handle))
+
+    def _unconfirmed_stop(self, room_id: str, handle: H) -> UnconfirmedStop[H]:
+        stop = self._unconfirmed.get(room_id)
+        if stop is None:
+            stop = self._unconfirmed[room_id] = UnconfirmedStop(
                 handle, asyncio.get_running_loop().create_future()
             )
-        self._spawn_stop(room_id, self._cancel(handle))
+        return stop
 
     async def _stop_when_started(
         self, room_id: str, call: asyncio.Future[H | None]
