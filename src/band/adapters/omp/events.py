@@ -13,6 +13,7 @@ from band.integrations.ompwire import (
     OmpEvent,
     OmpEventType,
     OmpMessage,
+    OmpToolResult,
 )
 from band.runtime.toolactivity import (
     end_activity,
@@ -96,7 +97,7 @@ class OmpEventMixin(OmpAdapterContract):
                     or ("[image]" if block.type == OmpContentKind.IMAGE else "")
                     for block in event.result.content
                 )
-                if event.result
+                if isinstance(event.result, OmpToolResult)
                 else ""
             )
             await send_event_safe(

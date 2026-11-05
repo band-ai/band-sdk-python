@@ -20,6 +20,7 @@ class PeerScenario(StrEnum):
     BAD_JSON = "bad-json"
     BAD_NEGOTIATION = "bad-negotiation"
     STANDARD_TURN = "basic"
+    COMPACTION_RESULT = "compaction-result"
     PARALLEL_CALLBACKS = "callbacks"
     CHUNK_EOF = "chunk-eof"
     CHUNK_INTERRUPTED = "chunk-interrupted"
