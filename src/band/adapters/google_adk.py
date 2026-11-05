@@ -15,6 +15,7 @@ import re
 import sys
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
 import httpx
@@ -79,6 +80,9 @@ logger = logging.getLogger(__name__)
 _APP_NAME = "band"
 _PROVIDER = "google_adk"
 
+HISTORY_CONTEXT_START: Final[str] = "[Previous conversation context]"
+HISTORY_CONTEXT_END: Final[str] = "[End of previous context]"
+
 # Extra HTTP attempts per generation request (total attempts = max_retries + 1).
 GOOGLE_ADK_MAX_GENERATION_RETRIES: Final[int] = 10
 
@@ -89,6 +93,15 @@ _DECLARATION_CANDIDATES: tuple[str, ...] = (
     "_get_declaration",  # google-adk 1.x (current internal API)
     "get_declaration",  # likely public rename candidate
 )
+
+
+@dataclass(frozen=True)
+class TurnPrompt:
+    """Carry rendered input and transcript sizes for orchestration diagnostics."""
+
+    text: str
+    original_transcript_chars: int
+    retained_transcript_chars: int
 
 
 def _redacted_function_response_output(tool_name: str, response: Any) -> str:
@@ -626,6 +639,23 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
             # Safety: ensure history exists even if not first message
             self._room_history[room_id] = []
 
+        prompt = self._build_turn_prompt(
+            self._room_history[room_id], messages, participants_msg, contacts_msg
+        )
+        self._remember_inputs(room_id, messages)
+        if prompt.retained_transcript_chars < prompt.original_transcript_chars:
+            logger.warning(
+                "Room %s: Transcript truncated from %d to %d chars "
+                "to stay within token budget",
+                room_id,
+                prompt.original_transcript_chars,
+                prompt.retained_transcript_chars,
+            )
+        if participants_msg:
+            logger.info("Room %s: Participants updated", room_id)
+        if contacts_msg:
+            logger.info("Room %s: Contacts broadcast received", room_id)
+
         # Per-turn usage, summed across the event stream below. Initialized
         # outside the try so the finally can emit whatever accumulated.
         turn_usage = TurnUsage()
@@ -653,58 +683,9 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
             )
             logger.debug("Room %s: Created new ADK session %s", room_id, session_id)
 
-            # Build the user message content
-            parts: list[str] = []
-
-            # Inject recent accumulated history as transcript for context.
-            # Apply sliding window to avoid unbounded transcript growth.
-            room_history = self._room_history[room_id]
-            if room_history:
-                windowed = room_history[-self.config.max_history_messages :]
-                transcript = self._format_history_transcript(windowed)
-                if transcript:
-                    if len(transcript) > self.config.max_transcript_chars:
-                        original_len = len(transcript)
-                        transcript = transcript[-self.config.max_transcript_chars :]
-                        # Cut to the next newline to avoid a partial first line
-                        nl = transcript.find("\n")
-                        if nl != -1:
-                            transcript = transcript[nl + 1 :]
-                        logger.warning(
-                            "Room %s: Transcript truncated from %d to %d chars "
-                            "to stay within token budget",
-                            room_id,
-                            original_len,
-                            len(transcript),
-                        )
-                    parts.append(
-                        f"[Previous conversation context]\n{transcript}\n"
-                        f"[End of previous context]\n\n"
-                    )
-
-            # Inject participants update
-            if participants_msg:
-                parts.append(f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
-                logger.info("Room %s: Participants updated", room_id)
-
-            # Inject contacts update
-            if contacts_msg:
-                parts.append(f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
-                logger.info("Room %s: Contacts broadcast received", room_id)
-
-            # Add the turn's current inputs
-            parts.append(format_current_inputs(messages))
-
             user_content = types.Content(
                 role="user",
-                parts=[types.Part.from_text(text="\n".join(parts))],
-            )
-
-            logger.info(
-                "Room %s: Running ADK agent (bootstrap=%s, history_size=%s)",
-                room_id,
-                is_session_bootstrap,
-                len(room_history),
+                parts=[types.Part.from_text(text=prompt.text)],
             )
 
             # Run the ADK agent - it handles the full tool loop. Usage is
@@ -774,27 +755,77 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
                     finally:
                         await cast(Any, runner.agent).model.aclose()
 
-        # Accumulate message history for future transcript injection, one
-        # entry per original in the converter's own ``[name]: content`` shape.
-        self._room_history[room_id].extend(
-            {"role": "user", "content": message.format_for_llm()}
-            for message in messages
-        )
+        # Failed runs keep their inputs, but not unfinished model output.
         if final_response_text:
             self._room_history[room_id].append(
                 {"role": "model", "content": final_response_text}
             )
 
-        # Trim accumulated history to prevent unbounded memory growth.
-        # Keep twice the window so the sliding window in the next call
-        # still has a full page of messages to work with.
-        trim_threshold = self.config.max_history_messages * 2
-        if len(self._room_history[room_id]) > trim_threshold:
+        self._trim_history(room_id)
+
+        logger.debug("Messages %s processed successfully", message_ids)
+
+    def _build_turn_prompt(
+        self,
+        history: GoogleADKMessages,
+        messages: Sequence[PlatformMessage],
+        participants_msg: str | None,
+        contacts_msg: str | None,
+    ) -> TurnPrompt:
+        """Render bounded context and current inputs without changing history."""
+        current_ids = set(ids_of(messages))
+        context = [entry for entry in history if entry.get("id") not in current_ids]
+        transcript = self._format_history_transcript(
+            context[-self.config.max_history_messages :]
+        )
+        original_transcript_chars = len(transcript)
+        parts: list[str] = []
+        if transcript:
+            if len(transcript) > self.config.max_transcript_chars:
+                transcript = transcript[-self.config.max_transcript_chars :]
+                # Drop the partial first line when the character limit cuts one.
+                newline = transcript.find("\n")
+                if newline != -1:
+                    transcript = transcript[newline + 1 :]
+            parts.append(
+                f"{HISTORY_CONTEXT_START}\n{transcript}\n{HISTORY_CONTEXT_END}\n\n"
+            )
+        if participants_msg:
+            parts.append(f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
+        if contacts_msg:
+            parts.append(f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
+        parts.append(format_current_inputs(messages))
+        return TurnPrompt(
+            text="\n".join(parts),
+            original_transcript_chars=original_transcript_chars,
+            retained_transcript_chars=len(transcript),
+        )
+
+    def _remember_inputs(
+        self, room_id: str, messages: Sequence[PlatformMessage]
+    ) -> None:
+        """Retain each inbound message once within the room's history window."""
+        room_history = self._room_history[room_id]
+        remembered_ids = {entry.get("id") for entry in room_history}
+        for message in messages:
+            if message.id not in remembered_ids:
+                room_history.append(
+                    {
+                        "id": message.id,
+                        "role": "user",
+                        "content": message.format_for_llm(),
+                    }
+                )
+                remembered_ids.add(message.id)
+        self._trim_history(room_id)
+
+    def _trim_history(self, room_id: str) -> None:
+        """Bound retained inputs even when provider execution fails."""
+        # Keep twice the window so the next turn still has a full page.
+        if len(self._room_history[room_id]) > self.config.max_history_messages * 2:
             self._room_history[room_id] = self._room_history[room_id][
                 -self.config.max_history_messages :
             ]
-
-        logger.debug("Messages %s processed successfully", message_ids)
 
     @staticmethod
     def _usage_from_event(event: Any) -> TurnUsage:

@@ -24,6 +24,7 @@ from tests.integrations.ompframes import (
 from tests.integrations.omppeers.base import (
     BACKGROUND_COMPLETE,
     COMPLETE,
+    ROLLOVER_SUMMARY,
     YIELDED,
     RpcPeer,
 )
@@ -42,6 +43,7 @@ class TransportPeer(RpcPeer):
             PeerScenario.BAD_JSON,
             PeerScenario.BAD_NEGOTIATION,
             PeerScenario.STANDARD_TURN,
+            PeerScenario.COMPACTION_RESULT,
             PeerScenario.CHUNK_EOF,
             PeerScenario.CHUNK_INTERRUPTED,
             PeerScenario.CHUNK_INVALID_DATA,
@@ -128,6 +130,8 @@ class TransportPeer(RpcPeer):
                 self.send_large_image_turn()
             case PeerScenario.STANDARD_TURN:
                 self.send_standard_turn()
+            case PeerScenario.COMPACTION_RESULT:
+                self.send_compaction_turn()
             case (
                 PeerScenario.STUBBORN
                 | PeerScenario.DESCENDANTS
@@ -268,6 +272,30 @@ class TransportPeer(RpcPeer):
         )
         self.send_prompt_result(settled=True)
         self.settle_session()
+
+    def send_compaction_turn(self) -> None:
+        send(
+            {
+                "type": OmpEventType.AUTO_COMPACTION_START,
+                "reason": "threshold",
+                "action": "context-full",
+            }
+        )
+        send(
+            {
+                "type": OmpEventType.AUTO_COMPACTION_END,
+                "action": "context-full",
+                "result": {
+                    "summary": ROLLOVER_SUMMARY,
+                    "firstKeptEntryId": "kept-entry",
+                    "tokensBefore": 120000,
+                    "details": {"kind": "experimental-context-rollover", "version": 1},
+                },
+                "aborted": False,
+                "willRetry": False,
+            }
+        )
+        self.send_standard_turn()
 
     def send_standard_turn(self) -> None:
         send({"type": "queue_update", "steering": [], "followUp": []})

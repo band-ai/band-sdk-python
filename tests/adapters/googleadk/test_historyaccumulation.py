@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -49,7 +50,7 @@ class TestHistoryAccumulation:
 
             # Second message (non-bootstrap) should still have history
             await adapter.on_message(
-                msg=sample_message,
+                msg=replace(sample_message, id="next-message"),
                 tools=mock_tools,
                 history=[],  # History param ignored on non-bootstrap
                 participants_msg=None,
@@ -99,7 +100,7 @@ class TestHistoryAccumulation:
 
             # Non-bootstrap - accumulated history only has the first msg
             await adapter.on_message(
-                msg=sample_message,
+                msg=replace(sample_message, id="next-message"),
                 tools=mock_tools,
                 history=[],
                 participants_msg=None,

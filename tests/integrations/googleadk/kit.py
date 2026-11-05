@@ -57,7 +57,7 @@ class GoogleModelPeer:
     """Return only explicitly queued responses and retain model requests."""
 
     def __init__(self) -> None:
-        self.responses: deque[types.GenerateContentResponse] = deque()
+        self.responses: deque[types.GenerateContentResponse | Exception] = deque()
         self.requests: list[Any] = []
 
     async def generate(
@@ -65,7 +65,10 @@ class GoogleModelPeer:
     ) -> types.GenerateContentResponse:
         self.requests.append(deepcopy(contents))
         assert self.responses, "Unexpected model request"
-        return self.responses.popleft()
+        response = self.responses.popleft()
+        if isinstance(response, Exception):
+            raise response
+        return response
 
     def decline_then_followup(self) -> None:
         self.responses.extend([batch(("decline", {})), text_reply(FOLLOWUP)])
@@ -115,6 +118,16 @@ def model_results(
         for part in content.parts or []
         if part.function_response
     ]
+
+
+def request_text(contents: list[types.Content]) -> str:
+    """Read all text presented in an actual model request."""
+    return "\n".join(
+        part.text
+        for content in contents
+        for part in content.parts or []
+        if part.text is not None
+    )
 
 
 class FailedPlatformTools(PlatformSchemaFakeTools):
