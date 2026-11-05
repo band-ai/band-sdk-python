@@ -58,6 +58,8 @@ async def stop_parked_on_decision() -> list[str]:
         await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
         await wait_until(lambda: bool(agent.permission_responses))
         await adapter.backend_turns.drain()
+        await adapter.on_cleanup(ROOM_ID)
+        assert adapter.backend_turns.blocker(ROOM_ID) is None
         decisions = [
             DECISION_CANCELLED
             for response in agent.permission_responses

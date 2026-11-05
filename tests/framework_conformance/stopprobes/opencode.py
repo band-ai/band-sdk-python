@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import looptime
+import pytest
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.client.streaming import ControlMode
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import BandTool
@@ -59,6 +63,7 @@ class JournalingOpencodeClient(FakeOpencodeClient):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.journal: list[str] = []
+        self.closed_event = asyncio.Event()
 
     async def prompt_async(self, session_id: str, **kwargs: Any) -> None:
         self.journal.append(f"prompt {session_id}")
@@ -71,6 +76,7 @@ class JournalingOpencodeClient(FakeOpencodeClient):
     async def close(self) -> None:
         self.journal.append(CLIENT_CLOSED)
         await super().close()
+        self.closed_event.set()
 
 
 class HoldingAbortClient(JournalingOpencodeClient):
@@ -89,14 +95,18 @@ class HoldingAbortClient(JournalingOpencodeClient):
         await super().abort_session(session_id)
 
 
+@asynccontextmanager
 async def started(
     client: JournalingOpencodeClient, config: OpencodeAdapterConfig | None = None
-) -> OpencodeAdapter:
+) -> AsyncIterator[OpencodeAdapter]:
     adapter = OpencodeAdapter(
         config=config or OpencodeAdapterConfig(), client_factory=lambda _: client
     )
-    await adapter.on_started("OpenCode Agent", "A coding agent")
-    return adapter
+    try:
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        yield adapter
+    finally:
+        await adapter.cleanup_all()
 
 
 def deliver(adapter: OpencodeAdapter, tools: FakeAgentTools) -> asyncio.Task[None]:
@@ -143,15 +153,13 @@ def posted(tools: FakeAgentTools, before: int) -> list[str]:
 
 async def end_running_turn(mode: ControlMode) -> list[str]:
     client = JournalingOpencodeClient(prompt_event_sequences=[[]])
-    adapter = await started(client)
-    tools = FakeAgentTools()
-    turn = deliver(adapter, tools)
-    await wait_until(lambda: bool(client.prompt_calls))
-    await end_turn(adapter, turn, ROOM_ID, mode)
-    await stopped_turn_winds_down(client)
-    recorded = client.journal + posted(tools, 0)
-    await adapter.on_cleanup(ROOM_ID)
-    return recorded
+    async with started(client) as adapter:
+        tools = FakeAgentTools()
+        turn = deliver(adapter, tools)
+        await wait_until(lambda: bool(client.prompt_calls))
+        await end_turn(adapter, turn, ROOM_ID, mode)
+        await stopped_turn_winds_down(client)
+        return client.journal + posted(tools, 0)
 
 
 async def stop_detached_after_approval() -> list[str]:
@@ -159,15 +167,15 @@ async def stop_detached_after_approval() -> list[str]:
     client = JournalingOpencodeClient(
         prompt_event_sequences=[[event_permission(SESSION_ID, "perm-1")]]
     )
-    adapter = await started(client, OpencodeAdapterConfig(approval_mode="manual"))
-    tools = FakeAgentTools()
-    await deliver(adapter, tools)
-    asked = len(tools.messages_sent)
-    await stop_room(adapter, ROOM_ID)
-    await stopped_turn_winds_down(client)
-    recorded = client.journal + posted(tools, asked)
-    await adapter.on_cleanup(ROOM_ID)
-    return recorded
+    async with started(
+        client, OpencodeAdapterConfig(approval_mode="manual")
+    ) as adapter:
+        tools = FakeAgentTools()
+        await deliver(adapter, tools)
+        asked = len(tools.messages_sent)
+        await stop_room(adapter, ROOM_ID)
+        await stopped_turn_winds_down(client)
+        return client.journal + posted(tools, asked)
 
 
 async def stop_holding_abort(
@@ -188,17 +196,25 @@ async def wind_down(adapter: OpencodeAdapter, turn: asyncio.Task[None]) -> None:
 
 
 async def next_message_waits_for_the_abort() -> list[str]:
-    """The next message prompts the session only after its abort has finished."""
+    """Input waits for independent terminal evidence after the abort request."""
     client = HoldingAbortClient(prompt_event_sequences=[[], []])
-    adapter = await started(client)
-    await stop_holding_abort(adapter, client, FakeAgentTools())
-    next_turn = deliver(adapter, FakeAgentTools())
-    await wait_until(lambda: waiting_on_stop(next_turn) or len(client.prompt_calls) > 1)
-    client.release.set()
-    await wait_until(lambda: len(client.prompt_calls) == 2)
-    recorded = list(client.journal)
-    await wind_down(adapter, next_turn)
-    return recorded
+    async with started(client) as adapter:
+        await stop_holding_abort(adapter, client, FakeAgentTools())
+        with pytest.raises(InputNotAccepted) as pending:
+            await deliver(adapter, FakeAgentTools())
+        client.release.set()
+        assert pending.value.ready is not None
+        await pending.value.ready
+        with pytest.raises(InputNotAccepted) as uncertain:
+            await deliver(adapter, FakeAgentTools())
+        await stopped_turn_winds_down(client)
+        assert uncertain.value.ready is not None
+        await uncertain.value.ready
+        next_turn = deliver(adapter, FakeAgentTools())
+        await wait_until(lambda: len(client.prompt_calls) == 2)
+        recorded = list(client.journal)
+        await wind_down(adapter, next_turn)
+        return recorded
 
 
 async def late_mcp_call_during_held_abort() -> list[str]:
@@ -206,45 +222,51 @@ async def late_mcp_call_during_held_abort() -> list[str]:
     posts on that turn's tools, not on the replacement turn's."""
     with backends_created_by() as starts:
         client = HoldingAbortClient(prompt_event_sequences=[[], []])
-        adapter = await started(client)
-        stopped, replacement = FakeAgentTools(), FakeAgentTools()
-        await stop_holding_abort(adapter, client, stopped)
-        next_turn = deliver(adapter, replacement)
-        await wait_until(
-            lambda: waiting_on_stop(next_turn) or len(client.prompt_calls) > 1
-        )
-        await BandMCPCalls(starts).band_tool_call(
-            BandTool.SEND_MESSAGE,
-            {"content": LATE_CALL, "mentions": ["@alice"]},
-            room_id=ROOM_ID,
-        )()
-        landed = [
-            *(
-                f"stopped turn's tools got {m['content']}"
-                for m in stopped.messages_sent
-            ),
-            *(
-                f"replacement turn's tools got {m['content']}"
-                for m in replacement.messages_sent
-            ),
-        ]
-        client.release.set()
-        await wait_until(lambda: len(client.prompt_calls) == 2)
-        await wind_down(adapter, next_turn)
-        return landed
+        async with started(client) as adapter:
+            stopped, replacement = FakeAgentTools(), FakeAgentTools()
+            await stop_holding_abort(adapter, client, stopped)
+            with pytest.raises(InputNotAccepted):
+                await deliver(adapter, replacement)
+            await BandMCPCalls(starts).band_tool_call(
+                BandTool.SEND_MESSAGE,
+                {"content": LATE_CALL, "mentions": ["@alice"]},
+                room_id=ROOM_ID,
+            )()
+            landed = [
+                *(
+                    f"stopped turn's tools got {m['content']}"
+                    for m in stopped.messages_sent
+                ),
+                *(
+                    f"replacement turn's tools got {m['content']}"
+                    for m in replacement.messages_sent
+                ),
+            ]
+            client.release.set()
+            await adapter.backend_turns.drain()
+            await stopped_turn_winds_down(client)
+            next_turn = deliver(adapter, replacement)
+            await wait_until(lambda: len(client.prompt_calls) == 2)
+            await wind_down(adapter, next_turn)
+            return landed
 
 
 async def cleanup_waits_for_the_abort() -> list[str]:
-    """Teardown right after STOP waits for the session abort before it closes
-    the client."""
+    """Room teardown waits for abort; its terminal observer closes only after idle."""
     client = HoldingAbortClient(prompt_event_sequences=[[]])
-    adapter = await started(client)
-    await stop_holding_abort(adapter, client, FakeAgentTools())
-    cleanup = asyncio.create_task(adapter.on_cleanup(ROOM_ID))
-    await wait_until(lambda: waiting_on_stop(cleanup) or cleanup.done())
-    client.release.set()
-    await cleanup
-    return client.journal
+    async with started(client) as adapter:
+        await stop_holding_abort(adapter, client, FakeAgentTools())
+        cleanup = asyncio.create_task(adapter.on_cleanup(ROOM_ID))
+        await wait_until(lambda: waiting_on_stop(cleanup) or cleanup.done())
+        client.release.set()
+        await cleanup
+        ready = adapter.backend_turns.blocker(ROOM_ID)
+        assert ready is not None and not ready.done()
+        assert not client.closed
+        await client.push_event(event_session_idle(SESSION_ID))
+        await client.closed_event.wait()
+        assert ready.done()
+        return list(client.journal)
 
 
 def reported_timeout(tools: FakeAgentTools) -> list[str]:
@@ -259,32 +281,28 @@ def reported_timeout(tools: FakeAgentTools) -> list[str]:
 async def timeout_reports() -> list[str]:
     """A timed-out turn aborts the session and still posts the timeout."""
     client = JournalingOpencodeClient(prompt_event_sequences=[[]])
-    adapter = await started(
+    async with started(
         client, OpencodeAdapterConfig(turn_timeout_s=TURN_TIMEOUT_SECONDS)
-    )
-    tools = FakeAgentTools()
-    await deliver(adapter, tools)
-    recorded = client.journal + reported_timeout(tools)
-    await adapter.on_cleanup(ROOM_ID)
-    return recorded
+    ) as adapter:
+        tools = FakeAgentTools()
+        await deliver(adapter, tools)
+        return client.journal + reported_timeout(tools)
 
 
 @looptime.enabled(strict=True)
 async def stop_during_timeout_abort(mode: ControlMode) -> list[str]:
     """A STOP while the timeout abort is in flight still finishes that abort."""
     client = HoldingAbortClient(prompt_event_sequences=[[]])
-    adapter = await started(
+    async with started(
         client, OpencodeAdapterConfig(turn_timeout_s=TURN_TIMEOUT_SECONDS)
-    )
-    turn = deliver(adapter, FakeAgentTools())
-    await client.entered.wait()
-    await cancel_turn(turn)
-    await adapter.on_interrupt(ROOM_ID, mode)
-    client.release.set()
-    await adapter.backend_turns.drain()
-    recorded = list(client.completed)
-    await adapter.on_cleanup(ROOM_ID)
-    return recorded
+    ) as adapter:
+        turn = deliver(adapter, FakeAgentTools())
+        await client.entered.wait()
+        await cancel_turn(turn)
+        await adapter.on_interrupt(ROOM_ID, mode)
+        client.release.set()
+        await adapter.backend_turns.drain()
+        return list(client.completed)
 
 
 async def approve(adapter: OpencodeAdapter) -> None:
@@ -300,32 +318,28 @@ async def stop_released_turn_during_timeout_abort(mode: ControlMode) -> list[str
     client = HoldingAbortClient(
         prompt_event_sequences=[[event_permission(SESSION_ID, "req-1")]]
     )
-    adapter = await started(
+    async with started(
         client,
         OpencodeAdapterConfig(
             approval_mode="manual", turn_timeout_s=TURN_TIMEOUT_SECONDS
         ),
-    )
-    tools = FakeAgentTools()
-    await deliver(adapter, tools)
-    await approve(adapter)
-    await client.entered.wait()
-    await adapter.on_interrupt(ROOM_ID, mode)
-    client.release.set()
-    await adapter.backend_turns.drain()
-    await wait_until(lambda: bool(reported_timeout(tools)))
-    recorded = reported_timeout(tools)
-    await adapter.on_cleanup(ROOM_ID)
-    return recorded
+    ) as adapter:
+        tools = FakeAgentTools()
+        await deliver(adapter, tools)
+        await approve(adapter)
+        await client.entered.wait()
+        await adapter.on_interrupt(ROOM_ID, mode)
+        client.release.set()
+        await adapter.backend_turns.drain()
+        await wait_until(lambda: bool(reported_timeout(tools)))
+        return reported_timeout(tools)
 
 
 async def idle() -> list[str]:
     client = JournalingOpencodeClient()
-    adapter = await started(client)
-    await stop_room(adapter, ROOM_ID)
-    recorded = list(client.journal)
-    await adapter.on_cleanup(ROOM_ID)
-    return recorded
+    async with started(client) as adapter:
+        await stop_room(adapter, ROOM_ID)
+        return list(client.journal)
 
 
 CASES: dict[str, StopCase] = {

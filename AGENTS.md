@@ -42,6 +42,11 @@ Other developers and agents may be working concurrently. Preserve their
 changes, inspect current local and remote state before integrating or pushing,
 and avoid unrelated edits or destructive Git operations.
 
+Never create a `docs/` directory or files under a `docs/` directory at any depth
+in this repository. Keep necessary documentation in existing `README.md` or
+`AGENTS.md` files, or in code docstrings. Keep task plans in scratch files outside
+the repository, following the planning skill.
+
 ## Core Features
 
 1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno, Strands Agents, NOOA)

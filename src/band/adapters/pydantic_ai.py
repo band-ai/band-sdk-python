@@ -70,6 +70,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
 )
 from band.core.simple_adapter import BatchInputAdapter
+from band.core.turn import RoundOutcome
 from band.core.types import (
     Capability,
     Emit,
@@ -174,17 +175,17 @@ def _explicit_decline_is_terminal(
     request: ModelRequest, effects: Mapping[str, TurnEffect]
 ) -> bool:
     """A current-run decline ends the loop when every tool result in its batch succeeded."""
-    declined = False
+    outcome = RoundOutcome()
     for part in request.parts:
         if isinstance(part, RetryPromptPart):
             return False
         if not isinstance(part, ToolReturnPart):
             continue
-        if not _tool_return_succeeded(part):
-            return False
-        if effects.get(part.tool_name, turn_effect(part.tool_name)).ends_turn:
-            declined = True
-    return declined
+        outcome.record(
+            effects.get(part.tool_name, turn_effect(part.tool_name)),
+            _tool_return_succeeded(part),
+        )
+    return outcome.should_stop(complete=True)
 
 
 async def _finish_explicit_decline_after_tools(

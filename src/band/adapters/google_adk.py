@@ -324,6 +324,7 @@ def _get_tool_bridge_class() -> type:
         ) -> Any:
             """Execute the tool via Band's AgentToolsProtocol."""
             effect = TurnEffect.OBSERVE
+            round_outcome = self._batch.capture() if self._batch is not None else None
             try:
                 custom_tool = find_custom_tool(self._custom_tools, self.name)
                 if custom_tool:
@@ -362,7 +363,11 @@ def _get_tool_bridge_class() -> type:
 
             if self._batch is not None:
                 self._batch.completed(
-                    tool_context.invocation_id, self.name, succeeded, effect
+                    tool_context.invocation_id,
+                    self.name,
+                    succeeded,
+                    effect,
+                    round_outcome=round_outcome,
                 )
             if not succeeded:
                 return {"ok": False, "error": result}

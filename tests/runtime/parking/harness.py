@@ -287,6 +287,7 @@ class RoomPeer(SettlementPeer):
         self.posted = 0
         self.terminal_times: list[float] = []
         self.next_read_times: list[float] = []
+        self.message_read = asyncio.Event()
         self.terminal_replies: list[Reply | Hangup] = []
         self.admitted: list[str] = []
 
@@ -364,8 +365,10 @@ class RoomPeer(SettlementPeer):
             case "/messages", "POST", [message_id, action]:
                 return self.write(message_id, DeliveryStatus(action))
             case "/messages", "GET", [""]:
+                self.message_read.set()
                 return self.actionable()
             case "/messages", "GET", ["next"]:
+                self.message_read.set()
                 return self.next_message()
         return Reply.of_json(200, {"data": [], "metadata": {"has_more": False}})
 

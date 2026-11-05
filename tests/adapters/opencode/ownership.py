@@ -36,6 +36,7 @@ async def close_adapter(
             tasks.add(adapter._event_task)
         try:
             async with AsyncExitStack() as rooms:
+                rooms.push_async_callback(adapter.cleanup_all)
                 for room_id in list(adapter._rooms):
                     rooms.push_async_callback(adapter.on_cleanup, room_id)
         finally:

@@ -98,7 +98,11 @@ from band.core.delivery import (
     finish_automatic_reply,
     reraise_delivery_cause,
 )
-from band.core.exceptions import TerminalProviderFailure
+from band.core.exceptions import (
+    RECOVERY_HISTORY_UNAVAILABLE,
+    InputNotAccepted,
+    TerminalProviderFailure,
+)
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -110,7 +114,7 @@ from band.core.retention import (
     require_disabled_retention,
 )
 from band.core.simple_adapter import BatchInputAdapter
-from band.core.turn import judge_detached_turn
+from band.core.turn import detached_turn
 from band.core.turn_lifecycle import (
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
@@ -1120,7 +1124,7 @@ class ClaudeSDKAdapter(
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        await self._admit_turn(room_id, "Claude")
+        await self._admit_turn(room_id, "Claude", tools)
         session = self._session_manager.room(room_id)
 
         prompt = self._compose_prompt(
@@ -1242,9 +1246,8 @@ class ClaudeSDKAdapter(
         tools: AgentToolsProtocol,
         room_id: str,
         messages: Sequence[PlatformMessage],
-    ) -> str | None:
-        """The room's history before this turn, as the converter renders it;
-        None when it cannot be fetched."""
+    ) -> str:
+        """Require the room's history before admitting a replacement query."""
         try:
             raw = await fetch_transcript(tools, room_id=room_id, messages=messages)
         except Exception:
@@ -1253,7 +1256,7 @@ class ClaudeSDKAdapter(
                 room_id,
                 exc_info=True,
             )
-            return None
+            raise InputNotAccepted(RECOVERY_HISTORY_UNAVAILABLE) from None
         converter = cast(ClaudeSDKHistoryConverter, self.history_converter)
         return converter.convert(raw).text
 
@@ -1283,6 +1286,7 @@ class ClaudeSDKAdapter(
             async with (
                 self.backend_turns.running(session.room_id, session.room_id),
                 self._turn_lease(session, tools, resume_from) as client,
+                detached_turn(tools, room_id=session.room_id),
             ):
                 full_message = await self._seeded_prompt(
                     session, tools, prompt, messages, transcript
@@ -1312,6 +1316,9 @@ class ClaudeSDKAdapter(
             return
         generation = session.generation
         session.recover("Turn stopped before its result")
+        self.backend_turns.recovering(
+            room_id, room_id, session.retained, generation=generation
+        )
         await session.retained.wait_released(generation=generation)
 
     @asynccontextmanager
@@ -1780,7 +1787,6 @@ class ClaudeSDKAdapter(
             ):
                 return
             await finish_automatic_reply(tools, None, mentions)
-        await judge_detached_turn(tools, room_id=room_id)
 
     def _declined_the_reply(
         self, permission_denials: list[Any] | None, notified: set[str] | None
@@ -1955,6 +1961,7 @@ class ClaudeSDKAdapter(
         await manager.cleanup_session(room_id)
 
     def _forget_room(self, room_id: str) -> None:
+        self.backend_turns.confirm_disposed(room_id)
         self._room_tools.pop(room_id, None)
         self._mcp_room_tools.pop(room_id, None)
         self._recorded_session_ids.pop(room_id, None)

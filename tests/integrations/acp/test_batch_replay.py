@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import pytest
 
+from band.core.exceptions import InputNotAccepted
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.batchprobes import (
     ALICE_FIRST,
@@ -66,8 +67,8 @@ def times_shown(prompt: str, *texts: str) -> dict[str, int]:
     return {text: prompt.count(text) for text in texts}
 
 
-@pytest.mark.parametrize("framework_id", sorted(ADAPTERS))
 class TestACPBatchReplay:
+    @pytest.mark.parametrize("framework_id", sorted(ADAPTERS))
     async def test_history_stops_before_the_earliest_input_and_skips_what_follows_it(
         self, framework_id: str
     ) -> None:
@@ -90,6 +91,12 @@ class TestACPBatchReplay:
             LATER_PENDING: 0,
         }
 
+    async def test_cursor_retains_input_without_reconstructable_history(self) -> None:
+        room_without_earliest = [o for o in STORED_ROOM if o.id != ALICE_FIRST.id]
+        with pytest.raises(InputNotAccepted):
+            await replayed_prompt("cursor_acp", AROUND_HELPER, room_without_earliest)
+
+    @pytest.mark.parametrize("framework_id", sorted(set(ADAPTERS) - {"cursor_acp"}))
     async def test_no_input_slips_into_history_when_the_room_lacks_the_earliest(
         self, framework_id: str
     ) -> None:

@@ -1,3 +1,5 @@
+"""OpenCode terminal errors, abort failures and deadlines retain their cleanup owner."""
+
 from __future__ import annotations
 
 import asyncio
@@ -18,6 +20,7 @@ from tests.adapters.opencode.helpers import (
     run_single_turn,
     tools_protocol,
 )
+from tests.adapters.opencode.turns.kit import CancelOnAbortClient
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
@@ -50,12 +53,7 @@ class TestTermination:
     async def test_cleanup_cancel_during_abandon_still_tears_down(
         self, make_adapter, tools
     ) -> None:
-        """A CancelledError inside abandon() must still clear turn state and
-        shut down the shared client -- the last-room cleanup path."""
-
-        class CancelOnAbortClient(FakeOpencodeClient):
-            async def abort_session(self, session_id: str) -> None:
-                raise asyncio.CancelledError
+        """A failed abort releases room tools but needs independent stop evidence."""
 
         fake_client = CancelOnAbortClient(
             prompt_event_sequences=[[event_permission("sess-1", "perm-1")]]
@@ -79,8 +77,12 @@ class TestTermination:
         except asyncio.CancelledError:
             pass
 
-        assert fake_client.closed
         assert "room-1" not in adapter._rooms
+        ready = adapter.backend_turns.blocker("room-1")
+        assert ready is not None and not ready.done()
+        await adapter.cleanup_all()
+        assert fake_client.closed
+        assert not ready.done()
 
     @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_turn_timeout_aborts_session_and_emits_error(

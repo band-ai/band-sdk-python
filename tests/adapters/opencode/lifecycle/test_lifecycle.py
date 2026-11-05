@@ -530,7 +530,7 @@ class TestLifecycle:
         """
         fake_client = FakeOpencodeClient(
             prompt_event_sequences=[
-                [],  # interrupted: no terminal event ever arrives
+                [],  # interrupted: terminal evidence arrives after the abort
                 # The interrupted seed left sess-1 unseeded, so a new session runs.
                 [
                     event_message_updated("sess-2", "msg-2"),
@@ -570,7 +570,14 @@ class TestLifecycle:
         assert fake_client.aborted_sessions == ["sess-1"], "OpenCode kept working"
         assert tools.messages_sent == [], "posted the reply the user interrupted"
 
-        # The room takes the next message instead of answering "still processing".
+        with pytest.raises(InputNotAccepted) as refused:
+            await run_single_turn(adapter, tools)
+        assert len(fake_client.prompt_calls) == 1
+        await fake_client.push_event(event_session_idle("sess-1"))
+        assert refused.value.ready is not None
+        await refused.value.ready
+
+        # Independent terminal evidence permits a newly seeded session.
         await deliver_message(
             adapter,
             make_platform_message(content="next"),

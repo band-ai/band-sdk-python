@@ -7,8 +7,16 @@ from typing import Any
 
 from band.core.exceptions import InputNotAccepted
 from band.core.simple_adapter import SimpleAdapter
-from band.core.turn_lifecycle import bind_turn_task
+from band.core.turn_lifecycle import BackendTurns, bind_turn_task
 from tests.runtime.helpers import ROOM_ID
+
+
+def complete_blocker(blocker: asyncio.Future[None]) -> None:
+    blocker.set_result(None)
+
+
+def cancel_blocker(blocker: asyncio.Future[None]) -> None:
+    blocker.cancel()
 
 
 class ApprovalAdapter(SimpleAdapter[Any]):
@@ -108,3 +116,79 @@ def envelope(message_id: str) -> dict[str, Any]:
             "updated_at": "2026-01-01T00:00:00Z",
         },
     }
+
+
+class ReadinessAdapter(SimpleAdapter[Any]):
+    """Refuse input against externally controlled, successive backend blockers."""
+
+    def __init__(self, *blockers: asyncio.Future[None]) -> None:
+        super().__init__()
+        self.blockers = list(blockers)
+        self.attempts = 0
+        self.completed: list[str] = []
+        self.refused = asyncio.Event()
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        self.attempts += 1
+        blocker = next((item for item in self.blockers if not item.done()), None)
+        if blocker is not None:
+            self.refused.set()
+            raise InputNotAccepted(ready=blocker)
+        self.completed.append(msg.id)
+        tools.turn.settle()
+
+
+class SettledRefusalAdapter(SimpleAdapter[Any]):
+    """A custom adapter repeatedly returns the same already-complete blocker."""
+
+    def __init__(self, blocker: asyncio.Future[None]) -> None:
+        super().__init__()
+        self.blocker = blocker
+        self.attempts = 0
+        self.attempted: asyncio.Queue[None] = asyncio.Queue()
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        self.attempts += 1
+        self.attempted.put_nowait(None)
+        raise InputNotAccepted(ready=self.blocker)
+
+
+class GatedRefusalAdapter(SimpleAdapter[Any]):
+    """Hold admission until shutdown has begun, then refuse without executing."""
+
+    def __init__(self, blocker: asyncio.Future[None]) -> None:
+        super().__init__()
+        self.blocker = blocker
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        self.entered.set()
+        await self.release.wait()
+        raise InputNotAccepted(ready=self.blocker)
+
+
+class RecoveringAdapter(SimpleAdapter[Any]):
+    """Admit through the real backend owner before executing the input."""
+
+    def __init__(self, turns: BackendTurns[object]) -> None:
+        super().__init__()
+        self.turns = turns
+        self.refused = asyncio.Event()
+        self.completed: list[str] = []
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        try:
+            await self.turns.require_admission(ROOM_ID, tools)
+        except InputNotAccepted:
+            self.refused.set()
+            raise
+        self.completed.append(msg.id)
+        tools.turn.settle()
+
+
+async def callbacks_finished() -> None:
+    """Pass the callbacks already queued on the event loop."""
+    reached = asyncio.Event()
+    asyncio.get_running_loop().call_soon(reached.set)
+    await reached.wait()
