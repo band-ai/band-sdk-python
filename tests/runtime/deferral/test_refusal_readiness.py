@@ -21,6 +21,7 @@ from tests.runtime.helpers import (
     no_periodic_wake_config,
     rest_client_over,
     run_through,
+    running_execution,
 )
 from tests.toolkit.timecontrol import controlled_clock
 
@@ -36,16 +37,13 @@ class TestRefusalReadiness:
             link = BandLink(agent_id=AGENT_ID, api_key="test-key")
             link.rest = rest
             ctx = run_through(adapter, link, config=no_periodic_wake_config())
-            await ctx.start()
-            try:
+            async with running_execution(ctx):
                 peer.add_message("A")
                 await ctx.on_event(peer.event("A"))
                 await clock.elapse(1)
                 assert adapter.attempts == 2
                 assert peer.marked("processed") == []
                 assert peer.marked("failed") == []
-            finally:
-                await ctx.stop()
 
     @pytest.mark.parametrize("finish", [complete_blocker, cancel_blocker])
     async def test_a_settled_blocker_retries_the_unaccepted_input(
