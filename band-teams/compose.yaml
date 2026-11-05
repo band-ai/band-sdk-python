@@ -1,0 +1,28 @@
+services:
+  bridge:
+    build: .
+    image: band-teams:qualification
+    init: true
+    restart: "no"
+    ports:
+      - "127.0.0.1:3978:3978"
+    volumes:
+      - ./operator:/config:ro
+      - metadata:/state
+    secrets:
+      - source: teams
+        target: teams.env
+      - source: band
+        target: band.env
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+secrets:
+  teams:
+    file: ./operator/teams.env
+  band:
+    file: ../.env.test
+volumes:
+  metadata:

@@ -1,0 +1,141 @@
+{
+  "run_id": "RECORD-RUN-ID",
+  "code_revision": "RECORD-COMMIT",
+  "image_digest": "RECORD-SAME-IMAGE-DIGEST",
+  "cli_version": "3.0.4",
+  "client_version": "RECORD-TEAMS-DESKTOP-VERSION",
+  "timestamp": "RECORD-UTC-TIMESTAMP",
+  "aliases": [
+    "alice",
+    "bob"
+  ],
+  "independent_admission_artifacts": [],
+  "results": [
+    {
+      "environment": "local-tunnel",
+      "probe": "Q1",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "local-tunnel",
+      "probe": "Q2",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "local-tunnel",
+      "probe": "Q3",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "local-tunnel",
+      "probe": "Q4",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "local-tunnel",
+      "probe": "Q5",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "local-tunnel",
+      "probe": "Q6",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "local-tunnel",
+      "probe": "Q7",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "local-tunnel",
+      "probe": "Q8",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "local-tunnel",
+      "probe": "Q9",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "stable-server",
+      "probe": "Q1",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "stable-server",
+      "probe": "Q2",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "stable-server",
+      "probe": "Q3",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "stable-server",
+      "probe": "Q4",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "stable-server",
+      "probe": "Q5",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "stable-server",
+      "probe": "Q6",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "stable-server",
+      "probe": "Q7",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "stable-server",
+      "probe": "Q8",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    },
+    {
+      "environment": "stable-server",
+      "probe": "Q9",
+      "verdict": "NOT RUN",
+      "artifacts": [],
+      "external_incompatibility": false
+    }
+  ]
+}

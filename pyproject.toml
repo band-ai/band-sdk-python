@@ -449,6 +449,7 @@ markers = [
 # workspace members that aren't root dependencies — every dev-loop command
 # here and in CLAUDE.md uses `--all-packages`.
 members = ["packages/*"]
+exclude = ["band-teams"]
 
 [tool.uv]
 # google-adk pulls opentelemetry-resourcedetector-gcp transitively, whose 1.13.0 is
@@ -586,6 +587,7 @@ project_includes = [
 project_excludes = [
     "tests/**",                 # Tests use mocks with duck typing
     "examples/**",              # Examples use local imports
+    "band-teams/**",         # Independent Teams environment; checked in its CI step
     "band-bridge/**",        # Standalone bridge app, not in src/ import root
 ]
 # CrewAI and Parlant are each in a conflict group and not installed in the

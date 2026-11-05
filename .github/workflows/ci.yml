@@ -69,6 +69,16 @@ jobs:
       # import band_mcp) fail to collect and pyrefly misses packages/band-mcp/src.
       run: uv sync --all-packages --locked --extra dev
 
+    - name: Validate enterprise Teams qualification harness
+      run: |
+        uv sync --project band-teams --locked --group dev
+        uv run --project band-teams --locked python -m bandteams check-dependencies
+        uv run --project band-teams --locked pytest -c band-teams/pyproject.toml --confcutdir=tests/teams tests/teams -q
+        uv run --project band-teams --locked pytest -c band-teams/pyproject.toml --confcutdir=tests/teams/contracts tests/teams/contracts -q
+        uv run --project band-teams --locked pyrefly check --config band-teams/pyproject.toml
+        uv run --project band-teams --locked ruff check band-teams/src tests/teams
+        uv run --project band-teams --locked ruff format --check band-teams/src tests/teams
+
     - name: Run pre-commit hooks
       run: uv run --all-packages pre-commit run --all-files
 

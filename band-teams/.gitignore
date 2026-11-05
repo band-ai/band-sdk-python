@@ -1,0 +1,5 @@
+.venv/
+operator/
+state/
+*.env
+!*.example
