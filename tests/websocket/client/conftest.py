@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -12,6 +13,15 @@ from band.testing import FakePhoenixServer, fake_phoenix_server
 from tests.identifiers import AGENT_ID
 from tests.sessionpolicies import session_policy
 from tests.websocket.client.disconnect import DisconnectGate
+
+
+@pytest.fixture
+def fixed_retry_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep halfway retry assertions outside the host's timer tolerance."""
+    monkeypatch.setattr(
+        "band.client.streaming.session_decider.random",
+        SimpleNamespace(random=lambda: 0.5),
+    )
 
 
 @pytest.fixture
