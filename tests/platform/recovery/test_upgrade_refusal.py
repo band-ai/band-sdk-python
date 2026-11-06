@@ -7,7 +7,7 @@ from http import HTTPStatus
 
 import pytest
 from band_sdk_core import DeadReason
-from phoenix_channels_python_client.exceptions import PHXConnectionError
+from phoenix_channels_python_client import SocketError
 
 from band.client.streaming import WebSocketUpgradeError
 from band.client.streaming.disconnect import (
@@ -65,11 +65,11 @@ class TestUpgradeRefusal:
                 ):
                     await server.abort_connection()
                     await clock.elapse(await retries.get())
-                    with pytest.raises(PHXConnectionError, match="403") as failure:
+                    with pytest.raises(SocketError, match="403") as failure:
                         await run
                 assert "test-key" not in str(failure.value)
                 # Terminal completion remains observable to a later host waiter.
-                with pytest.raises(PHXConnectionError, match="403"):
+                with pytest.raises(SocketError, match="403"):
                     await link.run_forever(install_signal_handlers=False)
                 await clock.elapse(BEYOND_ANY_RETRY_S)
 

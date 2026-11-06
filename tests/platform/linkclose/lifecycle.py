@@ -12,19 +12,22 @@ from enum import StrEnum
 from http import HTTPStatus
 
 from hypothesis import strategies as st
-from phoenix_channels_python_client.exceptions import PHXConnectionError
+from phoenix_channels_python_client import SocketError
 from websockets.frames import CloseCode
 
 from band.client.streaming.client import AgentControlPayload, WireEvent
+from band.platform.event import PlatformEvent, WebSocketDisconnectedEvent
 from band.platform.link import BandLink
 from band.testing import FakePhoenixServer, close_transport, fake_phoenix_server
 from tests.conftest import TERMINAL_SUPERSEDE, spy_on_reconciliation_drain
 from tests.platform.linkclose.kit import (
     CONTROL_TOPIC,
     control_wire_payload,
+    drain_events,
     handle_supersede,
     make_link,
 )
+from tests.platform.recovery.kit import ROOM_ID, ROOM_TOPICS
 from tests.websocket.client.kit import observe_retries
 
 # A healthy step takes milliseconds; a hung one fails its example within this.
@@ -32,6 +35,8 @@ STEP_GUARD_S = 2.0
 
 
 class Step(StrEnum):
+    ROOM_SUBSCRIBE = "host subscribes to the room"
+    ROOM_UNSUBSCRIBE = "host leaves the room"
     SERVER_NORMAL_CLOSE = "server closes 1000"
     SERVER_GOING_AWAY = "server closes 1001"
     SERVER_POLICY_VIOLATION = "server closes 1008"
@@ -99,6 +104,7 @@ class LinkSession:
     held_id: str | None = None
     release_held: asyncio.Event = field(default_factory=asyncio.Event)
     held_entered: asyncio.Event = field(default_factory=asyncio.Event)
+    room_joined: bool = False
 
     async def hook(self, payload: AgentControlPayload) -> None:
         self.hooks_running += 1
@@ -124,6 +130,12 @@ class LinkSession:
                     await handle_supersede(self.link)
             return
         match step:
+            case Step.ROOM_SUBSCRIBE:
+                await self.link.subscribe_room(ROOM_ID)
+                self.room_joined = True
+            case Step.ROOM_UNSUBSCRIBE:
+                await self.link.unsubscribe_room(ROOM_ID)
+                self.room_joined = False
             case Step.SERVER_NORMAL_CLOSE:
                 await self.reconnect_after(
                     self.server.close_connection(code=CloseCode.NORMAL_CLOSURE)
@@ -157,6 +169,9 @@ class LinkSession:
                 # A live session's run never returns, so the host can only
                 # give up on it.
                 await self.host_cancels_run()
+        if not self.ended:
+            assert self.link.is_room_subscribed(ROOM_ID) is self.room_joined
+            assert ROOM_TOPICS.issubset(self.server.joined_topics) is self.room_joined
 
     async def refused_then_accepted(self) -> None:
         """Drop the socket and refuse the reconnect with a 503 until the
@@ -210,7 +225,7 @@ class LinkSession:
         """Wait for the verdict to stop the transport, which ends the host's
         run: raising for a close or refusal verdict, returning for a supersede."""
         await asyncio.wait_for(asyncio.wait({self.run}), STEP_GUARD_S)
-        assert isinstance(self.run.exception(), PHXConnectionError) is raises
+        assert isinstance(self.run.exception(), SocketError) is raises
         self.ended = True
         self.connections_at_end = self.server.connection_count
         self.upgrades_at_end = len(self.server.upgrades)
@@ -249,3 +264,45 @@ async def link_session() -> AsyncIterator[LinkSession]:
             await asyncio.wait({run})
             with suppress(Exception):
                 await link.disconnect()
+
+
+async def play(steps: list[Step]) -> None:
+    async with link_session() as session:
+        for step in steps:
+            await session.take(step)
+        await assert_invariants(session)
+
+
+async def assert_invariants(session: LinkSession) -> None:
+    link, server = session.link, session.server
+    if session.ended:
+        # The run ended with the transport, so nothing reconnects after the
+        # verdict, and it was reported exactly once.
+        assert (server.connection_count, len(server.upgrades)) == (
+            session.connections_at_end,
+            session.upgrades_at_end,
+        )
+        assert terminal_events(link) == [
+            WebSocketDisconnectedEvent(payload=link.last_disconnect_reason)
+        ]
+    else:
+        assert not session.run.done()
+        assert terminal_events(link) == []
+
+    await asyncio.wait_for(link.disconnect(), STEP_GUARD_S)
+    await asyncio.wait_for(asyncio.wait({session.run}), STEP_GUARD_S)
+
+    assert session.hooks_running == 0
+    assert session.applied.ids == session.pushed[: len(session.applied.ids)]
+
+    connections = server.connection_count
+    await asyncio.wait_for(link.connect(), STEP_GUARD_S)
+    assert server.connection_count == connections + 1
+
+
+def terminal_events(link: BandLink) -> list[PlatformEvent]:
+    return [
+        event
+        for event in drain_events(link)
+        if isinstance(event, WebSocketDisconnectedEvent)
+    ]

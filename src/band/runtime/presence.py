@@ -308,7 +308,7 @@ class RoomPresence:
         """
         Reconcile tracked rooms with the server after WebSocket reconnection.
 
-        PHXChannelsClient already re-subscribes previously joined room topics.
+        The Phoenix client already re-subscribes previously joined room topics.
         This method therefore syncs local room state against the API instead of
         replaying room joins, unsubscribing rooms that disappeared while the
         socket was down and only subscribing rooms that are newly discovered.

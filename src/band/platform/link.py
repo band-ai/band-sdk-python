@@ -269,7 +269,7 @@ class BandLink:
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
         """Block until the connection ends.
 
-        ``install_signal_handlers`` goes to ``PHXChannelsClient.run_forever``;
+        ``install_signal_handlers`` goes to ``phoenix_channels_python_client.Client.run_forever``;
         see ``Agent.run_forever`` for when a host turns it off.
         """
         if not self._ws:
@@ -375,10 +375,10 @@ class BandLink:
     # --- Event handlers ---
 
     async def _on_reconnected(self) -> None:
-        """Handle PHX client reconnection: PHXChannelsClient has already
-        re-subscribed previously joined topics by the time this fires, so
-        tracked rooms/topics can be reconciled against real server state
-        here without replaying duplicate joins.
+        """Reconcile after Phoenix's initial required topic rejoin attempts.
+
+        Recovering topics stay retained; retired topics need tracker repair
+        without replaying duplicate joins.
 
         Runs rejoin-failure detection before draining so a rejoin failure
         gets the same best-effort clean leave as every other ambiguous

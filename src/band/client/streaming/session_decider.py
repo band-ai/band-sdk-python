@@ -22,9 +22,9 @@ from phoenix_channels_python_client import (
     Disconnected,
     ReconnectDecision,
     ReconnectEvent,
+    SocketError,
 )
 from phoenix_channels_python_client.client_types import PROCEED
-from phoenix_channels_python_client.exceptions import PHXConnectionError
 
 from band.client.streaming.disconnect import (
     TerminalReason,
@@ -202,7 +202,7 @@ class SessionDecider:
         self._report(reason)
         # No cause chained: a raw upgrade response can retain credentials.
         return ReconnectDecision(
-            should_reconnect=False, terminal_error=PHXConnectionError(reason.message)
+            should_reconnect=False, terminal_error=SocketError(reason.message)
         )
 
     def _report(self, reason: WebSocketDisconnectReason) -> None:

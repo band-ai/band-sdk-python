@@ -16,12 +16,14 @@ from band_sdk_core import (
     chat_room_topic,
     room_participants_topic,
 )
-from phoenix_channels_python_client.client import (
-    PhoenixChannelsProtocolVersion,
-    PHXChannelsClient,
+from phoenix_channels_python_client import (
+    Channel,
+    ChannelError,
+    Client,
+    Message,
+    ProtocolVersion,
+    SocketError,
 )
-from phoenix_channels_python_client.exceptions import PHXConnectionError
-from phoenix_channels_python_client.phx_messages import PHXMessage
 from pydantic import Field
 
 from band.client.streaming.disconnect import (
@@ -371,7 +373,8 @@ class WebSocketClient:
         self.api_key = api_key
         self.agent_id = agent_id
         self._conflict_policy = conflict_policy
-        self.client: PHXChannelsClient | None = None
+        self.client: Client | None = None
+        self._channels: dict[str, Channel] = {}
         self._on_reconnect = on_reconnect
         self._on_disconnect = on_disconnect
         self._on_terminal = on_terminal
@@ -402,22 +405,25 @@ class WebSocketClient:
         self._validation_error_count = 0
         return count
 
-    def _require_client(self) -> PHXChannelsClient:
+    def _require_client(self) -> Client:
         if self.client is None:
             raise RuntimeError(NOT_CONNECTED)
         return self.client
 
     def joined_topics(self) -> frozenset[str]:
-        """Live snapshot of the transport's subscription registry. Call
-        once per detection pass and check membership against it --
-        `get_current_subscriptions` copies its dict on every call."""
-        return frozenset(self._require_client().get_current_subscriptions())
+        """Snapshot retained topics, including recovery and cleanup reservations.
 
-    def _build_phx_client(self, decider: SessionDecider) -> PHXChannelsClient:
-        client = PHXChannelsClient(
+        The source-supported registry is required: ``Channel.joined`` would
+        misclassify transient recovery as permanent loss. Recheck this binding
+        when upgrading the client; there is no public collection getter.
+        """
+        return frozenset(self._require_client().topic_subscriptions)
+
+    def _build_phx_client(self, decider: SessionDecider) -> Client:
+        client = Client(
             self.ws_url,
-            self.api_key,
-            protocol_version=PhoenixChannelsProtocolVersion.V2,
+            api_key=self.api_key,
+            protocol_version=ProtocolVersion.V2,
             auto_reconnect=True,
             reconnect_decider=decider,
             heartbeat_interval_s=self._session_policy.heartbeat_interval_s,
@@ -468,6 +474,7 @@ class WebSocketClient:
     async def __aenter__(self):
         """Connect a fresh session; every entry starts a new lifecycle."""
         self._supersede_shutdown = None
+        self._channels.clear()
         decider = self._decider = SessionDecider(
             session=Session(self._session_policy),
             redact=self._redact,
@@ -484,7 +491,7 @@ class WebSocketClient:
             # A caller's cancel stays a cancel; the bound or a refused session
             # raises the session's refusal verdict when it has one.
             timed_out = isinstance(exc, TimeoutError) and deadline.expired()
-            if not (timed_out or isinstance(exc, PHXConnectionError)):
+            if not (timed_out or isinstance(exc, SocketError)):
                 raise
             if decider.terminal_refusal is not None:
                 raise decider.terminal_refusal from None
@@ -498,15 +505,18 @@ class WebSocketClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """End the session without a verdict, then close the transport."""
         self.end_session()
-        if self.client:
-            await self.client.__aexit__(exc_type, exc_val, exc_tb)
+        client = self.client
+        if client is not None:
+            await client.__aexit__(exc_type, exc_val, exc_tb)
+            if self.client is client:
+                self._channels.clear()
 
     def end_session(self) -> None:
         """End the session locally, so nothing after this reports a verdict."""
         if self._decider is not None:
             self._decider.end()
 
-    async def _handle_events(self, message: PHXMessage, event_handlers: dict):
+    async def _handle_events(self, message: Message, event_handlers: dict):
         """Generic async event handler that maps events to their corresponding async callbacks"""
         logger.debug("[WebSocket] Received event: %s", message.event)
 
@@ -524,6 +534,13 @@ class WebSocketClient:
                 message.event,
                 list(event_handlers.keys()),
             )
+            return
+
+        if isinstance(message.payload, bytes):
+            logger.warning(
+                "[WebSocket] Dropping binary payload for %s event", message.event
+            )
+            self._validation_error_count += 1
             return
 
         # Validate (band-sdk-core) and hydrate into typed payload models for
@@ -637,7 +654,7 @@ class WebSocketClient:
         async def message_handler(message):
             await self._handle_events(message, handlers)
 
-        result = await self._require_client().subscribe_to_topic(topic, message_handler)
+        result = await self._join_topic(topic, message_handler)
         logger.info("[WebSocket] Subscribed to topic: %s", topic)
         return result
 
@@ -660,7 +677,7 @@ class WebSocketClient:
                 },
             )
 
-        result = await self._require_client().subscribe_to_topic(topic, message_handler)
+        result = await self._join_topic(topic, message_handler)
         logger.info("[WebSocket] Subscribed to topic: %s", topic)
         return result
 
@@ -689,7 +706,7 @@ class WebSocketClient:
         async def message_handler(message):
             await self._handle_events(message, handlers)
 
-        return await self._require_client().subscribe_to_topic(topic, message_handler)
+        return await self._join_topic(topic, message_handler)
 
     async def join_user_rooms_channel(
         self,
@@ -709,7 +726,7 @@ class WebSocketClient:
                 },
             )
 
-        return await self._require_client().subscribe_to_topic(topic, message_handler)
+        return await self._join_topic(topic, message_handler)
 
     async def join_room_participants_channel(
         self,
@@ -734,7 +751,7 @@ class WebSocketClient:
                 },
             )
 
-        return await self._require_client().subscribe_to_topic(topic, message_handler)
+        return await self._join_topic(topic, message_handler)
 
     async def join_tasks_channel(
         self,
@@ -754,14 +771,46 @@ class WebSocketClient:
                 },
             )
 
-        return await self._require_client().subscribe_to_topic(topic, message_handler)
+        return await self._join_topic(topic, message_handler)
+
+    def _forget_released_channel(self, topic: str, channel: Channel) -> None:
+        if self._channels.get(topic) is channel and topic not in self.joined_topics():
+            del self._channels[topic]
+
+    async def _join_topic(
+        self, topic: str, handler: Callable[[Message], Awaitable[None]]
+    ) -> None:
+        client = self._require_client()
+        if topic in self.joined_topics():
+            raise ChannelError(f"Topic {topic} already has a live channel")
+        channel = client.channel(topic)
+        channel.on_any(handler)
+        self._channels[topic] = channel
+        try:
+            await channel.join()
+        finally:
+            self._forget_released_channel(topic, channel)
 
     async def _leave_topic(self, topic: str) -> None:
         client = self._require_client()
-        # Server-closed topics are already absent from the transport registry.
-        if topic not in client.get_current_subscriptions():
+        channel = self._channels.get(topic)
+        if topic not in self.joined_topics():
+            if channel is not None:
+                self._forget_released_channel(topic, channel)
             return
-        await client.unsubscribe_from_topic(topic)
+        if channel is None:
+            raise ChannelError(f"No owned channel for retained topic {topic}")
+        try:
+            async with asyncio.timeout(client.leave_timeout_s):
+                await channel.leave()
+                # The leave reply can precede phx_close. The released client's
+                # terminal signal, not a repeated leave return, proves reuse.
+                if self.client is client and topic in self.joined_topics():
+                    await channel.subscription.terminal_received.wait()
+            if self.client is client and topic in self.joined_topics():
+                raise ChannelError(f"Topic {topic} is still reserved after leaving")
+        finally:
+            self._forget_released_channel(topic, channel)
 
     async def leave_agent_control_channel(self, agent_id: str):
         """Unsubscribe from agent control topic"""
@@ -824,7 +873,7 @@ class WebSocketClient:
                 },
             )
 
-        result = await self._require_client().subscribe_to_topic(topic, message_handler)
+        result = await self._join_topic(topic, message_handler)
         logger.info("[WebSocket] Subscribed to topic: %s", topic)
         return result
 
