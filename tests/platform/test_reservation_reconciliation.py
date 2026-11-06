@@ -9,7 +9,7 @@ from typing import Any
 from unittest.mock import create_autospec
 
 import pytest
-from band_sdk_core import AgentTopicKind, chat_room_topic, room_participants_topic
+from band_sdk_core import chat_room_topic, room_participants_topic
 
 from band.client.streaming import WebSocketClient
 from band.platform.subscriptions import SubscriptionManager
@@ -47,36 +47,6 @@ class TestReservationReconciliation:
         await manager.drain_reconciliation(transport)
         await manager.subscribe_room(transport, "room", **handlers)
         assert manager.is_room_subscribed("room") is subscribed
-
-    @pytest.mark.parametrize(
-        ("retained", "leave_error", "joined"),
-        [
-            (frozenset(), RuntimeError("leave already ended"), True),
-            (frozenset(), None, True),
-            (frozenset({AgentTopicKind.Contacts.topic("agent")}), None, False),
-        ],
-    )
-    async def test_agent_topic_release_is_decided_by_membership_not_leave_return(
-        self,
-        retained: frozenset[str],
-        leave_error: Exception | None,
-        joined: bool,
-        contact_event_handlers: dict[str, Callable[[Any], Awaitable[None]]],
-    ) -> None:
-        transport = create_autospec(WebSocketClient, instance=True)
-        manager = SubscriptionManager(lambda: transport)
-        handlers = contact_event_handlers
-        async with cancelled_mid_await(
-            transport.join_agent_contacts_channel,
-            manager.subscribe_agent_contacts(transport, "agent", **handlers),
-        ):
-            pass
-        transport.joined_topics.return_value = retained
-        transport.leave_agent_contacts_channel.side_effect = leave_error
-        await manager.drain_reconciliation(transport)
-        transport.join_agent_contacts_channel.reset_mock()
-        await manager.subscribe_agent_contacts(transport, "agent", **handlers)
-        assert transport.join_agent_contacts_channel.await_count == int(joined)
 
     async def test_replaced_session_keeps_its_own_room_quarantine(
         self, room_event_handlers: dict[str, Callable[[Any], Awaitable[None]]]
@@ -137,51 +107,3 @@ class TestReservationReconciliation:
             manager.is_room_subscribed("retained"),
             manager.is_room_subscribed("released"),
         ) == (False, True)
-
-    async def test_replaced_session_keeps_its_own_agent_topic_quarantine(
-        self, contact_event_handlers: dict[str, Callable[[Any], Awaitable[None]]]
-    ) -> None:
-        original = create_autospec(WebSocketClient, instance=True)
-        replacement = create_autospec(WebSocketClient, instance=True)
-        current = SimpleNamespace(ws=original)
-        manager = SubscriptionManager(lambda: current.ws)
-        async with cancelled_mid_await(
-            original.join_agent_contacts_channel,
-            manager.subscribe_agent_contacts(
-                original, "agent", **contact_event_handlers
-            ),
-        ):
-            pass
-        entered = asyncio.Event()
-        release = asyncio.Event()
-
-        async def held_leave(agent_id: str) -> None:
-            entered.set()
-            await release.wait()
-
-        original.leave_agent_contacts_channel.side_effect = held_leave
-        original.joined_topics.return_value = frozenset()
-        async with background(manager.drain_reconciliation(original)) as draining:
-            await entered.wait()
-            manager.end_session()
-            current.ws = replacement
-            async with cancelled_mid_await(
-                replacement.join_agent_contacts_channel,
-                manager.subscribe_agent_contacts(
-                    replacement, "agent", **contact_event_handlers
-                ),
-            ):
-                pass
-            release.set()
-            await draining
-        replacement.join_agent_contacts_channel.reset_mock()
-        await manager.subscribe_agent_contacts(
-            replacement, "agent", **contact_event_handlers
-        )
-        assert replacement.join_agent_contacts_channel.await_count == 0
-        replacement.joined_topics.return_value = frozenset()
-        await manager.drain_reconciliation(replacement)
-        await manager.subscribe_agent_contacts(
-            replacement, "agent", **contact_event_handlers
-        )
-        assert replacement.join_agent_contacts_channel.await_count == 1

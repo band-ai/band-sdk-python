@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
 
+import pytest
 import pytest_asyncio
 from websockets.asyncio.server import serve
 
-from band.client.streaming import WebSocketClient
+from band.client.streaming import ContactAddedPayload, WebSocketClient
 from band.platform.link import BandLink
 from tests.websocket.client.leaving.kit import LeavePeer, make_link
 
@@ -46,3 +48,20 @@ async def ws(leave_peer: LeavePeer) -> AsyncIterator[WebSocketClient]:
         finally:
             leave_peer.released.set()
             leave_peer.close_released.set()
+
+
+@pytest.fixture
+def contact_events() -> asyncio.Queue[ContactAddedPayload]:
+    return asyncio.Queue()
+
+
+@pytest.fixture
+def contact_handlers(
+    contact_events: asyncio.Queue[ContactAddedPayload],
+) -> dict[str, Callable[..., Awaitable[None]]]:
+    return {
+        "on_contact_request_received": contact_events.put,
+        "on_contact_request_updated": contact_events.put,
+        "on_contact_added": contact_events.put,
+        "on_contact_removed": contact_events.put,
+    }

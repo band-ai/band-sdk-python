@@ -77,6 +77,22 @@ class TestTerminalVerdicts:
             async with connected(link):
                 assert link.is_connected
 
+    async def test_cancelling_the_control_join_closes_without_a_verdict(self) -> None:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url, session_policy=session_policy())
+            with server.defer_join(CONTROL_TOPIC) as deferred:
+                async with background(link.connect()) as connecting:
+                    await deferred.ready.wait()
+                    connecting.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await connecting
+
+            assert link.last_disconnect_reason is None
+            assert not link.is_connected
+            assert drain_events(link) == []
+            async with connected(link):
+                assert link.is_connected
+
     async def test_a_supersede_queued_behind_a_verdict_reports_nothing_more(
         self,
     ) -> None:

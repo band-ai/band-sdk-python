@@ -25,6 +25,7 @@ from phoenix_channels_python_client import (
     SocketError,
 )
 from pydantic import Field
+from websockets.protocol import State
 
 from band.client.streaming.disconnect import (
     WebSocketDisconnectReason,
@@ -516,6 +517,15 @@ class WebSocketClient:
         if self._decider is not None:
             self._decider.end()
 
+    async def wait_for_disconnect_decision(self) -> None:
+        """Settle an in-progress remote close before rolling back startup."""
+        client = self._require_client()
+        # Client.connection is the released client's current socket binding.
+        # Channel failures can precede its supervisor's close classification.
+        connection = client.connection
+        if connection is None or connection.state is not State.OPEN:
+            await self._require_decider().disconnect_decided.wait()
+
     async def _handle_events(self, message: Message, event_handlers: dict):
         """Generic async event handler that maps events to their corresponding async callbacks"""
         logger.debug("[WebSocket] Received event: %s", message.event)
@@ -791,6 +801,9 @@ class WebSocketClient:
         finally:
             self._forget_released_channel(topic, channel)
 
+    def _retains_topic(self, client: Client, topic: str) -> bool:
+        return self.client is client and topic in self.joined_topics()
+
     async def _leave_topic(self, topic: str) -> None:
         client = self._require_client()
         channel = self._channels.get(topic)
@@ -805,9 +818,9 @@ class WebSocketClient:
                 await channel.leave()
                 # The leave reply can precede phx_close. The released client's
                 # terminal signal, not a repeated leave return, proves reuse.
-                if self.client is client and topic in self.joined_topics():
+                if self._retains_topic(client, topic):
                     await channel.subscription.terminal_received.wait()
-            if self.client is client and topic in self.joined_topics():
+            if self._retains_topic(client, topic):
                 raise ChannelError(f"Topic {topic} is still reserved after leaving")
         finally:
             self._forget_released_channel(topic, channel)

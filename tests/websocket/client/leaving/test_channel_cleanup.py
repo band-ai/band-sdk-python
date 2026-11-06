@@ -25,10 +25,18 @@ class TestChannelCleanup:
         received = asyncio.Queue()
         await ws.join_chat_room_channel(ROOM_ID, received.put)
         leave_peer.close_released.clear()
+        assert ws.client is not None
+        subscription = ws.client.topic_subscriptions[ROOM_TOPIC]
         async with background(ws.leave_chat_room_channel(ROOM_ID)) as leaving:
             await leave_peer.requested.wait()
             leave_peer.released.set()
             await leave_peer.close_requested.wait()
+            assert subscription.leave_task is not None
+            await subscription.leave_task
+            # A completed dependency leave proves the reply was processed.
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(0):
+                    await ws.leave_chat_room_channel(ROOM_ID)
             assert not leaving.done()
             assert ROOM_TOPIC in ws.joined_topics()
             leave_peer.close_released.set()
