@@ -171,7 +171,10 @@ class LinkSession:
                 await self.host_cancels_run()
         if not self.ended:
             assert self.link.is_room_subscribed(ROOM_ID) is self.room_joined
-            assert ROOM_TOPICS.issubset(self.server.joined_topics) is self.room_joined
+            expected_topics = ROOM_TOPICS if self.room_joined else frozenset()
+            assert (
+                ROOM_TOPICS.intersection(self.server.joined_topics) == expected_topics
+            )
 
     async def refused_then_accepted(self) -> None:
         """Drop the socket and refuse the reconnect with a 503 until the
