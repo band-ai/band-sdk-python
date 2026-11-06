@@ -75,10 +75,6 @@ ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
         Counter(send_message=3),
         "exempt from the verdict: the flow posts its own outcomes",
     ),
-    "testing/phoenix_server.py": (
-        Counter(send_message=2),
-        "the Phoenix protocol's own method",
-    ),
 }
 
 

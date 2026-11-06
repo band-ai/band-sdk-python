@@ -22,9 +22,9 @@ from phoenix_channels_python_client import (
     Disconnected,
     ReconnectDecision,
     ReconnectEvent,
+    SocketError,
 )
 from phoenix_channels_python_client.client_types import PROCEED
-from phoenix_channels_python_client.exceptions import PHXConnectionError
 
 from band.client.streaming.disconnect import (
     TerminalReason,
@@ -92,6 +92,7 @@ class SessionDecider:
         self._superseded: SessionOutcome | None = None
         self._refusal: WebSocketUpgradeError | None = None
         self.terminal: WebSocketDisconnectReason | None = None
+        self.disconnect_decided = asyncio.Event()
 
     @property
     def terminal_refusal(self) -> WebSocketUpgradeError | None:
@@ -99,18 +100,22 @@ class SessionDecider:
         return self._refusal if self.terminal is not None else None
 
     def __call__(self, event: ReconnectEvent) -> ReconnectDecision:
-        match event:
-            case Connecting():
-                return self._begin_attempt()
-            case Connected():
-                return self._connected()
-            case Disconnected() | ConnectFailed() if self._superseded is not None:
-                # The supersede retired this attempt's epoch; its delay applies.
-                return self._retry(self._superseded, "WebSocket superseded")
-            case Disconnected(close_code=close_code):
-                return self._closed(close_code)
-            case ConnectFailed(error=error):
-                return self._failed(error)
+        try:
+            match event:
+                case Connecting():
+                    return self._begin_attempt()
+                case Connected():
+                    return self._connected()
+                case Disconnected() | ConnectFailed() if self._superseded is not None:
+                    # The supersede retired this attempt's epoch; its delay applies.
+                    return self._retry(self._superseded, "WebSocket superseded")
+                case Disconnected(close_code=close_code):
+                    return self._closed(close_code)
+                case ConnectFailed(error=error):
+                    return self._failed(error)
+        finally:
+            if isinstance(event, Disconnected):
+                self.disconnect_decided.set()
 
     def supersede(self, payload: SupersedePayload) -> SupersedeVerdict:
         """Record a supersede push; the next decision applies it."""
@@ -132,6 +137,7 @@ class SessionDecider:
         """End the session locally; later verdicts report nothing."""
         self._ended = True
         self._session.end()
+        self.disconnect_decided.set()
 
     def _begin_attempt(self) -> ReconnectDecision:
         self._superseded = None
@@ -143,6 +149,7 @@ class SessionDecider:
         return PROCEED
 
     def _connected(self) -> ReconnectDecision:
+        self.disconnect_decided = asyncio.Event()
         outcome = self._session.on_connected(self._live_epoch, _now())
         if outcome.stale_reason is not None or outcome.state is not SessionState.Up:
             return self._end(_stale_connection_reason(outcome))
@@ -202,7 +209,7 @@ class SessionDecider:
         self._report(reason)
         # No cause chained: a raw upgrade response can retain credentials.
         return ReconnectDecision(
-            should_reconnect=False, terminal_error=PHXConnectionError(reason.message)
+            should_reconnect=False, terminal_error=SocketError(reason.message)
         )
 
     def _report(self, reason: WebSocketDisconnectReason) -> None:

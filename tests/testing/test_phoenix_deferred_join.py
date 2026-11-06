@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from phoenix_channels_python_client.client import PHXChannelsClient
-from phoenix_channels_python_client.phx_messages import PHXMessage
+from phoenix_channels_python_client import Client, Message
 
 from band.testing import fake_phoenix_server
 from tests.toolkit.clock import binary_clock_resolution
@@ -20,13 +19,13 @@ class TestDeferredPhoenixJoin:
         self,
     ) -> None:
         acknowledged = asyncio.Event()
-        delivered: asyncio.Queue[PHXMessage] = asyncio.Queue()
+        delivered: asyncio.Queue[Message] = asyncio.Queue()
         async with (
             controlled_clock() as clock,
             fake_phoenix_server() as server,
-            PHXChannelsClient(
+            Client(
                 server.url,
-                "test-key",
+                api_key="test-key",
                 auto_reconnect=False,
                 heartbeat_interval_s=4,
                 heartbeat_dead_threshold_s=11,
@@ -34,9 +33,9 @@ class TestDeferredPhoenixJoin:
             ) as client,
         ):
             with server.defer_join("probe:room") as deferred:
-                async with background(
-                    client.subscribe_to_topic("probe:room", delivered.put)
-                ) as joining:
+                channel = client.channel("probe:room")
+                channel.on_any(delivered.put)
+                async with background(channel.join()) as joining:
                     await deferred.ready.wait()
                     observed = await server.wait_for_connection(1)
                     assert deferred.connection is observed

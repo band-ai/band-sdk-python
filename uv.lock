@@ -1102,7 +1102,7 @@ requires-dist = [
     { name = "packaging", marker = "extra == 'dev'", specifier = ">=23.0" },
     { name = "parlant", marker = "extra == 'dev-parlant'", specifier = ">=3.3.2,<4" },
     { name = "parlant", marker = "extra == 'parlant'", specifier = ">=3.3.2,<4" },
-    { name = "phoenix-channels-python-client", specifier = ">=0.4.4,<0.5" },
+    { name = "phoenix-channels-python-client", specifier = ">=0.5.2,<0.6" },
     { name = "pillow", marker = "extra == 'crewai'", specifier = ">=12.1.1" },
     { name = "pillow", marker = "extra == 'dev-crewai'", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -6482,15 +6482,15 @@ wheels = [
 
 [[package]]
 name = "phoenix-channels-python-client"
-version = "0.4.4"
+version = "0.5.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1d/29/b8eb8c99621ccdd09175153afa71ad3d577db1c9031ef9cced90fff8c78b/phoenix_channels_python_client-0.4.4.tar.gz", hash = "sha256:1fe1699586f72d3ceb3c47bea5ee082e4fdea1ad66a54b0c42b82d1b5611bd1a", size = 91089, upload-time = "2026-11-02T09:18:03.138Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/5a/f28710d252d5eb25831a32b656d04305f3e5b475f1fd863ded6f06f3dbf5/phoenix_channels_python_client-0.5.3.tar.gz", hash = "sha256:a14349b24f2709c27f4dcc60c2c81be96b034694ac189ca5522db70321415379", size = 134500, upload-time = "2026-11-06T04:38:47.264Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/fd/104949c26749dd6f5e11dba8bb866efa11709990851d365544f4cf9d7481/phoenix_channels_python_client-0.4.4-py3-none-any.whl", hash = "sha256:b735c0a5acf79e23b5e4068f48103a25b7ab898848717438cf7deb21428516c0", size = 44311, upload-time = "2026-11-02T09:18:01.834Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/fa/9f67cc77d038469f33ba30f75c9f08be17cb5f7f71e2c30ade0f42298095/phoenix_channels_python_client-0.5.3-py3-none-any.whl", hash = "sha256:9e3ea9391b5874d42d038631127c0ce34ea8673c6b37907cc019b4c4a4e08252", size = 55058, upload-time = "2026-11-06T04:38:46.054Z" },
 ]
 
 [[package]]

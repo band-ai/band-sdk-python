@@ -26,7 +26,7 @@ class TestActivityTopics:
         assert peer.left == ["room_activity:left"]
         assert list(peer.callbacks) == ["room_activity:right"]
         peer.leave_failure = None
-        await peer.unsubscribe_from_topic("room_activity:right")
+        await peer.leave_topic("room_activity:right")
 
     async def test_join_completes_before_any_trigger_is_admitted(
         self, raw_peer: tuple[TrackingWebSocketClient, TopicPeer]

@@ -9,11 +9,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from band_sdk_core import chat_room_topic, room_participants_topic
-from phoenix_channels_python_client.phx_messages import ChannelMessage, PHXEvent
-from phoenix_channels_python_client.protocol_handler import (
-    PhoenixChannelsProtocolVersion,
-    PHXProtocolHandler,
-)
+from phoenix_channels_python_client import Message, ProtocolVersion, SystemEvent
+from phoenix_channels_python_client.codec import decode_message, encode_message
+from phoenix_channels_python_client.messages import HEARTBEAT_EVENT, PHOENIX_TOPIC
 from phoenix_channels_python_client.utils import make_message
 from websockets.asyncio.server import ServerConnection
 
@@ -41,7 +39,7 @@ class TopicLoss(logging.Handler):
         self.completed = asyncio.Event()
 
     def emit(self, record: logging.LogRecord) -> None:
-        if record.msg == "Lost topic %s: %s":
+        if record.getMessage().startswith("Lost topic "):
             self.completed.set()
 
 
@@ -65,29 +63,48 @@ class LeavePeer:
     requested: asyncio.Event = field(default_factory=asyncio.Event)
     released: asyncio.Event = field(default_factory=asyncio.Event)
     accepted: bool = True
-    protocol: PHXProtocolHandler = field(
-        default_factory=lambda: PHXProtocolHandler(PhoenixChannelsProtocolVersion.V2)
+    close_requested: asyncio.Event = field(default_factory=asyncio.Event)
+    close_released: asyncio.Event = field(default_factory=asyncio.Event)
+    leaves: asyncio.Queue[tuple[ServerConnection, Message]] = field(
+        default_factory=asyncio.Queue
     )
 
+    async def end_channel(self, connection: ServerConnection, message: Message) -> None:
+        close = make_message(
+            topic=message.topic,
+            event=SystemEvent.close,
+            ref=message.join_ref,
+            join_ref=message.join_ref,
+        )
+        await connection.send(encode_message(close, ProtocolVersion.V2))
+
     async def reply(
-        self, connection: ServerConnection, message: ChannelMessage, accepted: bool
+        self, connection: ServerConnection, message: Message, accepted: bool
     ) -> None:
         reply = make_message(
             topic=message.topic,
-            event=PHXEvent.reply,
+            event=SystemEvent.reply,
             ref=message.ref,
             join_ref=message.join_ref,
             payload={"status": "ok" if accepted else "error", "response": {}},
         )
-        # The protocol helper only needs send(), shared by both socket sides.
-        await self.protocol.send_message(connection, reply)  # pyrefly: ignore[bad-argument-type]
+        await connection.send(encode_message(reply, ProtocolVersion.V2))
 
     async def handle(self, connection: ServerConnection) -> None:
         async for raw in connection:
-            message = self.protocol.parse_message(raw)
-            if message.event == PHXEvent.leave:
+            message = decode_message(raw, ProtocolVersion.V2).message
+            if message.event == SystemEvent.leave:
+                self.leaves.put_nowait((connection, message))
                 self.requested.set()
                 await self.released.wait()
                 await self.reply(connection, message, self.accepted)
-            else:
+                if self.accepted:
+                    self.close_requested.set()
+                    await self.close_released.wait()
+                    await self.end_channel(connection, message)
+            elif message.event == SystemEvent.join or (
+                message.topic == PHOENIX_TOPIC and message.event == HEARTBEAT_EVENT
+            ):
                 await self.reply(connection, message, True)
+            else:
+                raise ValueError(f"Unsupported peer event {message.event}")

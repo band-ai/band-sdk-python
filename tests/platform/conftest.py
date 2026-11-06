@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, create_autospec
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 
@@ -113,3 +113,30 @@ async def cancelled_mid_await(
         with pytest.raises(asyncio.CancelledError):
             await task
         gate.side_effect = None
+
+
+@pytest.fixture
+def accepted_lifecycle_response() -> MagicMock:
+    return MagicMock(status_code=200, data=MagicMock(data=object()))
+
+
+@pytest.fixture
+def room_event_handlers() -> dict[str, Callable[[Any], Awaitable[None]]]:
+    received: asyncio.Queue[Any] = asyncio.Queue()
+    return {
+        "on_message_created": received.put,
+        "on_participant_added": received.put,
+        "on_participant_removed": received.put,
+        "on_room_deleted": received.put,
+    }
+
+
+@pytest.fixture
+def contact_event_handlers() -> dict[str, Callable[[Any], Awaitable[None]]]:
+    received: asyncio.Queue[Any] = asyncio.Queue()
+    return {
+        "on_contact_request_received": received.put,
+        "on_contact_request_updated": received.put,
+        "on_contact_added": received.put,
+        "on_contact_removed": received.put,
+    }
