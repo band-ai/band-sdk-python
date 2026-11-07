@@ -10,6 +10,7 @@ from enum import StrEnum
 from band.integrations.omprpc.errors import BACKLOG_EXCEEDED, OmpProcessError
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
+    OmpContentKind,
     OmpEvent,
     OmpEventType,
     OmpHostToolCall,
@@ -157,6 +158,15 @@ class PromptRun:
 
     def boundary_reached(self) -> bool:
         return self.result.done() or self.terminal_seen or self.settled_proven()
+
+    def is_single_tool_call(self, tool_call_id: str) -> bool:
+        message = self.last_assistant
+        if message is None or isinstance(message.content, str):
+            return False
+        calls = [
+            block for block in message.content if block.type == OmpContentKind.TOOL_CALL
+        ]
+        return len(calls) == 1 and calls[0].id == tool_call_id
 
     def has_pending_native_work(self) -> bool:
         event_claims_pending_work = (

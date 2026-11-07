@@ -6,11 +6,17 @@ import argparse
 import sys
 from pathlib import Path
 
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
-from band.integrations.ompwire import OmpCommandName, OmpFrameType, OmpPromptStatus
+from band.integrations.ompwire import (
+    OmpCommandName,
+    OmpContentKind,
+    OmpEventType,
+    OmpFrameType,
+    OmpPromptStatus,
+)
 from tests.framework_conformance.turnprobes import TurnScript
-from tests.integrations.ompframes import Frame, send_host_tool_request
+from tests.integrations.ompframes import Frame, send, send_host_tool_request
 from tests.integrations.omppeer import announce_ready
 from tests.integrations.omppeers.startup import StartupPeer
 from tests.integrations.ompscenarios import PeerScenario
@@ -36,9 +42,30 @@ class TurnPeer(StartupPeer):
             return
         index, call = action
         self.pending_call = f"request-{index}"
-        send_host_tool_request(
-            self.pending_call, f"tool-{index}", call.name, call.arguments
+        call_id = f"tool-{index}"
+        send(
+            {
+                "type": OmpEventType.MESSAGE_END,
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": OmpContentKind.TOOL_CALL,
+                            "id": call_id,
+                            "name": call.name,
+                            "arguments": call.arguments,
+                        }
+                    ],
+                },
+            }
         )
+        send_host_tool_request(self.pending_call, call_id, call.name, call.arguments)
+
+    def state_snapshot(self) -> dict[str, JsonValue]:
+        state = super().state_snapshot()
+        state["isStreaming"] = not self.settled
+        state["hasPendingAsyncWork"] = False
+        return state
 
     def abort_prompt(self, frame: Frame) -> None:
         self.respond(frame)

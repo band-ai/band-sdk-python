@@ -277,6 +277,30 @@ class OmpRpcClient:
                 message, on_event, on_tool, on_ui, schedule_admission
             )
 
+    async def can_stop_after_tool(self, call: OmpHostToolCall) -> bool:
+        """Check that a host tool can end the prompt without stranding native work."""
+        turn = self._turn
+        callback = (
+            turn.callbacks.get((OmpCallbackKind.TOOL, call.id))
+            if turn is not None
+            else None
+        )
+        if turn is None or callback is None:
+            raise ValueError("OMP stop requires an active host tool callback")
+        await self._refresh_completion_snapshot(turn, "Invalid OMP stop protocol data")
+        if self._turn is not turn or not self._callback_still_active(
+            turn, OmpCallbackKind.TOOL, call.id, callback.identity
+        ):
+            raise asyncio.CancelledError
+        assert turn.snapshot is not None
+        _, state = turn.snapshot
+        # A sibling tool can register background work after an idle snapshot.
+        return (
+            not state.hasPendingAsyncWork
+            and state.queuedMessageCount == 0
+            and turn.is_single_tool_call(call.toolCallId)
+        )
+
     def stop_after_tool(self, call_id: str) -> None:
         """Stop this prompt after acknowledging the successful host tool call."""
         turn = self._turn

@@ -271,13 +271,20 @@ class OmpTurnMixin(OmpAdapterContract):
             async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
                 if turn.closed:
                     return _text_tool_result("OMP turn already closed", is_error=True)
+                builtin_decline = (
+                    call.toolName == BandTool.NO_REPLY
+                    and find_custom_tool(self._custom_tools, call.toolName) is None
+                )
+                if builtin_decline and not await room.client.can_stop_after_tool(call):
+                    return _text_tool_result(
+                        "This turn still has background work, queued results, or other "
+                        "tool calls to handle. Wait for and process their results, then "
+                        "call band_no_reply separately when no work remains.",
+                        is_error=True,
+                    )
                 with suppress_tool_activity():
                     result = await self._execute_tool(call, tools)
-                if (
-                    call.toolName == BandTool.NO_REPLY
-                    and not result.is_error
-                    and find_custom_tool(self._custom_tools, call.toolName) is None
-                ):
+                if builtin_decline and not result.is_error:
                     room.client.stop_after_tool(call.id)
                 return result
 
