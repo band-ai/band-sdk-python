@@ -37,6 +37,7 @@ from band.integrations.omprpc.frames import (
     ui_response_frame,
 )
 from band.integrations.omprpc.prompt import (
+    BUSY_DECLINE_REFUSAL,
     CompletionAction,
     OmpCallbackKind,
     PromptCallback,
@@ -73,7 +74,6 @@ from band.integrations.ompwire import (
     OmpUIResponse,
     OmpWireModel,
 )
-from band.runtime.tools import BandTool
 
 TModel = TypeVar("TModel", bound=OmpWireModel)
 CloseProcess = Callable[[], Coroutine[Any, Any, None]]
@@ -302,17 +302,24 @@ class OmpRpcClient:
             raise ValueError("OMP stop requires an active host tool callback")
         if turn.stop_after_tool_id is None:
             turn.stop_after_tool_id = call.id
-            turn.stop_tool_call_id = call.toolCallId
             turn.stop_commit = on_commit
 
-    def clear_stop_after_tool(self, call_id: str) -> None:
+    def clear_stop_after_tool(
+        self, call_id: str, *, cancel_task: bool = True
+    ) -> None:
         """Drop a previously armed stop that will not be committed."""
         turn = self._turn
         if turn is None or turn.stop_after_tool_id != call_id:
             return
         turn.stop_after_tool_id = None
-        turn.stop_tool_call_id = None
         turn.stop_commit = None
+        # When refuse runs inside stop_task, leave that task to finish cleanly.
+        if (
+            cancel_task
+            and turn.stop_task is not None
+            and not turn.stop_task.done()
+        ):
+            turn.stop_task.cancel()
 
     def stop_after_tool(self, call_id: str) -> None:
         """Stop this prompt after acknowledging the successful host tool call."""
@@ -884,8 +891,9 @@ class OmpRpcClient:
             callback.task.cancel()
         if kind is OmpCallbackKind.TOOL and turn.stop_after_tool_id == request_id:
             turn.stop_after_tool_id = None
-            turn.stop_tool_call_id = None
             turn.stop_commit = None
+            if turn.stop_task is not None and not turn.stop_task.done():
+                turn.stop_task.cancel()
 
     @staticmethod
     def _callback_finished(
@@ -940,38 +948,27 @@ class OmpRpcClient:
         # this armed stop still owns the prompt. The host-tool callback may
         # already be finished, so this refresh does not require its identity.
         call_id = turn.stop_after_tool_id
-        if call_id is not None:
-            await self._refresh_completion_snapshot(
-                turn, "Invalid OMP stop protocol data"
+        if call_id is None:
+            # Disarmed (cancel or refuse) — never fall through to ABORT.
+            return
+        await self._refresh_completion_snapshot(turn, "Invalid OMP stop protocol data")
+        if self._turn is not turn or turn.stop_after_tool_id != call_id:
+            self.clear_stop_after_tool(call_id, cancel_task=False)
+            return
+        assert turn.snapshot is not None
+        _, state = turn.snapshot
+        if state_has_async_backlog(state):
+            self.clear_stop_after_tool(call_id, cancel_task=False)
+            refusal = OmpToolResult(
+                content=[
+                    OmpContent(type=OmpContentKind.TEXT, text=BUSY_DECLINE_REFUSAL)
+                ],
+                is_error=True,
             )
-            if self._turn is not turn:
-                self.clear_stop_after_tool(call_id)
-                return
-            assert turn.snapshot is not None
-            _, state = turn.snapshot
-            if state_has_async_backlog(state):
-                self.clear_stop_after_tool(call_id)
-                refusal = OmpToolResult(
-                    content=[
-                        OmpContent(
-                            type=OmpContentKind.TEXT,
-                            text=(
-                                "This turn still has background work, queued "
-                                "results, or other tool calls to handle. Wait "
-                                "for and process their results, then call "
-                                f"{BandTool.NO_REPLY} separately when no work "
-                                "remains."
-                            ),
-                        )
-                    ],
-                    is_error=True,
-                )
-                await self._write_frame(
-                    OmpHostToolResult.from_tool(call_id, refusal).model_dump(
-                        mode="json"
-                    )
-                )
-                return
+            await self._write_frame(
+                OmpHostToolResult.from_tool(call_id, refusal).model_dump(mode="json")
+            )
+            return
         commit = turn.stop_commit
         turn.stop_commit = None
         if commit is not None:

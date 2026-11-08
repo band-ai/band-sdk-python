@@ -30,6 +30,7 @@ from band.core.protocols import (
 )
 from band.core.types import Emit, MessageType, PlatformMessage
 from band.integrations import omproomask, omprpc
+from band.integrations.omprpc.prompt import BUSY_DECLINE_REFUSAL
 from band.integrations.ompwire import (
     OmpEvent,
     OmpHostToolCall,
@@ -280,10 +281,7 @@ class OmpTurnMixin(OmpAdapterContract):
                     # then arm stop so _stop_after_result can recheck and commit.
                     if not await room.client.can_stop_after_tool(call):
                         return _text_tool_result(
-                            "This turn still has background work, queued results, or "
-                            "other tool calls to handle. Wait for and process their "
-                            "results, then call "
-                            f"{BandTool.NO_REPLY} separately when no work remains.",
+                            BUSY_DECLINE_REFUSAL,
                             is_error=True,
                         )
                     ledger_record = tools.turn.record

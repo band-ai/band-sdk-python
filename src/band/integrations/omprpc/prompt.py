@@ -21,8 +21,15 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
+from band.runtime.tools import BandTool
 
 EVENT_BACKLOG_LIMIT = 256
+
+BUSY_DECLINE_REFUSAL = (
+    "This turn still has background work, queued results, or other "
+    "tool calls to handle. Wait for and process their results, then call "
+    f"{BandTool.NO_REPLY} separately when no work remains."
+)
 
 
 class OmpCallbackKind(StrEnum):
@@ -73,7 +80,6 @@ class PromptRun:
         self.event_worker: asyncio.Task[None] | None = None
         self.stop_after_tool_id: str | None = None
         self.stop_commit: Callable[[], None] | None = None
-        self.stop_tool_call_id: str | None = None
         self.stop_task: asyncio.Task[None] | None = None
         self.stopped = False
         self.result_owed = True

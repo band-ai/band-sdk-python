@@ -9,7 +9,7 @@ import pytest
 
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.omprpc.errors import OmpPromptError
-from band.integrations.ompwire import OmpPromptStatus
+from band.integrations.ompwire import OmpFrameType, OmpPromptStatus
 from band.runtime.tools import BandTool
 from band.testing import failure_reports
 from tests.adapters.hold import Hold
@@ -135,15 +135,17 @@ class TestTerminalDecline:
             decline_at = next(
                 i
                 for i, frame in enumerate(frames)
-                if frame.get("type") == "host_tool_result"
+                if frame.get("type") == OmpFrameType.HOST_TOOL_RESULT
                 and frame.get("id") == DECLINE_CALL
             )
             assert not any(
                 frame.get("type") == "abort" for frame in frames[: decline_at + 1]
             )
+            assert stop_commands(tmp_path) == []
 
         assert tools.chat == [REPLY_TEXT]
         assert failure_reports(tools) == []
+        # Execute ran (deferred DECLINE) then refuse recovered with a reply.
         assert [call["tool_name"] for call in tools.tool_calls] == [
             BandTool.NO_REPLY,
             BandTool.SEND_MESSAGE,
@@ -153,6 +155,8 @@ class TestTerminalDecline:
             (DECLINE_CALL, True),
             (REPLY_CALL, False),
         ]
+        # Refuse path must not have committed DECLINE before the reply.
+        assert tools.turn.replied is True
 
     async def test_cancelled_snapshot_cannot_record_a_decline(
         self, tmp_path: Path
