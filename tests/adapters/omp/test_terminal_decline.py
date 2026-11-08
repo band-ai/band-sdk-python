@@ -21,6 +21,7 @@ from tests.adapters.omp.declinekit import (
     declining_adapter,
     stop_commands,
     tool_results,
+    wire_frames,
 )
 from tests.adapters.omp.declinepeer import (
     ADMIT_SECOND_DECLINE,
@@ -98,6 +99,8 @@ class TestTerminalDecline:
             DeclineScenario.BACKGROUND_COMPLETING,
             DeclineScenario.MIXED_BATCH,
             DeclineScenario.MISSING_BATCH,
+            DeclineScenario.STRING_CONTENT,
+            DeclineScenario.MISMATCHED_ID,
         ],
     )
     async def test_background_work_refuses_decline_and_keeps_reply_available(
@@ -112,6 +115,38 @@ class TestTerminalDecline:
         assert failure_reports(tools) == []
         assert [call["tool_name"] for call in tools.tool_calls] == [
             BandTool.SEND_MESSAGE
+        ]
+        results = tool_results(tmp_path)
+        assert [(result["id"], result["isError"]) for result in results] == [
+            (DECLINE_CALL, True),
+            (REPLY_CALL, False),
+        ]
+
+    async def test_post_check_pending_work_refuses_after_execute(
+        self, tmp_path: Path
+    ) -> None:
+        """Pending work that appears after can_stop must still block ABORT."""
+        tools = DeclineTools()
+        async with declining_adapter(
+            tmp_path, DeclineScenario.POST_CHECK_PENDING
+        ) as adapter:
+            await run_turn(adapter, tools)
+            frames = wire_frames(tmp_path)
+            decline_at = next(
+                i
+                for i, frame in enumerate(frames)
+                if frame.get("type") == "host_tool_result"
+                and frame.get("id") == DECLINE_CALL
+            )
+            assert not any(
+                frame.get("type") == "abort" for frame in frames[: decline_at + 1]
+            )
+
+        assert tools.chat == [REPLY_TEXT]
+        assert failure_reports(tools) == []
+        assert [call["tool_name"] for call in tools.tool_calls] == [
+            BandTool.NO_REPLY,
+            BandTool.SEND_MESSAGE,
         ]
         results = tool_results(tmp_path)
         assert [(result["id"], result["isError"]) for result in results] == [

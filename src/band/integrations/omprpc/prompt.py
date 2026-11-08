@@ -72,6 +72,8 @@ class PromptRun:
         self.callback_tasks: set[asyncio.Task[None]] = set()
         self.event_worker: asyncio.Task[None] | None = None
         self.stop_after_tool_id: str | None = None
+        self.stop_commit: Callable[[], None] | None = None
+        self.stop_tool_call_id: str | None = None
         self.stop_task: asyncio.Task[None] | None = None
         self.stopped = False
         self.result_owed = True
@@ -182,11 +184,15 @@ class PromptRun:
         return event_claims_pending_work and not state.isSettled
 
 
+def state_has_async_backlog(state: OmpState) -> bool:
+    """Native async work or queued messages still need a continuation."""
+    return bool(state.hasPendingAsyncWork or state.queuedMessageCount > 0)
+
+
 def state_is_idle(state: OmpState) -> bool:
     """Positive idle proof for a snapshot: no busy signal remains set."""
     return bool(
         not state.isStreaming
-        and not state.hasPendingAsyncWork
         and not state.isCompacting
-        and state.queuedMessageCount == 0
+        and not state_has_async_backlog(state)
     )

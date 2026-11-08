@@ -46,6 +46,9 @@ class DeclineScenario(StrEnum):
     BACKGROUND_COMPLETING = "background-completing"
     MIXED_BATCH = "mixed-batch"
     MISSING_BATCH = "missing-batch"
+    STRING_CONTENT = "string-content"
+    MISMATCHED_ID = "mismatched-id"
+    POST_CHECK_PENDING = "post-check-pending"
     CANCEL_SNAPSHOT = "cancel-snapshot"
 
 
@@ -65,6 +68,8 @@ class DeclinePeer(RpcPeer):
         self.background_pending = False
         self.background_queued = False
         self.cancel_snapshot_pending = False
+        self.post_check_pending = False
+        self.stop_check_seen = False
 
     def call(
         self, name: BandTool, arguments: dict[str, JsonValue], call_id: str
@@ -74,30 +79,45 @@ class DeclinePeer(RpcPeer):
             self.scenario_name == DeclineScenario.MISSING_BATCH
             and call_id == DECLINE_CALL
         ):
-            content: list[JsonValue] = [
-                {
-                    "type": OmpContentKind.TOOL_CALL,
-                    "id": call_id,
-                    "name": name,
-                    "arguments": arguments,
-                }
-            ]
             if (
-                self.scenario_name == DeclineScenario.MIXED_BATCH
+                self.scenario_name == DeclineScenario.STRING_CONTENT
                 and call_id == DECLINE_CALL
             ):
-                content.append(
+                message_content: JsonValue = f"{name}({arguments})"
+            else:
+                tool_call_id = (
+                    "other-id"
+                    if (
+                        self.scenario_name == DeclineScenario.MISMATCHED_ID
+                        and call_id == DECLINE_CALL
+                    )
+                    else call_id
+                )
+                content: list[JsonValue] = [
                     {
                         "type": OmpContentKind.TOOL_CALL,
-                        "id": "background",
-                        "name": "bash",
-                        "arguments": {},
+                        "id": tool_call_id,
+                        "name": name,
+                        "arguments": arguments,
                     }
-                )
+                ]
+                if (
+                    self.scenario_name == DeclineScenario.MIXED_BATCH
+                    and call_id == DECLINE_CALL
+                ):
+                    content.append(
+                        {
+                            "type": OmpContentKind.TOOL_CALL,
+                            "id": "background",
+                            "name": "bash",
+                            "arguments": {},
+                        }
+                    )
+                message_content = content
             send(
                 {
                     "type": OmpEventType.MESSAGE_END,
-                    "message": {"role": "assistant", "content": content},
+                    "message": {"role": "assistant", "content": message_content},
                 }
             )
         send(
@@ -158,6 +178,8 @@ class DeclinePeer(RpcPeer):
         self.cancel_snapshot_pending = (
             self.scenario_name == DeclineScenario.CANCEL_SNAPSHOT
         )
+        self.post_check_pending = False
+        self.stop_check_seen = False
         name = (
             BandTool.GET_PARTICIPANTS
             if self.scenario_name == DeclineScenario.ORDINARY
@@ -168,7 +190,9 @@ class DeclinePeer(RpcPeer):
     def state_snapshot(self) -> dict[str, JsonValue]:
         state = super().state_snapshot()
         state["isStreaming"] = not self.settled
-        state["hasPendingAsyncWork"] = self.background_pending
+        state["hasPendingAsyncWork"] = (
+            self.background_pending or self.post_check_pending
+        )
         state["queuedMessageCount"] = int(self.background_queued)
         return state
 
@@ -187,6 +211,12 @@ class DeclinePeer(RpcPeer):
                 self.call(BandTool.NO_REPLY, {}, SECOND_DECLINE_CALL)
                 self.respond(frame)
             case OmpCommandName.GET_STATE:
+                if self.scenario_name == DeclineScenario.POST_CHECK_PENDING:
+                    self.respond_with_state(frame)
+                    if not self.stop_check_seen:
+                        self.stop_check_seen = True
+                        self.post_check_pending = True
+                    return
                 if self.cancel_snapshot_pending:
                     self.cancel_snapshot_pending = False
                     frames = [
@@ -231,6 +261,7 @@ class DeclinePeer(RpcPeer):
                 if frame.id in {DECLINE_CALL, SECOND_DECLINE_CALL}:
                     self.background_pending = False
                     self.background_queued = False
+                    self.post_check_pending = False
                     self.reply()
                 else:
                     self.emit_assistant_turn("")

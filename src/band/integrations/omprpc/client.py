@@ -41,6 +41,7 @@ from band.integrations.omprpc.prompt import (
     OmpCallbackKind,
     PromptCallback,
     PromptRun,
+    state_has_async_backlog,
 )
 from band.integrations.omprpc.scope import OmpProcessScope
 from band.integrations.ompwire import (
@@ -49,6 +50,8 @@ from band.integrations.ompwire import (
     OMP_REASSEMBLED_BYTES,
     OmpCommand,
     OmpCommandName,
+    OmpContent,
+    OmpContentKind,
     OmpEvent,
     OmpEventType,
     OmpFrame,
@@ -70,6 +73,7 @@ from band.integrations.ompwire import (
     OmpUIResponse,
     OmpWireModel,
 )
+from band.runtime.tools import BandTool
 
 TModel = TypeVar("TModel", bound=OmpWireModel)
 CloseProcess = Callable[[], Coroutine[Any, Any, None]]
@@ -287,19 +291,28 @@ class OmpRpcClient:
         )
         if turn is None or callback is None:
             raise ValueError("OMP stop requires an active host tool callback")
-        await self._refresh_completion_snapshot(turn, "Invalid OMP stop protocol data")
-        if self._turn is not turn or not self._callback_still_active(
-            turn, OmpCallbackKind.TOOL, call.id, callback.identity
-        ):
-            raise asyncio.CancelledError
-        assert turn.snapshot is not None
-        _, state = turn.snapshot
-        # A sibling tool can register background work after an idle snapshot.
-        return (
-            not state.hasPendingAsyncWork
-            and state.queuedMessageCount == 0
-            and turn.is_single_tool_call(call.toolCallId)
-        )
+        return await self._stop_snapshot_is_safe(turn, call, callback.identity)
+
+    def arm_stop_after_tool(
+        self, call: OmpHostToolCall, *, on_commit: Callable[[], None]
+    ) -> None:
+        """Arm prompt stop after a successful host tool; commit DECLINE on ABORT."""
+        turn = self._turn
+        if turn is None or (OmpCallbackKind.TOOL, call.id) not in turn.callbacks:
+            raise ValueError("OMP stop requires an active host tool callback")
+        if turn.stop_after_tool_id is None:
+            turn.stop_after_tool_id = call.id
+            turn.stop_tool_call_id = call.toolCallId
+            turn.stop_commit = on_commit
+
+    def clear_stop_after_tool(self, call_id: str) -> None:
+        """Drop a previously armed stop that will not be committed."""
+        turn = self._turn
+        if turn is None or turn.stop_after_tool_id != call_id:
+            return
+        turn.stop_after_tool_id = None
+        turn.stop_tool_call_id = None
+        turn.stop_commit = None
 
     def stop_after_tool(self, call_id: str) -> None:
         """Stop this prompt after acknowledging the successful host tool call."""
@@ -869,6 +882,10 @@ class OmpRpcClient:
         callback = turn.callbacks.pop((kind, request_id), None)
         if callback is not None and callback.task is not None:
             callback.task.cancel()
+        if kind is OmpCallbackKind.TOOL and turn.stop_after_tool_id == request_id:
+            turn.stop_after_tool_id = None
+            turn.stop_tool_call_id = None
+            turn.stop_commit = None
 
     @staticmethod
     def _callback_finished(
@@ -899,9 +916,66 @@ class OmpRpcClient:
         else:
             await self._write_frame(frame)
 
+    async def _stop_snapshot_is_safe(
+        self, turn: PromptRun, call: OmpHostToolCall, identity: object
+    ) -> bool:
+        await self._refresh_completion_snapshot(turn, "Invalid OMP stop protocol data")
+        if self._turn is not turn or not self._callback_still_active(
+            turn, OmpCallbackKind.TOOL, call.id, identity
+        ):
+            raise asyncio.CancelledError
+        assert turn.snapshot is not None
+        _, state = turn.snapshot
+        # A sibling tool can register background work after an idle snapshot.
+        return not state_has_async_backlog(state) and turn.is_single_tool_call(
+            call.toolCallId
+        )
+
     async def _stop_after_result(
         self, turn: PromptRun, result: dict[str, JsonValue]
     ) -> None:
+        # Recheck backlog after the tool path: pending/queued work can arrive
+        # between the arming snapshot and ABORT. Do not re-require sole-tool
+        # correlation — a later MESSAGE_END can replace last_assistant while
+        # this armed stop still owns the prompt. The host-tool callback may
+        # already be finished, so this refresh does not require its identity.
+        call_id = turn.stop_after_tool_id
+        if call_id is not None:
+            await self._refresh_completion_snapshot(
+                turn, "Invalid OMP stop protocol data"
+            )
+            if self._turn is not turn:
+                self.clear_stop_after_tool(call_id)
+                return
+            assert turn.snapshot is not None
+            _, state = turn.snapshot
+            if state_has_async_backlog(state):
+                self.clear_stop_after_tool(call_id)
+                refusal = OmpToolResult(
+                    content=[
+                        OmpContent(
+                            type=OmpContentKind.TEXT,
+                            text=(
+                                "This turn still has background work, queued "
+                                "results, or other tool calls to handle. Wait "
+                                "for and process their results, then call "
+                                f"{BandTool.NO_REPLY} separately when no work "
+                                "remains."
+                            ),
+                        )
+                    ],
+                    is_error=True,
+                )
+                await self._write_frame(
+                    OmpHostToolResult.from_tool(call_id, refusal).model_dump(
+                        mode="json"
+                    )
+                )
+                return
+        commit = turn.stop_commit
+        turn.stop_commit = None
+        if commit is not None:
+            commit()
         # The bridge must consume the result before abort cancels pending tools.
         try:
             await self._request_frame(OmpCommandName.ABORT, {}, preceding_frame=result)
