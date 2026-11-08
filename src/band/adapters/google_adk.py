@@ -187,9 +187,8 @@ def _require_adk() -> tuple[type, type, type, type, Any]:
 
         @functools.cached_property
         def api_client(self) -> Client:
-            tracking_headers = self._tracking_headers
-            if callable(tracking_headers):
-                tracking_headers = tracking_headers()
+            tracking = self._tracking_headers
+            headers: dict[str, str] = tracking() if callable(tracking) else tracking
             client_options: dict[str, Any] = {}
             if self.model.startswith("projects/"):
                 client_options["vertexai"] = True
@@ -197,7 +196,7 @@ def _require_adk() -> tuple[type, type, type, type, Any]:
             return genai.Client(
                 **client_options,
                 http_options=genai.types.HttpOptions(
-                    headers=tracking_headers,
+                    headers=headers,
                     retry_options=self.retry_options,
                     httpx_async_client=self.httpx_client,
                 ),
@@ -251,7 +250,7 @@ def _get_tool_bridge_class() -> type:
             "google-adk BaseTool has no known declaration method "
             f"(tried: {', '.join(_DECLARATION_CANDIDATES)}). "
             "This adapter relies on overriding the declaration method "
-            "(pinned to google-adk >=1.10,<2). Your installed version "
+            "(pinned to google-adk >=1.10,<3). Your installed version "
             "may be incompatible."
         )
 
@@ -409,7 +408,7 @@ def _get_tool_bridge_class() -> type:
             "google-adk BaseTool declaration smoke-test failed. "
             f"Method '{active_methods[0]}' exists but did not return a valid "
             "FunctionDeclaration. The adapter is pinned to google-adk "
-            ">=1.10,<2 — your installed version may be incompatible."
+            ">=1.10,<3 — your installed version may be incompatible."
         ) from exc
 
     return _BandToolBridge
@@ -718,7 +717,14 @@ class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
                 # run after one, so drain rather than break: breaking leaves
                 # ADK's nested generators open inside their tracing spans.
                 # ADK <= 1.10 reports an empty normal finish as "STOP".
-                if event.error_code and event.error_code != types.FinishReason.STOP:
+                # ADK 2.x marks the same case MODEL_RETURNED_NO_CONTENT via
+                # apply_empty_response_policy; keep both as missing-reply, not
+                # a hard provider failure.
+                if event.error_code and event.error_code not in {
+                    types.FinishReason.STOP,
+                    "STOP",
+                    "MODEL_RETURNED_NO_CONTENT",
+                }:
                     model_failure = ProviderRunError(
                         event.error_code, event.error_message
                     )
