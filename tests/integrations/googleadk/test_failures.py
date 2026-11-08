@@ -14,6 +14,7 @@ from band.core.types import ToolEventKey
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools.types import BandTool, TurnEffect
 from band.testing import FakeAgentTools, failure_reports
+from tests.adapters.genaikit import text_reply
 from tests.framework_conformance.turnprobes import turn_input
 from tests.integrations.googleadk.kit import (
     DECLINE_REJECTED,
@@ -195,14 +196,27 @@ class TestFailures:
     async def test_unknown_native_sibling_is_not_hidden_by_decline(
         self, google_model: GoogleModelPeer
     ) -> None:
-        google_model.responses.append(batch(("decline", {}), ("unknown_native", {})))
+        # ADK 2.x answers unknown tool names with a function-response error
+        # instead of raising ValueError, so the run continues. A successful
+        # decline sibling must still not short-circuit that follow-up call.
+        google_model.responses.extend(
+            [
+                batch(("decline", {}), ("unknown_native", {})),
+                text_reply("continued after unknown tool"),
+            ]
+        )
         adapter = GoogleADKAdapter(additional_tools=[(DeclineInput, decline)])
         await adapter.on_started("Agent", "An agent")
 
-        with pytest.raises(ValueError, match="unknown_native"):
-            await adapter.on_event(turn_input(FakeAgentTools()))
+        await adapter.on_event(turn_input(FakeAgentTools()))
 
-        assert len(google_model.requests) == 1
+        assert len(google_model.requests) == 2
+        assert any(
+            getattr(part.function_response, "name", None) == "unknown_native"
+            for content in google_model.requests[1]
+            for part in (content.parts or [])
+            if getattr(part, "function_response", None) is not None
+        )
 
     async def test_lifecycle_exception_remains_a_control_signal(
         self, google_model: GoogleModelPeer
