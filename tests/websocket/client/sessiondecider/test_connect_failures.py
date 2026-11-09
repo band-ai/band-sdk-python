@@ -30,7 +30,6 @@ class TestConnectFailures:
     @pytest.mark.parametrize(
         "error",
         [
-            pytest.param(refusal(401), id="401"),
             pytest.param(refusal(429), id="429"),
             pytest.param(refusal(503), id="503"),
             pytest.param(
@@ -61,7 +60,7 @@ class TestConnectFailures:
 
         assert decision.delay_s >= RETRY_AFTER_S
 
-    @pytest.mark.parametrize("status", [400, 403, 409])
+    @pytest.mark.parametrize("status", [400, 401, 403, 409])
     async def test_a_terminal_refusal_at_boot_is_recorded_but_not_reported(
         self, probe: DeciderProbe, status: int
     ) -> None:

@@ -39,7 +39,6 @@ class TestInitialConnect:
     @pytest.mark.parametrize(
         ("status", "headers"),
         [
-            pytest.param(HTTPStatus.UNAUTHORIZED, {}, id="401"),
             pytest.param(HTTPStatus.SERVICE_UNAVAILABLE, {}, id="503"),
             pytest.param(
                 HTTPStatus.SERVICE_UNAVAILABLE,
