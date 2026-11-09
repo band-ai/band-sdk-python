@@ -31,6 +31,7 @@ INVALID_ON_CONFLICT = "invalid_on_conflict"
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
 class TestInitialConnect:
+    @pytest.mark.usefixtures("fixed_retry_jitter")
     @pytest.mark.parametrize(
         ("status", "headers"),
         [

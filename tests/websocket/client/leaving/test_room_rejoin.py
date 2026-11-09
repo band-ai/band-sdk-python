@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from phoenix_channels_python_client.phx_messages import PHXEvent
+from phoenix_channels_python_client.messages import SystemEvent
 
 from band.client.streaming.client import WireEvent
 from band.platform.event import MessageEvent
@@ -29,7 +29,7 @@ class TestRoomRejoin:
                 await link.connect()
                 await link.subscribe_room(ROOM_ID)
                 with observe_topic_loss() as loss:
-                    await server.push(closed_topic, PHXEvent.close.value, {})
+                    await server.push(closed_topic, SystemEvent.close.value, {})
                     await loss.completed.wait()
 
                 await link.unsubscribe_room(ROOM_ID)

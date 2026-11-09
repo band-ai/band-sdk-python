@@ -8,8 +8,8 @@ import asyncio
 import logging
 
 import pytest
-from phoenix_channels_python_client.exceptions import PHXConnectionError
-from phoenix_channels_python_client.phx_messages import PHXEvent
+from phoenix_channels_python_client import SocketError
+from phoenix_channels_python_client.messages import SystemEvent
 from websockets.frames import CloseCode
 
 from band.client.streaming.client import WireEvent
@@ -46,7 +46,7 @@ class TestTerminalVerdicts:
             async with connected(link), running(link) as run:
                 await server.close_connection(code=CloseCode.POLICY_VIOLATION)
 
-                with pytest.raises(PHXConnectionError, match="1008"):
+                with pytest.raises(SocketError, match="1008"):
                     await run
                 await clock.elapse(BEYOND_ANY_RETRY_S)
 
@@ -67,12 +67,28 @@ class TestTerminalVerdicts:
                     await deferred.ready.wait()
                     await server.close_connection(code=CloseCode.POLICY_VIOLATION)
 
-                    with pytest.raises(PHXConnectionError):
+                    with pytest.raises(SocketError):
                         await connecting
 
             assert link.last_disconnect_reason == CLOSED_1008
             assert not link.is_connected
             # The ended session's event is not left for the next one.
+            assert drain_events(link) == []
+            async with connected(link):
+                assert link.is_connected
+
+    async def test_cancelling_the_control_join_closes_without_a_verdict(self) -> None:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url, session_policy=session_policy())
+            with server.defer_join(CONTROL_TOPIC) as deferred:
+                async with background(link.connect()) as connecting:
+                    await deferred.ready.wait()
+                    connecting.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await connecting
+
+            assert link.last_disconnect_reason is None
+            assert not link.is_connected
             assert drain_events(link) == []
             async with connected(link):
                 assert link.is_connected
@@ -84,7 +100,7 @@ class TestTerminalVerdicts:
             link = make_link(server.url, session_policy=session_policy())
             async with connected(link), running(link) as run:
                 await server.close_connection(code=CloseCode.POLICY_VIOLATION)
-                with pytest.raises(PHXConnectionError):
+                with pytest.raises(SocketError):
                     await run
 
                 await handle_supersede(link)
@@ -93,7 +109,7 @@ class TestTerminalVerdicts:
                     WebSocketDisconnectedEvent(payload=CLOSED_1008)
                 ]
                 assert link.last_disconnect_reason == CLOSED_1008
-                with pytest.raises(PHXConnectionError, match="1008"):
+                with pytest.raises(SocketError, match="1008"):
                     await link.run_forever(install_signal_handlers=False)
 
     async def test_sockets_that_keep_dropping_at_once_end_the_session(self) -> None:
@@ -108,7 +124,7 @@ class TestTerminalVerdicts:
                         await server.wait_for_connection(number)
                     await server.abort_connection()
 
-                    with pytest.raises(PHXConnectionError):
+                    with pytest.raises(SocketError):
                         await run
                     await clock.elapse(BEYOND_ANY_RETRY_S)
 
@@ -138,7 +154,7 @@ class TestTerminalVerdicts:
             assert [
                 message.topic
                 for message in server.received
-                if message.event == PHXEvent.leave
+                if message.event == SystemEvent.leave
             ] == []
             assert caplog.records == []
             assert not link.is_room_subscribed(ROOM_ID)

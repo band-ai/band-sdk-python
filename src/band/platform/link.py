@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
 from band_sdk_core import AgentTopicKind, SessionPolicy
+from phoenix_channels_python_client import SocketError
 
 from band.client.rest import AsyncRestClient
 from band.client.streaming import (
@@ -226,13 +227,17 @@ class BandLink:
                 # cancelled) must still close the half-opened client, or it
                 # leaks -- _ws itself was never assigned, so there's nothing
                 # to roll back on that side.
-                if ws.last_disconnect_reason is not None:
-                    self._last_disconnect_reason = ws.last_disconnect_reason
-                await ws.__aexit__(None, None, None)
-                # Only an accepted session can have queued events; before
-                # that, the queue holds only the caller's.
-                if accepted:
-                    self._drop_queued_events()
+                try:
+                    if isinstance(exc, SocketError):
+                        await ws.wait_for_disconnect_decision()
+                finally:
+                    if ws.last_disconnect_reason is not None:
+                        self._last_disconnect_reason = ws.last_disconnect_reason
+                    await ws.__aexit__(None, None, None)
+                    # Only an accepted session can have queued events; before
+                    # that, the queue holds only the caller's.
+                    if accepted:
+                        self._drop_queued_events()
                 if (
                     isinstance(exc, WebSocketUpgradeError)
                     and exc.is_connection_conflict
@@ -269,7 +274,7 @@ class BandLink:
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
         """Block until the connection ends.
 
-        ``install_signal_handlers`` goes to ``PHXChannelsClient.run_forever``;
+        ``install_signal_handlers`` goes to ``phoenix_channels_python_client.Client.run_forever``;
         see ``Agent.run_forever`` for when a host turns it off.
         """
         if not self._ws:
@@ -375,10 +380,10 @@ class BandLink:
     # --- Event handlers ---
 
     async def _on_reconnected(self) -> None:
-        """Handle PHX client reconnection: PHXChannelsClient has already
-        re-subscribed previously joined topics by the time this fires, so
-        tracked rooms/topics can be reconciled against real server state
-        here without replaying duplicate joins.
+        """Reconcile after Phoenix's initial required topic rejoin attempts.
+
+        Recovering topics stay retained; retired topics need tracker repair
+        without replaying duplicate joins.
 
         Runs rejoin-failure detection before draining so a rejoin failure
         gets the same best-effort clean leave as every other ambiguous

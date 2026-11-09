@@ -12,7 +12,7 @@ from functools import partial
 from typing import Any, TypeVar
 
 from band_rest import AgentActivityDetail
-from phoenix_channels_python_client.phx_messages import ChannelMessage
+from phoenix_channels_python_client import Message
 
 from band.client.streaming import AgentControlPayload, ControlMode
 from band.client.streaming.client import ControlHook
@@ -275,7 +275,9 @@ class ActivityCapture:
         async with asyncio.timeout(self.deadline_s):
             await asyncio.shield(control.completed)
 
-    async def _receive(self, room_id: str, message: ChannelMessage) -> None:
+    async def _receive(self, room_id: str, message: Message) -> None:
+        if isinstance(message.payload, bytes):
+            raise ValueError("Activity capture requires a dictionary payload")
         self.raw.append(
             RawActivity(
                 self._recorded(), room_id, str(message.event), dict(message.payload)
@@ -292,8 +294,9 @@ class ActivityCapture:
         async with AsyncExitStack() as subscriptions:
             for room_id in room_ids:
                 topic = f"room_activity:{room_id}"
-                await client.subscribe_to_topic(topic, partial(self._receive, room_id))
-                subscriptions.push_async_callback(client.unsubscribe_from_topic, topic)
+                channel = client.channel(topic)
+                channel.on_any(partial(self._receive, room_id))
+                await subscriptions.enter_async_context(channel)
             yield
 
     async def detail(

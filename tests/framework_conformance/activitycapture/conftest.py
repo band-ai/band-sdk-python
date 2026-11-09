@@ -7,7 +7,7 @@ from typing import cast
 
 import httpx
 import pytest
-from phoenix_channels_python_client import PHXChannelsClient
+from phoenix_channels_python_client import Client
 
 from band.client.streaming import WebSocketClient
 from tests.activitysupport import install_activity_support
@@ -54,5 +54,5 @@ async def observed_link(
 def raw_peer() -> tuple[TrackingWebSocketClient, TopicPeer]:
     peer = TopicPeer()
     ws = WebSocketClient(ws_url="ws://peer.invalid", api_key="test-key")
-    ws.client = cast(PHXChannelsClient, peer)
+    ws.client = cast(Client, peer)
     return TrackingWebSocketClient(ws), peer

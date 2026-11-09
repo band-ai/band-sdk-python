@@ -1,11 +1,10 @@
 """In-process fake Phoenix Channels server for exercising BandLink's real
 WebSocket stack end to end.
 
-Speaks the real Phoenix Channels V2 wire protocol -- parsed and built with
-phoenix_channels_python_client's own ``PHXProtocolHandler``/``make_message``,
-never reimplemented -- behind a real loopback ``websockets.serve()`` socket.
+Speaks the real Phoenix Channels V2 wire protocol through the dependency's
+codec behind a real loopback ``websockets.serve()`` socket.
 Only the platform side of the wire is faked: ``BandLink`` -> ``WebSocketClient``
--> ``PHXChannelsClient`` all run unmocked, so real reconnect-supervisor
+-> ``Client`` all run unmocked, so real reconnect-supervisor
 behavior, real close-code classification, and real join/leave acks are
 actually exercised instead of assumed.
 """
@@ -22,11 +21,8 @@ from enum import StrEnum
 from http import HTTPStatus
 from urllib.parse import parse_qsl, urlsplit
 
-from phoenix_channels_python_client.phx_messages import ChannelMessage, Event, PHXEvent
-from phoenix_channels_python_client.protocol_handler import (
-    PhoenixChannelsProtocolVersion,
-    PHXProtocolHandler,
-)
+from phoenix_channels_python_client import Message, ProtocolVersion, SystemEvent
+from phoenix_channels_python_client.codec import decode_message, encode_message
 from phoenix_channels_python_client.utils import make_message
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
@@ -103,7 +99,7 @@ class PhoenixConnection:
 
     socket: ServerConnection
     joined_topics: set[str] = field(default_factory=set)
-    heartbeats: list[ChannelMessage] = field(default_factory=list)
+    heartbeats: list[Message] = field(default_factory=list)
     # Phoenix discards pushes carrying a different join reference.
     join_refs: dict[str, str | None] = field(default_factory=dict)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
@@ -131,7 +127,7 @@ class DeferredJoin:
 
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     connection: PhoenixConnection | None = None
-    message: ChannelMessage | None = None
+    message: Message | None = None
     outcome: JoinOutcome = JoinOutcome.OK
 
 
@@ -161,12 +157,9 @@ class FakePhoenixServer:
         )
         self._held_upgrade: HeldUpgrade | None = None
         self._deferred_joins: dict[str, DeferredJoin] = {}
-        self._protocol = PHXProtocolHandler(
-            protocol_version=PhoenixChannelsProtocolVersion.V2
-        )
         self.url: str = ""
         self.joined_topics: set[str] = set()
-        self.received: list[ChannelMessage] = []
+        self.received: list[Message] = []
         # Includes refused upgrades; connection_count counts accepted ones only.
         self.upgrades: list[Upgrade] = []
         self.connection_count = 0
@@ -212,7 +205,7 @@ class FakePhoenixServer:
     async def _reply(
         self,
         connection: ServerConnection,
-        message: ChannelMessage,
+        message: Message,
         *,
         outcome: JoinOutcome,
     ) -> None:
@@ -224,17 +217,15 @@ class FakePhoenixServer:
         )
         reply = make_message(
             topic=message.topic,
-            event=PHXEvent.reply,
+            event=SystemEvent.reply,
             ref=message.ref,
             join_ref=message.join_ref,
             payload=payload,
         )
-        # PHXProtocolHandler.send_message is typed for ClientConnection, but
-        # only calls .send() -- ServerConnection satisfies that identically.
-        await self._protocol.send_message(connection, reply)  # pyrefly: ignore[bad-argument-type]
+        await connection.send(encode_message(reply, ProtocolVersion.V2))
 
     async def _complete_join(
-        self, observed: PhoenixConnection, message: ChannelMessage, outcome: JoinOutcome
+        self, observed: PhoenixConnection, message: Message, outcome: JoinOutcome
     ) -> None:
         await self._reply(observed.socket, message, outcome=outcome)
         if outcome is JoinOutcome.OK:
@@ -246,11 +237,11 @@ class FakePhoenixServer:
         observed.notify()
 
     async def _handle_message(
-        self, observed: PhoenixConnection, message: ChannelMessage
+        self, observed: PhoenixConnection, message: Message
     ) -> None:
         self.received.append(message)
         match message.event:
-            case PHXEvent.join:
+            case SystemEvent.join:
                 outcome = self._next_join_outcome(message.topic)
                 deferred = self._deferred_joins.pop(message.topic, None)
                 if deferred is not None:
@@ -260,9 +251,21 @@ class FakePhoenixServer:
                     deferred.ready.set()
                 else:
                     await self._complete_join(observed, message, outcome)
-            case PHXEvent.leave:
+            case SystemEvent.leave:
+                joined = message.topic in observed.joined_topics
+                join_ref = observed.join_refs.get(message.topic)
                 self._forget_topic(observed, message.topic)
                 await self._reply(observed.socket, message, outcome=JoinOutcome.OK)
+                if joined:
+                    close = make_message(
+                        topic=message.topic,
+                        event=SystemEvent.close,
+                        ref=join_ref,
+                        join_ref=join_ref,
+                    )
+                    await observed.socket.send(
+                        encode_message(close, ProtocolVersion.V2)
+                    )
             case _ if message.topic == "phoenix":
                 if self.reply_heartbeats:
                     await self._reply(observed.socket, message, outcome=JoinOutcome.OK)
@@ -283,7 +286,7 @@ class FakePhoenixServer:
         self._connection_ready.set()
         try:
             async for raw in connection:
-                message = self._protocol.parse_message(raw)
+                message = decode_message(raw, ProtocolVersion.V2).message
                 await self._handle_message(observed, message)
         except ConnectionClosed:
             logger.debug("Connection closed")
@@ -357,11 +360,11 @@ class FakePhoenixServer:
         assert self._connection is not None
         message = make_message(
             topic=topic,
-            event=Event(event),
+            event=event,
             payload=payload,
             join_ref=self.connections[-1].join_refs.get(topic),
         )
-        await self._protocol.send_message(self._connection, message)  # pyrefly: ignore[bad-argument-type]
+        await self._connection.send(encode_message(message, ProtocolVersion.V2))
 
     async def close_connection(self, *, code: int = 1000, reason: str = "") -> None:
         """Server-initiated close handshake with a specific close code."""
@@ -397,7 +400,7 @@ async def fake_phoenix_server(
     reply_heartbeats: bool = True,
 ) -> AsyncIterator[FakePhoenixServer]:
     """A real loopback Phoenix Channels server for exercising BandLink's real
-    WebSocketClient/PHXChannelsClient stack, no mocks below BandLink.
+    WebSocketClient/Client stack, no mocks below BandLink.
 
     ``reply_heartbeats`` defaults to automatic replies; disabling it preserves
     frame reading and WebSocket Ping/Pong. Connection-specific observations
