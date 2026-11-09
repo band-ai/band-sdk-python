@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AsyncExitStack
+from unittest.mock import AsyncMock
 
 import pytest
 from band_sdk_core import chat_room_topic
@@ -25,10 +26,6 @@ REFRESHED_TOKEN = "synthetic-refreshed-token"
 ROOM_ID = VALID_MESSAGE_CREATED_PAYLOAD["chat_room_id"]
 
 
-async def ignore(_payload: MessageCreatedPayload) -> None:
-    """Drop a room event the old client never sees in this scenario."""
-
-
 @pytest.mark.looptime(resolution=binary_clock_resolution())
 class TestCredentialReplacement:
     async def test_a_new_client_replaces_one_waiting_to_reconnect(self) -> None:
@@ -42,7 +39,7 @@ class TestCredentialReplacement:
             old = await old_session.enter_async_context(
                 WebSocketClient(server.url, access_token=EXPIRING_TOKEN)
             )
-            await old.join_chat_room_channel(ROOM_ID, on_message_created=ignore)
+            await old.join_chat_room_channel(ROOM_ID, on_message_created=AsyncMock())
             with observe_retries() as retries:
                 await server.abort_connection()
                 old_retry_delay = await retries.get()

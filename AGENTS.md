@@ -186,8 +186,8 @@ pinned wheel lacks one, so a new core symbol needs no manual CI step.
 
 WebSocket credentials are sent in the `x-api-key` or `x-auth-token` handshake
 header, never the query; optional agent identity and non-default conflict
-policy are query parameters. Preserve credential redaction. The transport and regression
-coverage are in `src/band/client/streaming/` and `tests/websocket/`.
+policy are query parameters. Preserve credential redaction. The transport and
+regression coverage are in `src/band/client/streaming/` and `tests/websocket/`.
 
 ## Contact Event Handling
 

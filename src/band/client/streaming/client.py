@@ -340,7 +340,9 @@ DEFAULT_CONNECT_TIMEOUT_S = 300.0
 
 NOT_CONNECTED = "WebSocket client is not connected"
 SUPERSEDE_REASON = "superseded by another connection"
-CREDENTIAL_REQUIRED = "Pass exactly one nonblank credential: api_key or access_token"
+CREDENTIAL_REQUIRED = (
+    "Pass exactly one nonblank, printable credential: api_key or access_token"
+)
 TOKEN_WITH_AGENT_SETTINGS = (
     "agent_id and conflict_policy require api_key; an access token connects as its user"
 )
@@ -367,21 +369,19 @@ def handshake_headers(
     A header, never the URL: under proxy-managed custody the proxy swaps the
     header's sentinel, and the transport keeps headers out of its logs.
     """
-    supplied: dict[str, str] = {
-        header: credential
-        for header, credential in (
-            (AuthenticationHeader.API_KEY, api_key),
-            (AuthenticationHeader.TOKEN, access_token),
-        )
-        if credential is not None
-    }
-    if len(supplied) != 1 or not all(value.strip() for value in supplied.values()):
+    match api_key, access_token:
+        case str() as credential, None:
+            header = AuthenticationHeader.API_KEY
+        case None, str() as credential:
+            header = AuthenticationHeader.TOKEN
+            if agent_id or conflict_policy is not ConflictPolicy.SUPERSEDE:
+                raise ValueError(TOKEN_WITH_AGENT_SETTINGS)
+        case _:
+            raise ValueError(CREDENTIAL_REQUIRED)
+    # A control character would end the header line and start another.
+    if not credential.strip() or not credential.isprintable():
         raise ValueError(CREDENTIAL_REQUIRED)
-    # The platform authenticates a token as its user, ignoring both settings.
-    agent_settings = agent_id or conflict_policy is not ConflictPolicy.SUPERSEDE
-    if access_token is not None and agent_settings:
-        raise ValueError(TOKEN_WITH_AGENT_SETTINGS)
-    return supplied
+    return {header: credential}
 
 
 class WebSocketClient:
@@ -391,14 +391,11 @@ class WebSocketClient:
     socket is up, a terminal verdict ends the session, or ``connect_timeout``
     expires (``TimeoutError``; ``None`` leaves the bound to the caller).
 
-    Authenticate with exactly one credential: ``api_key`` (an agent with
-    ``agent_id``, or its user without), or a user's ``access_token``. The
-    credential is fixed for the client's lifetime and checked only when a
-    socket opens; an open socket is never reauthenticated. To use a refreshed
-    token, enter a new client with it, join its topics there and exit the old
-    one. A refused credential ends the session: entering raises
-    ``WebSocketUpgradeError``, and after a reconnect ``on_terminal`` reports
-    the verdict and ``run_forever`` raises.
+    Authenticate with exactly one credential: ``api_key`` (an agent key with
+    ``agent_id``, or a user key without it), or a user's ``access_token``. The
+    credential is fixed for the client's lifetime; an open socket is never
+    reauthenticated. The README's "Streaming With A User Access Token" covers
+    refreshing a token and handling a refused one.
     """
 
     def __init__(

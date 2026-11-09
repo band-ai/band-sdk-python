@@ -33,6 +33,16 @@ class TestCredentialValidation:
                 {"access_token": " \t"}, CREDENTIAL_REQUIRED, id="blank-access-token"
             ),
             pytest.param(
+                {"api_key": f"{SECRET}\r\nx-injected: 1"},
+                CREDENTIAL_REQUIRED,
+                id="api-key-with-line-break",
+            ),
+            pytest.param(
+                {"access_token": f"{SECRET}\n"},
+                CREDENTIAL_REQUIRED,
+                id="access-token-with-line-break",
+            ),
+            pytest.param(
                 {"access_token": SECRET, "agent_id": AGENT_ID},
                 TOKEN_WITH_AGENT_SETTINGS,
                 id="access-token-with-agent-id",
@@ -52,10 +62,19 @@ class TestCredentialValidation:
 
         assert str(rejected.value) == message
 
-    def test_the_credential_cannot_be_replaced_in_place(self) -> None:
-        client = WebSocketClient(UNREACHABLE_URL, SECRET)
+    @pytest.mark.parametrize(
+        ("credentials", "api_key"),
+        [
+            pytest.param({"api_key": SECRET}, SECRET, id="api-key"),
+            pytest.param({"access_token": SECRET}, None, id="access-token"),
+        ],
+    )
+    def test_the_api_key_is_reported_but_cannot_be_replaced(
+        self, credentials: dict[str, Any], api_key: str | None
+    ) -> None:
+        client = WebSocketClient(UNREACHABLE_URL, **credentials)
 
         with pytest.raises(AttributeError):
             client.api_key = "synthetic-replacement-credential"  # pyrefly: ignore[read-only]
 
-        assert client.api_key == SECRET
+        assert client.api_key == api_key

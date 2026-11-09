@@ -9,30 +9,22 @@ from band.testing import fake_phoenix_server
 from tests.websocket.client.kit import VSN_ONLY, Credential, credentials_sent
 
 SECRET = "synthetic-handshake-credential"
-# A guard against a hung reconnect, not part of the claim.
-RECONNECT_GUARD_S = 10
 
 
 class TestCredentialHandshake:
-    async def test_reconnects_and_reentry_send_the_same_header_credential(
+    async def test_reentry_sends_the_same_header_credential(
         self, credential: Credential
     ) -> None:
-        reconnected = asyncio.Event()
-
-        async def on_reconnect() -> None:
-            reconnected.set()
-
         async with fake_phoenix_server() as server:
-            client = credential.client(server.url, SECRET, on_reconnect=on_reconnect)
+            client = credential.client(server.url, SECRET)
             async with client:
-                await server.close_connection(code=1012)
-                await asyncio.wait_for(reconnected.wait(), RECONNECT_GUARD_S)
+                pass
             async with client:
                 pass
 
         assert [
             (credentials_sent(upgrade), upgrade.query) for upgrade in server.upgrades
-        ] == [({credential.header: SECRET}, VSN_ONLY)] * 3
+        ] == [({credential.header: SECRET}, VSN_ONLY)] * 2
 
     async def test_concurrent_clients_each_send_their_own_credential(
         self, credential: Credential

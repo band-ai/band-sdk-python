@@ -10,10 +10,7 @@ import pytest
 from band_sdk_core import DeadReason
 
 from band.client.streaming import WebSocketClient, WebSocketUpgradeError
-from band.client.streaming.disconnect import (
-    WebSocketDisconnectReason,
-    http_refusal_reason,
-)
+from band.client.streaming.disconnect import WebSocketDisconnectReason
 from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
 from band.client.streaming.session_decider import VERDICT_LOG
 from band.client.streaming.session_decider import logger as decider_logger
@@ -23,7 +20,11 @@ from tests.identifiers import AGENT_ID
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
-from tests.websocket.client.kit import observe_retries, upgrade_error_body
+from tests.websocket.client.kit import (
+    FORBIDDEN,
+    observe_retries,
+    upgrade_error_body,
+)
 
 RETRY_AFTER_S = 12
 INVALID_ON_CONFLICT = "invalid_on_conflict"
@@ -103,12 +104,7 @@ class TestInitialConnect:
                 HTTPStatus.FORBIDDEN,
                 b"Forbidden",
                 None,
-                WebSocketDisconnectReason(
-                    reason=http_refusal_reason(HTTPStatus.FORBIDDEN),
-                    message="WebSocket upgrade failed with HTTP 403",
-                    retryable=False,
-                    dead_reason=DeadReason.Classified,
-                ),
+                FORBIDDEN,
                 id="403",
             ),
             pytest.param(
