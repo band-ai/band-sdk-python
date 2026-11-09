@@ -35,7 +35,7 @@ from band.client.streaming.disconnect import (
 from band.client.streaming.session_decider import SessionDecider, SupersedeVerdict
 from band.client.streaming.wire import WirePayload
 from band.core.retention.cleanup import report_owned, spawn_owned
-from band.core.types import ConflictPolicy
+from band.core.types import DEFAULT_CONFLICT_POLICY, ConflictPolicy
 from band.logging_config import core_issues, trace_context_extra
 
 logger = logging.getLogger(__name__)
@@ -343,8 +343,6 @@ SUPERSEDE_REASON = "superseded by another connection"
 CREDENTIAL_REQUIRED = (
     "Pass exactly one nonblank, printable credential: api_key or access_token"
 )
-# The platform's own default, so a client using it leaves it off the wire.
-DEFAULT_CONFLICT_POLICY = ConflictPolicy.SUPERSEDE
 TOKEN_WITH_AGENT_SETTINGS = (
     "agent_id and conflict_policy require api_key; an access token connects as its user"
 )

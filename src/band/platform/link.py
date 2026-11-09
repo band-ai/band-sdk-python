@@ -31,7 +31,7 @@ from band.client.streaming.client import (
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.settlement import SettlementResult
-from band.core.types import ConflictPolicy, PlatformConnection
+from band.core.types import DEFAULT_CONFLICT_POLICY, ConflictPolicy, PlatformConnection
 from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -109,7 +109,7 @@ class BandLink:
         api_key: str,
         ws_url: str = DEFAULT_WS_URL,
         rest_url: str = DEFAULT_REST_URL,
-        conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE,
+        conflict_policy: ConflictPolicy = DEFAULT_CONFLICT_POLICY,
         session_policy: SessionPolicy | None = None,
         connect_timeout: float | None = DEFAULT_CONNECT_TIMEOUT_S,
     ):

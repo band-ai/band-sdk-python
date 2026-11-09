@@ -12,14 +12,7 @@ from band.client.streaming import WebSocketClient
 from band.testing import FakePhoenixServer, fake_phoenix_server
 from tests.identifiers import AGENT_ID
 from tests.sessionpolicies import session_policy
-from tests.websocket.client.credentials import CREDENTIALS, Credential
 from tests.websocket.client.disconnect import DisconnectGate
-
-
-@pytest.fixture(params=CREDENTIALS)
-def credential(request: pytest.FixtureRequest) -> Credential:
-    """Each way a client authenticates."""
-    return request.param
 
 
 @pytest.fixture

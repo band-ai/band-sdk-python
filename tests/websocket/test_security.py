@@ -16,7 +16,7 @@ from band.client.streaming.client import WebSocketClient
 from band.client.streaming.errors import WebSocketUpgradeError
 from band.client.streaming.session_decider import logger as decider_logger
 from band.testing import fake_phoenix_server
-from tests.websocket.client.credentials import CREDENTIALS, Credential, credentials_sent
+from tests.websocket.client.credentials import Credential, credentials_sent
 
 SECRET = "synthetic/private+ credential?x=1&z=#[]"
 
@@ -51,7 +51,6 @@ CLIENT_LOGGERS = ("band.", "phoenix_channels_python_client")
 
 
 class TestTransportDiagnosticSecurity:
-    @pytest.mark.parametrize("credential", CREDENTIALS)
     async def test_connection_and_reconnect_keep_headers_and_logs_private(
         self, caplog: pytest.LogCaptureFixture, credential: Credential
     ) -> None:
@@ -108,7 +107,6 @@ class TestTransportDiagnosticSecurity:
 
     @pytest.mark.parametrize("status", [HTTPStatus.BAD_REQUEST, HTTPStatus.CONFLICT])
     @pytest.mark.parametrize("field", ["message", "code", "request_id"])
-    @pytest.mark.parametrize("credential", CREDENTIALS)
     async def test_a_terminal_refusal_reports_only_redacted_fields(
         self,
         caplog: pytest.LogCaptureFixture,
@@ -143,7 +141,6 @@ class TestTransportDiagnosticSecurity:
         "status", [HTTPStatus.TOO_MANY_REQUESTS, HTTPStatus.SERVICE_UNAVAILABLE]
     )
     @pytest.mark.parametrize("field", ["message", "code", "request_id"])
-    @pytest.mark.parametrize("credential", CREDENTIALS)
     async def test_a_retried_refusal_logs_only_redacted_fields(
         self,
         caplog: pytest.LogCaptureFixture,
@@ -173,7 +170,6 @@ class TestTransportDiagnosticSecurity:
         assert len(server.upgrades) == 1
 
     @pytest.mark.parametrize("field", ["message", "code", "request_id"])
-    @pytest.mark.parametrize("credential", CREDENTIALS)
     async def test_terminal_error_and_consumer_traceback_are_safe(
         self, credential: Credential, field: str
     ) -> None:
