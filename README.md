@@ -801,10 +801,10 @@ Configure your editor to use `band-acp` as a custom agent server. See [examples/
 
 An application that already holds a Band user access token can open the
 real-time stream as that user. `WebSocketClient` takes exactly one credential:
-`api_key` (an agent key with `agent_id`, or a user key without it) or
-`access_token`. The token travels in the `x-auth-token` upgrade header, never
-the URL, and is redacted from logs and errors. How the application obtains and
-refreshes the token is up to it.
+`api_key` (an agent key, or a user key that connects as the user unless
+`agent_id` names one of their agents) or `access_token`. The token travels in
+the `x-auth-token` upgrade header, never the URL, and is redacted from logs and
+errors. How the application obtains and refreshes the token is up to it.
 
 ```python
 from band.client.streaming import WebSocketClient

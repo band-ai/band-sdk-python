@@ -391,11 +391,13 @@ class WebSocketClient:
     socket is up, a terminal verdict ends the session, or ``connect_timeout``
     expires (``TimeoutError``; ``None`` leaves the bound to the caller).
 
-    Authenticate with exactly one credential: ``api_key`` (an agent key with
-    ``agent_id``, or a user key without it), or a user's ``access_token``. The
-    credential is fixed for the client's lifetime; an open socket is never
-    reauthenticated. The README's "Streaming With A User Access Token" covers
-    refreshing a token and handling a refused one.
+    Authenticate with exactly one credential: ``api_key`` (an agent key, or a
+    user key that connects as the user unless ``agent_id`` names one of their
+    agents), or a user's ``access_token``. A non-default ``conflict_policy``
+    applies to the agent the connection resolves to; a user connection ignores
+    it. The credential is fixed for the client's lifetime; an open socket is
+    never reauthenticated. The README's "Streaming With A User Access Token"
+    covers refreshing a token and handling a refused one.
     """
 
     def __init__(
@@ -485,7 +487,9 @@ class WebSocketClient:
             additional_headers=self._handshake_headers,
         )
         if self.agent_id:
-            client.channel_socket_url += f"&{urlencode({'agent_id': self.agent_id})}{self._initial_connect_query}"
+            client.channel_socket_url += f"&{urlencode({'agent_id': self.agent_id})}"
+        # Last, so the first accepted socket can strip it as a suffix.
+        client.channel_socket_url += self._initial_connect_query
         return client
 
     @property

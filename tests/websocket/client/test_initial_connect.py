@@ -14,7 +14,7 @@ from band.client.streaming.disconnect import WebSocketDisconnectReason
 from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
 from band.client.streaming.session_decider import VERDICT_LOG
 from band.client.streaming.session_decider import logger as decider_logger
-from band.core.types import ConflictPolicy
+from band.core.types import DEFAULT_CONFLICT_POLICY, ConflictPolicy
 from band.testing import fake_phoenix_server
 from tests.identifiers import AGENT_ID
 from tests.toolkit.clock import binary_clock_resolution
@@ -161,12 +161,46 @@ class TestInitialConnect:
             )
         ]
 
+    @pytest.mark.parametrize(
+        ("agent_id", "conflict_policy", "expected"),
+        [
+            pytest.param(
+                AGENT_ID,
+                ConflictPolicy.REJECT,
+                [
+                    (AGENT_ID, ConflictPolicy.REJECT),
+                    (AGENT_ID, ConflictPolicy.REJECT),
+                    (AGENT_ID, None),
+                ],
+                id="agent-id-reject",
+            ),
+            pytest.param(
+                None,
+                ConflictPolicy.REJECT,
+                [
+                    (None, ConflictPolicy.REJECT),
+                    (None, ConflictPolicy.REJECT),
+                    (None, None),
+                ],
+                id="no-agent-id-reject",
+            ),
+            pytest.param(
+                None,
+                DEFAULT_CONFLICT_POLICY,
+                [(None, None)] * 3,
+                id="no-agent-id-default",
+            ),
+        ],
+    )
     async def test_the_conflict_policy_rides_every_upgrade_until_one_is_accepted(
         self,
+        agent_id: str | None,
+        conflict_policy: ConflictPolicy,
+        expected: list[tuple[str | None, str | None]],
     ) -> None:
         async with controlled_clock() as clock, fake_phoenix_server() as server:
             client = WebSocketClient(
-                server.url, "test-key", AGENT_ID, conflict_policy=ConflictPolicy.REJECT
+                server.url, "test-key", agent_id, conflict_policy=conflict_policy
             )
             with observe_retries() as retries:
                 async with background(client.__aenter__()) as entering:
@@ -181,8 +215,7 @@ class TestInitialConnect:
                 finally:
                     await client.__aexit__(None, None, None)
 
-        assert [upgrade.query.get("on_conflict") for upgrade in server.upgrades] == [
-            ConflictPolicy.REJECT,
-            ConflictPolicy.REJECT,
-            None,
-        ]
+        assert [
+            (upgrade.query.get("agent_id"), upgrade.query.get("on_conflict"))
+            for upgrade in server.upgrades
+        ] == expected
