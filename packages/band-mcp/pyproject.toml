@@ -1,6 +1,6 @@
 [project]
 name = "band-mcp"
-version = "2.2.12"
+version = "2.2.13"
 description = "Model Context Protocol (MCP) server for Band integration"
 readme = "README.md"
 authors = [{ name = "band" }]
