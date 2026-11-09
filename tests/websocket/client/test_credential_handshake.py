@@ -6,7 +6,7 @@ import asyncio
 from contextlib import AsyncExitStack
 
 from band.testing import fake_phoenix_server
-from tests.websocket.client.kit import VSN_ONLY, Credential, credentials_sent
+from tests.websocket.client.credentials import Credential, credentials_sent
 
 SECRET = "synthetic-handshake-credential"
 
@@ -24,7 +24,7 @@ class TestCredentialHandshake:
 
         assert [
             (credentials_sent(upgrade), upgrade.query) for upgrade in server.upgrades
-        ] == [({credential.header: SECRET}, VSN_ONLY)] * 2
+        ] == [({credential.header: SECRET}, credential.query)] * 2
 
     async def test_concurrent_clients_each_send_their_own_credential(
         self, credential: Credential

@@ -15,11 +15,8 @@ from band.client.streaming import MessageCreatedPayload, WebSocketClient, WireEv
 from band.testing import fake_phoenix_server
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
-from tests.websocket.client.kit import (
-    VALID_MESSAGE_CREATED_PAYLOAD,
-    credentials_sent,
-    observe_retries,
-)
+from tests.websocket.client.credentials import credentials_sent
+from tests.websocket.client.kit import VALID_MESSAGE_CREATED_PAYLOAD, observe_retries
 
 EXPIRING_TOKEN = "synthetic-expiring-token"
 REFRESHED_TOKEN = "synthetic-refreshed-token"

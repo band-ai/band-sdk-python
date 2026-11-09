@@ -12,8 +12,8 @@ from band.client.streaming import WebSocketClient
 from band.testing import FakePhoenixServer, fake_phoenix_server
 from tests.identifiers import AGENT_ID
 from tests.sessionpolicies import session_policy
+from tests.websocket.client.credentials import CREDENTIALS, Credential
 from tests.websocket.client.disconnect import DisconnectGate
-from tests.websocket.client.kit import CREDENTIALS, Credential
 
 
 @pytest.fixture(params=CREDENTIALS)

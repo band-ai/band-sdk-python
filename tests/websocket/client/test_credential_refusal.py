@@ -14,7 +14,8 @@ from tests.sessionpolicies import BEYOND_ANY_RETRY_S
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
-from tests.websocket.client.kit import FORBIDDEN, Credential, observe_retries
+from tests.websocket.client.credentials import Credential
+from tests.websocket.client.kit import FORBIDDEN, observe_retries
 
 SECRET = "synthetic-refused-credential"
 

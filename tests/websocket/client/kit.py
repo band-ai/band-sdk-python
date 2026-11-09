@@ -7,16 +7,12 @@ import json
 import logging
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass
 from http import HTTPStatus
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
-import pytest
 from band_sdk_core import DeadReason
-from phoenix_channels_python_client import ProtocolVersion
-from phoenix_channels_python_client.authentication import AuthenticationHeader
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
@@ -27,7 +23,6 @@ from band.client.streaming.disconnect import http_refusal_reason
 from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
 from band.client.streaming.session_decider import VERDICT_LOG
 from band.client.streaming.session_decider import logger as decider_logger
-from band.testing.phoenix_server import Upgrade
 from tests.toolkit.timecontrol import ControlledClock
 
 # A bare 403 carries no platform body, so the reason is named by its status;
@@ -38,40 +33,6 @@ FORBIDDEN = WebSocketDisconnectReason(
     retryable=False,
     dead_reason=DeadReason.Classified,
 )
-
-
-@dataclass(frozen=True)
-class Credential:
-    """One way a client authenticates, and the upgrade header it rides in."""
-
-    header: AuthenticationHeader
-
-    def client(self, ws_url: str, secret: str, **options: Any) -> WebSocketClient:
-        """A client authenticating with ``secret`` in this mode."""
-        match self.header:
-            case AuthenticationHeader.API_KEY:
-                return WebSocketClient(ws_url, secret, **options)
-            case AuthenticationHeader.TOKEN:
-                return WebSocketClient(ws_url, access_token=secret, **options)
-
-
-CREDENTIALS = [
-    pytest.param(Credential(AuthenticationHeader.API_KEY), id="api-key"),
-    pytest.param(Credential(AuthenticationHeader.TOKEN), id="access-token"),
-]
-
-
-# An upgrade's whole query when it carries no agent identity: no credential.
-VSN_ONLY = {"vsn": ProtocolVersion.V2.vsn}
-
-
-def credentials_sent(upgrade: Upgrade) -> dict[str, str]:
-    """The authentication headers an upgrade carried."""
-    return {
-        header: upgrade.headers[header]
-        for header in AuthenticationHeader
-        if header in upgrade.headers
-    }
 
 
 VALID_MESSAGE_CREATED_PAYLOAD: dict = {

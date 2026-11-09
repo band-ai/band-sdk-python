@@ -343,6 +343,8 @@ SUPERSEDE_REASON = "superseded by another connection"
 CREDENTIAL_REQUIRED = (
     "Pass exactly one nonblank, printable credential: api_key or access_token"
 )
+# The platform's own default, so a client using it leaves it off the wire.
+DEFAULT_CONFLICT_POLICY = ConflictPolicy.SUPERSEDE
 TOKEN_WITH_AGENT_SETTINGS = (
     "agent_id and conflict_policy require api_key; an access token connects as its user"
 )
@@ -374,7 +376,7 @@ def handshake_headers(
             header = AuthenticationHeader.API_KEY
         case None, str() as credential:
             header = AuthenticationHeader.TOKEN
-            if agent_id or conflict_policy is not ConflictPolicy.SUPERSEDE:
+            if agent_id or conflict_policy is not DEFAULT_CONFLICT_POLICY:
                 raise ValueError(TOKEN_WITH_AGENT_SETTINGS)
         case _:
             raise ValueError(CREDENTIAL_REQUIRED)
@@ -406,7 +408,7 @@ class WebSocketClient:
         on_reconnect: Callable[[], Awaitable[None]] | None = None,
         on_disconnect: Callable[[Exception | None], Awaitable[None]] | None = None,
         session_policy: SessionPolicy | None = None,
-        conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE,
+        conflict_policy: ConflictPolicy = DEFAULT_CONFLICT_POLICY,
         connect_timeout: float | None = DEFAULT_CONNECT_TIMEOUT_S,
         on_terminal: Callable[[WebSocketDisconnectReason], None] | None = None,
         *,
@@ -490,9 +492,9 @@ class WebSocketClient:
 
     @property
     def _initial_connect_query(self) -> str:
-        """Conflict policy until the first accepted socket. Supersede is the
-        platform default, so it stays off the wire."""
-        if self._conflict_policy is ConflictPolicy.SUPERSEDE:
+        """Conflict policy until the first accepted socket; the default stays
+        off the wire."""
+        if self._conflict_policy is DEFAULT_CONFLICT_POLICY:
             return ""
         return f"&on_conflict={self._conflict_policy}"
 

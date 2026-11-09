@@ -16,12 +16,7 @@ from band.client.streaming.client import WebSocketClient
 from band.client.streaming.errors import WebSocketUpgradeError
 from band.client.streaming.session_decider import logger as decider_logger
 from band.testing import fake_phoenix_server
-from tests.websocket.client.kit import (
-    CREDENTIALS,
-    VSN_ONLY,
-    Credential,
-    credentials_sent,
-)
+from tests.websocket.client.credentials import CREDENTIALS, Credential, credentials_sent
 
 SECRET = "synthetic/private+ credential?x=1&z=#[]"
 
@@ -78,7 +73,7 @@ class TestTransportDiagnosticSecurity:
         assert len(server.upgrades) == 2
         assert [
             (credentials_sent(upgrade), upgrade.query) for upgrade in server.upgrades
-        ] == [({credential.header: secret}, VSN_ONLY)] * 2
+        ] == [({credential.header: secret}, credential.query)] * 2
         records = [
             record
             for record in caplog.records
@@ -141,7 +136,7 @@ class TestTransportDiagnosticSecurity:
         self.assert_private(client_log(caplog))
         assert [
             (credentials_sent(upgrade), upgrade.query) for upgrade in server.upgrades
-        ] == [({credential.header: SECRET}, VSN_ONLY)]
+        ] == [({credential.header: SECRET}, credential.query)]
 
     @pytest.mark.looptime
     @pytest.mark.parametrize(
