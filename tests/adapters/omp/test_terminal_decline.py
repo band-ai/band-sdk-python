@@ -9,7 +9,7 @@ import pytest
 
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.omprpc.errors import OmpPromptError
-from band.integrations.ompwire import OmpFrameType, OmpPromptStatus
+from band.integrations.ompwire import OmpCommandName, OmpFrameType, OmpPromptStatus
 from band.runtime.tools import BandTool
 from band.testing import failure_reports
 from tests.adapters.hold import Hold
@@ -139,7 +139,8 @@ class TestTerminalDecline:
                 and frame.get("id") == DECLINE_CALL
             )
             assert not any(
-                frame.get("type") == "abort" for frame in frames[: decline_at + 1]
+                frame.get("type") == OmpCommandName.ABORT
+                for frame in frames[: decline_at + 1]
             )
             assert stop_commands(tmp_path) == []
 
@@ -157,6 +158,20 @@ class TestTerminalDecline:
         ]
         # Refuse path must not have committed DECLINE before the reply.
         assert tools.turn.replied is True
+
+    async def test_cancel_after_abort_write_does_not_record_decline(
+        self, tmp_path: Path
+    ) -> None:
+        """HOST_TOOL_CANCEL after ABORT write must not leave an unpaired DECLINE."""
+        tools = DeclineTools()
+        async with declining_adapter(
+            tmp_path, DeclineScenario.CANCEL_AFTER_ABORT
+        ) as adapter:
+            with pytest.raises(asyncio.CancelledError):
+                await run_turn(adapter, tools)
+            assert tools.turn.replied is False
+            assert stop_commands(tmp_path)
+            assert failure_reports(tools) == []
 
     async def test_cancelled_snapshot_cannot_record_a_decline(
         self, tmp_path: Path

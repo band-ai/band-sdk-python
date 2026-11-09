@@ -50,6 +50,7 @@ class DeclineScenario(StrEnum):
     MISMATCHED_ID = "mismatched-id"
     POST_CHECK_PENDING = "post-check-pending"
     CANCEL_SNAPSHOT = "cancel-snapshot"
+    CANCEL_AFTER_ABORT = "cancel-after-abort"
 
 
 class DeclinePeer(RpcPeer):
@@ -268,6 +269,18 @@ class DeclinePeer(RpcPeer):
                     self.send_prompt_result(settled=True)
                     self.settle_session()
             case OmpCommandName.ABORT if not self.settled:
+                if self.scenario_name == DeclineScenario.CANCEL_AFTER_ABORT:
+                    # Cancel after the abort write but before the abort ack so
+                    # stop_task cannot commit DECLINE without a finished stop.
+                    send(
+                        {
+                            "type": OmpFrameType.HOST_TOOL_CANCEL,
+                            "id": "cancel-after-abort",
+                            "targetId": DECLINE_CALL,
+                        }
+                    )
+                    self.finish_aborted(OmpPromptStatus.ABORTED)
+                    return
                 status = (
                     OmpPromptStatus.ERROR
                     if self.scenario_name == DeclineScenario.PROVIDER_ERROR

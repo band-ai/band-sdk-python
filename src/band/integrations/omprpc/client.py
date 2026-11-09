@@ -303,7 +303,7 @@ class OmpRpcClient:
     ) -> None:
         """Arm prompt stop after a successful host tool; commit DECLINE on ABORT."""
         turn, _ = self._require_tool_callback(call.id)
-        turn.arm_stop(call.id, on_commit=on_commit)
+        turn.arm_stop(call.id, on_commit=on_commit, recheck_backlog=True)
 
     def clear_stop_after_tool(self, call_id: str, *, cancel_task: bool = True) -> None:
         """Drop a previously armed stop that will not be committed."""
@@ -928,25 +928,23 @@ class OmpRpcClient:
     async def _stop_after_result(
         self, turn: PromptRun, result: dict[str, JsonValue]
     ) -> None:
-        # Builtin decline arms stop_commit and must recheck backlog before
-        # ABORT: pending/queued work can appear after can_stop. Explicit
-        # stop_after_tool (no commit) keeps the historical ABORT path — a
-        # GET_STATE recheck would false-refuse while peers report
-        # hasPendingAsyncWork until the session settles.
+        # Builtin decline sets stop_recheck_backlog and must recheck before
+        # ABORT. Explicit stop_after_tool keeps the historical ABORT path.
         call_id = turn.stop_after_tool_id
         if call_id is None:
             # Disarmed (cancel or refuse) — never fall through to ABORT.
             return
         commit = turn.stop_commit
-        if commit is not None:
+        if turn.stop_recheck_backlog:
             await self._refresh_completion_snapshot(turn, _STOP_PROTOCOL_ERROR)
             if self._turn is not turn or turn.stop_after_tool_id != call_id:
                 return
             assert turn.snapshot is not None
             _, state = turn.snapshot
             if state_has_async_backlog(state):
-                # Leave stop_task running; it owns writing this refusal frame.
-                turn.clear_stop(call_id, cancel_task=False)
+                # Keep stop_after_tool_id so HOST_TOOL_CANCEL can still cancel
+                # this task mid-write; only drop the DECLINE commit.
+                turn.stop_commit = None
                 refusal = OmpToolResult(
                     content=[
                         OmpContent(type=OmpContentKind.TEXT, text=BUSY_DECLINE_REFUSAL)
@@ -958,16 +956,21 @@ class OmpRpcClient:
                         mode="json"
                     )
                 )
+                turn.clear_stop(call_id, cancel_task=False)
                 return
-            turn.stop_commit = None
-            commit()
         # The bridge must consume the result before abort cancels pending tools.
+        # Commit DECLINE only after ABORT succeeds so cancel mid-ABORT cannot
+        # leave an unpaired ledger decline.
         try:
             await self._request_frame(OmpCommandName.ABORT, {}, preceding_frame=result)
         except (OmpProcessError, OmpRpcError) as error:
+            turn.clear_stop(call_id, cancel_task=False)
             turn.fail(error)
             return
         turn.stopped = True
+        if commit is not None and turn.stop_commit is commit:
+            turn.stop_commit = None
+            commit()
 
     async def _handle_ui(
         self, turn: PromptRun, request: OmpUIRequest, identity: object

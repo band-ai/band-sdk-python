@@ -80,6 +80,7 @@ class PromptRun:
         self.event_worker: asyncio.Task[None] | None = None
         self.stop_after_tool_id: str | None = None
         self.stop_commit: Callable[[], None] | None = None
+        self.stop_recheck_backlog = False
         self.stop_task: asyncio.Task[None] | None = None
         self.stopped = False
         self.result_owed = True
@@ -88,17 +89,23 @@ class PromptRun:
         self.snapshot: tuple[int, OmpState] | None = None
 
     def arm_stop(
-        self, call_id: str, *, on_commit: Callable[[], None] | None = None
+        self,
+        call_id: str,
+        *,
+        on_commit: Callable[[], None] | None = None,
+        recheck_backlog: bool = False,
     ) -> None:
         if self.stop_after_tool_id is None:
             self.stop_after_tool_id = call_id
             self.stop_commit = on_commit
+            self.stop_recheck_backlog = recheck_backlog
 
     def clear_stop(self, call_id: str, *, cancel_task: bool = True) -> None:
         if self.stop_after_tool_id != call_id:
             return
         self.stop_after_tool_id = None
         self.stop_commit = None
+        self.stop_recheck_backlog = False
         if cancel_task and self.stop_task is not None and not self.stop_task.done():
             self.stop_task.cancel()
 

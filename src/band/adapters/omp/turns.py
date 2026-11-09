@@ -276,8 +276,6 @@ class OmpTurnMixin(OmpAdapterContract):
                     call.toolName == BandTool.NO_REPLY
                     and find_custom_tool(self._custom_tools, call.toolName) is None
                 )
-                # Built-in no-reply: refuse while busy, defer DECLINE until stop
-                # commits, and arm stop so _stop_after_result can recheck backlog.
                 if builtin_decline and not await room.client.can_stop_after_tool(call):
                     return _text_tool_result(BUSY_DECLINE_REFUSAL, is_error=True)
 
