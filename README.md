@@ -581,10 +581,20 @@ middleware, and the middleware is not installed on supplied graphs or factories.
 The native OMP adapter accepts the built-in `band_no_reply` only as the sole
 tool call in its assistant message, with no pending background work or queued
 messages. Otherwise it returns a recoverable tool error without recording a
-decline or aborting the prompt. Wait for and process outstanding results before
-calling `band_no_reply` separately; it ends the current prompt rather than
-waiting for background completion. Custom tools named `band_no_reply` retain
-their handler-defined behavior.
+decline or aborting the prompt. The error identifies pending async work, the
+queued native message count, or missing proof that the decline is the sole tool
+call. Queued messages may contain participant input, not just tool results;
+allow OMP to deliver them on continuation, then read and handle them. Tool and
+task inventory cannot reveal their contents. Do not repeatedly poll
+`band_no_reply` or replace a refused decline with a plain-text "Done" — that
+does not decline the turn or reach the room. If delivery is the only remaining
+action, yield the native model step without further tool calls so OMP can
+deliver queued follow-ups or async completions. Yielding does not decline or
+complete the Band turn. After handling pending work and input, send any required
+reply with `band_send_message`, or call `band_no_reply`
+separately if the whole turn needs no reply. It ends the current prompt rather
+than waiting for background completion. Custom tools named `band_no_reply`
+retain their handler-defined behavior.
 
 #### Emit Telemetry
 

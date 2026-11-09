@@ -92,19 +92,23 @@ class TestTerminalDecline:
             assert failure_reports(follow_up) == []
 
     @pytest.mark.parametrize(
-        "scenario",
+        ("scenario", "blockers"),
         [
-            DeclineScenario.BACKGROUND_PENDING,
-            DeclineScenario.BACKGROUND_QUEUED,
-            DeclineScenario.BACKGROUND_COMPLETING,
-            DeclineScenario.MIXED_BATCH,
-            DeclineScenario.MISSING_BATCH,
-            DeclineScenario.STRING_CONTENT,
-            DeclineScenario.MISMATCHED_ID,
+            (DeclineScenario.BACKGROUND_PENDING, ("hasPendingAsyncWork=true",)),
+            (DeclineScenario.BACKGROUND_QUEUED, ("queuedMessageCount=1",)),
+            (DeclineScenario.BACKGROUND_COMPLETING, ("hasPendingAsyncWork=true",)),
+            (
+                DeclineScenario.BACKGROUND_BOTH,
+                ("hasPendingAsyncWork=true", "queuedMessageCount=1"),
+            ),
+            (DeclineScenario.MIXED_BATCH, ("toolCallId=decline",)),
+            (DeclineScenario.MISSING_BATCH, ("toolCallId=decline",)),
+            (DeclineScenario.STRING_CONTENT, ("toolCallId=decline",)),
+            (DeclineScenario.MISMATCHED_ID, ("toolCallId=decline",)),
         ],
     )
     async def test_background_work_refuses_decline_and_keeps_reply_available(
-        self, tmp_path: Path, scenario: DeclineScenario
+        self, tmp_path: Path, scenario: DeclineScenario, blockers: tuple[str, ...]
     ) -> None:
         tools = DeclineTools()
         async with declining_adapter(tmp_path, scenario) as adapter:
@@ -121,15 +125,30 @@ class TestTerminalDecline:
             (DECLINE_CALL, True),
             (REPLY_CALL, False),
         ]
+        refusal = results[0]["result"]["content"][0]["text"]
+        for blocker in blockers:
+            assert blocker in refusal
+        if scenario == DeclineScenario.BACKGROUND_QUEUED:
+            assert "hasPendingAsyncWork=true" not in refusal
+        if scenario in {
+            DeclineScenario.BACKGROUND_PENDING,
+            DeclineScenario.BACKGROUND_COMPLETING,
+        }:
+            assert "queuedMessageCount=" not in refusal
 
+    @pytest.mark.parametrize(
+        ("scenario", "blocker"),
+        [
+            (DeclineScenario.POST_CHECK_PENDING, "hasPendingAsyncWork=true"),
+            (DeclineScenario.POST_CHECK_QUEUED, "queuedMessageCount=1"),
+        ],
+    )
     async def test_post_check_pending_work_refuses_after_execute(
-        self, tmp_path: Path
+        self, tmp_path: Path, scenario: DeclineScenario, blocker: str
     ) -> None:
-        """Pending work that appears after can_stop must still block ABORT."""
+        """Pending work that appears after the initial check must still block ABORT."""
         tools = DeclineTools()
-        async with declining_adapter(
-            tmp_path, DeclineScenario.POST_CHECK_PENDING
-        ) as adapter:
+        async with declining_adapter(tmp_path, scenario) as adapter:
             await run_turn(adapter, tools)
             frames = wire_frames(tmp_path)
             decline_at = next(
@@ -143,6 +162,8 @@ class TestTerminalDecline:
                 for frame in frames[: decline_at + 1]
             )
             assert stop_commands(tmp_path) == []
+            refusal = tool_results(tmp_path)[0]["result"]["content"][0]["text"]
+            assert blocker in refusal
 
         assert tools.chat == [REPLY_TEXT]
         assert failure_reports(tools) == []
