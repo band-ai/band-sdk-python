@@ -8,5 +8,5 @@ from __future__ import annotations
 
 from band_mcp.config import settings
 
-__version__ = "2.2.11"
+__version__ = "2.2.12"
 __all__ = ["settings"]
