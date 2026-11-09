@@ -184,9 +184,9 @@ CI's isolated-wheel smoke (`.github/scripts/wheel-smoke.py`) finds every
 `band_sdk_core` name the installed `band` package refers to and fails if the
 pinned wheel lacks one, so a new core symbol needs no manual CI step.
 
-WebSocket credentials are sent in the `x-api-key` handshake header, never the
-query; optional agent identity and non-default conflict policy are query
-parameters. Preserve credential redaction. The transport and regression
+WebSocket credentials are sent in the `x-api-key` or `x-auth-token` handshake
+header, never the query; optional agent identity and non-default conflict
+policy are query parameters. Preserve credential redaction. The transport and regression
 coverage are in `src/band/client/streaming/` and `tests/websocket/`.
 
 ## Contact Event Handling
