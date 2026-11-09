@@ -154,7 +154,15 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
             **features,
         )
         self.config = config or AnthropicAdapterConfig()
-        self.client = AsyncAnthropic(api_key=self.config.provider_key)
+        # anthropic>=2 sends api_key as Authorization: Bearer. Band's
+        # proxy-managed custody (and the Claude API) still accept X-Api-Key;
+        # keep sending it so host-side secret injection that keys off that
+        # header continues to see the sentinel without changing custody logic.
+        key = self.config.provider_key
+        self.client = AsyncAnthropic(
+            api_key=key,
+            default_headers={"X-Api-Key": key} if key else None,
+        )
 
         # Per-room conversation history (Anthropic SDK is stateless)
         self._message_history: dict[str, list[dict[str, Any]]] = {}
