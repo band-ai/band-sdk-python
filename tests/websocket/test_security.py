@@ -16,6 +16,7 @@ from band.client.streaming.client import WebSocketClient
 from band.client.streaming.errors import WebSocketUpgradeError
 from band.client.streaming.session_decider import logger as decider_logger
 from band.testing import fake_phoenix_server
+from tests.websocket.client.credentials import Credential, credentials_sent
 
 SECRET = "synthetic/private+ credential?x=1&z=#[]"
 
@@ -51,7 +52,7 @@ CLIENT_LOGGERS = ("band.", "phoenix_channels_python_client")
 
 class TestTransportDiagnosticSecurity:
     async def test_connection_and_reconnect_keep_headers_and_logs_private(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, credential: Credential
     ) -> None:
         secret = "synthetic-reconnect-credential"
         personal_data = "synthetic-person@example.invalid"
@@ -63,17 +64,15 @@ class TestTransportDiagnosticSecurity:
         caplog.set_level(logging.DEBUG, logger="phoenix_channels_python_client.client")
         async with (
             fake_phoenix_server() as server,
-            WebSocketClient(
-                server.url, secret, "agent-synthetic", on_reconnect=on_reconnect
-            ),
+            credential.client(server.url, secret, on_reconnect=on_reconnect),
         ):
             await server.close_connection(code=1012, reason=personal_data)
             await asyncio.wait_for(reconnected.wait(), timeout=10)
 
         assert len(server.upgrades) == 2
-        for upgrade in server.upgrades:
-            assert upgrade.query == {"vsn": "2.0.0", "agent_id": "agent-synthetic"}
-            assert upgrade.headers["x-api-key"] == secret
+        assert [
+            (credentials_sent(upgrade), upgrade.query) for upgrade in server.upgrades
+        ] == [({credential.header: secret}, credential.query)] * 2
         records = [
             record
             for record in caplog.records
@@ -109,11 +108,15 @@ class TestTransportDiagnosticSecurity:
     @pytest.mark.parametrize("status", [HTTPStatus.BAD_REQUEST, HTTPStatus.CONFLICT])
     @pytest.mark.parametrize("field", ["message", "code", "request_id"])
     async def test_a_terminal_refusal_reports_only_redacted_fields(
-        self, caplog: pytest.LogCaptureFixture, status: HTTPStatus, field: str
+        self,
+        caplog: pytest.LogCaptureFixture,
+        credential: Credential,
+        status: HTTPStatus,
+        field: str,
     ) -> None:
         caplog.set_level(logging.DEBUG)
         async with fake_phoenix_server() as server:
-            client = WebSocketClient(server.url, SECRET, "agent-synthetic")
+            client = credential.client(server.url, SECRET)
             with (
                 server.refusing_upgrades(status, body=self.hostile_refusal(field)),
                 pytest.raises(WebSocketUpgradeError) as refused,
@@ -129,9 +132,9 @@ class TestTransportDiagnosticSecurity:
         self.assert_private("".join(traceback.format_exception(refused.value)))
         self.assert_private(repr(client.last_disconnect_reason))
         self.assert_private(client_log(caplog))
-        assert len(server.upgrades) == 1
-        assert "api_key" not in server.upgrades[0].query
-        assert server.upgrades[0].headers["x-api-key"] == SECRET
+        assert [
+            (credentials_sent(upgrade), upgrade.query) for upgrade in server.upgrades
+        ] == [({credential.header: SECRET}, credential.query)]
 
     @pytest.mark.looptime
     @pytest.mark.parametrize(
@@ -139,15 +142,16 @@ class TestTransportDiagnosticSecurity:
     )
     @pytest.mark.parametrize("field", ["message", "code", "request_id"])
     async def test_a_retried_refusal_logs_only_redacted_fields(
-        self, caplog: pytest.LogCaptureFixture, status: HTTPStatus, field: str
+        self,
+        caplog: pytest.LogCaptureFixture,
+        credential: Credential,
+        status: HTTPStatus,
+        field: str,
     ) -> None:
         caplog.set_level(logging.DEBUG)
         async with fake_phoenix_server() as server:
-            client = WebSocketClient(
-                server.url,
-                SECRET,
-                "agent-synthetic",
-                connect_timeout=BEFORE_THE_HINTED_RETRY_S,
+            client = credential.client(
+                server.url, SECRET, connect_timeout=BEFORE_THE_HINTED_RETRY_S
             )
             with (
                 server.refusing_upgrades(status, body=self.hostile_refusal(field)),
@@ -167,7 +171,7 @@ class TestTransportDiagnosticSecurity:
 
     @pytest.mark.parametrize("field", ["message", "code", "request_id"])
     async def test_terminal_error_and_consumer_traceback_are_safe(
-        self, field: str
+        self, credential: Credential, field: str
     ) -> None:
         secret = "synthetic-terminal-credential"
         error = {
@@ -185,9 +189,7 @@ class TestTransportDiagnosticSecurity:
 
         async with serve(peer, "127.0.0.1", 0, process_request=refuse) as server:
             port = server.sockets[0].getsockname()[1]
-            client = WebSocketClient(
-                f"ws://127.0.0.1:{port}/socket", secret, "agent-synthetic"
-            )
+            client = credential.client(f"ws://127.0.0.1:{port}/socket", secret)
             with pytest.raises(WebSocketUpgradeError) as terminal:
                 await client.__aenter__()
             assert secret not in "".join(traceback.format_exception(terminal.value))

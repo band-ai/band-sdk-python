@@ -24,6 +24,7 @@ from phoenix_channels_python_client import (
     ProtocolVersion,
     SocketError,
 )
+from phoenix_channels_python_client.authentication import AuthenticationHeader
 from pydantic import Field
 from websockets.protocol import State
 
@@ -34,7 +35,7 @@ from band.client.streaming.disconnect import (
 from band.client.streaming.session_decider import SessionDecider, SupersedeVerdict
 from band.client.streaming.wire import WirePayload
 from band.core.retention.cleanup import report_owned, spawn_owned
-from band.core.types import ConflictPolicy
+from band.core.types import DEFAULT_CONFLICT_POLICY, ConflictPolicy
 from band.logging_config import core_issues, trace_context_extra
 
 logger = logging.getLogger(__name__)
@@ -339,6 +340,12 @@ DEFAULT_CONNECT_TIMEOUT_S = 300.0
 
 NOT_CONNECTED = "WebSocket client is not connected"
 SUPERSEDE_REASON = "superseded by another connection"
+CREDENTIAL_REQUIRED = (
+    "Pass exactly one nonblank, printable credential: api_key or access_token"
+)
+TOKEN_WITH_AGENT_SETTINGS = (
+    "agent_id and conflict_policy require api_key; an access token connects as its user"
+)
 
 
 def validate_connect_timeout(connect_timeout: float | None) -> float | None:
@@ -350,28 +357,68 @@ def validate_connect_timeout(connect_timeout: float | None) -> float | None:
     return connect_timeout
 
 
+def handshake_headers(
+    *,
+    api_key: str | None,
+    access_token: str | None,
+    agent_id: str | None,
+    conflict_policy: ConflictPolicy,
+) -> dict[str, str]:
+    """Return the one upgrade header that authenticates a client.
+
+    A header, never the URL: under proxy-managed custody the proxy swaps the
+    header's sentinel, and the transport keeps headers out of its logs.
+    """
+    match api_key, access_token:
+        case str() as credential, None:
+            header = AuthenticationHeader.API_KEY
+        case None, str() as credential:
+            header = AuthenticationHeader.TOKEN
+            if agent_id or conflict_policy is not DEFAULT_CONFLICT_POLICY:
+                raise ValueError(TOKEN_WITH_AGENT_SETTINGS)
+        case _:
+            raise ValueError(CREDENTIAL_REQUIRED)
+    # A control character would end the header line and start another.
+    if not credential.strip() or not credential.isprintable():
+        raise ValueError(CREDENTIAL_REQUIRED)
+    return {header: credential}
+
+
 class WebSocketClient:
     """Band's Phoenix Channels connection, decided by band-sdk-core's ``Session``.
 
     Entering connects, retrying retryable refusals and failures until the
     socket is up, a terminal verdict ends the session, or ``connect_timeout``
     expires (``TimeoutError``; ``None`` leaves the bound to the caller).
+
+    Authenticate with exactly one credential: ``api_key`` (an agent key with
+    ``agent_id``, or a user key without it), or a user's ``access_token``. The
+    credential is fixed for the client's lifetime; an open socket is never
+    reauthenticated. The README's "Streaming With A User Access Token" covers
+    refreshing a token and handling a refused one.
     """
 
     def __init__(
         self,
         ws_url: str,
-        api_key: str,
+        api_key: str | None = None,
         agent_id: str | None = None,
         on_reconnect: Callable[[], Awaitable[None]] | None = None,
         on_disconnect: Callable[[Exception | None], Awaitable[None]] | None = None,
         session_policy: SessionPolicy | None = None,
-        conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE,
+        conflict_policy: ConflictPolicy = DEFAULT_CONFLICT_POLICY,
         connect_timeout: float | None = DEFAULT_CONNECT_TIMEOUT_S,
         on_terminal: Callable[[WebSocketDisconnectReason], None] | None = None,
+        *,
+        access_token: str | None = None,
     ):
+        self._handshake_headers = handshake_headers(
+            api_key=api_key,
+            access_token=access_token,
+            agent_id=agent_id,
+            conflict_policy=conflict_policy,
+        )
         self.ws_url = ws_url
-        self.api_key = api_key
         self.agent_id = agent_id
         self._conflict_policy = conflict_policy
         self.client: Client | None = None
@@ -386,6 +433,11 @@ class WebSocketClient:
         # Held so it stays alive; its presence tells run_forever a supersede
         # has ended the session.
         self._supersede_shutdown: asyncio.Task[None] | None = None
+
+    @property
+    def api_key(self) -> str | None:
+        """The API key this client authenticates with; ``None`` for a token."""
+        return self._handshake_headers.get(AuthenticationHeader.API_KEY)
 
     @property
     def validation_error_count(self) -> int:
@@ -423,7 +475,6 @@ class WebSocketClient:
     def _build_phx_client(self, decider: SessionDecider) -> Client:
         client = Client(
             self.ws_url,
-            api_key=self.api_key,
             protocol_version=ProtocolVersion.V2,
             auto_reconnect=True,
             reconnect_decider=decider,
@@ -438,17 +489,10 @@ class WebSocketClient:
         return client
 
     @property
-    def _handshake_headers(self) -> dict[str, str]:
-        """``x-api-key`` on every upgrade: under proxy-managed custody the
-        proxy swaps the sentinel in this header but cannot touch the URL
-        query, and the platform authenticates off it."""
-        return {"x-api-key": self.api_key}
-
-    @property
     def _initial_connect_query(self) -> str:
-        """Conflict policy until the first accepted socket. Supersede is the
-        platform default, so it stays off the wire."""
-        if self._conflict_policy is ConflictPolicy.SUPERSEDE:
+        """Conflict policy until the first accepted socket; the default stays
+        off the wire."""
+        if self._conflict_policy is DEFAULT_CONFLICT_POLICY:
             return ""
         return f"&on_conflict={self._conflict_policy}"
 

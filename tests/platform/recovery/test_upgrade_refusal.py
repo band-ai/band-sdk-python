@@ -6,14 +6,9 @@ from __future__ import annotations
 from http import HTTPStatus
 
 import pytest
-from band_sdk_core import DeadReason
 from phoenix_channels_python_client import SocketError
 
 from band.client.streaming import WebSocketUpgradeError
-from band.client.streaming.disconnect import (
-    WebSocketDisconnectReason,
-    http_refusal_reason,
-)
 from band.platform.event import WebSocketDisconnectedEvent
 from band.testing import fake_phoenix_server
 from tests.platform.linkclose.kit import connected, drain_events, make_link
@@ -21,15 +16,7 @@ from tests.sessionpolicies import BEYOND_ANY_RETRY_S
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
-from tests.websocket.client.kit import observe_retries
-
-# A bare 403 carries no platform body, so the reason is named by its status.
-FORBIDDEN = WebSocketDisconnectReason(
-    reason=http_refusal_reason(HTTPStatus.FORBIDDEN),
-    message=f"WebSocket upgrade failed with HTTP {HTTPStatus.FORBIDDEN.value}",
-    retryable=False,
-    dead_reason=DeadReason.Classified,
-)
+from tests.websocket.client.kit import FORBIDDEN, observe_retries
 
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())

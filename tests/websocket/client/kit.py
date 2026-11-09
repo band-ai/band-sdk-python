@@ -7,20 +7,33 @@ import json
 import logging
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, contextmanager
+from http import HTTPStatus
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+from band_sdk_core import DeadReason
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
-from band.client.streaming import WebSocketClient
+from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
+from band.client.streaming.disconnect import http_refusal_reason
 from band.client.streaming.errors import CONNECTION_CONFLICT_CODE
 from band.client.streaming.session_decider import VERDICT_LOG
 from band.client.streaming.session_decider import logger as decider_logger
 from tests.toolkit.timecontrol import ControlledClock
+
+# A bare 403 carries no platform body, so the reason is named by its status;
+# the platform refuses every unusable credential this way.
+FORBIDDEN = WebSocketDisconnectReason(
+    reason=http_refusal_reason(HTTPStatus.FORBIDDEN),
+    message=f"WebSocket upgrade failed with HTTP {HTTPStatus.FORBIDDEN.value}",
+    retryable=False,
+    dead_reason=DeadReason.Classified,
+)
+
 
 VALID_MESSAGE_CREATED_PAYLOAD: dict = {
     "id": "msg-123",

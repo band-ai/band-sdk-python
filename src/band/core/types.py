@@ -43,6 +43,10 @@ class ConflictPolicy(StrEnum):
     REJECT = "reject"
 
 
+# What the platform applies when a connection names no policy.
+DEFAULT_CONFLICT_POLICY = ConflictPolicy.SUPERSEDE
+
+
 class ToolEventKey(StrEnum):
     """Canonical JSON keys for execution events written into room history."""
 

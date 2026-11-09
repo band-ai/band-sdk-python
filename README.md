@@ -797,6 +797,47 @@ band-acp --agent-id "$ACP_AGENT_ID" --api-key "$ACP_API_KEY"
 
 Configure your editor to use `band-acp` as a custom agent server. See [examples/acp](examples/acp/) for setup guides.
 
+## Streaming With A User Access Token
+
+An application that already holds a Band user access token can open the
+real-time stream as that user. `WebSocketClient` takes exactly one credential:
+`api_key` (an agent key with `agent_id`, or a user key without it) or
+`access_token`. The token travels in the `x-auth-token` upgrade header, never
+the URL, and is redacted from logs and errors. How the application obtains and
+refreshes the token is up to it.
+
+```python
+from band.client.streaming import WebSocketClient
+
+client = WebSocketClient(
+    "wss://app.band.ai/api/v1/socket/websocket", access_token="<user token>"
+)
+assert client.api_key is None
+```
+
+```python notest
+async with WebSocketClient(ws_url, access_token=token, on_terminal=on_terminal) as ws:
+    await ws.join_user_rooms_channel(user_id, on_room_added, on_room_removed)
+    await ws.run_forever()
+```
+
+A token client cannot take `agent_id` or a non-default `conflict_policy`; the
+platform authenticates a token as its user.
+
+**Refreshing.** The platform checks the token only when a socket opens. An open
+socket keeps running after the token expires, and a client never swaps its
+credential in place. To use a refreshed token, enter a new client with it, join
+your topics there, then exit the old client. Exiting stops the old client's
+reconnect attempts. While both are open, the same event can arrive twice, so
+deduplicate by message id. Fetch anything sent between the two over REST.
+
+**Errors.** The platform refuses an unusable token with HTTP 403. Entering the
+client then raises `WebSocketUpgradeError` (`status_code == 403`). If the token
+is refused on a reconnect, `on_terminal` receives the verdict once and
+`run_forever` raises. The SDK does not retry a 403. The response carries no
+reason, so an expired token, a disabled user and a brief identity-provider
+outage look the same: obtain a token and create a new client.
+
 ## Troubleshooting
 
 ### Exceptions
