@@ -10,6 +10,7 @@ from enum import StrEnum
 from band.integrations.omprpc.errors import BACKLOG_EXCEEDED, OmpProcessError
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
+    OmpContentKind,
     OmpEvent,
     OmpEventType,
     OmpHostToolCall,
@@ -20,8 +21,15 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
+from band.runtime.tools import BandTool
 
 EVENT_BACKLOG_LIMIT = 256
+
+BUSY_DECLINE_REFUSAL = (
+    "This turn still has background work, queued results, or other "
+    "tool calls to handle. Wait for and process their results, then call "
+    f"{BandTool.NO_REPLY} separately when no work remains."
+)
 
 
 class OmpCallbackKind(StrEnum):
@@ -71,12 +79,35 @@ class PromptRun:
         self.callback_tasks: set[asyncio.Task[None]] = set()
         self.event_worker: asyncio.Task[None] | None = None
         self.stop_after_tool_id: str | None = None
+        self.stop_commit: Callable[[], None] | None = None
+        self.stop_recheck_backlog = False
         self.stop_task: asyncio.Task[None] | None = None
         self.stopped = False
         self.result_owed = True
         self.terminal_seen = False
         self.awaiting_async = False
         self.snapshot: tuple[int, OmpState] | None = None
+
+    def arm_stop(
+        self,
+        call_id: str,
+        *,
+        on_commit: Callable[[], None] | None = None,
+        recheck_backlog: bool = False,
+    ) -> None:
+        if self.stop_after_tool_id is None:
+            self.stop_after_tool_id = call_id
+            self.stop_commit = on_commit
+            self.stop_recheck_backlog = recheck_backlog
+
+    def clear_stop(self, call_id: str, *, cancel_task: bool = True) -> None:
+        if self.stop_after_tool_id != call_id:
+            return
+        self.stop_after_tool_id = None
+        self.stop_commit = None
+        self.stop_recheck_backlog = False
+        if cancel_task and self.stop_task is not None and not self.stop_task.done():
+            self.stop_task.cancel()
 
     def fail(self, error: BaseException) -> None:
         if not self.failure.done():
@@ -158,6 +189,15 @@ class PromptRun:
     def boundary_reached(self) -> bool:
         return self.result.done() or self.terminal_seen or self.settled_proven()
 
+    def is_single_tool_call(self, tool_call_id: str) -> bool:
+        message = self.last_assistant
+        if message is None or isinstance(message.content, str):
+            return False
+        calls = [
+            block for block in message.content if block.type == OmpContentKind.TOOL_CALL
+        ]
+        return len(calls) == 1 and calls[0].id == tool_call_id
+
     def has_pending_native_work(self) -> bool:
         event_claims_pending_work = (
             self.awaiting_async and self.settled_sequence <= self.last_activity_sequence
@@ -172,11 +212,15 @@ class PromptRun:
         return event_claims_pending_work and not state.isSettled
 
 
+def state_has_async_backlog(state: OmpState) -> bool:
+    """Native async work or queued messages still need a continuation."""
+    return bool(state.hasPendingAsyncWork or state.queuedMessageCount > 0)
+
+
 def state_is_idle(state: OmpState) -> bool:
     """Positive idle proof for a snapshot: no busy signal remains set."""
     return bool(
         not state.isStreaming
-        and not state.hasPendingAsyncWork
         and not state.isCompacting
-        and state.queuedMessageCount == 0
+        and not state_has_async_backlog(state)
     )

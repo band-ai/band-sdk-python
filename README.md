@@ -578,6 +578,14 @@ errors as native error tool results. Ready-made LangChain tools keep their own
 native behavior; their declarations do not enroll them in Band's decline
 middleware, and the middleware is not installed on supplied graphs or factories.
 
+The native OMP adapter accepts the built-in `band_no_reply` only as the sole
+tool call in its assistant message, with no pending background work or queued
+messages. Otherwise it returns a recoverable tool error without recording a
+decline or aborting the prompt. Wait for and process outstanding results before
+calling `band_no_reply` separately; it ends the current prompt rather than
+waiting for background completion. Custom tools named `band_no_reply` retain
+their handler-defined behavior.
+
 #### Emit Telemetry
 
 Emit controls adapter-level telemetry: events the adapter publishes when it observes tool calls, reasoning, or turn lifecycle changes. This is separate from the model's own ability to send events: `band_send_event` is a chat tool available to the LLM, so the agent can still send `thought`, `error`, or `task` events organically based on its prompt and judgment, regardless of emit settings.

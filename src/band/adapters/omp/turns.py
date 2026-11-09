@@ -30,6 +30,7 @@ from band.core.protocols import (
 )
 from band.core.types import Emit, MessageType, PlatformMessage
 from band.integrations import omproomask, omprpc
+from band.integrations.omprpc.prompt import BUSY_DECLINE_REFUSAL
 from band.integrations.ompwire import (
     OmpEvent,
     OmpHostToolCall,
@@ -46,7 +47,7 @@ from band.runtime.prompts import (
 )
 from band.runtime.sessionresume import fetch_transcript
 from band.runtime.toolactivity import end_activity, suppress_tool_activity
-from band.runtime.tools import BandTool
+from band.runtime.tools import BandTool, TurnEffect
 
 logger = logging.getLogger(__name__)
 
@@ -271,14 +272,32 @@ class OmpTurnMixin(OmpAdapterContract):
             async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
                 if turn.closed:
                     return _text_tool_result("OMP turn already closed", is_error=True)
-                with suppress_tool_activity():
-                    result = await self._execute_tool(call, tools)
-                if (
+                builtin_decline = (
                     call.toolName == BandTool.NO_REPLY
-                    and not result.is_error
                     and find_custom_tool(self._custom_tools, call.toolName) is None
-                ):
-                    room.client.stop_after_tool(call.id)
+                )
+                if builtin_decline and not await room.client.can_stop_after_tool(call):
+                    return _text_tool_result(BUSY_DECLINE_REFUSAL, is_error=True)
+
+                ledger_record = tools.turn.record
+                if builtin_decline:
+
+                    def _defer_decline(effect: TurnEffect) -> None:
+                        if effect is not TurnEffect.DECLINE:
+                            ledger_record(effect)
+
+                    tools.turn.record = _defer_decline  # type: ignore[method-assign]
+                try:
+                    with suppress_tool_activity():
+                        result = await self._execute_tool(call, tools)
+                finally:
+                    if builtin_decline:
+                        tools.turn.record = ledger_record  # type: ignore[method-assign]
+                if builtin_decline and not result.is_error:
+                    room.client.arm_stop_after_tool(
+                        call,
+                        on_commit=lambda: tools.turn.record(TurnEffect.DECLINE),
+                    )
                 return result
 
             async def on_ui(request: OmpUIRequest) -> OmpUIResponse:

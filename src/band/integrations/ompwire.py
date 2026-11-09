@@ -30,6 +30,7 @@ class OmpContentKind(StrEnum):
     TEXT = "text"
     IMAGE = "image"
     THINKING = "thinking"
+    TOOL_CALL = "toolCall"
 
 
 class OmpCommandName(StrEnum):
