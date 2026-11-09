@@ -277,6 +277,7 @@ class TestReadRoomFileImagePassthrough:
                     "bytes": 12,
                     "sha256": "a" * 64,
                     "has_thumb": False,
+                    "available": True,
                 }
             ],
         )

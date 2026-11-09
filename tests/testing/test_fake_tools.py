@@ -1020,6 +1020,7 @@ class TestFileTools:
             "bytes": 12,
             "sha256": "a" * 64,
             "has_thumb": False,
+            "available": True,
         }
         tools = FakeAgentTools(files=[seeded])
 
@@ -1035,6 +1036,7 @@ class TestFileTools:
             "bytes": 12,
             "sha256": "a" * 64,
             "has_thumb": False,
+            "available": True,
         }
         tools = FakeAgentTools(files=[seeded])
 

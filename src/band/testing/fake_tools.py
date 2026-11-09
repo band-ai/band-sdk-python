@@ -945,6 +945,7 @@ class FakeAgentTools:
             bytes=len(body),
             sha256=hashlib.sha256(body).hexdigest(),
             has_thumb=False,
+            available=True,
         ).model_dump()
         message = self._record_message(caption, mentions)
         self.files.append(attachment)

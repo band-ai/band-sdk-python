@@ -63,15 +63,13 @@ def _build_text(raw: list[dict[str, Any]], agent_name: str) -> str:
             if content:
                 lines.append(f"[{sender_name}]: {content}")
 
-        elif message_type == "tool_call":
+        elif message_type == "tool_call" and content:
             # Include raw tool_call JSON as-is
-            if content:
-                lines.append(content)
+            lines.append(content)
 
-        elif message_type == "tool_result":
+        elif message_type == "tool_result" and content:
             # Include raw tool_result JSON as-is
-            if content:
-                lines.append(content)
+            lines.append(content)
 
     return "\n".join(lines) if lines else ""
 
