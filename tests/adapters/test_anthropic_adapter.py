@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 from anthropic import APIStatusError
 from anthropic.types import TextBlock, ToolUseBlock
@@ -98,7 +98,17 @@ class TestInitialization:
         with patch("band.adapters.anthropic.AsyncAnthropic") as client_cls:
             AnthropicAdapter(AnthropicAdapterConfig(provider_key="sk-test-key"))
 
-        client_cls.assert_called_once_with(api_key="sk-test-key")
+        # anthropic>=2 uses Bearer; also keep X-Api-Key for proxy-managed custody.
+        client_cls.assert_called_once_with(
+            api_key="sk-test-key",
+            default_headers={"X-Api-Key": "sk-test-key"},
+        )
+
+    def test_missing_provider_key_leaves_header_injection_to_the_sdk(self):
+        with patch("band.adapters.anthropic.AsyncAnthropic") as client_cls:
+            AnthropicAdapter(AnthropicAdapterConfig(provider_key=None))
+
+        client_cls.assert_called_once_with(api_key=None, default_headers=None)
 
     def test_rejects_non_positive_max_tokens(self):
         with pytest.raises(ValueError, match="max_tokens"):
@@ -1033,8 +1043,8 @@ class TestToolExecution:
 
 def make_api_status_error(status_code: int, body: dict) -> APIStatusError:
     """A real anthropic.APIStatusError, built the way the SDK itself would."""
-    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-    response = httpx.Response(status_code, request=request, json=body)
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx2.Response(status_code, request=request, json=body)
     return APIStatusError(body["error"]["message"], response=response, body=body)
 
 
