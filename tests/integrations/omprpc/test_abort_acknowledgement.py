@@ -43,6 +43,12 @@ class TestAbortAcknowledgement:
     async def test_delayed_abort_response_completes_the_stopped_turn(
         self, stopping_turn: RpcTurn[StoppingObserver]
     ) -> None:
+        """Explicit stop_after_tool still ABORTs while the peer is unsettled.
+
+        Complements adapter POST_CHECK refuse (builtin recheck): this path has
+        no stop_commit / stop_recheck_backlog, so pending-async GET_STATE must
+        not block the historical ABORT.
+        """
         await stopping_turn.observer.wait_for(OmpEventType.AGENT_END)
         await snapshots_observed(stopping_turn.client)
         assert not stopping_turn.running.done()

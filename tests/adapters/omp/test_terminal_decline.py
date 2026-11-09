@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.omprpc.errors import OmpPromptError
-from band.integrations.ompwire import OmpPromptStatus
+from band.integrations.ompwire import OmpCommandName, OmpFrameType, OmpPromptStatus
 from band.runtime.tools import BandTool
 from band.testing import failure_reports
 from tests.adapters.hold import Hold
@@ -20,10 +21,12 @@ from tests.adapters.omp.declinekit import (
     declining_adapter,
     stop_commands,
     tool_results,
+    wire_frames,
 )
 from tests.adapters.omp.declinepeer import (
     ADMIT_SECOND_DECLINE,
     DECLINE_CALL,
+    REPLY_CALL,
     REPLY_TEXT,
     SECOND_DECLINE_CALL,
     DeclineScenario,
@@ -84,6 +87,104 @@ class TestTerminalDecline:
             assert results[0]["id"] == DECLINE_CALL
             assert not results[0]["isError"]
 
+            await run_turn(adapter, follow_up, bootstrap=False)
+            assert follow_up.chat == [REPLY_TEXT]
+            assert failure_reports(follow_up) == []
+
+    @pytest.mark.parametrize(
+        "scenario",
+        [
+            DeclineScenario.BACKGROUND_PENDING,
+            DeclineScenario.BACKGROUND_QUEUED,
+            DeclineScenario.BACKGROUND_COMPLETING,
+            DeclineScenario.MIXED_BATCH,
+            DeclineScenario.MISSING_BATCH,
+            DeclineScenario.STRING_CONTENT,
+            DeclineScenario.MISMATCHED_ID,
+        ],
+    )
+    async def test_background_work_refuses_decline_and_keeps_reply_available(
+        self, tmp_path: Path, scenario: DeclineScenario
+    ) -> None:
+        tools = DeclineTools()
+        async with declining_adapter(tmp_path, scenario) as adapter:
+            await run_turn(adapter, tools)
+            assert stop_commands(tmp_path) == []
+
+        assert tools.chat == [REPLY_TEXT]
+        assert failure_reports(tools) == []
+        assert [call["tool_name"] for call in tools.tool_calls] == [
+            BandTool.SEND_MESSAGE
+        ]
+        results = tool_results(tmp_path)
+        assert [(result["id"], result["isError"]) for result in results] == [
+            (DECLINE_CALL, True),
+            (REPLY_CALL, False),
+        ]
+
+    async def test_post_check_pending_work_refuses_after_execute(
+        self, tmp_path: Path
+    ) -> None:
+        """Pending work that appears after can_stop must still block ABORT."""
+        tools = DeclineTools()
+        async with declining_adapter(
+            tmp_path, DeclineScenario.POST_CHECK_PENDING
+        ) as adapter:
+            await run_turn(adapter, tools)
+            frames = wire_frames(tmp_path)
+            decline_at = next(
+                i
+                for i, frame in enumerate(frames)
+                if frame.get("type") == OmpFrameType.HOST_TOOL_RESULT
+                and frame.get("id") == DECLINE_CALL
+            )
+            assert not any(
+                frame.get("type") == OmpCommandName.ABORT
+                for frame in frames[: decline_at + 1]
+            )
+            assert stop_commands(tmp_path) == []
+
+        assert tools.chat == [REPLY_TEXT]
+        assert failure_reports(tools) == []
+        # Execute ran (deferred DECLINE) then refuse recovered with a reply.
+        assert [call["tool_name"] for call in tools.tool_calls] == [
+            BandTool.NO_REPLY,
+            BandTool.SEND_MESSAGE,
+        ]
+        results = tool_results(tmp_path)
+        assert [(result["id"], result["isError"]) for result in results] == [
+            (DECLINE_CALL, True),
+            (REPLY_CALL, False),
+        ]
+        # Refuse path must not have committed DECLINE before the reply.
+        assert tools.turn.replied is True
+
+    async def test_cancel_after_abort_write_does_not_record_decline(
+        self, tmp_path: Path
+    ) -> None:
+        """HOST_TOOL_CANCEL after ABORT write must not leave an unpaired DECLINE."""
+        tools = DeclineTools()
+        async with declining_adapter(
+            tmp_path, DeclineScenario.CANCEL_AFTER_ABORT
+        ) as adapter:
+            with pytest.raises(asyncio.CancelledError):
+                await run_turn(adapter, tools)
+            assert tools.turn.replied is False
+            assert stop_commands(tmp_path)
+            assert failure_reports(tools) == []
+
+    async def test_cancelled_snapshot_cannot_record_a_decline(
+        self, tmp_path: Path
+    ) -> None:
+        tools = DeclineTools()
+        follow_up = DeclineTools()
+        async with declining_adapter(
+            tmp_path, DeclineScenario.CANCEL_SNAPSHOT
+        ) as adapter:
+            with pytest.raises(TurnResultAlreadyReported):
+                await run_turn(adapter, tools)
+            assert tools.tool_calls == []
+            assert stop_commands(tmp_path) == []
             await run_turn(adapter, follow_up, bootstrap=False)
             assert follow_up.chat == [REPLY_TEXT]
             assert failure_reports(follow_up) == []
