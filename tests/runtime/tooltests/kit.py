@@ -20,6 +20,7 @@ def _attachment(
     content_type: str = "text/plain",
     size: int = 20,
     expires_at: datetime | None = None,
+    available: bool = True,
 ) -> Attachment:
     return Attachment(
         id=file_id,
@@ -29,6 +30,7 @@ def _attachment(
         sha256="a" * 64,
         has_thumb=False,
         expires_at=expires_at,
+        available=available,
     )
 
 

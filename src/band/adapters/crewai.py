@@ -61,19 +61,32 @@ _tool_turn_var: ContextVar[ToolTurn | None] = ContextVar(
     "_crewai_tool_turn", default=None
 )
 
-# CrewAI offers no error type or code for an empty completion, so its message
-# is the only discriminator. One definition, matched here and faked in tests.
+# Pre-1.15.34 CrewAI raised a bare ValueError with this marker; tests that stub
+# kickoff_async still use it. 1.15.34+ raises EmptyLLMResponseError after its
+# own one-shot empty retry (still a ValueError subclass, different message).
 EMPTY_LLM_RESPONSE_MARKER = "Invalid response from LLM call"
 
 
 def _is_empty_llm_response(exc: Exception) -> bool:
     """Whether ``exc`` is CrewAI reporting that an LLM call came back empty.
 
-    ``crewai.utilities.agent_utils`` raises this bare ``ValueError`` for every
-    empty completion in its loop, not only the forced final-answer step — so a
-    match means "no text came back", never "the turn is healthy".
+    A match means "no text came back", never "the turn is healthy". Prefer the
+    typed ``EmptyLLMResponseError`` when present; fall back to the legacy
+    message marker for older CrewAI and for kickoff stubs that raise it.
     """
+    if type(exc).__name__ == "EmptyLLMResponseError" and isinstance(exc, ValueError):
+        return True
     return isinstance(exc, ValueError) and EMPTY_LLM_RESPONSE_MARKER in str(exc)
+
+
+def _crewai_already_retried_empty(exc: Exception) -> bool:
+    """True when ``exc`` is CrewAI's post-retry empty error.
+
+    ``EmptyLLMResponseError`` is raised only after CrewAI's agent loop has
+    already repeated the empty LLM call once, so an outer kickoff retry would
+    be a second retry and would change the one-retry contract.
+    """
+    return type(exc).__name__ == "EmptyLLMResponseError" and isinstance(exc, ValueError)
 
 
 def _silence_lite_agent_error_panel() -> None:
@@ -456,6 +469,7 @@ class CrewAIAdapter(BatchInputAdapter[CrewAIMessages]):
         """Retry an empty kickoff once only when no tool activity was recorded."""
         for attempt in range(2):
             tool_turn.check_active()
+            already_retried = False
             try:
                 result = await agent.kickoff_async(prompt)
             except Exception as exc:
@@ -463,11 +477,15 @@ class CrewAIAdapter(BatchInputAdapter[CrewAIMessages]):
                     raise
                 logger.debug("Room %s: CrewAI returned no text: %s", room_id, exc)
                 result = None
+                already_retried = _crewai_already_retried_empty(exc)
 
             if result and (result.raw or "").strip():
                 return result
             if reply_tracker.any_tool_ran:
                 return None
+            if already_retried:
+                # CrewAI already spent the one empty retry inside kickoff.
+                break
             if attempt == 0:
                 logger.warning(
                     "Room %s: CrewAI kickoff returned no text before any tool "
