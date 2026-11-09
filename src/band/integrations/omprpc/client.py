@@ -304,9 +304,7 @@ class OmpRpcClient:
             turn.stop_after_tool_id = call.id
             turn.stop_commit = on_commit
 
-    def clear_stop_after_tool(
-        self, call_id: str, *, cancel_task: bool = True
-    ) -> None:
+    def clear_stop_after_tool(self, call_id: str, *, cancel_task: bool = True) -> None:
         """Drop a previously armed stop that will not be committed."""
         turn = self._turn
         if turn is None or turn.stop_after_tool_id != call_id:
@@ -314,11 +312,7 @@ class OmpRpcClient:
         turn.stop_after_tool_id = None
         turn.stop_commit = None
         # When refuse runs inside stop_task, leave that task to finish cleanly.
-        if (
-            cancel_task
-            and turn.stop_task is not None
-            and not turn.stop_task.done()
-        ):
+        if cancel_task and turn.stop_task is not None and not turn.stop_task.done():
             turn.stop_task.cancel()
 
     def stop_after_tool(self, call_id: str) -> None:
@@ -942,36 +936,40 @@ class OmpRpcClient:
     async def _stop_after_result(
         self, turn: PromptRun, result: dict[str, JsonValue]
     ) -> None:
-        # Recheck backlog after the tool path: pending/queued work can arrive
-        # between the arming snapshot and ABORT. Do not re-require sole-tool
-        # correlation — a later MESSAGE_END can replace last_assistant while
-        # this armed stop still owns the prompt. The host-tool callback may
-        # already be finished, so this refresh does not require its identity.
+        # Builtin decline arms stop_commit and must recheck backlog before
+        # ABORT: pending/queued work can appear after can_stop. Explicit
+        # stop_after_tool (no commit) keeps the historical ABORT path — a
+        # GET_STATE recheck would false-refuse while peers report
+        # hasPendingAsyncWork until the session settles.
         call_id = turn.stop_after_tool_id
         if call_id is None:
             # Disarmed (cancel or refuse) — never fall through to ABORT.
             return
-        await self._refresh_completion_snapshot(turn, "Invalid OMP stop protocol data")
-        if self._turn is not turn or turn.stop_after_tool_id != call_id:
-            self.clear_stop_after_tool(call_id, cancel_task=False)
-            return
-        assert turn.snapshot is not None
-        _, state = turn.snapshot
-        if state_has_async_backlog(state):
-            self.clear_stop_after_tool(call_id, cancel_task=False)
-            refusal = OmpToolResult(
-                content=[
-                    OmpContent(type=OmpContentKind.TEXT, text=BUSY_DECLINE_REFUSAL)
-                ],
-                is_error=True,
-            )
-            await self._write_frame(
-                OmpHostToolResult.from_tool(call_id, refusal).model_dump(mode="json")
-            )
-            return
         commit = turn.stop_commit
-        turn.stop_commit = None
         if commit is not None:
+            await self._refresh_completion_snapshot(
+                turn, "Invalid OMP stop protocol data"
+            )
+            if self._turn is not turn or turn.stop_after_tool_id != call_id:
+                self.clear_stop_after_tool(call_id, cancel_task=False)
+                return
+            assert turn.snapshot is not None
+            _, state = turn.snapshot
+            if state_has_async_backlog(state):
+                self.clear_stop_after_tool(call_id, cancel_task=False)
+                refusal = OmpToolResult(
+                    content=[
+                        OmpContent(type=OmpContentKind.TEXT, text=BUSY_DECLINE_REFUSAL)
+                    ],
+                    is_error=True,
+                )
+                await self._write_frame(
+                    OmpHostToolResult.from_tool(call_id, refusal).model_dump(
+                        mode="json"
+                    )
+                )
+                return
+            turn.stop_commit = None
             commit()
         # The bridge must consume the result before abort cancels pending tools.
         try:
