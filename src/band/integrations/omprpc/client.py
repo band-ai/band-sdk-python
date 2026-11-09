@@ -92,6 +92,7 @@ _ABORT_TIMEOUT_S = 1.0
 PROCESS_EXIT_TIMEOUT_S = 1.0
 CALLBACK_EXIT_TIMEOUT_S = 1.0
 COMPLETION_TIMEOUT_S = 30.0
+_STOP_PROTOCOL_ERROR = "Invalid OMP stop protocol data"
 _EVENT_TYPES = frozenset(OmpEventType)
 _UI_NOTIFICATIONS = frozenset(
     {"notify", "setStatus", "setWidget", "setTitle", "set_editor_text", "open_url"}
@@ -281,47 +282,41 @@ class OmpRpcClient:
                 message, on_event, on_tool, on_ui, schedule_admission
             )
 
-    async def can_stop_after_tool(self, call: OmpHostToolCall) -> bool:
-        """Check that a host tool can end the prompt without stranding native work."""
+    def _require_tool_callback(self, call_id: str) -> tuple[PromptRun, PromptCallback]:
         turn = self._turn
         callback = (
-            turn.callbacks.get((OmpCallbackKind.TOOL, call.id))
+            turn.callbacks.get((OmpCallbackKind.TOOL, call_id))
             if turn is not None
             else None
         )
         if turn is None or callback is None:
             raise ValueError("OMP stop requires an active host tool callback")
+        return turn, callback
+
+    async def can_stop_after_tool(self, call: OmpHostToolCall) -> bool:
+        """Check that a host tool can end the prompt without stranding native work."""
+        turn, callback = self._require_tool_callback(call.id)
         return await self._stop_snapshot_is_safe(turn, call, callback.identity)
 
     def arm_stop_after_tool(
         self, call: OmpHostToolCall, *, on_commit: Callable[[], None]
     ) -> None:
         """Arm prompt stop after a successful host tool; commit DECLINE on ABORT."""
-        turn = self._turn
-        if turn is None or (OmpCallbackKind.TOOL, call.id) not in turn.callbacks:
-            raise ValueError("OMP stop requires an active host tool callback")
-        if turn.stop_after_tool_id is None:
-            turn.stop_after_tool_id = call.id
-            turn.stop_commit = on_commit
+        turn, _ = self._require_tool_callback(call.id)
+        turn.arm_stop(call.id, on_commit=on_commit)
 
     def clear_stop_after_tool(self, call_id: str, *, cancel_task: bool = True) -> None:
         """Drop a previously armed stop that will not be committed."""
         turn = self._turn
-        if turn is None or turn.stop_after_tool_id != call_id:
+        if turn is None:
             return
-        turn.stop_after_tool_id = None
-        turn.stop_commit = None
-        # When refuse runs inside stop_task, leave that task to finish cleanly.
-        if cancel_task and turn.stop_task is not None and not turn.stop_task.done():
-            turn.stop_task.cancel()
+        # cancel_task=False when refuse runs inside stop_task so it can finish.
+        turn.clear_stop(call_id, cancel_task=cancel_task)
 
     def stop_after_tool(self, call_id: str) -> None:
         """Stop this prompt after acknowledging the successful host tool call."""
-        turn = self._turn
-        if turn is None or (OmpCallbackKind.TOOL, call_id) not in turn.callbacks:
-            raise ValueError("OMP stop requires an active host tool callback")
-        if turn.stop_after_tool_id is None:
-            turn.stop_after_tool_id = call_id
+        turn, _ = self._require_tool_callback(call_id)
+        turn.arm_stop(call_id)
 
     def _retire_survivors(self) -> OmpProcessError | None:
         """Re-prove callback retirement on every repeat close attempt."""
@@ -883,11 +878,8 @@ class OmpRpcClient:
         callback = turn.callbacks.pop((kind, request_id), None)
         if callback is not None and callback.task is not None:
             callback.task.cancel()
-        if kind is OmpCallbackKind.TOOL and turn.stop_after_tool_id == request_id:
-            turn.stop_after_tool_id = None
-            turn.stop_commit = None
-            if turn.stop_task is not None and not turn.stop_task.done():
-                turn.stop_task.cancel()
+        if kind is OmpCallbackKind.TOOL:
+            turn.clear_stop(request_id)
 
     @staticmethod
     def _callback_finished(
@@ -921,7 +913,7 @@ class OmpRpcClient:
     async def _stop_snapshot_is_safe(
         self, turn: PromptRun, call: OmpHostToolCall, identity: object
     ) -> bool:
-        await self._refresh_completion_snapshot(turn, "Invalid OMP stop protocol data")
+        await self._refresh_completion_snapshot(turn, _STOP_PROTOCOL_ERROR)
         if self._turn is not turn or not self._callback_still_active(
             turn, OmpCallbackKind.TOOL, call.id, identity
         ):
@@ -947,16 +939,14 @@ class OmpRpcClient:
             return
         commit = turn.stop_commit
         if commit is not None:
-            await self._refresh_completion_snapshot(
-                turn, "Invalid OMP stop protocol data"
-            )
+            await self._refresh_completion_snapshot(turn, _STOP_PROTOCOL_ERROR)
             if self._turn is not turn or turn.stop_after_tool_id != call_id:
-                self.clear_stop_after_tool(call_id, cancel_task=False)
                 return
             assert turn.snapshot is not None
             _, state = turn.snapshot
             if state_has_async_backlog(state):
-                self.clear_stop_after_tool(call_id, cancel_task=False)
+                # Leave stop_task running; it owns writing this refusal frame.
+                turn.clear_stop(call_id, cancel_task=False)
                 refusal = OmpToolResult(
                     content=[
                         OmpContent(type=OmpContentKind.TEXT, text=BUSY_DECLINE_REFUSAL)

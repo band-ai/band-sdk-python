@@ -87,6 +87,21 @@ class PromptRun:
         self.awaiting_async = False
         self.snapshot: tuple[int, OmpState] | None = None
 
+    def arm_stop(
+        self, call_id: str, *, on_commit: Callable[[], None] | None = None
+    ) -> None:
+        if self.stop_after_tool_id is None:
+            self.stop_after_tool_id = call_id
+            self.stop_commit = on_commit
+
+    def clear_stop(self, call_id: str, *, cancel_task: bool = True) -> None:
+        if self.stop_after_tool_id != call_id:
+            return
+        self.stop_after_tool_id = None
+        self.stop_commit = None
+        if cancel_task and self.stop_task is not None and not self.stop_task.done():
+            self.stop_task.cancel()
+
     def fail(self, error: BaseException) -> None:
         if not self.failure.done():
             self.failure.set_result(error)

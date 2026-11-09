@@ -276,35 +276,31 @@ class OmpTurnMixin(OmpAdapterContract):
                     call.toolName == BandTool.NO_REPLY
                     and find_custom_tool(self._custom_tools, call.toolName) is None
                 )
+                # Built-in no-reply: refuse while busy, defer DECLINE until stop
+                # commits, and arm stop so _stop_after_result can recheck backlog.
+                if builtin_decline and not await room.client.can_stop_after_tool(call):
+                    return _text_tool_result(BUSY_DECLINE_REFUSAL, is_error=True)
+
+                ledger_record = tools.turn.record
                 if builtin_decline:
-                    # Refuse while busy, execute without recording DECLINE yet,
-                    # then arm stop so _stop_after_result can recheck and commit.
-                    if not await room.client.can_stop_after_tool(call):
-                        return _text_tool_result(
-                            BUSY_DECLINE_REFUSAL,
-                            is_error=True,
-                        )
-                    ledger_record = tools.turn.record
 
                     def _defer_decline(effect: TurnEffect) -> None:
-                        if effect is TurnEffect.DECLINE:
-                            return
-                        ledger_record(effect)
+                        if effect is not TurnEffect.DECLINE:
+                            ledger_record(effect)
 
                     tools.turn.record = _defer_decline  # type: ignore[method-assign]
-                    try:
-                        with suppress_tool_activity():
-                            result = await self._execute_tool(call, tools)
-                    finally:
+                try:
+                    with suppress_tool_activity():
+                        result = await self._execute_tool(call, tools)
+                finally:
+                    if builtin_decline:
                         tools.turn.record = ledger_record  # type: ignore[method-assign]
-                    if not result.is_error:
-                        room.client.arm_stop_after_tool(
-                            call,
-                            on_commit=lambda: tools.turn.record(TurnEffect.DECLINE),
-                        )
-                    return result
-                with suppress_tool_activity():
-                    return await self._execute_tool(call, tools)
+                if builtin_decline and not result.is_error:
+                    room.client.arm_stop_after_tool(
+                        call,
+                        on_commit=lambda: tools.turn.record(TurnEffect.DECLINE),
+                    )
+                return result
 
             async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
                 if turn.closed:
