@@ -20,6 +20,7 @@ from tests.identifiers import AGENT_ID
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
+from tests.websocket.client.credentials import VSN
 from tests.websocket.client.kit import (
     FORBIDDEN,
     observe_retries,
@@ -28,6 +29,8 @@ from tests.websocket.client.kit import (
 
 RETRY_AFTER_S = 12
 INVALID_ON_CONFLICT = "invalid_on_conflict"
+NAMES_AGENT = {"agent_id": AGENT_ID}
+REJECTS_CONFLICT = {"on_conflict": ConflictPolicy.REJECT}
 
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
@@ -168,9 +171,9 @@ class TestInitialConnect:
                 AGENT_ID,
                 ConflictPolicy.REJECT,
                 [
-                    (AGENT_ID, ConflictPolicy.REJECT),
-                    (AGENT_ID, ConflictPolicy.REJECT),
-                    (AGENT_ID, None),
+                    {**VSN, **NAMES_AGENT, **REJECTS_CONFLICT},
+                    {**VSN, **NAMES_AGENT, **REJECTS_CONFLICT},
+                    {**VSN, **NAMES_AGENT},
                 ],
                 id="agent-id-reject",
             ),
@@ -178,25 +181,25 @@ class TestInitialConnect:
                 None,
                 ConflictPolicy.REJECT,
                 [
-                    (None, ConflictPolicy.REJECT),
-                    (None, ConflictPolicy.REJECT),
-                    (None, None),
+                    {**VSN, **REJECTS_CONFLICT},
+                    {**VSN, **REJECTS_CONFLICT},
+                    VSN,
                 ],
                 id="no-agent-id-reject",
             ),
             pytest.param(
                 None,
                 DEFAULT_CONFLICT_POLICY,
-                [(None, None)] * 3,
+                [VSN] * 3,
                 id="no-agent-id-default",
             ),
         ],
     )
-    async def test_the_conflict_policy_rides_every_upgrade_until_one_is_accepted(
+    async def test_a_non_default_policy_rides_each_upgrade_until_one_is_accepted(
         self,
         agent_id: str | None,
         conflict_policy: ConflictPolicy,
-        expected: list[tuple[str | None, str | None]],
+        expected: list[dict[str, str]],
     ) -> None:
         async with controlled_clock() as clock, fake_phoenix_server() as server:
             client = WebSocketClient(
@@ -215,7 +218,4 @@ class TestInitialConnect:
                 finally:
                     await client.__aexit__(None, None, None)
 
-        assert [
-            (upgrade.query.get("agent_id"), upgrade.query.get("on_conflict"))
-            for upgrade in server.upgrades
-        ] == expected
+        assert [upgrade.query for upgrade in server.upgrades] == expected
