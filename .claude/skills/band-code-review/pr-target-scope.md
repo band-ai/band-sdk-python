@@ -1,6 +1,6 @@
 # Resolve the target and scope
 
-Shared by `band-code-review` and `band-pr-triage`. Run once, before spawning anyone.
+Shared by `band-code-review`, `band-pr-triage`, and `band-pr-assess`. Run once, before spawning anyone.
 
 1. No target → `gh pr view --json number,state,isDraft,headRefOid,baseRefName`.
 2. Bare number or PR URL → use it.

@@ -64,7 +64,10 @@ changes, such as moving from investigation to implementation, testing, or review
 Skill discovery alone does not load its instructions.
 
 Follow each skill's activation rules; `band-code-review` runs only when a user
-explicitly asks for it. Read the referenced `SKILL.md` directly when automatic loading is
+explicitly asks for it; `band-pr-assess` when assessing a PR toward merge — including
+"is this PR good" / "assess this PR" (invokes `band-code-review --fix` once and
+requires that run to converge before ship, unless a wrong-layer, incomplete-claim,
+design-only, or no-push stop halts first). Read the referenced `SKILL.md` directly when automatic loading is
 unavailable. Reference only skills that actually exist; disclose missing guidance
 when it materially affects the work. Workflow execution follows
 [the shared runtime guidance](.claude/skills/workflow-runtime.md).
@@ -96,6 +99,7 @@ explicit user approval.
 | [band-run-e2e-live](.claude/skills/band-run-e2e-live/SKILL.md) | running the E2E baseline lanes against the live platform |
 | [band-investigate-test-error](.claude/skills/band-investigate-test-error/SKILL.md) | finding the root cause of a failing or flaky test |
 | [band-code-review](.claude/skills/band-code-review/SKILL.md) | running the team's fixed-criteria review on a PR or branch |
+| [band-pr-assess](.claude/skills/band-pr-assess/SKILL.md) | end-to-end PR assessment ("is this PR good", "assess this PR"); one converging `band-code-review --fix` before ship |
 | [band-here-is-a-review](.claude/skills/band-here-is-a-review/SKILL.md) | handling review feedback on a PR or pasted review findings |
 | [band-pr-triage](.claude/skills/band-pr-triage/SKILL.md) | a quick read-only check of whether a PR can merge or needs a full review |
 | [band-ci-triage](.claude/skills/band-ci-triage/SKILL.md) | investigating failing GitHub Actions checks on the current commit |
