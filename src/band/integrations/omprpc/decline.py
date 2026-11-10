@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Set
 from dataclasses import dataclass
 
 from band.integrations.ompwire import OmpContent, OmpContentKind, OmpMessage, OmpState
@@ -76,9 +77,25 @@ def assistant_tool_calls(message: OmpMessage | None) -> tuple[OmpContent, ...] |
     )
 
 
-def is_sole_tool_call(message: OmpMessage | None, tool_call_id: str) -> bool:
-    """True when the assistant message proves exactly this host tool call."""
+def unfinished_tool_calls(
+    message: OmpMessage | None,
+    finished_tools: Set[str] = frozenset(),
+) -> tuple[OmpContent, ...] | None:
+    """Structured TOOL_CALL blocks that have not yet finished, or None if unstructured."""
     calls = assistant_tool_calls(message)
+    if calls is None:
+        return None
+    return tuple(block for block in calls if block.id not in finished_tools)
+
+
+def is_sole_tool_call(
+    message: OmpMessage | None,
+    tool_call_id: str,
+    *,
+    finished_tools: Set[str] = frozenset(),
+) -> bool:
+    """True when unfinished assistant tool calls prove exactly this host tool call."""
+    calls = unfinished_tool_calls(message, finished_tools)
     return calls is not None and len(calls) == 1 and calls[0].id == tool_call_id
 
 
@@ -152,11 +169,14 @@ def decline_backlog_refusal(state: OmpState, *, allow_yield: bool = True) -> str
 
 
 def sole_tool_diagnosis(
-    message: OmpMessage | None, tool_call_id: str
+    message: OmpMessage | None,
+    tool_call_id: str,
+    *,
+    finished_tools: Set[str] = frozenset(),
 ) -> tuple[str, str] | None:
     """Return (diagnosis, recovery) when sole-tool proof fails, else None."""
     label = tool_call_id_label(tool_call_id)
-    match assistant_tool_calls(message):
+    match unfinished_tool_calls(message, finished_tools):
         case None:
             return (
                 f"no sole-tool-call proof for {label} (string or missing content)",
@@ -191,11 +211,49 @@ def format_sole_tool_refusal(diagnosis: str, recovery: str) -> str:
 
 
 def decline_sole_tool_refusal(
-    message: OmpMessage | None, tool_call_id: str
+    message: OmpMessage | None,
+    tool_call_id: str,
+    *,
+    finished_tools: Set[str] = frozenset(),
 ) -> str | None:
     """Describe why the decline is not the sole tool call, or None when it is."""
-    diagnosed = sole_tool_diagnosis(message, tool_call_id)
+    diagnosed = sole_tool_diagnosis(
+        message, tool_call_id, finished_tools=finished_tools
+    )
     if diagnosed is None:
         return None
     diagnosis, recovery = diagnosed
     return format_sole_tool_refusal(diagnosis, recovery)
+
+
+def decline_running_tools_refusal(
+    tool_call_id: str, running_tools: Set[str]
+) -> str | None:
+    """Refuse when the declining call is not the only native tool still running."""
+    if running_tools == {tool_call_id}:
+        return None
+    label = tool_call_id_label(tool_call_id)
+    if tool_call_id not in running_tools:
+        diagnosis = (
+            f"no sole-tool-call proof for {label} "
+            "(declining call is not a running native tool)"
+        )
+    else:
+        diagnosis = (
+            f"no sole-tool-call proof for {label} "
+            f"({len(running_tools)} native tools running)"
+        )
+    return format_sole_tool_refusal(diagnosis, SOLE_TOOL_SIBLING_RECOVERY)
+
+
+def decline_sibling_callback_refusal(
+    tool_call_id: str, *, has_sibling_callbacks: bool
+) -> str | None:
+    """Refuse when another host callback is still registered beside the decline."""
+    if not has_sibling_callbacks:
+        return None
+    label = tool_call_id_label(tool_call_id)
+    return format_sole_tool_refusal(
+        f"no sole-tool-call proof for {label} (other host callbacks remain)",
+        SOLE_TOOL_SIBLING_RECOVERY,
+    )

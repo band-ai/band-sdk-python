@@ -9,6 +9,8 @@ from tests.integrations.omppeers.base import COMPLETE, RpcPeer
 from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 
 STOP_CALL_ID = "stop-tool"
+ADMIT_STOP_SIBLING = "admit-stop-sibling"
+STOP_SIBLING_ID = "stop-sibling"
 
 
 class AcknowledgementPeer(RpcPeer):
@@ -41,6 +43,12 @@ class AcknowledgementPeer(RpcPeer):
         self.settle_session()
 
     def handle_command(self, frame: Frame) -> None:
+        if frame.type == ADMIT_STOP_SIBLING:
+            send_host_tool_request(
+                STOP_SIBLING_ID, STOP_SIBLING_ID, BandTool.NO_REPLY, {}
+            )
+            self.respond(frame)
+            return
         if frame.type == PeerCommand.RELEASE_ACK:
             if self.acknowledgement is None:
                 raise ValueError("No command acknowledgement is held")
