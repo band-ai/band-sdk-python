@@ -664,7 +664,7 @@ wheels = [
 
 [[package]]
 name = "band-mcp"
-version = "2.2.14"
+version = "2.2.15"
 source = { editable = "packages/band-mcp" }
 dependencies = [
     { name = "band-client-rest" },
@@ -687,7 +687,7 @@ requires-dist = [
 
 [[package]]
 name = "band-sdk"
-version = "9.0.2"
+version = "9.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "async-lru" },
