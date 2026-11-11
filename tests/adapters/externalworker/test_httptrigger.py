@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -10,13 +11,14 @@ from pydantic import SecretStr
 from pytest_httpx import HTTPXMock
 
 from band.adapters.external_worker import (
-    ExternalWorkerAdapter,
+    WORKER_UNREACHABLE_CODE,
     ExternalWorkerAdapterConfig,
     WorkRequest,
 )
 from band.client.streaming import DeliveryStatus
+from band.core.exceptions import ProviderRunError
 from band.runtime.tools.agent import AgentTools
-from tests.adapters.externalworker.kit import run_turn
+from tests.adapters.externalworker.kit import connected_adapter, run_turn
 from tests.runtime.delivery.kit import RestPeer
 from tests.runtime.helpers import AGENT_ID, ROOM_ID
 
@@ -51,7 +53,7 @@ class TestHttpTrigger:
         )
 
         await run_turn(
-            ExternalWorkerAdapter(config, rest_client=tools.rest),
+            connected_adapter(tools, config),
             tools,
             rest_peer.row("ours"),
         )
@@ -63,18 +65,30 @@ class TestHttpTrigger:
             authorization,
         )
 
-    async def test_a_worker_answering_with_an_error_fails_the_turn(
-        self, httpx_mock: HTTPXMock, rest_peer: RestPeer, tools: AgentTools
+    @pytest.mark.parametrize(
+        "worker_fails",
+        [
+            lambda mock: mock.add_response(url=WORKER_URL, status_code=503),
+            lambda mock: mock.add_exception(
+                httpx.ConnectError("connection refused"), url=WORKER_URL
+            ),
+        ],
+        ids=["error-status", "unreachable"],
+    )
+    async def test_a_worker_that_cannot_take_the_request_fails_the_turn(
+        self,
+        httpx_mock: HTTPXMock,
+        rest_peer: RestPeer,
+        tools: AgentTools,
+        worker_fails: Callable[[HTTPXMock], None],
     ) -> None:
         rest_peer.post("ours")
-        httpx_mock.add_response(url=WORKER_URL, method="POST", status_code=503)
+        worker_fails(httpx_mock)
         config = ExternalWorkerAdapterConfig(trigger_url=WORKER_URL)
 
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(ProviderRunError) as error:
             await run_turn(
-                ExternalWorkerAdapter(config, rest_client=tools.rest),
-                tools,
-                rest_peer.row("ours"),
+                connected_adapter(tools, config), tools, rest_peer.row("ours")
             )
 
-        assert rest_peer.reads == []
+        assert (error.value.code, rest_peer.reads) == (WORKER_UNREACHABLE_CODE, [])

@@ -21,11 +21,12 @@ from pydantic_settings import SettingsConfigDict
 from typing_extensions import Unpack
 
 from band.client.rest import AsyncRestClient
+from band.client.streaming import DeliveryStatus
 from band.core.adapterconfig import EnvAdapterConfig
 from band.core.exceptions import BandConfigError, ProviderRunError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import FeatureKwargs, PlatformMessage
+from band.core.types import FeatureKwargs, PlatformMessage, delivery_status_for_agent
 from band.platform.message_lifecycle import MessageLifecycle
 
 logger = logging.getLogger(__name__)
@@ -35,13 +36,15 @@ logger = logging.getLogger(__name__)
 WAKEUP_EVENT_TYPE: Final = "agent.wakeup"
 TRIGGER_HTTP_TIMEOUT_SECONDS: Final = 30.0
 WORKER_TIMEOUT_CODE: Final = "external_worker_timeout"
+WORKER_FAILED_CODE: Final = "external_worker_failed"
+WORKER_UNREACHABLE_CODE: Final = "external_worker_unreachable"
 
 
 @dataclass(frozen=True)
 class WorkRequest:
     """The message an external worker is asked to handle."""
 
-    agent_id: str | None
+    agent_id: str
     room_id: str
     message_id: str
 
@@ -68,8 +71,9 @@ class ExternalWorkerAdapterConfig(EnvAdapterConfig):
         trigger_url: Where the built-in HTTP trigger POSTs each work request.
             Leave unset when passing a custom ``trigger`` to the adapter.
         trigger_token: Sent as ``Authorization: Bearer <token>`` with each POST.
-        timeout_seconds: How long one message may stay unprocessed before the
-            turn fails and the platform offers the message again later.
+        timeout_seconds: One budget for the whole turn: the trigger call and
+            the wait for the worker together. When it runs out the turn fails
+            and the platform offers the message again later.
         poll_interval_seconds: How often to ask the platform whether the
             worker has marked the message processed.
     """
@@ -96,12 +100,18 @@ class HttpTrigger:
         self._token = token
 
     async def __call__(self, request: WorkRequest) -> None:
-        """POST ``request``; a non-2xx answer raises ``httpx.HTTPStatusError``."""
-        async with httpx.AsyncClient(timeout=TRIGGER_HTTP_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                self._url, json=request.wakeup_body(), headers=self._headers()
-            )
-        response.raise_for_status()
+        """POST ``request``; a non-2xx answer or a transport error raises
+        ``ProviderRunError``, whose code is safe to show in the room."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=TRIGGER_HTTP_TIMEOUT_SECONDS
+            ) as client:
+                response = await client.post(
+                    self._url, json=request.wakeup_body(), headers=self._headers()
+                )
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            raise ProviderRunError(WORKER_UNREACHABLE_CODE, str(e)) from e
 
     def _headers(self) -> dict[str, str]:
         if self._token is None:
@@ -116,8 +126,10 @@ class ExternalWorkerAdapter(SimpleAdapter[Any]):
     ``config.trigger_url``), then waits until the platform no longer lists the
     message as awaiting processing. The worker posts the reply and marks the
     message processed itself, so this adapter never replies and never judges
-    the turn. Past ``config.timeout_seconds`` the turn fails, and the platform
-    offers the message again later.
+    the turn. The turn fails at once if the worker marks the message failed,
+    and otherwise once ``config.timeout_seconds`` (shared by the trigger call
+    and the wait) runs out; either way the platform offers the message again
+    later.
 
     The worker does not need to know what woke it: a worker that scans its
     rooms for the next unprocessed message works the same whether started by
@@ -169,11 +181,12 @@ class ExternalWorkerAdapter(SimpleAdapter[Any]):
         room_id: str,
     ) -> None:
         """Nudge the worker, then wait until it has processed ``msg``."""
-        request = WorkRequest(tools.agent_id, room_id, msg.id)
+        agent_id = self.require_platform().agent_id
+        request = WorkRequest(agent_id, room_id, msg.id)
         try:
             async with asyncio.timeout(self.config.timeout_seconds):
                 await self._trigger(request)
-                await self._wait_until_processed(room_id, msg.id)
+                await self._wait_until_processed(agent_id, room_id, msg.id)
         except TimeoutError as e:
             logger.warning(
                 "External worker left message %s in room %s unprocessed for %ss",
@@ -183,10 +196,21 @@ class ExternalWorkerAdapter(SimpleAdapter[Any]):
             )
             raise ProviderRunError(WORKER_TIMEOUT_CODE) from e
 
-    async def _wait_until_processed(self, room_id: str, message_id: str) -> None:
+    async def _wait_until_processed(
+        self, agent_id: str, room_id: str, message_id: str
+    ) -> None:
         # The room's whole outstanding list, not /messages/next: /next serves
         # the oldest outstanding message, so an older stuck or failed one
         # would hide whether this one is still pending.
         rest = self.require_rest_client(self._rest)
-        while await self._messages.get_actionable_message(rest, room_id, message_id):
+        while pending := await self._messages.get_actionable_message(
+            rest, room_id, message_id
+        ):
+            # The runtime marked this message processing before the turn, so
+            # "failed" now can only be the worker giving up on it.
+            if (
+                delivery_status_for_agent(pending.metadata, agent_id)
+                == DeliveryStatus.FAILED
+            ):
+                raise ProviderRunError(WORKER_FAILED_CODE)
             await asyncio.sleep(self.config.poll_interval_seconds)
