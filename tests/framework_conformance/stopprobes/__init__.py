@@ -41,6 +41,10 @@ class NoBackendTurn(StrEnum):
     IN_PROCESS = "runs its model in this process; cancelling the handler stops it"
     GATEWAY = "serves Band peers to outside callers; it drives no backend turn"
     CHANNEL = "relays a chat channel; it drives no backend turn"
+    EXTERNAL_WORKER = (
+        "nudges an outside worker it cannot cancel; a stopped room's /next "
+        "serves that worker nothing"
+    )
 
 
 @dataclass(frozen=True)
