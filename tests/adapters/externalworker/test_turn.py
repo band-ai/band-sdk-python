@@ -9,11 +9,11 @@ import pytest
 
 from band.adapters.external_worker import (
     WORKER_FAILED_CODE,
-    WORKER_TIMEOUT_CODE,
     ExternalWorkerAdapterConfig,
     WorkRequest,
 )
 from band.core.exceptions import ProviderRunError
+from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.runtime.tools.agent import AgentTools
 from tests.adapters.externalworker.kit import (
     GivingUpWorker,
@@ -61,7 +61,7 @@ class TestTurn:
             await run_turn(adapter, tools, rest_peer.row("ours"))
 
         assert (failure.value.code, rest_peer.status_of("ours")) == (
-            WORKER_TIMEOUT_CODE,
+            FAILURE_CODE_TIMEOUT,
             None,
         )
 
@@ -90,7 +90,7 @@ class TestTurn:
         with pytest.raises(ProviderRunError) as failure:
             await run_turn(adapter, tools, rest_peer.row("ours"))
 
-        assert (failure.value.code, rest_peer.reads) == (WORKER_TIMEOUT_CODE, [])
+        assert (failure.value.code, rest_peer.reads) == (FAILURE_CODE_TIMEOUT, [])
 
     async def test_a_failed_nudge_fails_the_turn_without_waiting(
         self, rest_peer: RestPeer, tools: AgentTools

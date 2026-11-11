@@ -24,7 +24,7 @@ from band.client.rest import AsyncRestClient
 from band.client.streaming import DeliveryStatus
 from band.core.adapterconfig import EnvAdapterConfig
 from band.core.exceptions import BandConfigError, ProviderRunError
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import FAILURE_CODE_TIMEOUT, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import FeatureKwargs, PlatformMessage, delivery_status_for_agent
 from band.platform.message_lifecycle import MessageLifecycle
@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 # written for wake-ups handles this adapter's trigger unchanged.
 WAKEUP_EVENT_TYPE: Final = "agent.wakeup"
 TRIGGER_HTTP_TIMEOUT_SECONDS: Final = 30.0
-WORKER_TIMEOUT_CODE: Final = "external_worker_timeout"
 WORKER_FAILED_CODE: Final = "external_worker_failed"
 WORKER_UNREACHABLE_CODE: Final = "external_worker_unreachable"
 
@@ -194,7 +193,7 @@ class ExternalWorkerAdapter(SimpleAdapter[Any]):
                 room_id,
                 self.config.timeout_seconds,
             )
-            raise ProviderRunError(WORKER_TIMEOUT_CODE) from e
+            raise ProviderRunError(FAILURE_CODE_TIMEOUT) from e
 
     async def _wait_until_processed(
         self, agent_id: str, room_id: str, message_id: str

@@ -56,7 +56,7 @@ adapter = ExternalWorkerAdapter(trigger=start_worker)
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| The turn fails with `external_worker_timeout` | The worker never marked the message processed | Make the worker call `POST /api/v1/agent/chats/{room_id}/messages/{id}/processed` after replying |
+| The turn fails with `timeout` | The worker never marked the message processed | Make the worker call `POST /api/v1/agent/chats/{room_id}/messages/{id}/processed` after replying |
 | The turn fails with `external_worker_unreachable` | The worker URL answered with a non-2xx status, or could not be reached | Check the URL and token; the agent log has the HTTP detail |
 | The turn fails with `external_worker_failed` | The worker marked the message failed | Check the worker's own logs |
 | The "working" indicator stops before the reply arrives | The worker marked the message processed before posting its reply | Post the reply first, then mark the message processed |
