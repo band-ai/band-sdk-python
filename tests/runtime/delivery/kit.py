@@ -383,7 +383,12 @@ class RestPeer:
         limit = int(request.url.params["limit"])
         if not self.participant:
             return _replying(NOT_FOUND)
-        rows = self._outstanding()
+        status = request.url.params.get("status")
+        rows = [
+            row
+            for row in self._outstanding()
+            if status is None or row.statuses.get(AGENT_ID) == status
+        ]
         if cursor is not None:
             rows = [row for row in rows if row.key > self.rows[cursor].key]
         page, more = rows[:limit], rows[limit:]

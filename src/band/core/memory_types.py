@@ -168,3 +168,15 @@ def organization_scope_rejected_message(agent_value: str) -> str:
         f"agent's owner does not belong to an organization. Retry with "
         f'scope="{agent_value}" instead.'
     )
+
+
+def memory_page_size_param(size: int, *, content_query: str | None) -> dict[str, int]:
+    """The query parameter that caps one page of a memory listing at ``size``.
+
+    A plain listing pages by ``limit``, the platform's cursor family. A
+    full-text search must send ``page_size``: the platform answers search only
+    on its deprecated offset family and rejects ``limit`` alongside a query.
+    """
+    if content_query is None:
+        return {"limit": size}
+    return {"page_size": size}

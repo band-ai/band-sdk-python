@@ -45,6 +45,7 @@ from band.core.memory_types import (
     MemoryListScope,
     MemoryStoreScope,
     is_organization_scope_rejection,
+    memory_page_size_param,
     organization_scope_rejected_message,
     validate_subject_scope,
 )
@@ -1086,7 +1087,9 @@ class AgentTools(AgentToolsProtocol):
             scope,
             system,
         )
-        kwargs: dict[str, Any] = {"page_size": page_size}
+        kwargs: dict[str, Any] = memory_page_size_param(
+            page_size, content_query=content_query
+        )
         optional_filters = {
             "subject_id": subject_id,
             "scope": scope,
