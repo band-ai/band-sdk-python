@@ -15,6 +15,7 @@ from tests.adapters.codex.activity.kit import (
     COMPACTION,
     DOCS_LOOKUP,
     LIST_FILES,
+    SUB_AGENT_WAIT,
     item_completed,
     item_started,
 )
@@ -51,14 +52,15 @@ def tool_patient() -> CodexAdapterConfig:
 class TestTurnToolSilence:
     @pytest.mark.parametrize(
         "tool",
-        [LIST_FILES, DOCS_LOOKUP, COMPACTION],
-        ids=["command", "mcp-tool", "context-compaction"],
+        [LIST_FILES, DOCS_LOOKUP, COMPACTION, SUB_AGENT_WAIT],
+        ids=["command", "mcp-tool", "context-compaction", "delegated-work"],
     )
     async def test_a_tool_silent_past_the_idle_limit_is_left_running(
         self, tool: dict[str, Any]
     ) -> None:
         """An open item of the turn says what it is working on: a command, a
-        tool call, or a context compaction, which is one long model call."""
+        tool call, a context compaction, which is one long model call, or the
+        wait for a sub-agent."""
         client = FakeCodexClient()
         adapter = await started_adapter({ROOM_ID: client}, tool_patient())
         tools = ToolSchemaFakeTools()

@@ -891,6 +891,12 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # Stops a turn that receives no event for this long; ``turn_timeout_s`` still
     # bounds its total. Answering the turn's own request -- a Band tool call, a
     # parked approval -- is not silence. None (the default) never checks.
+    # Set it above the model's longest single step: reasoning without summaries,
+    # the wait for the first output and the writing of a long tool argument send
+    # no event and open no item, and one such step can last most of a minute.
+    # Work the turn delegates is seen only through the turn's own collab item,
+    # which earns ``turn_tool_idle_timeout_s`` while it is open: a sub-agent's
+    # notifications name its own turn and do not restart this clock.
     turn_idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     # The silence allowed instead while an item the turn started is still open:
     # a command, a tool call or a context compaction. Each can run for long and

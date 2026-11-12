@@ -34,9 +34,18 @@ def silence_guarded(**limits: float) -> CodexAdapterConfig:
 
 def thinking() -> RpcEvent:
     """A reasoning delta, which the adapter reads without telling the room."""
+    return _reasoning_delta({"threadId": FIRST_THREAD_ID})
+
+
+def sub_agent_thinking(thread_id: str) -> RpcEvent:
+    """The same delta from a sub-agent, under its own thread and turn."""
+    return _reasoning_delta({"threadId": thread_id, "turnId": f"{thread_id}-turn"})
+
+
+def _reasoning_delta(named: dict[str, str]) -> RpcEvent:
     return event_notification(
         "item/reasoning/summaryTextDelta",
-        {"threadId": FIRST_THREAD_ID, "itemId": "reasoning-1", "delta": "."},
+        {**named, "itemId": "reasoning-1", "delta": "."},
     )
 
 

@@ -22,6 +22,7 @@ from tests.adapters.codex.kit import (
     StayQuietInput,
     ToolSchemaFakeTools,
     answered_turn,
+    delegated_to,
     make_platform_message,
     parked_on_approval,
     send_bootstrap,
@@ -33,6 +34,7 @@ from tests.adapters.codex.silentturn import (
     silence_guarded,
     silent_for,
     started_adapter,
+    sub_agent_thinking,
     thinking,
 )
 from tests.adapters.codex.timedturn import (
@@ -52,6 +54,7 @@ from tests.adapters.codexturns import (
 
 SILENT_ROOM = "room-silent"
 BUSY_ROOM = "room-busy"
+SUB_AGENT_THREAD = "thr-sub"
 
 
 @pytest.mark.looptime
@@ -137,6 +140,29 @@ class TestTurnSilence:
             await asyncio.sleep(heard_at_s)
             client.emit_turn(FIRST_TURN_ID, thinking())
             await asyncio.sleep(IDLE_S - MARGIN_S)
+            assert not turn.done()
+            assert failures(tools) == []
+
+            await asyncio.sleep(2 * MARGIN_S)
+            assert failures(tools) == silent_for(IDLE_S)
+            with pytest.raises(TurnResultAlreadyReported):
+                await turn
+
+    async def test_a_sub_agent_that_is_heard_from_does_not_restart_the_clock(
+        self,
+    ) -> None:
+        """A sub-agent's notifications name its own thread and turn, so the
+        turn that delegated to it is silent while only the sub-agent is heard."""
+        client = FakeCodexClient()
+        adapter = await started_adapter({ROOM_ID: client}, silence_guarded())
+        tools = ToolSchemaFakeTools()
+
+        async with running_turn(adapter, tools) as turn:
+            await client.turn_started.wait()
+            client.emit_turn(FIRST_TURN_ID, delegated_to(SUB_AGENT_THREAD))
+            await asyncio.sleep(HEARD_EVERY_S)
+            client.emit(sub_agent_thinking(SUB_AGENT_THREAD))
+            await asyncio.sleep(IDLE_S - HEARD_EVERY_S - MARGIN_S)
             assert not turn.done()
             assert failures(tools) == []
 
