@@ -414,6 +414,15 @@ class CodexClientProtocol(Protocol):
     async def close(self) -> None: ...
 
 
+class TurnSilent(TimeoutError):
+    """No event reached a turn for as long as ``setting`` allows."""
+
+    def __init__(self, seconds: float, setting: str) -> None:
+        super().__init__(
+            f"Codex turn timed out after {seconds}s of silence ({setting})"
+        )
+
+
 class CodexContinuityError(RuntimeError):
     """A retained Codex thread cannot continue as it was; its id is kept."""
 
@@ -876,6 +885,10 @@ class CodexAdapterConfig(EnvAdapterConfig):
     approval_wait_timeout_s: float = 300.0
     approval_timeout_decision: ApprovalDecision = "decline"
     turn_timeout_s: float = 180.0
+    # Stops a turn that receives no event for this long; ``turn_timeout_s`` still
+    # bounds its total. Answering the turn's own request -- a Band tool call, a
+    # parked approval -- is not silence. None (the default) never checks.
+    turn_idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     client_name: str = "band_codex_adapter"
     client_title: str = "Band Codex Adapter"
     client_version: str = "0.1.0"
@@ -1701,13 +1714,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         turn_id = native.turn_id
         result = TurnResult()
         failure_reported = False
+        # The loop's clock, which the waits below run on.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.config.turn_timeout_s
         try:
             while True:
-                _remaining = max(
-                    0.0,
-                    self.config.turn_timeout_s - (_time.perf_counter() - turn_start),
+                event = await self._next_turn_event(
+                    native, remaining=max(0.0, deadline - loop.time())
                 )
-                event = await asyncio.wait_for(native.events.get(), timeout=_remaining)
                 if isinstance(event, Exception):
                     raise event
                 if event.is_request:
@@ -1974,18 +1988,15 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 turn_start=turn_start,
             )
             raise
-        except TimeoutError:
-            logger.error(
-                "Codex turn timed out after %ss (thread=%s, turn=%s)",
-                self.config.turn_timeout_s,
-                thread_id,
-                turn_id,
+        except TimeoutError as expired:
+            timeout_message = (
+                str(expired)
+                if isinstance(expired, TurnSilent)
+                else f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )
+            logger.error("%s (thread=%s, turn=%s)", timeout_message, thread_id, turn_id)
             await self._interrupt_timed_out_turn(
                 CodexTurn(native.client, thread_id, turn_id or "")
-            )
-            timeout_message = (
-                f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )
             await tools.send_failure(
                 AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
@@ -2010,6 +2021,23 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
             raise TurnResultAlreadyReported(timeout_message)
         return result
+
+    async def _next_turn_event(
+        self, native: NativeTurn, *, remaining: float
+    ) -> RpcEvent | Exception:
+        """Wait for the turn's next event: at most ``remaining`` of its total
+        limit, and no longer than it may stay silent.
+
+        Silence is measured from the start of each wait, so the time the
+        adapter takes to answer the turn's own request never counts.
+        """
+        silence = self.config.turn_idle_timeout_s
+        if silence is None or remaining <= silence:
+            return await asyncio.wait_for(native.events.get(), timeout=remaining)
+        try:
+            return await asyncio.wait_for(native.events.get(), timeout=silence)
+        except TimeoutError:
+            raise TurnSilent(silence, "turn_idle_timeout_s") from None
 
     async def _answer_native_request(
         self,
