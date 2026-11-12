@@ -586,11 +586,13 @@ native behavior; their declarations do not enroll them in Band's decline
 middleware, and the middleware is not installed on supplied graphs or factories.
 
 The native OMP adapter accepts the built-in `band_no_reply` only as the sole
-tool call in its assistant message, with no pending background work or queued
-messages. Otherwise it returns a recoverable tool error without recording a
-decline or aborting the prompt. The error identifies pending async work, the
-queued native message count, or missing proof that the decline is the sole tool
-call. Queued messages may contain participant input, not just tool results;
+unfinished tool call, with no other running tools, pending host callbacks,
+background work, or queued messages. Earlier completed tool calls in the same
+assistant message do not block it. Otherwise it returns a recoverable tool error
+without recording a decline or aborting the prompt. The error identifies pending
+async work, the queued native message count, or missing proof that the decline is
+the sole unfinished tool call. Queued messages may contain participant input, not
+just tool results;
 allow OMP to deliver them on continuation, then read and handle them. Tool and
 task inventory cannot reveal their contents. Do not repeatedly poll
 `band_no_reply` or replace a refused decline with a plain-text "Done" — that
