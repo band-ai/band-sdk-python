@@ -913,6 +913,40 @@ The SDK reconnects automatically and resubscribes to active rooms. No action is 
 - Check network and firewall rules for WebSocket (`wss://`) traffic.
 - Make sure only one process is running per agent ID. Two processes sharing the same credentials can fight over the connection.
 
+A room can also miss messages without the socket dropping: the platform may
+crash one room's channel, or a rejoin may time out and recover later. Agents
+on the SDK runtime catch up right away. If you drive `WebSocketClient`
+directly, pass `on_ready` when joining a room. It runs for every confirmed
+join, before that join's messages, with `after_gap` set after a gap.
+
+```python
+from band.client.streaming import RoomReadiness
+
+catch_up: list[str] = []
+
+
+def on_ready(readiness: RoomReadiness) -> None:
+    # Runs on the transport's routing task: enqueue, never block.
+    if readiness.after_gap:
+        catch_up.append(readiness.room_id)
+
+
+on_ready(RoomReadiness(room_id="room-1", generation=1))
+on_ready(RoomReadiness(room_id="room-1", generation=2))
+assert catch_up == ["room-1"]
+```
+
+```python notest
+await client.join_chat_room_channel(room_id, on_message, on_ready=on_ready)
+```
+
+After `after_gap`, fetch the room's history and skip ids you already handled.
+`client.is_chat_room_ready(room_id)` reports the current state; it turns true
+only once `on_ready` returns. `on_reconnect`
+is socket-level and can run while rooms still recover. Not signalled: a room
+rejected for good, and messages dropped when a room's callbacks fall behind
+phoenix's per-topic queue limit.
+
 ### Adapter Dependency Conflicts
 
 Pydantic AI uses OpenAI 3 and its default HTTPX2 client. Current CrewAI, Strands,

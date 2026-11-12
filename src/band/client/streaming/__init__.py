@@ -28,6 +28,7 @@ from band.client.streaming.client import (
 )
 from band.client.streaming.disconnect import WebSocketDisconnectReason
 from band.client.streaming.errors import WebSocketUpgradeError
+from band.client.streaming.readiness import RoomReadiness
 
 __all__ = [
     "AgentControlPayload",
@@ -44,6 +45,7 @@ __all__ = [
     "ParticipantRemovedPayload",
     "RoomAddedPayload",
     "RoomDeletedPayload",
+    "RoomReadiness",
     "RoomRemovedPayload",
     "SupersedePayload",
     "WebSocketClient",

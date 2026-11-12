@@ -4,11 +4,18 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import pytest
 import pytest_asyncio
 
 from tests.core.retention.kit import ResidenceHost
 from tests.scenarios.oneshot import OneShotRig, oneshot_rig
 from tests.scenarios.world import BandWorld, band_world
+
+
+@pytest.fixture(autouse=True)
+def pinned_periodic_wake(periodic_wake_after_the_full_interval: None) -> None:
+    """A catch-up scenario must not pass through an early periodic resync."""
+
 
 # Function-scoped loops: the socket server and client must share the test's
 # loop, which the repo-wide session default would not give them.
