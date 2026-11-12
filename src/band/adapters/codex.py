@@ -888,9 +888,12 @@ class CodexAdapterConfig(EnvAdapterConfig):
     approval_wait_timeout_s: float = 300.0
     approval_timeout_decision: ApprovalDecision = "decline"
     turn_timeout_s: float = 180.0
-    # Stops a turn that receives no event for this long; ``turn_timeout_s`` still
-    # bounds its total. Answering the turn's own request -- a Band tool call, a
-    # parked approval -- is not silence. None (the default) never checks.
+    # Stops a turn that receives no event for this long. Answering the turn's own
+    # request -- a Band tool call, a parked approval -- is not silence. None (the
+    # default) never checks. ``turn_timeout_s`` stays the turn's total limit. It
+    # too is checked only while the turn waits for an event, but the time an
+    # answer takes counts toward it: a turn whose approval comes after the total
+    # has run out is stopped as soon as the approval returns.
     # Set it above the model's longest single step: reasoning without summaries,
     # the wait for the first output and the writing of a long tool argument send
     # no event and open no item, and one such step can last most of a minute.
