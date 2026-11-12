@@ -213,13 +213,13 @@ class Backends(BaseSettings):
     omp_native_command: str = ""  # OMP_NATIVE_COMMAND (defaults to `omp --mode rpc`)
     omp_model: str = DEFAULT_OMP_MODEL  # OMP_MODEL
 
-    # Copilot-hosted auth for the non-BYOK smokes in smoke/adapters/copilotacp/; the
-    # BYOK matrix cells never read it. Those smokes skip when unset.
+    # Copilot-hosted auth for the non-BYOK smokes in smoke/adapters/copilotacp/;
+    # the BYOK matrix cells never read it. Those smokes skip when unset.
     github_token: str = Field(default="", repr=False)  # GITHUB_TOKEN
-    # Those smokes' typed model (see hermetic_copilot_config) rather than
-    # Copilot's own pick, which can be an expensive reasoning-tier model
-    # (observed: gpt-5.6-terra); OPENAI_MODEL keeps billed turns cheap and
-    # deterministic.
+    # The model those smokes' billed turns run on (hosted auth, the live
+    # switch's starting model) rather than Copilot's own pick, which can be an
+    # expensive reasoning-tier model (observed: gpt-5.6-terra); OPENAI_MODEL
+    # keeps billed turns cheap and deterministic.
     copilot_hosted_model: str = OPENAI_MODEL  # COPILOT_HOSTED_MODEL
 
     @field_validator("antigravity_command")

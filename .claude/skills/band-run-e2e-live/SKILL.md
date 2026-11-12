@@ -176,7 +176,10 @@ Locally, do the equivalent:
   must still exist. The model default comes from `core/defaultmodels.py`.
 - **copilot_acp / cursor_acp / omp_acp** (`setup-copilot.sh`, `setup-cursor.sh`,
   `setup-omp.sh`): copilot_acp is Anthropic BYOK — the gate is the `copilot` CLI plus
-  `ANTHROPIC_API_KEY`, no login; cursor_acp needs the `agent` CLI plus
+  `ANTHROPIC_API_KEY`, no login. Baseline spawns set `COPILOT_AUTO_UPDATE=false`, so
+  they run the *installed* CLI, not a newer one in your package cache: install the
+  version `setup-copilot.sh` pins (into a scratch `npm --prefix`, pointed at with
+  `COPILOT_COMMAND`, to leave your own `copilot` alone). cursor_acp needs the `agent` CLI plus
   `CURSOR_API_KEY` (CI) or a local `agent login`; omp_acp needs Bun ≥ `OMP_MIN_BUN`, a
   working `omp`, and a provider key for `OMP_MODEL`.
 - The backends lane also runs the editor-facing ACP path

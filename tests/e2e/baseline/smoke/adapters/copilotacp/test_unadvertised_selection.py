@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from band.core.validation import AVAILABLE_PREFIX
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
@@ -25,22 +26,22 @@ class TestUnadvertisedSelection:
     @pytest.mark.timeout(extra=180)  # Copilot CLI cold boot
     @pytest.mark.asyncio(loop_scope="session")
     @pytest.mark.parametrize(
-        ("hosted", "selection", "failure"),
+        ("hosted", "selection"),
         [
-            # Under BYOK the provider env picks the model; no model select exists.
+            # BYOK advertises no model select before Copilot CLI 1.0.106 and
+            # auto plus the provider's model since; this is neither.
             pytest.param(
                 False,
                 {"model": "not-a-model"},
-                "ACP session advertises no model option; available:",
                 marks=requires(Dep.ANTHROPIC),
                 id="byok-model",
             ),
-            # Hosted sessions advertise per-model efforts; the refusal proves the
-            # selection was checked against Copilot's live catalog.
+            # Only the effort is selected, on Copilot's default model, so the
+            # effort is the one thing the live catalog can refuse, and no
+            # billed prompt is ever sent.
             pytest.param(
                 True,
                 {"reasoning_effort": "not-an-effort"},
-                'reasoning effort "not-an-effort" is not advertised for model',
                 id="hosted-effort",
             ),
         ],
@@ -54,10 +55,11 @@ class TestUnadvertisedSelection:
         tmp_path: Path,
         hosted: bool,
         selection: dict[str, str],
-        failure: str,
     ) -> None:
-        """A typed selection the session does not advertise fails the turn with a
-        visible error naming what it offers, rather than being ignored."""
+        """A typed selection the session does not advertise fails the turn with
+        one visible error naming what the session does offer, rather than being
+        ignored. Which catalog shape refuses it (no select at all, or a select
+        without the value) is Copilot's to change."""
         from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
             CopilotACPAdapter,
         )
@@ -91,4 +93,10 @@ class TestUnadvertisedSelection:
             await capture.wait_for_processed(mid, identity.id)
             errors = await capture.errors(sender_id=identity.id)
 
-        errors.assert_contains_any([CONFIG_FAILURE_PREFIX + failure])
+        refusals = [
+            error.content
+            for error in errors
+            if error.content.startswith(CONFIG_FAILURE_PREFIX)
+        ]
+        assert len(refusals) == 1, f"expected one configuration refusal: {refusals}"
+        assert AVAILABLE_PREFIX in refusals[0], refusals[0]

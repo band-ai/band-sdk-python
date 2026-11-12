@@ -44,9 +44,9 @@ class TestHostedAuth:
 
         The matrix cells run Anthropic BYOK to spare the monthly Copilot-hosted
         quota, but the hosted path is the one production users run — one cheap
-        turn per cell keeps it proven. Only hosted sessions advertise model/effort
-        selects, so the typed-effort cell proves a typed selection is accepted
-        against Copilot's live catalog. Replies use the injected Band tools.
+        turn per cell keeps it proven. The typed-effort cell proves a typed
+        selection is accepted against Copilot's live hosted catalog. Replies use
+        the injected Band tools.
         """
         from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
             CopilotACPAdapter,
@@ -64,6 +64,7 @@ class TestHostedAuth:
                 baseline_settings,
                 tmp_path / "hosted",
                 hosted=True,
+                model=baseline_settings.backends.copilot_hosted_model,
                 reasoning_effort=reasoning_effort,
             )
         )
