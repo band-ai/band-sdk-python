@@ -15,8 +15,11 @@ set -euo pipefail
 
 # Pinned for the same reason as codex: an unpinned global install lets the CLI
 # float between runs, so a CLI change lands as an unrelated-looking lane
-# failure. Bump deliberately.
-COPILOT_CLI_VERSION="${COPILOT_CLI_VERSION:-1.0.89}"
+# failure. Bump deliberately. The pin holds only because every baseline spawn
+# sets COPILOT_AUTO_UPDATE=false (builders.py copilot_cli_env); without it the
+# CLI updates itself on first launch. The variable avoids COPILOT_CLI_VERSION,
+# which the CLI itself reads.
+E2E_COPILOT_CLI_VERSION="${E2E_COPILOT_CLI_VERSION:-1.0.109}"
 
-npm install -g "@github/copilot@${COPILOT_CLI_VERSION}"
+npm install -g "@github/copilot@${E2E_COPILOT_CLI_VERSION}"
 copilot --version

@@ -1,195 +1,38 @@
-"""Tests for CopilotACPAdapter.
-
-CopilotACPAdapter is a thin specialization of ACPClientAdapter — its contract is
-how a CopilotACPAdapterConfig maps onto the base adapter's transport, auth, and
-system-context wiring. Runtime/on_started behavior is covered by the generic ACP
-client suite (tests/integrations/acp/); the model-selection tests drive the
-adapter against an in-process fake shaped like Copilot's live catalog.
-"""
+"""CopilotACPAdapter applies and switches typed model selections against an
+in-process fake shaped like Copilot's live catalog."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
 
 from band.adapters.copilot_acp import (
-    DEFAULT_COPILOT_COMMAND,
     CopilotACPAdapter,
     CopilotACPAdapterConfig,
 )
 from band.core.exceptions import BandConfigError
-from band.core.model_catalog import ModelSelection
 from band.integrations.acp import session_config
-from band.integrations.acp.client_adapter import ACPClientAdapter
-from band.integrations.acp.client_profiles import NoopACPClientProfile
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import (
     CONFIG_FAILURE_PREFIX,
     ACPConfigRequest,
+)
+from tests.adapters.copilot_acp.kit import (
+    COPILOT_EFFORTS,
+    ENDED_MID_SWITCH,
+    SWITCH_SWEEP_TICKS,
+    copilot,
+    copilot_room,
+    switch_room,
 )
 from tests.integrations.acp.acp_toolkit.agent import (
     EFFORT_OPTION_ID,
     MODEL_OPTION_ID,
     FakeACPAgent,
 )
-from tests.integrations.acp.acp_toolkit.harness import (
-    DEFAULT_ROOM,
-    AcpSession,
-    launch_for,
-    room_holder,
-    started_acp_adapter,
-)
-
-
-class TestCopilotACPAdapterConstruction:
-    def test_is_acp_client_adapter(self) -> None:
-        assert issubclass(CopilotACPAdapter, ACPClientAdapter)
-
-    @pytest.mark.asyncio
-    async def test_launches_copilot_with_its_ambient_login_by_default(
-        self, tmp_path: Path
-    ) -> None:
-        # No token and no env -> the CLI's ambient login (stored / gh / BYOK).
-        adapter = CopilotACPAdapter(CopilotACPAdapterConfig(cwd=str(tmp_path)))
-
-        launch = await launch_for(adapter)
-
-        assert launch.command == DEFAULT_COPILOT_COMMAND
-        assert launch.env is None
-
-    @pytest.mark.asyncio
-    async def test_cwd_becomes_a_room_workspace_root(self, tmp_path: Path) -> None:
-        adapter = CopilotACPAdapter(CopilotACPAdapterConfig(cwd=str(tmp_path)))
-
-        launch = await launch_for(adapter, "room-a")
-
-        assert launch.cwd == str(tmp_path / "room-a")
-
-    def test_cwd_and_a_workspace_resolver_are_exclusive(self, tmp_path: Path) -> None:
-        with pytest.raises(ValueError, match="set either cwd or workspace_for_room"):
-            CopilotACPAdapter(
-                CopilotACPAdapterConfig(cwd=str(tmp_path)),
-                workspace_for_room=lambda room_id: str(tmp_path / room_id),
-            )
-
-    @pytest.mark.parametrize(
-        "setting",
-        [{"host": "10.0.0.5", "port": 8080}, {"port": 8080}],
-        ids=["host-and-port", "port"],
-    )
-    def test_tcp_config_is_rejected(self, setting: dict[str, object]) -> None:
-        with pytest.raises(
-            ValueError,
-            match="TCP ACP transport cannot guarantee room process isolation",
-        ):
-            CopilotACPAdapterConfig.model_validate(setting)
-
-    def test_no_profile_uses_default_noop(self) -> None:
-        # Copilot speaks vanilla ACP; the base adapter leaves profile unset and the
-        # collecting client the runtime builds falls back to the no-op profile.
-        adapter = CopilotACPAdapter()
-        assert adapter._profile is None
-        client = adapter._build_runtime(room_holder(adapter), 1)._client_factory()
-        assert isinstance(client._profile, NoopACPClientProfile)
-
-    @pytest.mark.parametrize(
-        ("config", "env"),
-        [
-            pytest.param(
-                CopilotACPAdapterConfig(github_token="ghp_x"),
-                {"GITHUB_TOKEN": "ghp_x"},
-                id="token",
-            ),
-            # Any auth Copilot supports (COPILOT_GITHUB_TOKEN, BYOK keys) passes
-            # through env.
-            pytest.param(
-                CopilotACPAdapterConfig(
-                    env={"COPILOT_GITHUB_TOKEN": "tok", "OTHER": "x"}
-                ),
-                {"COPILOT_GITHUB_TOKEN": "tok", "OTHER": "x"},
-                id="env",
-            ),
-            pytest.param(
-                CopilotACPAdapterConfig(github_token="ghp_x", env={"GH_TOKEN": "gh"}),
-                {"GH_TOKEN": "gh", "GITHUB_TOKEN": "ghp_x"},
-                id="token-merged-into-env",
-            ),
-            pytest.param(
-                CopilotACPAdapterConfig(
-                    github_token="from-shortcut", env={"GITHUB_TOKEN": "from-env"}
-                ),
-                {"GITHUB_TOKEN": "from-env"},
-                id="env-wins-over-token",
-            ),
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_auth_reaches_the_cli_environment(
-        self, config: CopilotACPAdapterConfig, env: dict[str, str], tmp_path: Path
-    ) -> None:
-        adapter = CopilotACPAdapter(
-            config, workspace_for_room=lambda room_id: str(tmp_path / room_id)
-        )
-
-        launch = await launch_for(adapter)
-
-        assert launch.env == env
-
-    def test_additional_tools_are_registered(self) -> None:
-        class EchoInput(BaseModel):
-            text: str
-
-        def _echo(text: str) -> str:
-            return text
-
-        adapter = CopilotACPAdapter(additional_tools=[(EchoInput, _echo)])
-
-        assert "echo" in adapter._own_tool_names
-
-
-# Copilot CLI 1.0.89's efforts per model (probed live).
-COPILOT_EFFORTS = {
-    "claude-sonnet-5": ("low", "medium", "high", "xhigh", "max"),
-    "gpt-5.4": ("none", "low", "medium", "high", "xhigh"),
-    "claude-haiku-4.5": (),
-}
-
-# Event-loop ticks that cover every step of a model+effort switch, with
-# headroom: a cleanup after tick 15 finds the switch already done.
-SWITCH_SWEEP_TICKS = 24
-ENDED_MID_SWITCH = f"room {DEFAULT_ROOM}'s ACP session ended mid-switch"
-
-
-def copilot(current: str = "claude-sonnet-5") -> FakeACPAgent:
-    """A fake ``copilot --acp`` advertising Copilot's model catalog."""
-    return (
-        FakeACPAgent(supports_session_load=True)
-        .advertises_models(COPILOT_EFFORTS, current=current)
-        .knows_session("persisted-session")
-        .will_say("Configured")
-    )
-
-
-@asynccontextmanager
-async def copilot_room(agent: FakeACPAgent, **config: Any) -> AsyncIterator[AcpSession]:
-    adapter = CopilotACPAdapter(
-        CopilotACPAdapterConfig(inject_band_tools=False, **config)
-    )
-    async with started_acp_adapter(adapter, agent) as session:
-        yield session
-
-
-async def switch_room(session: AcpSession, **selection: str) -> None:
-    """Switch the live session of the room ``session.send`` talks to."""
-    await session.adapter.apply_model_selection(
-        ModelSelection(**selection), room_id=DEFAULT_ROOM
-    )
+from tests.integrations.acp.acp_toolkit.harness import DEFAULT_ROOM
 
 
 class TestCopilotACPModelSelection:
@@ -244,7 +87,8 @@ class TestCopilotACPModelSelection:
             pytest.param(
                 {"model": "claude-haiku-4.5", "reasoning_effort": "high"},
                 [(MODEL_OPTION_ID, "claude-haiku-4.5")],
-                'model "claude-haiku-4.5" offers no reasoning effort',
+                'reasoning effort "high" is not advertised for model '
+                '"claude-haiku-4.5"; available: (none)',
                 id="model-without-efforts",
             ),
             pytest.param(
@@ -284,7 +128,8 @@ class TestCopilotACPModelSelection:
                 await switch_room(session, reasoning_effort="high")
 
         assert str(rejected.value) == (
-            'model "claude-haiku-4.5" offers no reasoning effort'
+            'reasoning effort "high" is not advertised for model '
+            '"claude-haiku-4.5"; available: (none)'
         )
         assert agent.config_selections() == [(MODEL_OPTION_ID, "claude-haiku-4.5")]
 
@@ -341,7 +186,8 @@ class TestCopilotACPModelSelection:
                 await switch_room(session, reasoning_effort="high")
 
         assert str(rejected.value) == (
-            'model "claude-haiku-4.5" offers no reasoning effort'
+            'reasoning effort "high" is not advertised for model '
+            '"claude-haiku-4.5"; available: (none)'
         )
 
     @pytest.mark.asyncio

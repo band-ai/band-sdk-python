@@ -582,12 +582,25 @@ def copilot_home_dir(work_dir: str) -> str:
     """Create and return the ``copilot-home`` subdirectory of ``work_dir``.
 
     The one place the subdirectory name and its creation live — the registry
-    builder and the bespoke test configs (``test_copilot_acp.py``) all call
-    this rather than each re-picking the name and an os.path/pathlib API.
+    builder and the bespoke test configs (``smoke/adapters/copilotacp/kit.py``)
+    all call this rather than each re-picking the name and an os.path/pathlib API.
     """
     home = os.path.join(work_dir, "copilot-home")
     os.makedirs(home, exist_ok=True)
     return home
+
+
+def copilot_cli_env(copilot_home: str) -> dict[str, str]:
+    """The env every baseline ``copilot --acp`` spawn starts from.
+
+    ``COPILOT_AUTO_UPDATE=false`` keeps the CLI on the version
+    ``.github/scripts/setup-copilot.sh`` pins. The ACP spawn env is trimmed to
+    a few host variables, so the runner's ``CI=true``, which would otherwise
+    disable updates, never reaches the CLI: it downloads the latest release,
+    replaces the installed binary, and later spawns run that instead. Only
+    this flag also makes a launch ignore a newer version already cached.
+    """
+    return {"COPILOT_HOME": copilot_home, "COPILOT_AUTO_UPDATE": "false"}
 
 
 def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
@@ -605,7 +618,7 @@ def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
     the home never hides auth.
     """
     return {
-        "COPILOT_HOME": copilot_home,
+        **copilot_cli_env(copilot_home),
         "COPILOT_PROVIDER_TYPE": "anthropic",
         "COPILOT_PROVIDER_BASE_URL": "https://api.anthropic.com",
         "COPILOT_PROVIDER_API_KEY": s.llm_credentials.anthropic_api_key,

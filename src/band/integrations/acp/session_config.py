@@ -18,7 +18,7 @@ from acp.schema import (
 from pydantic import ValidationError
 
 from band.core.exceptions import BandConfigError
-from band.core.validation import listing
+from band.core.validation import available
 
 SessionConfigOption: TypeAlias = SessionConfigOptionSelect | SessionConfigOptionBoolean
 SessionConfigSelections: TypeAlias = Mapping[str, str | None]
@@ -153,7 +153,7 @@ async def apply_session_config_selections(
                 selected_value=selected_value,
                 message=(
                     f'ACP session offers no config option "{option_id}"; '
-                    f"available: {listing(select_ids(catalog))}."
+                    f"{available(select_ids(catalog))}."
                 ),
             )
 
@@ -167,8 +167,7 @@ async def apply_session_config_selections(
                 selected_value=selected_value,
                 message=(
                     f'ACP config value "{selected_value}" is not advertised '
-                    f'for option "{option_id}"; available: '
-                    f"{listing(available_values)}."
+                    f'for option "{option_id}"; {available(available_values)}.'
                 ),
             )
 
