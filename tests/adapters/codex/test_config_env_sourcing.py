@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
-from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex import CodexAdapterConfig, CodexWindowsSandbox
 
 
 class TestConfigEnvSourcing:
@@ -18,6 +19,7 @@ class TestConfigEnvSourcing:
             "CODEX_EMIT_TURN_TASK_MARKERS",
             "CODEX_COMMAND",
             "CODEX_CODEX_COMMAND",
+            "CODEX_WINDOWS_SANDBOX",
         ):
             monkeypatch.delenv(var, raising=False)
 
@@ -63,3 +65,16 @@ class TestConfigEnvSourcing:
         config = CodexAdapterConfig(codex_command=("explicit", "--kwarg"))
 
         assert config.codex_command == ("explicit", "--kwarg")
+
+    def test_windows_sandbox_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CODEX_WINDOWS_SANDBOX", "unelevated")
+
+        assert CodexAdapterConfig().windows_sandbox is CodexWindowsSandbox.UNELEVATED
+
+    def test_unknown_windows_sandbox_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEX_WINDOWS_SANDBOX", "restricted-token")
+
+        with pytest.raises(ValidationError, match="windows_sandbox"):
+            CodexAdapterConfig()

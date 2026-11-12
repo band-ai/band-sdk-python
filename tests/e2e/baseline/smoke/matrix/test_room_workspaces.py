@@ -38,14 +38,14 @@ async def test_room_files_survive_restart_without_cross_leak(
     cell: AdapterCell,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
-    tmp_path: Path,
+    workspace_root: Path,
 ) -> None:
     identity = await cell.provision()
     rooms = [
         await cell.resources.provision_room(participants=[identity.id])
         for _ in range(2)
     ]
-    resolver = create_room_workspace_resolver(tmp_path)
+    resolver = create_room_workspace_resolver(workspace_root)
     filename = "room-note.txt"
     markers = [unique_marker("alpha"), unique_marker("bravo")]
     adapter = cell.build(workspace_for_room=resolver)
