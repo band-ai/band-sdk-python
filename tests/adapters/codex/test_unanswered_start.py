@@ -14,6 +14,7 @@ from band.adapters.codex import (
 )
 from band.client.streaming import ControlMode
 from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
+from band.core.retention import RoomRetentionConfig
 from band.integrations.codex.types import CodexRequestMethod, CodexSessionState
 from tests.adapters.codex.kit import (
     ROOM_ID,
@@ -48,10 +49,11 @@ BEFORE_A_TURN_RUNS = pytest.mark.parametrize(
 )
 
 
-def unanswered(named: str) -> list[tuple[str, str]]:
+def unanswered(
+    named: str, bound_s: float = CODEX_TRANSITION_TIMEOUT_S
+) -> list[tuple[str, str]]:
     """The one failure of a turn whose ``named`` request Codex never answered."""
-    bound = CODEX_TRANSITION_TIMEOUT_S
-    text = f"Codex turn timed out after {bound}s of silence ({named})"
+    text = f"Codex turn timed out after {bound_s}s of silence ({named})"
     return [(FAILURE_CODE_TIMEOUT, text)]
 
 
@@ -167,6 +169,29 @@ class TestUnansweredStart:
         assert len(replacement.params_of(CodexRequestMethod.TURN_START)) == 1
         assert failures(stopped) == []
         assert failures(tools) == []
+
+    async def test_the_wait_is_as_long_as_the_rooms_own_transition_bound(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """An operator who changes how long a process gets to start changes
+        this wait with it, and the failure names that bound."""
+        bound_s = 5.0
+        client = UnansweringClient(CodexRequestMethod.TURN_START)
+        adapter = await started_codex(
+            client, retention=RoomRetentionConfig(transition_timeout_s=bound_s)
+        )
+        tools = ToolSchemaFakeTools()
+
+        async with running_turn(adapter, tools) as turn:
+            await client.asked.wait()
+            await asyncio.sleep(bound_s - MARGIN_S)
+            assert not turn.done()
+            assert failures(tools) == []
+
+            await asyncio.sleep(2 * MARGIN_S)
+            assert failures(tools) == unanswered("turn_start", bound_s)
+            with pytest.raises(TurnResultAlreadyReported):
+                await turn
 
     async def test_a_seeded_thread_continues_after_an_unanswered_turn_start(
         self,
