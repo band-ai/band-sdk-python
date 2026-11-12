@@ -8,6 +8,8 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
+from band_sdk_core import chat_room_topic
+
 from band.client.streaming import ControlMode, WireEvent
 from band.platform.link import BandLink
 from band.runtime.execution import Execution, ExecutionContext
@@ -66,7 +68,7 @@ class BandWorld:
 
     async def add_room(self, room_id: str) -> None:
         """The platform adds the agent to a room."""
-        self.peer.room(room_id).member = True
+        self.add_room_unseen(room_id)
         await self.server.push(ROOMS_TOPIC, "room_added", room_json(room_id))
 
     async def join(self, room_id: str) -> None:
@@ -115,6 +117,18 @@ class BandWorld:
         """A newer process connects with the same key; the platform evicts
         this one with a terminal supersede."""
         await self.server.push(CONTROL_TOPIC, WireEvent.SUPERSEDE, TERMINAL_SUPERSEDE)
+
+    def add_room_unseen(self, room_id: str) -> None:
+        """The platform adds the agent to a room; no live push reaches it."""
+        self.peer.room(room_id).member = True
+
+    async def crash_rooms_channel(self) -> None:
+        """The platform crashes the agent's room membership channel."""
+        await self.server.crash_channel(ROOMS_TOPIC)
+
+    async def crash_room_channel(self, room_id: str) -> None:
+        """The platform crashes the room's channel; the socket stays up."""
+        await self.server.crash_channel(chat_room_topic(room_id))
 
     async def close_connection(self, code: int) -> None:
         """The platform closes the socket with ``code``."""

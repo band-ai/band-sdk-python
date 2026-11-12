@@ -138,10 +138,10 @@ class WebSocketDisconnectedEvent:
 
 @dataclass
 class ReconnectedEvent:
-    """Emitted when the WebSocket reconnects after a disconnection.
+    """Message delivery may have had a gap.
 
-    Signals RoomPresence to re-derive room state from the server
-    instead of relying on stale subscription state.
+    Without ``room_id``: reconcile all rooms (socket reconnect, or membership
+    channel recovered). With ``room_id``: that room's channel recovered.
     """
 
     type: Literal["reconnected"] = "reconnected"

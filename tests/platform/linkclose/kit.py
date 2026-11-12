@@ -24,6 +24,7 @@ from tests.identifiers import AGENT_ID
 from tests.sessionpolicies import millisecond_backoff
 
 CONTROL_TOPIC = AgentTopicKind.Control.topic(AGENT_ID)
+ROOMS_TOPIC = AgentTopicKind.Rooms.topic(AGENT_ID)
 HANG_GUARD_S = 5.0
 
 
