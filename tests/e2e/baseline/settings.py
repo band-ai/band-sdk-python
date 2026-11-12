@@ -213,7 +213,7 @@ class Backends(BaseSettings):
     omp_native_command: str = ""  # OMP_NATIVE_COMMAND (defaults to `omp --mode rpc`)
     omp_model: str = DEFAULT_OMP_MODEL  # OMP_MODEL
 
-    # Copilot-hosted auth for the non-BYOK smokes in test_copilot_acp.py; the
+    # Copilot-hosted auth for the non-BYOK smokes in smoke/adapters/copilotacp/; the
     # BYOK matrix cells never read it. Those smokes skip when unset.
     github_token: str = Field(default="", repr=False)  # GITHUB_TOKEN
     # Those smokes' typed model (see hermetic_copilot_config) rather than

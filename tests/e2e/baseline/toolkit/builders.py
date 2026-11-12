@@ -582,7 +582,7 @@ def copilot_home_dir(work_dir: str) -> str:
     """Create and return the ``copilot-home`` subdirectory of ``work_dir``.
 
     The one place the subdirectory name and its creation live — the registry
-    builder and the bespoke test configs (``test_copilot_acp.py``) all call
+    builder and the bespoke test configs (``smoke/adapters/copilotacp/kit.py``) all call
     this rather than each re-picking the name and an os.path/pathlib API.
     """
     home = os.path.join(work_dir, "copilot-home")
