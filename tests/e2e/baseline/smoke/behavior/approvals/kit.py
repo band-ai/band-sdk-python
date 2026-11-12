@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,7 +31,6 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.workspaceroot import InheritedTemporaryDirectory
 
 
 def readback_commands(target: Path) -> frozenset[str]:
@@ -95,8 +95,8 @@ async def approval_room(
     # package: other adapters log tool input at INFO.
     with (
         sdk_logs_at(band.adapters.opencode, logging.INFO),
-        InheritedTemporaryDirectory(
-            "band-e2e-approval-", parent=dialect.workdir_root(cell.settings)
+        tempfile.TemporaryDirectory(
+            prefix="band-e2e-approval-", dir=dialect.workdir_root(cell.settings)
         ) as workdir,
     ):
         # Resolved: a symlinked temp root (macOS /var) reads as an outside dir.

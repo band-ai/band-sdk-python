@@ -446,6 +446,9 @@ def _codex(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
         "approval_mode": setup.approval,
         "approval_policy": "untrusted",
         "sandbox": CodexSandboxMode.READ_ONLY,
+        # Codex does not escalate an approved write that a Windows sandbox
+        # denies, so the gated command runs only without a backend there.
+        "windows_sandbox": None,
         "approval_wait_timeout_s": setup.wait_timeout_s,
     }
     return CodexAdapter(

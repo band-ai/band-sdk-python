@@ -848,6 +848,9 @@ class CodexAdapterConfig(EnvAdapterConfig):
         creates sandbox users. Keep room workspaces under a directory with
         inherited permissions; one created with mode ``0o700`` (such as
         ``tempfile.mkdtemp``) can block the sandbox from the workspace.
+        Codex does not recognize a Windows sandbox denial, so an approved
+        command it first runs sandboxed is not retried outside the sandbox:
+        with ``read-only``, an approved write still fails.
 
     Turn task events:
         ``emit_turn_task_markers`` and ``emit_turn_lifecycle_events`` are
