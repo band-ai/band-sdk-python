@@ -108,6 +108,8 @@ from band.integrations.codex.types import (
     CODEX_PROVIDER,
     CODEX_TRANSPORT_CLOSED_FAILURE_CODE,
     DYNAMIC_TOOL_CALL_METHOD,
+    WINDOWS_PLATFORM_OS,
+    WINDOWS_SANDBOX_CONFIG_KEY,
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
@@ -117,6 +119,7 @@ from band.integrations.codex.types import (
     CodexSessionState,
     CodexTokenUsage,
     CodexTurnStatus,
+    CodexWindowsSandboxReadiness,
     build_agent_failure,
     parse_plan_steps,
 )
@@ -256,8 +259,20 @@ class CodexSandboxMode(StrEnum):
     DANGER_FULL_ACCESS = "danger-full-access"
 
 
+class CodexWindowsSandbox(StrEnum):
+    """Codex's ``[windows] sandbox`` backends: without one, a Windows app-server
+    cannot enforce ``read-only`` or ``workspace-write``."""
+
+    ELEVATED = "elevated"
+    UNELEVATED = "unelevated"
+
+
 # Membership by plain string: Python 3.11's Enum rejects `"word" in CodexSandboxMode`.
 _SANDBOX_MODES = frozenset(CodexSandboxMode)
+# Sandboxes Codex enforces itself; on Windows they need a Windows sandbox backend.
+_ENFORCED_SANDBOX_MODES = frozenset(
+    {CodexSandboxMode.READ_ONLY, CodexSandboxMode.WORKSPACE_WRITE}
+)
 # A sandbox kind expressible only as a turn/start sandboxPolicy, not a mode.
 _EXTERNAL_SANDBOX_KEY = "external-sandbox"
 _EXTERNAL_SANDBOX_POLICY_TYPE = "externalSandbox"
@@ -267,6 +282,19 @@ _SANDBOX_KEY_ALIASES = {
 }
 _SANDBOX_CONFIRM_FLAG = "--confirm"
 _SANDBOX_MODE_CHOICES = "|".join(CodexSandboxMode)
+WINDOWS_SANDBOX_MISSING_WARNING = (
+    "Codex on Windows has no sandbox configured, so it cannot enforce a "
+    "read-only or workspace-write sandbox: with approval_policy 'never' it "
+    "refuses every shell command and file edit, and otherwise it asks approval "
+    "for each. Set windows_sandbox (or CODEX_WINDOWS_SANDBOX) to "
+    f"'{CodexWindowsSandbox.UNELEVATED}' or '{CodexWindowsSandbox.ELEVATED}', "
+    "or set [windows] sandbox in the Codex config."
+)
+WINDOWS_SANDBOX_SETUP_WARNING = (
+    f"Codex's {CodexWindowsSandbox.ELEVATED} Windows sandbox has not finished "
+    "its setup, so sandboxed commands fail. Complete the setup in Codex, or set "
+    f"windows_sandbox (or CODEX_WINDOWS_SANDBOX) to '{CodexWindowsSandbox.UNELEVATED}'."
+)
 
 _HELP_TEXT = (
     "Codex commands: "
@@ -809,6 +837,18 @@ class CodexAdapterConfig(EnvAdapterConfig):
     whitespace-split shell string (e.g. ``"custom-codex --args"``). An
     explicit constructor kwarg always wins over the environment.
 
+    Windows sandbox:
+        Codex leaves its Windows sandbox off unless configured, and then
+        treats ``workspace-write`` as read-only and, under
+        ``approval_policy="never"``, refuses every command. ``windows_sandbox``
+        picks a backend for each thread; unset keeps Codex's own
+        ``[windows] sandbox`` config. It is opt-in because both backends
+        change the host: ``unelevated`` grants ACL entries on the workspace
+        and temp directory, and ``elevated`` needs administrator setup that
+        creates sandbox users. Keep room workspaces under a directory with
+        inherited permissions; one created with mode ``0o700`` (such as
+        ``tempfile.mkdtemp``) can block the sandbox from the workspace.
+
     Turn task events:
         ``emit_turn_task_markers`` and ``emit_turn_lifecycle_events`` are
         independent channels.  Enabling both will produce **two** task
@@ -846,6 +886,7 @@ class CodexAdapterConfig(EnvAdapterConfig):
     personality: Literal["friendly", "pragmatic", "none"] = "pragmatic"
     sandbox: str | None = None
     sandbox_policy: dict[str, Any] | None = None
+    windows_sandbox: CodexWindowsSandbox | None = None
     system_prompt: str | None = None
     custom_section: str = ""
     include_base_instructions: bool = True
@@ -1061,6 +1102,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._session_approved: dict[str, OrderedDict[str, None]] = {}
         # Per-room sandbox overrides (set via /sandbox command)
         self._sandbox_overrides: dict[str, str] = {}
+        # Every room's app-server shares one config, so its readiness is checked once.
+        self._windows_sandbox_checked = False
 
     def _room_closing(self, room_id: str) -> bool:
         """Whether the room admits no more work; a forgotten room is closed."""
@@ -1198,7 +1241,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
         logger.info(
             "Codex adapter started: agent=%s, transport=%s, model=%s, "
-            "sandbox=%s, approval_mode=%s, "
+            "sandbox=%s, windows_sandbox=%s, approval_mode=%s, "
             "execution_reporting=%s, self_config_tools=%s, "
             "task_events=%s, turn_markers=%s, thought_events=%s, "
             "stream_reasoning=%s, stream_plan=%s, stream_commentary=%s, "
@@ -1207,6 +1250,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             self.config.transport,
             self.config.model or "auto",
             self.config.sandbox or "default",
+            self.config.windows_sandbox or "codex config",
             self.config.approval_mode,
             Emit.TOOL_CALLS in self.features.emit,
             self.config.enable_self_config_tools,
@@ -2059,12 +2103,13 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             self._read_native_events(room, client, generation),
             label=f"Room {room.room_id} Codex event reader",
         )
-        await client.initialize(
+        initialized = await client.initialize(
             client_name=self.config.client_name,
             client_title=self.config.client_title,
             client_version=self.config.client_version,
             experimental_api=self.config.experimental_api,
         )
+        await self._check_windows_sandbox(client, initialized)
         await self._register_skill_roots(client)
         if room.selected_model is None:
             room.selected_model = await self._select_model(client)
@@ -2534,6 +2579,39 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 thread_id,
             )
             room.forget_thread()
+
+    async def _check_windows_sandbox(
+        self, client: CodexClientProtocol, initialized: dict[str, Any]
+    ) -> None:
+        """Warn once when a Windows app-server has no backend for the sandbox it must enforce."""
+        if (
+            self._windows_sandbox_checked
+            or self.config.windows_sandbox is not None
+            or initialized.get("platformOs") != WINDOWS_PLATFORM_OS
+            or not self._enforces_sandbox()
+        ):
+            return
+        self._windows_sandbox_checked = True
+        try:
+            readiness = await client.request(
+                CodexRequestMethod.WINDOWS_SANDBOX_READINESS
+            )
+        except CodexJsonRpcError as exc:
+            logger.debug("Codex Windows sandbox readiness unavailable: %s", exc)
+            return
+        match readiness.get("status"):
+            case CodexWindowsSandboxReadiness.NOT_CONFIGURED:
+                logger.warning(WINDOWS_SANDBOX_MISSING_WARNING)
+            case CodexWindowsSandboxReadiness.UPDATE_REQUIRED:
+                logger.warning(WINDOWS_SANDBOX_SETUP_WARNING)
+
+    def _enforces_sandbox(self) -> bool:
+        """Whether Codex enforces the configured sandbox itself; its default is enforced."""
+        policy = self.config.sandbox_policy
+        kind = policy.get("type") if policy is not None else self.config.sandbox
+        if not isinstance(kind, str):
+            return True
+        return self._canonical_sandbox_key(kind) in _ENFORCED_SANDBOX_MODES
 
     async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
         roots = self.config.skill_roots
@@ -4530,7 +4608,12 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     def _apply_thread_sandbox(
         self, params: dict[str, Any], *, room_id: str | None = None
     ) -> None:
-        """Apply sandbox to thread/start params (only SandboxMode is accepted)."""
+        """Apply sandbox settings to thread/start or thread/resume params.
+
+        Only a SandboxMode is accepted there, plus the Windows backend override.
+        """
+        if self.config.windows_sandbox is not None:
+            params["config"] = {WINDOWS_SANDBOX_CONFIG_KEY: self.config.windows_sandbox}
         if self.config.sandbox_policy is not None:
             # thread/start only has a `sandbox` field (SandboxMode enum).
             # Extract mode from sandbox_policy when possible.

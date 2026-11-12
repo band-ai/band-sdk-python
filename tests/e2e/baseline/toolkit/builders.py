@@ -23,7 +23,7 @@ import weakref
 from typing import TYPE_CHECKING, Any
 
 from band import create_room_workspace_resolver
-from band.adapters.codex import CodexSandboxMode
+from band.adapters.codex import CodexSandboxMode, CodexWindowsSandbox
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.omp import omp_provider_env
@@ -48,6 +48,7 @@ from tests.e2e.baseline.toolkit.omp_credentials import (
     omp_provider_api_key,
 )
 from tests.e2e.baseline.toolkit.tools import ToolSpec
+from tests.e2e.baseline.toolkit.workspaceroot import InheritedTemporaryDirectory
 
 if TYPE_CHECKING:
     from band.adapters.copilot_sdk import CopilotSDKAdapter
@@ -65,7 +66,8 @@ _EVERY_CAPABILITY = (
 
 
 def _own_sandbox(
-    adapter: SimpleAdapter[Any], sandbox: tempfile.TemporaryDirectory[str]
+    adapter: SimpleAdapter[Any],
+    sandbox: tempfile.TemporaryDirectory[str] | InheritedTemporaryDirectory,
 ) -> None:
     """Release after SDK teardown, with a fallback for never-started adapters."""
     fallback = weakref.finalize(adapter, sandbox.cleanup)
@@ -500,6 +502,9 @@ def codex_config_kwargs(
             workspace_root or s.backends.codex_cwd
         ),
         "sandbox": CodexSandboxMode.WORKSPACE_WRITE,
+        # Without a backend, Codex on Windows refuses every command under
+        # workspace-write; unelevated needs no administrator setup.
+        "windows_sandbox": CodexWindowsSandbox.UNELEVATED,
         "custom_section": prompt or "",
         "model": s.backends.codex_model,
     }
@@ -527,8 +532,8 @@ def _build_codex(
         CodexAdapterConfig,
     )
 
-    sandbox = tempfile.TemporaryDirectory(
-        prefix="band-e2e-codex-", dir=s.backends.codex_cwd or None
+    sandbox = InheritedTemporaryDirectory(
+        "band-e2e-codex-", parent=s.backends.codex_cwd or None
     )
     config_kwargs = codex_config_kwargs(s, prompt=prompt, workspace_root=sandbox.name)
     if workspace_for_room is not None:

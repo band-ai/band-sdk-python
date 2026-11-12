@@ -13,8 +13,9 @@ topologies build through ``AdapterCell`` so construction + run wiring lives in o
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 
@@ -33,8 +34,9 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_members,
 )
 from tests.e2e.baseline.toolkit.tools import ToolSpec
+from tests.e2e.baseline.toolkit.workspaceroot import InheritedTemporaryDirectory
 
-__all__ = ["adapter_id", "agent", "agents", "cell", "peer"]
+__all__ = ["adapter_id", "agent", "agents", "cell", "peer", "workspace_root"]
 
 
 # The demo adapters reply tersely and in-chat unless a test steers otherwise; this is the
@@ -101,6 +103,19 @@ def adapter_id(request: pytest.FixtureRequest) -> str:
             "fixtures without that decorator."
         )
     return str(request.param)
+
+
+@pytest.fixture
+def workspace_root() -> Iterator[Path]:
+    """A root for per-room agent workspaces that a native sandbox can enter.
+
+    ``tmp_path`` is owner-only on Windows, which Codex's sandbox cannot use.
+    """
+    root = InheritedTemporaryDirectory("band-e2e-rooms-")
+    try:
+        yield Path(root.name)
+    finally:
+        root.cleanup()
 
 
 @pytest.fixture

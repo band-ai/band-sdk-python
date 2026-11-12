@@ -82,6 +82,8 @@ class FakeCodexClient(RecordedRequests):
         resumed_thread_id: str | None = None,
         recorded_cwd: str | None = None,
         hold_when_drained: bool = False,
+        platform_os: str | None = None,
+        windows_sandbox_readiness: str | Exception | None = None,
     ) -> None:
         self.connected = False
         self.initialized = False
@@ -104,6 +106,9 @@ class FakeCodexClient(RecordedRequests):
         self._resumed_thread_id = resumed_thread_id
         # The cwd a resumed thread reports when resume names none.
         self._recorded_cwd = recorded_cwd
+        # The OS initialize reports, and the windowsSandbox/readiness answer.
+        self._platform_os = platform_os
+        self._windows_sandbox_readiness = windows_sandbox_readiness
         self._thread_counter = 0
         self._turn_counter = 0
         self._released: deque[RpcEvent] = deque()
@@ -128,7 +133,8 @@ class FakeCodexClient(RecordedRequests):
         opt_out_notification_methods: list[str] | None = None,
     ) -> dict[str, Any]:
         self.initialized = True
-        return {"userAgent": f"{client_name}/{client_version}"}
+        platform = {"platformOs": self._platform_os} if self._platform_os else {}
+        return {"userAgent": f"{client_name}/{client_version}", **platform}
 
     async def request(
         self,
@@ -150,6 +156,16 @@ class FakeCodexClient(RecordedRequests):
             case CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET:
                 if self._skill_roots_error is not None:
                     raise self._skill_roots_error
+            case CodexRequestMethod.WINDOWS_SANDBOX_READINESS:
+                match self._windows_sandbox_readiness:
+                    case None:
+                        raise AssertionError(
+                            "Windows sandbox readiness was not scripted"
+                        )
+                    case Exception() as error:
+                        raise error
+                    case status:
+                        return {"status": status}
             case CodexRequestMethod.THREAD_RESUME:
                 if self._resume_error is not None:
                     raise self._resume_error

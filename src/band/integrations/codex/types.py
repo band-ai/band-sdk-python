@@ -101,6 +101,23 @@ class CodexRequestMethod(StrEnum):
     TURN_START = "turn/start"
     TURN_INTERRUPT = "turn/interrupt"
     TERMINAL_TERMINATE = "thread/backgroundTerminals/terminate"
+    WINDOWS_SANDBOX_READINESS = "windowsSandbox/readiness"
+
+
+# initialize's ``platformOs`` for an app-server running on Windows.
+WINDOWS_PLATFORM_OS = "windows"
+# The thread/start and thread/resume config override that picks Codex's
+# Windows sandbox backend.
+WINDOWS_SANDBOX_CONFIG_KEY = "windows.sandbox"
+
+
+class CodexWindowsSandboxReadiness(StrEnum):
+    """``windowsSandbox/readiness`` statuses: whether a Windows app-server can
+    enforce a sandbox."""
+
+    READY = "ready"
+    NOT_CONFIGURED = "notConfigured"
+    UPDATE_REQUIRED = "updateRequired"
 
 
 CODEX_PROVIDER = "codex"
