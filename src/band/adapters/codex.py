@@ -948,13 +948,19 @@ class CodexAdapterConfig(EnvAdapterConfig):
     def _require_safe_retention(
         cls, retention: RoomRetentionConfig
     ) -> RoomRetentionConfig:
-        return require_disabled_retention(
+        checked = require_disabled_retention(
             retention,
             reason=(
                 "Codex idle retention is unavailable: native idle and terminal state "
                 "do not account for asynchronous hooks and delegated work; shutdown "
                 "can cancel that work."
             ),
+        )
+        if "transition_timeout_s" in checked.model_fields_set:
+            return checked
+        # The shared default is too short for a Codex start that resumes a thread.
+        return checked.model_copy(
+            update={"transition_timeout_s": CODEX_TRANSITION_TIMEOUT_S}
         )
 
     @field_validator("codex_command", mode="before")
@@ -2709,6 +2715,16 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 CodexRequestMethod.THREAD_RESUME,
                 self._resume_params(room, named),
             )
+        except CodexUnanswered:
+            # This turn fails as the room's first, so no later turn resumes from
+            # Band history; the next process restores the thread it names.
+            self._room_threads[room_id] = named
+            room.bind_thread(
+                registration=None,
+                settings=ThreadSettings(),
+                seed=SessionSeed(restored=True),
+            )
+            raise
         except CodexJsonRpcError as exc:
             logger.warning(
                 "thread/resume failed for room %s thread %s: %s",

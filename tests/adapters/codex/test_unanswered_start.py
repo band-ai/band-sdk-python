@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 import pytest
 
@@ -17,6 +18,7 @@ from tests.adapters.codex.kit import (
     ROOM_ID,
     ToolSchemaFakeTools,
     UnansweringClient,
+    agent_input,
     answered_turn,
     send_bootstrap,
 )
@@ -26,10 +28,12 @@ from tests.adapters.codexturns import (
     FakeCodexClient,
     patch_codex_client,
 )
+from tests.adapters.dispatch import deliver_event
 from tests.adapters.waiting import until
 
 # A thread Band history records for the room, which its first turn resumes.
-RECORDED = CodexSessionState(room_to_thread={ROOM_ID: "thr-recorded"})
+RECORDED_THREAD = "thr-recorded"
+RECORDED = CodexSessionState(room_to_thread={ROOM_ID: RECORDED_THREAD})
 # Each request a room's first turn waits on before it runs, the history that
 # makes the turn send it, and the name its failure gives it.
 BEFORE_A_TURN_RUNS = pytest.mark.parametrize(
@@ -108,6 +112,37 @@ class TestUnansweredStart:
 
         assert client.closed
         assert len(replacement.params_of(CodexRequestMethod.TURN_START)) == 1
+        assert failures(tools) == []
+
+    async def test_a_recorded_thread_survives_an_unanswered_history_resume(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """The failed turn was the room's first, so its next message is an
+        ordinary one. It still continues the thread Band history records."""
+        client = UnansweringClient(CodexRequestMethod.THREAD_RESUME)
+        replacement = FakeCodexClient(events=answered_turn())
+        adapter = await started_codex(client, replacement)
+        unheard, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
+
+        async with running_turn(adapter, unheard, history=RECORDED) as turn:
+            await client.asked.wait()
+            await asyncio.sleep(CODEX_TRANSITION_TIMEOUT_S + MARGIN_S)
+            assert failures(unheard) == unanswered("thread_resume")
+            with pytest.raises(TurnResultAlreadyReported):
+                await turn
+        await deliver_event(
+            adapter, agent_input("and now?", tools, is_session_bootstrap=False)
+        )
+
+        assert [
+            resumed["threadId"]
+            for resumed in replacement.params_of(CodexRequestMethod.THREAD_RESUME)
+        ] == [RECORDED_THREAD]
+        assert replacement.params_of(CodexRequestMethod.THREAD_START) == []
+        assert [
+            started["threadId"]
+            for started in replacement.params_of(CodexRequestMethod.TURN_START)
+        ] == [RECORDED_THREAD]
         assert failures(tools) == []
 
     async def test_a_seeded_thread_continues_after_an_unanswered_turn_start(

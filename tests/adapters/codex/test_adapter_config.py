@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex import CODEX_TRANSITION_TIMEOUT_S, CodexAdapterConfig
+from band.core.retention import RoomRetentionConfig
 
 
 class TestAdapterConfig:
@@ -28,3 +29,22 @@ class TestAdapterConfig:
         answered."""
         with pytest.raises(ValidationError, match="greater than or equal to 0"):
             CodexAdapterConfig(turn_settle_timeout_s=-1)
+
+    @pytest.mark.parametrize(
+        ("retention", "bound_s"),
+        [
+            pytest.param(RoomRetentionConfig(), CODEX_TRANSITION_TIMEOUT_S, id="unset"),
+            pytest.param({}, CODEX_TRANSITION_TIMEOUT_S, id="unset-in-a-mapping"),
+            pytest.param(
+                RoomRetentionConfig(transition_timeout_s=5.0), 5.0, id="explicit"
+            ),
+        ],
+    )
+    def test_a_supplied_retention_config_keeps_the_codex_transition_bound(
+        self, retention: RoomRetentionConfig | dict[str, float], bound_s: float
+    ) -> None:
+        """Starting a Codex process and resuming its thread takes longer than
+        the shared default allows; only an explicit bound replaces Codex's."""
+        config = CodexAdapterConfig.model_validate({"retention": retention})
+
+        assert config.retention.transition_timeout_s == bound_s
