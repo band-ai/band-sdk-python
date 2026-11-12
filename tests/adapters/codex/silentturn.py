@@ -5,15 +5,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex import CodexAdapterConfig
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.integrations.codex import RpcEvent
-from tests.adapters.codex.kit import patch_codex_clients_by_room
-from tests.adapters.codexturns import (
-    FIRST_THREAD_ID,
-    FakeCodexClient,
-    event_notification,
-)
+from tests.adapters.codexturns import FIRST_THREAD_ID, event_notification
 
 # The silence a turn is allowed, and a total limit no test's turn reaches.
 IDLE_S = 120.0
@@ -59,13 +54,3 @@ def silent_for(
             f"Codex turn timed out after {seconds}s of silence ({limit})",
         )
     ]
-
-
-async def started_adapter(
-    clients: dict[str, FakeCodexClient], config: CodexAdapterConfig, **kwargs: Any
-) -> CodexAdapter:
-    """A started adapter serving each room from its own fake app-server."""
-    adapter = CodexAdapter(config, **kwargs)
-    patch_codex_clients_by_room(adapter, clients)
-    await adapter.on_started("Codex Agent", "A coding agent")
-    return adapter

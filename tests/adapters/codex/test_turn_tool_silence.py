@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex.types import CodexRequestMethod
 from tests.adapters.codex.activity.kit import (
@@ -25,7 +26,6 @@ from tests.adapters.codex.silentturn import (
     IDLE_S,
     silence_guarded,
     silent_for,
-    started_adapter,
 )
 from tests.adapters.codex.timedturn import (
     FIRST_TURN_ID,
@@ -56,13 +56,15 @@ class TestTurnToolSilence:
         ids=["command", "mcp-tool", "context-compaction", "delegated-work"],
     )
     async def test_a_tool_silent_past_the_idle_limit_is_left_running(
-        self, tool: dict[str, Any]
+        self,
+        tool: dict[str, Any],
+        started_rooms: Callable[..., Awaitable[CodexAdapter]],
     ) -> None:
         """An open item of the turn says what it is working on: a command, a
         tool call, a context compaction, which is one long model call, or the
         wait for a sub-agent."""
         client = FakeCodexClient()
-        adapter = await started_adapter({ROOM_ID: client}, tool_patient())
+        adapter = await started_rooms({ROOM_ID: client}, tool_patient())
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:
@@ -79,10 +81,10 @@ class TestTurnToolSilence:
         assert client.params_of(CodexRequestMethod.TURN_INTERRUPT) == []
 
     async def test_a_command_silent_past_the_tool_allowance_is_interrupted(
-        self,
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         client = FakeCodexClient()
-        adapter = await started_adapter({ROOM_ID: client}, tool_patient())
+        adapter = await started_rooms({ROOM_ID: client}, tool_patient())
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:
@@ -103,10 +105,10 @@ class TestTurnToolSilence:
         )
 
     async def test_the_idle_limit_applies_again_once_the_command_completes(
-        self,
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         client = FakeCodexClient()
-        adapter = await started_adapter({ROOM_ID: client}, tool_patient())
+        adapter = await started_rooms({ROOM_ID: client}, tool_patient())
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:
@@ -124,10 +126,10 @@ class TestTurnToolSilence:
                 await turn
 
     async def test_without_a_tool_allowance_a_silent_command_gets_the_idle_limit(
-        self,
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         client = FakeCodexClient()
-        adapter = await started_adapter({ROOM_ID: client}, silence_guarded())
+        adapter = await started_rooms({ROOM_ID: client}, silence_guarded())
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:
@@ -143,12 +145,12 @@ class TestTurnToolSilence:
                 await turn
 
     async def test_a_command_an_earlier_turn_left_open_earns_no_allowance(
-        self,
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         """Codex closes an item only with its item/completed, so a command can
         outlive the turn that started it."""
         client = FakeCodexClient(events=[item_started(LIST_FILES), *answered_turn()])
-        adapter = await started_adapter({ROOM_ID: client}, tool_patient())
+        adapter = await started_rooms({ROOM_ID: client}, tool_patient())
         earlier, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
         async with running_turn(adapter, earlier) as left_open:
             await left_open

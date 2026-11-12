@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 import pytest
 from pydantic import ValidationError
 
-from band.adapters.codex import CodexAdapterConfig, CodexCommand
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexCommand
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.turn_lifecycle import BACKEND_CANCEL_TIMEOUT_SECONDS
 from band.integrations.codex.types import CodexRequestMethod
@@ -33,7 +33,6 @@ from tests.adapters.codex.silentturn import (
     IDLE_S,
     silence_guarded,
     silent_for,
-    started_adapter,
     sub_agent_thinking,
     thinking,
 )
@@ -60,11 +59,11 @@ SUB_AGENT_THREAD = "thr-sub"
 @pytest.mark.looptime
 class TestTurnSilence:
     async def test_a_turn_heard_from_every_minute_outlives_the_idle_limit(
-        self,
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         """Half an hour of reasoning the room never sees is not silence."""
         client = FakeCodexClient()
-        adapter = await started_adapter({ROOM_ID: client}, silence_guarded())
+        adapter = await started_rooms({ROOM_ID: client}, silence_guarded())
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:
@@ -79,10 +78,10 @@ class TestTurnSilence:
         assert client.params_of(CodexRequestMethod.TURN_INTERRUPT) == []
 
     async def test_a_silent_turn_is_interrupted_at_the_idle_limit_and_not_before(
-        self,
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         client = FakeCodexClient()
-        adapter = await started_adapter({ROOM_ID: client}, silence_guarded())
+        adapter = await started_rooms({ROOM_ID: client}, silence_guarded())
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:
@@ -103,13 +102,13 @@ class TestTurnSilence:
         )
 
     async def test_a_silent_turn_frees_its_room_when_the_interrupt_goes_unanswered(
-        self,
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         """Silence ends a turn through the same bounded interrupt as the total
         limit: one failure, the process closed, and the next message answered."""
         client = FakeCodexClient()
         client.interrupt_released.clear()
-        adapter = await started_adapter({ROOM_ID: client}, silence_guarded())
+        adapter = await started_rooms({ROOM_ID: client}, silence_guarded())
         silent, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
 
         async with running_turn(adapter, silent) as turn:
@@ -129,10 +128,12 @@ class TestTurnSilence:
         assert client.closed
         assert failures(tools) == []
 
-    async def test_each_event_restarts_the_silence_clock(self) -> None:
+    async def test_each_event_restarts_the_silence_clock(
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
         heard_at_s = 100.0
         client = FakeCodexClient()
-        adapter = await started_adapter({ROOM_ID: client}, silence_guarded())
+        adapter = await started_rooms({ROOM_ID: client}, silence_guarded())
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:
@@ -149,12 +150,12 @@ class TestTurnSilence:
                 await turn
 
     async def test_a_sub_agent_that_is_heard_from_does_not_restart_the_clock(
-        self,
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         """A sub-agent's notifications name its own thread and turn, so the
         turn that delegated to it is silent while only the sub-agent is heard."""
         client = FakeCodexClient()
-        adapter = await started_adapter({ROOM_ID: client}, silence_guarded())
+        adapter = await started_rooms({ROOM_ID: client}, silence_guarded())
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:
@@ -172,11 +173,11 @@ class TestTurnSilence:
                 await turn
 
     async def test_the_total_limit_still_ends_a_turn_that_is_never_silent(
-        self,
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         total_s = 600.0
         client = FakeCodexClient()
-        adapter = await started_adapter(
+        adapter = await started_rooms(
             {ROOM_ID: client}, silence_guarded(turn_timeout_s=total_s)
         )
         tools = ToolSchemaFakeTools()
@@ -227,7 +228,7 @@ class TestTurnSilence:
         assert room.client.params_of(CodexRequestMethod.TURN_INTERRUPT) == []
 
     async def test_a_band_tool_call_that_outlasts_the_idle_limit_is_not_silence(
-        self,
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         running, finish = asyncio.Event(), asyncio.Event()
 
@@ -244,7 +245,7 @@ class TestTurnSilence:
                 turn_completed(),
             ]
         )
-        adapter = await started_adapter(
+        adapter = await started_rooms(
             {ROOM_ID: client},
             silence_guarded(),
             additional_tools=[(StayQuietInput, stay_quiet)],
@@ -261,9 +262,11 @@ class TestTurnSilence:
         assert failures(tools) == []
         assert client.params_of(CodexRequestMethod.TURN_INTERRUPT) == []
 
-    async def test_silence_in_one_room_leaves_a_busy_room_running(self) -> None:
+    async def test_silence_in_one_room_leaves_a_busy_room_running(
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
         silent_client, busy_client = FakeCodexClient(), FakeCodexClient()
-        adapter = await started_adapter(
+        adapter = await started_rooms(
             {SILENT_ROOM: silent_client, BUSY_ROOM: busy_client}, silence_guarded()
         )
         silent_tools, busy_tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
@@ -328,12 +331,14 @@ class TestTurnSilence:
             ((), "value_error")
         ]
 
-    async def test_the_total_limit_wins_when_both_limits_end_together(self) -> None:
+    async def test_the_total_limit_wins_when_both_limits_end_together(
+        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
         """A wait that starts with exactly the idle limit left of the total ends
         as the total limit, with its text."""
         total_s = 300.0
         client = FakeCodexClient()
-        adapter = await started_adapter(
+        adapter = await started_rooms(
             {ROOM_ID: client}, silence_guarded(turn_timeout_s=total_s)
         )
         tools = ToolSchemaFakeTools()
