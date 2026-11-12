@@ -267,6 +267,11 @@ Gotcha: agents are created with `LETTA_EMBEDDING` (default
 `openai/text-embedding-3-small`) — Letta's docker server rejects agent create
 without an embedding model.
 
+Gotcha: Letta runs the pinned `LETTA_SELF_HOSTED_MODEL` at reasoning effort
+`"none"`, so the builder sets `LETTA_SELF_HOSTED_REASONING_EFFORT`
+(`band.core.defaultmodels`) through `model_settings`. Overriding `LETTA_MODEL`
+drops that setting and runs the new model at Letta's own defaults.
+
 ## Fail-loud vs skip (how to read a result)
 
 - Only `E2E_TESTS_ENABLED` unset → clean skip of the whole suite.

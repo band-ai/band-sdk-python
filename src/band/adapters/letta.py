@@ -73,6 +73,18 @@ logger = logging.getLogger(__name__)
 _PROVIDER = "letta"
 
 
+def _stop_reason(response_messages: Sequence[Any]) -> str | None:
+    """Why Letta ended the run, from the stream's ``stop_reason`` message."""
+    return next(
+        (
+            getattr(message, "stop_reason", None)
+            for message in response_messages
+            if getattr(message, "message_type", None) == "stop_reason"
+        ),
+        None,
+    )
+
+
 @dataclass(frozen=True)
 class LettaRun:
     """What cancelling one room's runs needs: the room's conversation in
@@ -682,7 +694,14 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
                 room_id,
             )
         elif not final_text_parts:
-            logger.debug("Room %s: Letta turn complete, no output", room_id)
+            # The stop reason tells an empty model answer apart from a
+            # provider-side stop when the turn is then judged missing a reply.
+            logger.log(
+                logging.DEBUG if tools.turn.complete else logging.WARNING,
+                "Room %s: Letta turn produced no reply or text (stop_reason=%s)",
+                room_id,
+                _stop_reason(response_messages),
+            )
         elif not self.config.auto_relay:
             logger.error(
                 "Room %s: Agent did not call %s and auto-relay is disabled; "
@@ -966,6 +985,8 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         # Letta's Docker server requires an embedding model on agent create.
         if self.config.embedding:
             create_kwargs["embedding"] = self.config.embedding
+        if self.config.model_settings:
+            create_kwargs["model_settings"] = self.config.model_settings
 
         agent = await self._client.agents.create(**create_kwargs)
         agent_id = agent.id

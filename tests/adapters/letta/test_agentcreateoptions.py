@@ -44,6 +44,40 @@ class TestAgentCreateOptions:
         assert "embedding" not in mock_client.agents.create.call_args.kwargs
 
     @pytest.mark.asyncio
+    async def test_model_settings_passed_when_configured(self) -> None:
+        model_settings = {
+            "provider_type": "openai",
+            "reasoning": {"reasoning_effort": "low"},
+        }
+        adapter = LettaAdapter(config=LettaAdapterConfig(model_settings=model_settings))
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test"
+        adapter._mcp.tool_ids = []
+        adapter._mcp.server_id = "mcp-server-1"
+        mock_client.agents.create.return_value = make_mock_agent()
+
+        await adapter._create_agent("room-1")
+
+        create_kwargs = mock_client.agents.create.call_args.kwargs
+        assert create_kwargs["model_settings"] == model_settings
+
+    @pytest.mark.asyncio
+    async def test_model_settings_omitted_by_default(self) -> None:
+        """Letta keeps its per-model defaults — None must not be sent."""
+        adapter = LettaAdapter()
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test"
+        adapter._mcp.tool_ids = []
+        adapter._mcp.server_id = "mcp-server-1"
+        mock_client.agents.create.return_value = make_mock_agent()
+
+        await adapter._create_agent("room-1")
+
+        assert "model_settings" not in mock_client.agents.create.call_args.kwargs
+
+    @pytest.mark.asyncio
     async def test_per_room_persona_carries_room_id(self) -> None:
         """Self-hosted MCP schemas require room_id per call; a per_room agent
         gets it in its persona block."""

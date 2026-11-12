@@ -16,3 +16,6 @@ ANTHROPIC_SMALL_MODEL = "claude-haiku-4-5"
 # Letta 0.16.8, the last self-hosted Letta server, never registers gpt-6-*
 # handles and sends reasoning effort "minimal", which gpt-5.6-* rejects.
 LETTA_SELF_HOSTED_MODEL = "openai/gpt-5.4-mini"
+# Letta runs that model at reasoning effort "none", where it often answers only
+# the newest of several batched requests or refuses an echo probe.
+LETTA_SELF_HOSTED_REASONING_EFFORT = "low"

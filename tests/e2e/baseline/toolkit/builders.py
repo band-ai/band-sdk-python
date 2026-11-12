@@ -24,6 +24,10 @@ from typing import TYPE_CHECKING, Any
 
 from band import create_room_workspace_resolver
 from band.adapters.codex import CodexSandboxMode, CodexWindowsSandbox
+from band.core.defaultmodels import (
+    LETTA_SELF_HOSTED_MODEL,
+    LETTA_SELF_HOSTED_REASONING_EFFORT,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.omp import omp_provider_env
@@ -924,9 +928,20 @@ def _build_letta(
             provider_key=s.backends.letta_api_key or None,
             model=s.backends.letta_model,
             embedding=s.backends.letta_embedding or None,
+            model_settings=_letta_model_settings(s.backends.letta_model),
             mcp=mcp,
             custom_section=prompt or "",
             consolidate_memory_on_cleanup=False,
         ),
         **feature_kwargs(features),
     )
+
+
+def _letta_model_settings(model: str) -> dict[str, Any] | None:
+    """Set the pinned self-hosted model's reasoning effort; other models keep Letta's defaults."""
+    if model != LETTA_SELF_HOSTED_MODEL:
+        return None
+    return {
+        "provider_type": "openai",
+        "reasoning": {"reasoning_effort": LETTA_SELF_HOSTED_REASONING_EFFORT},
+    }

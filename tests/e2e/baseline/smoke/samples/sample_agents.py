@@ -162,6 +162,13 @@ LIVENESS_REPLY_PROMPT = (
     + " When another participant asks you to confirm you are active, include the "
     "complete token from their message exactly in your reply."
 )
+# A batched turn tempts a model to answer only the newest request; ask for all.
+QUEUED_REPLY_PROMPT = (
+    LIVENESS_REPLY_PROMPT
+    + " When one turn delivers several such requests, answer every one of them, "
+    "not just the latest: include each requested token and mention each sender, "
+    "whether a person or an agent."
+)
 REMEMBER = (
     "Please remember this note: {note}. Call band_send_message to confirm you "
     "remember the complete note."
