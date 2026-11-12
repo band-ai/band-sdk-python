@@ -740,7 +740,7 @@ class WebSocketClient:
         """Subscribe to agent rooms topic with async callbacks.
 
         ``on_resumed`` runs, like ``on_ready``, before a rejoin's events, but
-        only after a gap: membership changes in the gap were not delivered.
+        never on the first join: membership changes in the gap were lost.
         """
         topic = AgentTopicKind.Rooms.topic(agent_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)

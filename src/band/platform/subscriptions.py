@@ -19,7 +19,6 @@ from band_sdk_core import (
 )
 
 from band.client.streaming import WebSocketClient
-from band.client.streaming.readiness import ResumedCallback, RoomReadyCallback
 
 if TYPE_CHECKING:
     from band.client.streaming import (
@@ -34,6 +33,7 @@ if TYPE_CHECKING:
         RoomDeletedPayload,
         RoomRemovedPayload,
     )
+    from band.client.streaming.readiness import ResumedCallback, RoomReadyCallback
 
 logger = logging.getLogger(__name__)
 

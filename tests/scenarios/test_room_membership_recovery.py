@@ -18,7 +18,7 @@ class TestRoomMembershipRecovery:
         assert world.serving("r1")
         assert world.server.connection_count == 1
 
-    async def test_both_channels_recovering_together_catch_up_what_each_missed(
+    async def test_both_channels_recovering_together_handle_the_missed_message_once(
         self, world: BandWorld
     ) -> None:
         await world.join("r1")
