@@ -687,7 +687,7 @@ requires-dist = [
 
 [[package]]
 name = "band-sdk"
-version = "9.1.0"
+version = "9.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "async-lru" },
