@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 INITIAL_GENERATION = 1
 
 
+def is_after_gap(generation: int) -> bool:
+    """Whether a join followed a gap: every join after a subscription's first."""
+    return generation > INITIAL_GENERATION
+
+
 @dataclass(frozen=True)
 class RoomReadiness:
     """A confirmed join of one chat room subscription, counted from 1."""
@@ -21,7 +26,7 @@ class RoomReadiness:
     @property
     def after_gap(self) -> bool:
         """Delivery resumed after a gap: catch up from history."""
-        return self.generation > INITIAL_GENERATION
+        return is_after_gap(self.generation)
 
 
 RoomReadyCallback = Callable[[RoomReadiness], None]

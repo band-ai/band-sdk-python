@@ -33,10 +33,10 @@ from band.client.streaming.disconnect import (
     with_outcome,
 )
 from band.client.streaming.readiness import (
-    INITIAL_GENERATION,
     JoinHook,
     RoomReadiness,
     RoomReadyCallback,
+    is_after_gap,
 )
 from band.client.streaming.session_decider import SessionDecider, SupersedeVerdict
 from band.client.streaming.wire import WirePayload
@@ -753,7 +753,7 @@ class WebSocketClient:
             )
 
         def on_join(generation: int) -> None:
-            if on_resumed is not None and generation > INITIAL_GENERATION:
+            if on_resumed is not None and is_after_gap(generation):
                 on_resumed()
 
         result = await self._join_topic(
