@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e.baseline.agents import Lane, lane
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.adapters.copilotacp.kit import (
@@ -28,6 +29,10 @@ class TestLiveSwitch:
     # Bespoke build exposes no framework; pin scheduling to backends.
     @lane(Lane.BACKENDS)
     @requires(Dep.COPILOT_CLI)
+    @flaky_model(
+        "a hosted turn can end without the Band reply tool call (observed: run "
+        "43199446975, ubuntu, the start model's first turn)"
+    )
     # A catalog probe boot, two hosted turns, and a boot for the session/load check.
     @pytest.mark.timeout(extra=300)
     @pytest.mark.asyncio(loop_scope="session")
