@@ -10,7 +10,6 @@ import pytest
 from band.adapters.codex import (
     CODEX_TRANSITION_TIMEOUT_S,
     CodexAdapter,
-    CodexAdapterConfig,
 )
 from band.client.streaming import ControlMode
 from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
@@ -28,7 +27,6 @@ from tests.adapters.codex.timedturn import MARGIN_S, failures, running_turn
 from tests.adapters.codexturns import (
     FIRST_THREAD_ID,
     FakeCodexClient,
-    patch_codex_client,
 )
 from tests.adapters.dispatch import deliver_event
 from tests.adapters.waiting import until
@@ -57,14 +55,6 @@ def unanswered(
     return [(FAILURE_CODE_TIMEOUT, text)]
 
 
-async def started_adapter(*processes: FakeCodexClient) -> CodexAdapter:
-    """A started adapter whose room runs on each of ``processes`` in turn."""
-    adapter = CodexAdapter(CodexAdapterConfig())
-    patch_codex_client(adapter, *processes)
-    await adapter.on_started("Codex Agent", "A coding agent")
-    return adapter
-
-
 @pytest.mark.looptime
 class TestUnansweredStart:
     @BEFORE_A_TURN_RUNS
@@ -73,10 +63,11 @@ class TestUnansweredStart:
         request_method: CodexRequestMethod,
         history: CodexSessionState | None,
         named: str,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
     ) -> None:
         """Codex gets as long as a process gets to start; no turn limit runs yet."""
         client = UnansweringClient(request_method)
-        adapter = await started_adapter(client)
+        adapter = await started_codex(client)
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools, history=history) as turn:
@@ -98,11 +89,12 @@ class TestUnansweredStart:
         request_method: CodexRequestMethod,
         history: CodexSessionState | None,
         named: str,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
     ) -> None:
         """The old process is closed and a new one answers the next message."""
         client = UnansweringClient(request_method)
         replacement = FakeCodexClient(events=answered_turn())
-        adapter = await started_adapter(client, replacement)
+        adapter = await started_codex(client, replacement)
         unheard, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
 
         async with running_turn(adapter, unheard, history=history) as turn:
@@ -195,12 +187,13 @@ class TestUnansweredStart:
 
     async def test_a_seeded_thread_continues_after_an_unanswered_turn_start(
         self,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
     ) -> None:
         client = UnansweringClient(
             CodexRequestMethod.TURN_START, answered=1, events=answered_turn()
         )
         replacement = FakeCodexClient(events=answered_turn())
-        adapter = await started_adapter(client, replacement)
+        adapter = await started_codex(client, replacement)
         unheard, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
         await send_bootstrap(adapter, tools=ToolSchemaFakeTools())
 
@@ -221,10 +214,11 @@ class TestUnansweredStart:
 
     async def test_an_answer_that_comes_within_the_bound_keeps_the_process(
         self,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
     ) -> None:
         client, spare = FakeCodexClient(events=answered_turn()), FakeCodexClient()
         client.turn_start_released.clear()
-        adapter = await started_adapter(client, spare)
+        adapter = await started_codex(client, spare)
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:

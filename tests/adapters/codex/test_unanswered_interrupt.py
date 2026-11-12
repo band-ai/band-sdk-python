@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex import CodexAdapter
 from band.client.streaming import ControlMode
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.turn_lifecycle import BACKEND_CANCEL_TIMEOUT_SECONDS
@@ -30,19 +30,10 @@ from tests.adapters.codex.timedturn import (
 from tests.adapters.codexturns import (
     FIRST_THREAD_ID,
     FakeCodexClient,
-    patch_codex_client,
 )
 from tests.adapters.waiting import until
 
 TOTAL_S = 180.0
-
-
-async def started_adapter(*processes: FakeCodexClient) -> CodexAdapter:
-    """A started adapter whose room runs on each of ``processes`` in turn."""
-    adapter = CodexAdapter(CodexAdapterConfig(turn_timeout_s=TOTAL_S))
-    patch_codex_client(adapter, *processes)
-    await adapter.on_started("Codex Agent", "A coding agent")
-    return adapter
 
 
 def deaf_to_interrupts() -> FakeCodexClient:
@@ -56,10 +47,11 @@ def deaf_to_interrupts() -> FakeCodexClient:
 class TestUnansweredInterrupt:
     async def test_the_timeout_is_reported_once_the_interrupt_goes_unanswered(
         self,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
     ) -> None:
         """The process gets as long to answer as a stop of the turn would wait."""
         client = deaf_to_interrupts()
-        adapter = await started_adapter(client)
+        adapter = await started_codex(client, turn_timeout_s=TOTAL_S)
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:
@@ -79,13 +71,15 @@ class TestUnansweredInterrupt:
             == INTERRUPTED_FIRST_TURN
         )
 
-    async def test_the_process_that_ignored_the_interrupt_is_replaced(self) -> None:
+    async def test_the_process_that_ignored_the_interrupt_is_replaced(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
         """The old process is closed, and the room's thread continues on a new
         one, which answers the next message."""
         client = deaf_to_interrupts()
         client.script(*answered_turn())
         replacement = FakeCodexClient(events=answered_turn())
-        adapter = await started_adapter(client, replacement)
+        adapter = await started_codex(client, replacement, turn_timeout_s=TOTAL_S)
         timed_out, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
         await send_bootstrap(adapter, tools=ToolSchemaFakeTools())
         client.turn_started.clear()
@@ -106,9 +100,11 @@ class TestUnansweredInterrupt:
         assert len(replacement.params_of(CodexRequestMethod.TURN_START)) == 1
         assert failures(tools) == []
 
-    async def test_a_process_that_answers_the_interrupt_keeps_its_room(self) -> None:
+    async def test_a_process_that_answers_the_interrupt_keeps_its_room(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
         client, spare = FakeCodexClient(), FakeCodexClient()
-        adapter = await started_adapter(client, spare)
+        adapter = await started_codex(client, spare, turn_timeout_s=TOTAL_S)
         timed_out, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
 
         async with running_turn(adapter, timed_out) as turn:
