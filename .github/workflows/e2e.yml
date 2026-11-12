@@ -298,6 +298,10 @@ jobs:
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-omp.sh
 
+    - name: Verify native OMP headless capabilities without inference
+      if: matrix.lane == 'backends'
+      run: uv run pytest tests/integrations/ompprocess/test_headless.py -v --no-cov
+
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'opencode'
       run: bash .github/scripts/setup-opencode.sh

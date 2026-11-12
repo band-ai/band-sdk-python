@@ -23,7 +23,6 @@ from band.adapters.omp.toolprotocol import (
 )
 from band.adapters.omp.turnstate import OmpTurn
 from band.converters.omp import OmpMetadataKey
-from band.core import delivery, exceptions
 from band.core.delivery import DeliveryFailedError
 from band.core.exceptions import InvalidToolArgumentsError
 from band.core.protocols import AgentToolsProtocol, send_event_safe
@@ -33,10 +32,8 @@ from band.core.types import (
     Emit,
     MessageType,
     PermissionEventKey,
-    PlatformMessage,
     ToolEventKey,
 )
-from band.integrations import omproomask
 from band.integrations.omp import (
     OMP_DEVICE_CONTENT_KEY,
     OMP_DEVICE_KIND_EXECUTE,
@@ -103,41 +100,6 @@ class OmpCallbackMixin(OmpAdapterContract):
         except Exception as error:
             logger.exception("OMP host tool %s failed", call.toolName)
             return _text_tool_result(str(error), is_error=True)
-
-    async def _ask_room(
-        self,
-        request: OmpUIRequest,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        room_id: str,
-    ) -> OmpUIResponse:
-        """Post the questions as this turn's reply, then defer the actual answer."""
-        mention = {"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}
-        try:
-            sent = await delivery.deliver_reply(
-                tools,
-                omproomask.render_room_questions(request.questions),
-                mentions=[mention],
-            )
-        except DeliveryFailedError as error:
-            if (
-                isinstance(error.cause, exceptions.RoomExecutionStoppedError)
-                and error.cause.room_id == room_id
-            ):
-                raise
-            logger.warning(
-                "OMP ask could not be posted (%s)", type(error.cause).__name__
-            )
-            return OmpUIResponse(
-                answers=omproomask.undelivered_answers(request.questions, error.cause)
-            )
-        if sent is None:
-            return OmpUIResponse(
-                answers=omproomask.undelivered_answers(
-                    request.questions, ValueError("the questions were empty")
-                )
-            )
-        return OmpUIResponse(answers=omproomask.delivered_answers(request.questions))
 
     def _project_tool_call(
         self,

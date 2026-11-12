@@ -52,10 +52,6 @@ class SessionChange(BaseModel):
     cancelled: bool
 
 
-class AskDialog(BaseModel):
-    enabled: bool
-
-
 class OmpRoomLifecycleMixin(OmpAdapterContract):
     async def _connection_mcp_servers(
         self, room: OmpRoom
@@ -184,12 +180,6 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
                 OmpCommandName.SET_HOST_TOOLS,
                 tools=cast(list[JsonValue], self._host_tools()),
             )
-            # Room turns answer structured asks through a follow-up message.
-            dialog = AskDialog.model_validate(
-                await room.client.request(OmpCommandName.SET_ASK_DIALOG, enabled=True)
-            )
-            if not dialog.enabled:
-                raise RuntimeError("OMP refused the structured ask dialog")
             await self._refresh_state(room)
         finally:
             room.servers = {}

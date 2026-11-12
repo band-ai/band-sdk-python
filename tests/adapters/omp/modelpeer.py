@@ -93,7 +93,6 @@ class ModelPeer(StartupPeer):
                 self.respond(frame)
             case (
                 OmpCommandName.NEGOTIATE_PROTOCOL
-                | OmpCommandName.SET_ASK_DIALOG
                 | OmpCommandName.SET_HOST_TOOLS
                 | OmpCommandName.PROMPT
                 | OmpCommandName.GET_STATE
