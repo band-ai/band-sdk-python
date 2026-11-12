@@ -744,6 +744,10 @@ class RoomCodexClient:
     seed: SessionSeed = dataclass_field(default_factory=SessionSeed)
     # Band history names the thread: its resume record was posted.
     recorded: bool = False
+    # A thread Band history names whose resume went unanswered. It is not the
+    # room's thread: the room's next turn tries it once more. Binding or
+    # forgetting a thread drops it.
+    unanswered_resume: str | None = None
     # Runtime commits these deltas even when a turn fails; its successor needs them.
     pending_system_context: list[str] = dataclass_field(default_factory=list)
     # Serializes this room's turns, local commands and their preparation; a
@@ -769,6 +773,7 @@ class RoomCodexClient:
         self.seed = seed
         self.restored = False
         self.recorded = False
+        self.unanswered_resume = None
 
     def forget_thread(self) -> None:
         self.bind_thread(
@@ -2770,9 +2775,19 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 self._confirm_restored_tools(room, tools, thread_id)
             return thread_id
         client = room.require_client()
-        if is_session_bootstrap and (named := history.room_to_thread.get(room_id)):
+        # Band history reaches only a room's first turn, so a thread whose
+        # resume went unanswered there gets its one retry from the room.
+        retry, room.unanswered_resume = room.unanswered_resume, None
+        named = retry
+        if named is None and is_session_bootstrap:
+            named = history.room_to_thread.get(room_id)
+        if named:
             resumed = await self._resume_from_history(
-                room=room, client=client, named=named, tools=tools
+                room=room,
+                client=client,
+                named=named,
+                tools=tools,
+                last_try=retry is not None,
             )
             if resumed is not None:
                 return resumed
@@ -2806,8 +2821,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         client: CodexClientProtocol,
         named: str,
         tools: AgentToolsProtocol,
+        last_try: bool,
     ) -> str | None:
-        """Resume the thread Band history names; None falls back to a new one."""
+        """Resume the thread Band history names; None falls back to a new one.
+
+        An unanswered resume fails the turn. Unless ``last_try``, the room's
+        next turn tries the thread again on the new process; after that a new
+        thread takes its place.
+        """
         room_id = room.room_id
         try:
             result = await self._request_before_turn(
@@ -2816,14 +2837,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 self._resume_params(room, named),
             )
         except CodexUnanswered:
-            # This turn fails as the room's first, so no later turn resumes from
-            # Band history; the next process restores the thread it names.
-            self._room_threads[room_id] = named
-            room.bind_thread(
-                registration=None,
-                settings=ThreadSettings(),
-                seed=SessionSeed(restored=True),
-            )
+            if not last_try:
+                room.unanswered_resume = named
             raise
         except CodexJsonRpcError as exc:
             logger.warning(

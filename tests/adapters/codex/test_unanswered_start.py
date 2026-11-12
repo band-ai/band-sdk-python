@@ -14,13 +14,17 @@ from band.adapters.codex import (
 from band.client.streaming import ControlMode
 from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
 from band.core.retention import RoomRetentionConfig
+from band.integrations.codex import CodexJsonRpcError
 from band.integrations.codex.types import CodexRequestMethod, CodexSessionState
 from tests.adapters.codex.kit import (
+    REPLAYED,
     ROOM_ID,
+    TRANSCRIPT,
     ToolSchemaFakeTools,
     UnansweringClient,
     agent_input,
     answered_turn,
+    replayed_history,
     send_bootstrap,
 )
 from tests.adapters.codex.timedturn import MARGIN_S, failures, running_turn
@@ -53,6 +57,14 @@ def unanswered(
     """The one failure of a turn whose ``named`` request Codex never answered."""
     text = f"Codex turn timed out after {bound_s}s of silence ({named})"
     return [(FAILURE_CODE_TIMEOUT, text)]
+
+
+def resumed_threads(client: FakeCodexClient) -> list[str]:
+    """The threads ``client`` was asked to resume, in order."""
+    return [
+        resumed["threadId"]
+        for resumed in client.params_of(CodexRequestMethod.THREAD_RESUME)
+    ]
 
 
 @pytest.mark.looptime
@@ -129,15 +141,75 @@ class TestUnansweredStart:
             adapter, agent_input("and now?", tools, is_session_bootstrap=False)
         )
 
-        assert [
-            resumed["threadId"]
-            for resumed in replacement.params_of(CodexRequestMethod.THREAD_RESUME)
-        ] == [RECORDED_THREAD]
+        assert resumed_threads(replacement) == [RECORDED_THREAD]
         assert replacement.params_of(CodexRequestMethod.THREAD_START) == []
         assert [
             started["threadId"]
             for started in replacement.params_of(CodexRequestMethod.TURN_START)
         ] == [RECORDED_THREAD]
+        assert failures(tools) == []
+
+    async def test_a_recorded_thread_the_next_process_refuses_gives_way(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """The next turn tries the thread once more, with the fallback a room's
+        first turn has: refused, it starts a new thread in the same turn and
+        seeds it with the room's history."""
+        client = UnansweringClient(CodexRequestMethod.THREAD_RESUME)
+        replacement = FakeCodexClient(
+            events=answered_turn(),
+            resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
+        )
+        adapter = await started_codex(client, replacement)
+        unheard, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
+        tools.set_room_context(TRANSCRIPT)
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(adapter, tools=unheard, history=RECORDED)
+        await deliver_event(
+            adapter, agent_input("and now?", tools, is_session_bootstrap=False)
+        )
+
+        assert failures(unheard) == unanswered("thread_resume")
+        assert resumed_threads(replacement) == [RECORDED_THREAD]
+        (started,) = replacement.params_of(CodexRequestMethod.TURN_START)
+        assert started["threadId"] == FIRST_THREAD_ID
+        (replay,) = replayed_history(started)
+        assert REPLAYED in replay
+        assert failures(tools) == []
+
+    async def test_a_recorded_thread_unanswered_twice_is_given_up(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """A second silence fails one more turn. The room then gives the thread
+        up: its next turn starts a new one on a new process."""
+        client = UnansweringClient(CodexRequestMethod.THREAD_RESUME)
+        retry = UnansweringClient(CodexRequestMethod.THREAD_RESUME)
+        fresh = FakeCodexClient(events=answered_turn())
+        adapter = await started_codex(client, retry, fresh)
+        unheard, again, tools = (
+            ToolSchemaFakeTools(),
+            ToolSchemaFakeTools(),
+            ToolSchemaFakeTools(),
+        )
+        tools.set_room_context(TRANSCRIPT)
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(adapter, tools=unheard, history=RECORDED)
+        with pytest.raises(TurnResultAlreadyReported):
+            await deliver_event(
+                adapter, agent_input("again?", again, is_session_bootstrap=False)
+            )
+        await deliver_event(
+            adapter, agent_input("and now?", tools, is_session_bootstrap=False)
+        )
+
+        assert failures(unheard) == failures(again) == unanswered("thread_resume")
+        assert resumed_threads(retry) == [RECORDED_THREAD]
+        assert retry.closed
+        assert resumed_threads(fresh) == []
+        (started,) = fresh.params_of(CodexRequestMethod.TURN_START)
+        assert started["threadId"] == FIRST_THREAD_ID
+        (replay,) = replayed_history(started)
+        assert REPLAYED in replay
         assert failures(tools) == []
 
     async def test_a_stop_during_an_unanswered_thread_start_replaces_the_process(
@@ -206,10 +278,7 @@ class TestUnansweredStart:
         await send_bootstrap(adapter, tools=tools)
 
         assert client.closed
-        assert [
-            resumed["threadId"]
-            for resumed in replacement.params_of(CodexRequestMethod.THREAD_RESUME)
-        ] == [FIRST_THREAD_ID]
+        assert resumed_threads(replacement) == [FIRST_THREAD_ID]
         assert failures(tools) == []
 
     async def test_an_answer_that_comes_within_the_bound_keeps_the_process(

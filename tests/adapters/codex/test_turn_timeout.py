@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 import pytest
 
 from band.adapters.codex import (
+    CodexAdapter,
     CodexAdapterConfig,
 )
 from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
@@ -18,6 +21,7 @@ from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,
     send_bootstrap,
 )
+from tests.adapters.codex.timedturn import INTERRUPTED_FIRST_TURN
 from tests.adapters.codexturns import (
     FakeCodexClient,
     event_notification,
@@ -116,9 +120,9 @@ class TestTurnTimeout:
         ] == [[FAILURE_CODE_TIMEOUT], [FAILURE_CODE_TIMEOUT]]
         assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
 
-    @pytest.mark.asyncio
+    @pytest.mark.looptime
     async def test_a_turn_that_reported_an_error_times_out_without_a_second_failure(
-        self,
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         """Codex reports an error and never completes the turn. The limit still
         interrupts it, and the error stays the turn's one failure."""
@@ -130,18 +134,16 @@ class TestTurnTimeout:
                 )
             ]
         )
-        adapter = make_codex_adapter(
-            client, config=CodexAdapterConfig(turn_timeout_s=0.01)
-        )
+        adapter = await started_codex(client)
         tools = ToolSchemaFakeTools()
 
-        await adapter.on_started("Codex Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
             await send_bootstrap(adapter, tools=tools)
 
         assert [failure["message"] for failure in reported_failures(tools)] == [
             REPORTED_ERROR
         ]
-        assert client.params_of(CodexRequestMethod.TURN_INTERRUPT) == [
-            {"threadId": "thr-1", "turnId": "turn-1"}
-        ]
+        assert (
+            client.params_of(CodexRequestMethod.TURN_INTERRUPT)
+            == INTERRUPTED_FIRST_TURN
+        )
