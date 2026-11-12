@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
+from types import TracebackType
 
 
 class InheritedTemporaryDirectory:
@@ -24,3 +25,14 @@ class InheritedTemporaryDirectory:
 
     def cleanup(self) -> None:
         shutil.rmtree(self.name)
+
+    def __enter__(self) -> str:
+        return self.name
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.cleanup()

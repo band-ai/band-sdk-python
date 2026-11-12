@@ -111,11 +111,8 @@ def workspace_root() -> Iterator[Path]:
 
     ``tmp_path`` is owner-only on Windows, which Codex's sandbox cannot use.
     """
-    root = InheritedTemporaryDirectory("band-e2e-rooms-")
-    try:
-        yield Path(root.name)
-    finally:
-        root.cleanup()
+    with InheritedTemporaryDirectory("band-e2e-rooms-") as root:
+        yield Path(root)
 
 
 @pytest.fixture
