@@ -115,7 +115,6 @@ class TurnPeer(StartupPeer):
             case (
                 OmpCommandName.GET_AVAILABLE_COMMANDS
                 | OmpCommandName.SET_HOST_TOOLS
-                | OmpCommandName.SET_ASK_DIALOG
                 | OmpCommandName.GET_STATE
                 | OmpCommandName.NEGOTIATE_PROTOCOL
                 | OmpCommandName.PROMPT

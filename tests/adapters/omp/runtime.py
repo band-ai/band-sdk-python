@@ -51,8 +51,6 @@ class PendingRuntime:
                     "sessionFile": None,
                     "isSettled": True,
                 }
-            case OmpCommandName.SET_ASK_DIALOG:
-                return {"enabled": True}
             case OmpCommandName.SET_HOST_TOOLS:
                 return {}
             case _:

@@ -20,7 +20,7 @@ from band.converters.omp import OmpSessionState
 from band.core.model_catalog import ModelSelection
 from band.core.protocols import AgentToolsProtocol
 from band.core.retention import RoomRetention
-from band.core.types import AdapterFeatures, Capability, PlatformMessage
+from band.core.types import AdapterFeatures, Capability
 from band.integrations.ompwire import (
     OmpEvent,
     OmpHostToolCall,
@@ -110,15 +110,6 @@ class OmpAdapterContract(ABC):
     async def _execute_tool(
         self, call: OmpHostToolCall, tools: AgentToolsProtocol
     ) -> OmpToolResult: ...
-
-    @abstractmethod
-    async def _ask_room(
-        self,
-        request: OmpUIRequest,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        room_id: str,
-    ) -> OmpUIResponse: ...
 
     @abstractmethod
     async def _permission(
