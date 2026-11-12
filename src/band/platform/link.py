@@ -149,6 +149,9 @@ class BandLink:
         # Durable terminal disconnect reason for the current connection lifecycle.
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
 
+        # Rejoins until on_reconnect are covered by the reconnect's reconcile.
+        self._socket_reconnect_pending = False
+
         # Preemptive control-signal hook (interrupt/stop/play). Set by the
         # runtime. Never run via the serialized _event_queue, so a control
         # signal can act on a cycle already in flight instead of queuing
@@ -206,6 +209,7 @@ class BandLink:
         self._connecting = True
         try:
             self._last_disconnect_reason = None
+            self._socket_reconnect_pending = False
             ws = WebSocketClient(
                 self.ws_url,
                 self.api_key,
@@ -303,6 +307,7 @@ class BandLink:
             agent_id,
             on_room_added=self._on_room_added,
             on_room_removed=self._on_room_removed,
+            on_resumed=self._on_agent_rooms_resumed,
         )
 
     async def subscribe_room(self, room_id: str) -> None:
@@ -394,6 +399,7 @@ class BandLink:
         that ambiguity is safely resolvable (see design doc).
         """
         logger.info("WebSocket reconnected — reconciling room state")
+        self._socket_reconnect_pending = False
         self._subscriptions_manager.mark_reconnected()
         ws = self._connected_ws()
         joined = ws.joined_topics()
@@ -481,6 +487,7 @@ class BandLink:
 
     async def _on_disconnected(self, error: Exception | None) -> None:
         """Handle PHX client disconnection."""
+        self._socket_reconnect_pending = True
         if self.last_disconnect_reason:
             logger.warning(
                 "WebSocket disconnected after terminal platform reason: %s",
@@ -528,14 +535,16 @@ class BandLink:
         self._queue_event(event)
 
     def _on_room_ready(self, readiness: RoomReadiness) -> None:
-        """Ask the room to catch up after its subscription resumed from a gap.
-
-        Runs before the rejoined room's messages are dispatched, so the event
-        precedes them in the queue. Socket reconnects also trigger the global
-        reconcile; same-socket recovery has only this signal.
-        """
         if readiness.after_gap:
-            self._queue_event(ReconnectedEvent(room_id=readiness.room_id))
+            self._catch_up(ReconnectedEvent(room_id=readiness.room_id))
+
+    def _on_agent_rooms_resumed(self) -> None:
+        self._catch_up(ReconnectedEvent())
+
+    def _catch_up(self, event: ReconnectedEvent) -> None:
+        """Queue ``event`` ahead of the rejoined topic's own events."""
+        if not self._socket_reconnect_pending:
+            self._queue_event(event)
 
     async def _on_message_created(
         self, room_id: str, payload: MessageCreatedPayload

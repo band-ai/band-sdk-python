@@ -367,8 +367,7 @@ class FakePhoenixServer:
         await self._connection.send(encode_message(message, ProtocolVersion.V2))
 
     async def crash_channel(self, topic: str) -> None:
-        """Crash one joined channel (``phx_error``); the socket stays up and
-        the client recovers the channel on it."""
+        """Crash one joined channel (``phx_error``); the socket stays up."""
         await self.push(topic, SystemEvent.error, {})
 
     async def close_connection(self, *, code: int = 1000, reason: str = "") -> None:

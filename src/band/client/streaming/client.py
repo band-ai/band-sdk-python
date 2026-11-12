@@ -32,7 +32,12 @@ from band.client.streaming.disconnect import (
     WebSocketDisconnectReason,
     with_outcome,
 )
-from band.client.streaming.readiness import RoomReadinessHook, RoomReadyCallback
+from band.client.streaming.readiness import (
+    INITIAL_GENERATION,
+    JoinHook,
+    RoomReadiness,
+    RoomReadyCallback,
+)
 from band.client.streaming.session_decider import SessionDecider, SupersedeVerdict
 from band.client.streaming.wire import WirePayload
 from band.core.retention.cleanup import report_owned, spawn_owned
@@ -400,10 +405,8 @@ class WebSocketClient:
     never reauthenticated. The README's "Streaming With A User Access Token"
     covers refreshing a token and handling a refused one.
 
-    ``on_reconnect`` is socket-level: it runs after the reconnect's blocking
-    rejoin pass, while some rooms may still be recovering and after others
-    already delivered messages. Track each room with ``on_ready`` on
-    ``join_chat_room_channel`` and ``is_chat_room_ready`` instead.
+    ``on_reconnect`` is socket-level and unordered with room rejoins; track
+    rooms with ``join_chat_room_channel(on_ready=...)``.
     """
 
     def __init__(
@@ -474,8 +477,7 @@ class WebSocketClient:
     def joined_topics(self) -> frozenset[str]:
         """Snapshot retained topics, including recovery and cleanup reservations.
 
-        Retained is not live: use ``is_chat_room_ready`` for a room's
-        confirmed join.
+        Retained is not live: see ``is_chat_room_ready``.
 
         The source-supported registry is required: ``Channel.joined`` would
         misclassify transient recovery as permanent loss. Recheck this binding
@@ -730,8 +732,14 @@ class WebSocketClient:
         agent_id: str,
         on_room_added: Callable[[RoomAddedPayload], Awaitable[None]],
         on_room_removed: Callable[[RoomRemovedPayload], Awaitable[None]],
+        *,
+        on_resumed: Callable[[], None] | None = None,
     ):
-        """Subscribe to agent rooms topic with async callbacks"""
+        """Subscribe to agent rooms topic with async callbacks.
+
+        ``on_resumed`` runs, like ``on_ready``, before a rejoin's events, but
+        only after a gap: membership changes in the gap were not delivered.
+        """
         topic = AgentTopicKind.Rooms.topic(agent_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
@@ -744,7 +752,15 @@ class WebSocketClient:
                 },
             )
 
-        result = await self._join_topic(topic, message_handler)
+        def on_join(generation: int) -> None:
+            if on_resumed is not None and generation > INITIAL_GENERATION:
+                on_resumed()
+
+        result = await self._join_topic(
+            topic,
+            message_handler,
+            on_join_response=JoinHook(topic=topic, on_join=on_join),
+        )
         logger.info("[WebSocket] Subscribed to topic: %s", topic)
         return result
 
@@ -763,12 +779,8 @@ class WebSocketClient:
         ``message_updated`` events (e.g. delivery-status transitions). Omit it to
         ignore those events as before.
 
-        ``on_ready`` is called synchronously on the transport's routing task
-        for every confirmed join of this subscription: the initial join
-        (before this method returns) and each rejoin after a gap, including
-        recovery on the same socket. It always precedes that join's message
-        callbacks, so keep it non-blocking, e.g. enqueue a catch-up marker.
-        It is not ordered relative to ``on_reconnect``.
+        ``on_ready`` runs synchronously for every confirmed join, before that
+        join's messages and before this method returns; keep it non-blocking.
         """
         topic = chat_room_topic(chat_room_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
@@ -782,21 +794,18 @@ class WebSocketClient:
         async def message_handler(message):
             await self._handle_events(message, handlers)
 
-        on_join_response = (
-            None
-            if on_ready is None
-            else RoomReadinessHook(room_id=chat_room_id, on_ready=on_ready)
-        )
+        def on_join(generation: int) -> None:
+            if on_ready is not None:
+                on_ready(RoomReadiness(room_id=chat_room_id, generation=generation))
+
         return await self._join_topic(
-            topic, message_handler, on_join_response=on_join_response
+            topic,
+            message_handler,
+            on_join_response=JoinHook(topic=topic, on_join=on_join),
         )
 
     def is_chat_room_ready(self, chat_room_id: str) -> bool:
-        """Whether the room's subscription is confirmed joined right now.
-
-        False while the room is recovering, and also during its ``on_ready``
-        call, which runs just before the join is marked confirmed.
-        """
+        """Whether the room is confirmed joined; false while recovering."""
         channel = self._channels.get(chat_room_topic(chat_room_id))
         return channel is not None and channel.joined
 
@@ -874,7 +883,7 @@ class WebSocketClient:
         topic: str,
         handler: Callable[[Message], Awaitable[None]],
         *,
-        on_join_response: RoomReadinessHook | None = None,
+        on_join_response: JoinHook | None = None,
     ) -> None:
         client = self._require_client()
         if topic in self.joined_topics():

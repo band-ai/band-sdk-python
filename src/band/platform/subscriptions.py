@@ -115,6 +115,7 @@ class SubscriptionManager:
         *,
         on_room_added: Callable[[RoomAddedPayload], Awaitable[None]],
         on_room_removed: Callable[[RoomRemovedPayload], Awaitable[None]],
+        on_resumed: Callable[[], None] | None = None,
     ) -> None:
         """Subscribe to agent room events (room_added/removed)."""
         await self._subscribe_agent_topic(
@@ -123,6 +124,7 @@ class SubscriptionManager:
                 agent_id,
                 on_room_added=on_room_added,
                 on_room_removed=on_room_removed,
+                on_resumed=on_resumed,
             ),
             ws,
         )

@@ -914,12 +914,10 @@ The SDK reconnects automatically and resubscribes to active rooms. No action is 
 - Make sure only one process is running per agent ID. Two processes sharing the same credentials can fight over the connection.
 
 A room can also miss messages without the socket dropping: the platform may
-crash one room's channel, or a rejoin may time out and recover in the
-background. Agents built on the SDK runtime catch up on such a room
-immediately. If you drive `WebSocketClient` directly, pass `on_ready` when
-joining a room. It runs for every confirmed join of that subscription,
-before that join's messages: once with `generation == 1`, then again with
-`after_gap` set whenever delivery resumes after a gap.
+crash one room's channel, or a rejoin may time out and recover later. Agents
+on the SDK runtime catch up right away. If you drive `WebSocketClient`
+directly, pass `on_ready` when joining a room. It runs for every confirmed
+join, before that join's messages, with `after_gap` set after a gap.
 
 ```python
 from band.client.streaming import RoomReadiness
@@ -942,13 +940,11 @@ assert catch_up == ["room-1"]
 await client.join_chat_room_channel(room_id, on_message, on_ready=on_ready)
 ```
 
-Fetch history for the room after an `after_gap` signal and drop messages
-you already handled by id. `client.is_chat_room_ready(room_id)` tells whether
-the room is confirmed joined right now. `on_reconnect` is socket-level: it is
-not ordered relative to room readiness and can run while a room is still
-recovering, so track room state from `on_ready`. A room the platform rejects
-for good stops signalling, and the transport does not report messages it drops
-when a room's message callbacks fall more than 1000 messages behind.
+After `after_gap`, fetch the room's history and skip ids you already handled.
+`client.is_chat_room_ready(room_id)` reports the current state. `on_reconnect`
+is socket-level and can run while rooms still recover. Not signalled: a room
+rejected for good, and messages dropped when a room's callbacks fall more than
+1000 behind.
 
 ### Adapter Dependency Conflicts
 
