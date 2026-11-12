@@ -199,7 +199,8 @@ test claims to prove.
 - `monkeypatch.setattr` is patching and follows the rule below;
   `monkeypatch.setenv`/`delenv` for configuration is fine. When repo-owned
   nondeterminism has no seam, pin it once in a documented fixture, as
-  `tests/runtime/conftest.py` pins the resync jitter.
+  `tests/conftest.py`'s `periodic_wake_after_the_full_interval` pins the
+  resync jitter for the suites that opt in.
 - A constructor seam (`create_process=`) or a public instance timeout of `0`
   ("check now / no grace") is the test hook. `unittest.mock.patch` of
   `asyncio.create_subprocess_exec`, a private `_close_process`, or a

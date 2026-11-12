@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         RoomDeletedPayload,
         RoomRemovedPayload,
     )
+    from band.client.streaming.readiness import ResumedCallback, RoomReadyCallback
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ class SubscriptionManager:
         *,
         on_room_added: Callable[[RoomAddedPayload], Awaitable[None]],
         on_room_removed: Callable[[RoomRemovedPayload], Awaitable[None]],
+        on_resumed: ResumedCallback | None = None,
     ) -> None:
         """Subscribe to agent room events (room_added/removed)."""
         await self._subscribe_agent_topic(
@@ -122,6 +124,7 @@ class SubscriptionManager:
                 agent_id,
                 on_room_added=on_room_added,
                 on_room_removed=on_room_removed,
+                on_resumed=on_resumed,
             ),
             ws,
         )
@@ -135,6 +138,7 @@ class SubscriptionManager:
         on_participant_added: Callable[[ParticipantAddedPayload], Awaitable[None]],
         on_participant_removed: Callable[[ParticipantRemovedPayload], Awaitable[None]],
         on_room_deleted: Callable[[RoomDeletedPayload], Awaitable[None]],
+        on_ready: RoomReadyCallback | None = None,
     ) -> None:
         """Subscribe to room messages and participants.
 
@@ -160,6 +164,7 @@ class SubscriptionManager:
                 await ws.join_chat_room_channel(
                     room_id,
                     on_message_created=on_message_created,
+                    on_ready=on_ready,
                 )
             except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
                 logger.warning("Failed to join chat_room:%s: %s", room_id, e)
