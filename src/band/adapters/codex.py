@@ -907,6 +907,9 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # Set it above the model's longest single step: reasoning without summaries,
     # the wait for the first output and the writing of a long tool argument send
     # no event and open no item, and one such step can last most of a minute.
+    # The same holds for a retry: an ``error`` that Codex will retry restarts
+    # this clock and is not reported, so a backoff longer than the limit stops
+    # the turn as silence.
     # Work the turn delegates is seen only through the turn's own collab item,
     # which earns ``turn_tool_idle_timeout_s`` while it is open: a sub-agent's
     # notifications name its own turn and do not restart this clock.
