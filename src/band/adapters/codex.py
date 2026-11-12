@@ -76,6 +76,7 @@ from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import detached_turn
 from band.core.turn_lifecycle import (
+    BACKEND_CANCEL_TIMEOUT_SECONDS,
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
     BackendTurns,
@@ -431,10 +432,7 @@ class CodexContinuityError(RuntimeError):
 class CodexUnanswered(TimeoutError):
     """Codex did not answer a request a turn waits on before it runs."""
 
-    def __init__(
-        self, client: CodexClientProtocol, method: str, seconds: float
-    ) -> None:
-        self.client = client
+    def __init__(self, method: str, seconds: float) -> None:
         self.method = method
         super().__init__(
             f"Codex turn timed out after {seconds}s of silence "
@@ -932,10 +930,9 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # disables the bound (legacy behavior); ``retention.transition_timeout_s``
     # still bounds how long a caller waits to learn the outcome.
     client_close_timeout_s: float | None = 10.0
-    # Also bounds a timed-out turn's wait for its turn/interrupt answer, and
-    # answering a finished turn's leftover native requests. Not Optional like
-    # client_close_timeout_s: a turn possibly stuck on real work must never
-    # defeat its bound.
+    # Also bounds answering a finished turn's leftover native requests. Not
+    # Optional like client_close_timeout_s: a turn possibly stuck on real work
+    # must never defeat its bound.
     turn_settle_timeout_s: TurnSettleTimeout = TURN_SETTLE_GRACE_S
     # Matching rules for session-level auto-approval (``/approve-session``).
     #
@@ -972,13 +969,19 @@ class CodexAdapterConfig(EnvAdapterConfig):
     def _require_safe_retention(
         cls, retention: RoomRetentionConfig
     ) -> RoomRetentionConfig:
-        return require_disabled_retention(
+        checked = require_disabled_retention(
             retention,
             reason=(
                 "Codex idle retention is unavailable: native idle and terminal state "
                 "do not account for asynchronous hooks and delegated work; shutdown "
                 "can cancel that work."
             ),
+        )
+        if "transition_timeout_s" in checked.model_fields_set:
+            return checked
+        # The shared default is too short for a Codex start that resumes a thread.
+        return checked.model_copy(
+            update={"transition_timeout_s": CODEX_TRANSITION_TIMEOUT_S}
         )
 
     @model_validator(mode="after")
@@ -1428,13 +1431,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
                 raise
             except CodexUnanswered as unanswered:
-                # The room's next turn would wait on the same process.
                 logger.warning(
                     "Room %s: Codex did not answer %s; recovering its process",
                     room.room_id,
                     unanswered.method,
                 )
-                self._recover_process(CodexTurn(unanswered.client, "", ""))
                 await tools.send_failure(
                     AgentFailure(CODEX_PROVIDER, str(unanswered), FAILURE_CODE_TIMEOUT)
                 )
@@ -2021,9 +2022,13 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             await self._interrupt_timed_out_turn(
                 CodexTurn(native.client, thread_id, turn_id or "")
             )
-            await tools.send_failure(
-                AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
-            )
+            # Skipped when an earlier "error" notification in this same turn
+            # already reported one, so one incident isn't posted twice -- but
+            # the turn is still interrupted and fails either way.
+            if not failure_reported:
+                await tools.send_failure(
+                    AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
+                )
             result.turn_status = CodexTurnStatus.FAILED
             result.turn_error = timeout_message
             # A raise from here lands in this try's own except clauses, not the
@@ -2469,12 +2474,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
     async def _interrupt_timed_out_turn(self, turn: CodexTurn) -> None:
         """Ask Codex to stop a turn past its limit, waiting for the answer no
-        longer than the turn's settle bound.
+        longer than a stop of the same turn waits for it.
 
         A process that answers keeps its room. One that does not would hold
-        the room for as long as it stays up, so recovery replaces it.
+        the room for as long as it stays up, so recovery replaces it. The
+        bound is fixed: no setting can shorten it under a healthy answer or
+        stretch it into a hold.
         """
-        bound = self.config.turn_settle_timeout_s
+        bound = BACKEND_CANCEL_TIMEOUT_SECONDS
         try:
             async with asyncio.timeout(bound):
                 await turn.client.request(
@@ -2506,14 +2513,19 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         ``turn/start``.
 
         Codex answers these before the model works, and no turn limit runs
-        yet, so the answer gets as long as a process gets to start.
+        yet, so the answer gets as long as a process gets to start. A wait
+        that ends without one, at its bound or at a stop, hands the process
+        to recovery: the room's next turn must not wait on it again.
         """
         bound = self.config.retention.transition_timeout_s
         try:
             async with asyncio.timeout(bound):
                 return await client.request(method, params)
-        except TimeoutError:
-            raise CodexUnanswered(client, method, bound) from None
+        except (TimeoutError, asyncio.CancelledError) as unanswered:
+            self._recover_process(CodexTurn(client, "", ""))
+            if isinstance(unanswered, TimeoutError):
+                raise CodexUnanswered(method, bound) from None
+            raise
 
     def _recover_process(self, turn: CodexTurn) -> None:
         """Hand the process running ``turn`` to recovery; the room's next
@@ -2782,6 +2794,16 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 CodexRequestMethod.THREAD_RESUME,
                 self._resume_params(room, named),
             )
+        except CodexUnanswered:
+            # This turn fails as the room's first, so no later turn resumes from
+            # Band history; the next process restores the thread it names.
+            self._room_threads[room_id] = named
+            room.bind_thread(
+                registration=None,
+                settings=ThreadSettings(),
+                seed=SessionSeed(restored=True),
+            )
+            raise
         except CodexJsonRpcError as exc:
             logger.warning(
                 "thread/resume failed for room %s thread %s: %s",

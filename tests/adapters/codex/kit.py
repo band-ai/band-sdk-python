@@ -618,6 +618,24 @@ class SlowTurnStartClient(FakeCodexClient):
         return result
 
 
+class AnswersAStepLaterClient(FakeCodexClient):
+    """An app-server whose turn/interrupt answer arrives one loop step after
+    the request, as an answer read from a real process does."""
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == CodexRequestMethod.TURN_INTERRUPT:
+            await asyncio.sleep(0)
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+
+
 class UnansweringClient(FakeCodexClient):
     """An app-server that stops answering one kind of request: it answers the
     first ``answered`` of them, then takes each further one and says nothing."""

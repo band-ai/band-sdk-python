@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from band.adapters.codex import CodexAdapterConfig, CodexCommand
 from band.core.protocols import TurnResultAlreadyReported
-from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
+from band.core.turn_lifecycle import BACKEND_CANCEL_TIMEOUT_SECONDS
 from band.integrations.codex.types import CodexRequestMethod
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
@@ -110,7 +110,7 @@ class TestTurnSilence:
 
         async with running_turn(adapter, silent) as turn:
             await client.turn_started.wait()
-            await asyncio.sleep(IDLE_S + TURN_SETTLE_GRACE_S - MARGIN_S)
+            await asyncio.sleep(IDLE_S + BACKEND_CANCEL_TIMEOUT_SECONDS - MARGIN_S)
             assert not turn.done()
             assert failures(silent) == []
 
