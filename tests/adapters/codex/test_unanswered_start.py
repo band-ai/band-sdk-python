@@ -228,6 +228,91 @@ class TestUnansweredStart:
         assert REPLAYED in replay
         assert failures(tools) == []
 
+    async def test_the_archive_command_drops_a_pending_retry(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """Archived after the failed first turn, the thread is not tried again:
+        the next message starts a new thread on the replacement process."""
+        client = UnansweringClient(CodexRequestMethod.THREAD_RESUME)
+        replacement = FakeCodexClient(events=answered_turn())
+        adapter = await started_codex(client, replacement)
+        tools = ToolSchemaFakeTools()
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(adapter, history=RECORDED)
+        await deliver_event(
+            adapter,
+            agent_input(ARCHIVE, ToolSchemaFakeTools(), is_session_bootstrap=False),
+        )
+        await deliver_event(
+            adapter, agent_input("and now?", tools, is_session_bootstrap=False)
+        )
+
+        assert resumed_threads(replacement) == []
+        (started,) = replacement.params_of(CodexRequestMethod.TURN_START)
+        assert started["threadId"] == FIRST_THREAD_ID
+        assert failures(tools) == []
+
+    async def test_a_stop_during_the_retried_resume_spends_the_retry(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """The stop closes the process the retry waited on, and the room's next
+        message starts a new thread rather than trying the thread again."""
+        client = UnansweringClient(CodexRequestMethod.THREAD_RESUME)
+        retry = UnansweringClient(CodexRequestMethod.THREAD_RESUME)
+        fresh = FakeCodexClient(events=answered_turn())
+        adapter = await started_codex(client, retry, fresh)
+        stopped, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(adapter, history=RECORDED)
+        retried = asyncio.create_task(
+            deliver_event(
+                adapter, agent_input("again?", stopped, is_session_bootstrap=False)
+            )
+        )
+        try:
+            await retry.asked.wait()
+            await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
+        finally:
+            await asyncio.gather(retried, return_exceptions=True)
+        await deliver_event(
+            adapter, agent_input("and now?", tools, is_session_bootstrap=False)
+        )
+
+        assert retry.closed
+        assert resumed_threads(retry) == [RECORDED_THREAD]
+        assert resumed_threads(fresh) == []
+        (started,) = fresh.params_of(CodexRequestMethod.TURN_START)
+        assert started["threadId"] == FIRST_THREAD_ID
+        assert failures(stopped) == failures(tools) == []
+
+    async def test_after_an_answered_retry_the_thread_is_the_rooms(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """The message after an answered retry runs on the recorded thread
+        without resuming it from history again."""
+        client = UnansweringClient(CodexRequestMethod.THREAD_RESUME)
+        replacement = FakeCodexClient(
+            events=[*answered_turn(), *answered_turn("turn-2")]
+        )
+        adapter = await started_codex(client, replacement)
+        tools = ToolSchemaFakeTools()
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(adapter, history=RECORDED)
+        await deliver_event(
+            adapter,
+            agent_input("and now?", ToolSchemaFakeTools(), is_session_bootstrap=False),
+        )
+        await deliver_event(
+            adapter, agent_input("and then?", tools, is_session_bootstrap=False)
+        )
+
+        assert resumed_threads(replacement) == [RECORDED_THREAD]
+        assert [
+            started["threadId"]
+            for started in replacement.params_of(CodexRequestMethod.TURN_START)
+        ] == [RECORDED_THREAD, RECORDED_THREAD]
+        assert failures(tools) == []
+
     async def test_a_given_up_thread_stays_given_up_when_history_names_it_again(
         self,
         started_codex: Callable[..., Awaitable[CodexAdapter]],
