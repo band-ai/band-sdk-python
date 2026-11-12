@@ -27,6 +27,7 @@ from tests.adapters.codex.kit import (
     send_bootstrap,
 )
 from tests.adapters.codex.silentturn import (
+    CEILING_S,
     HEARD_EVERY_S,
     IDLE_S,
     silence_guarded,
@@ -284,3 +285,43 @@ class TestTurnSilence:
         assert [(error["loc"], error["type"]) for error in refused.value.errors()] == [
             (("turn_idle_timeout_s",), refusal)
         ]
+
+    @pytest.mark.parametrize(
+        "idle_s",
+        [CEILING_S, CEILING_S + 1],
+        ids=["equal-to-the-total", "above-the-total"],
+    )
+    async def test_an_idle_limit_that_could_never_apply_is_refused(
+        self, idle_s: float
+    ) -> None:
+        """The total limit would always end the turn first."""
+        with pytest.raises(ValidationError, match="turn_timeout_s") as refused:
+            silence_guarded(turn_idle_timeout_s=idle_s)
+
+        assert [(error["loc"], error["type"]) for error in refused.value.errors()] == [
+            ((), "value_error")
+        ]
+
+    async def test_the_total_limit_wins_when_both_limits_end_together(self) -> None:
+        """A wait that starts with exactly the idle limit left of the total ends
+        as the total limit, with its text."""
+        total_s = 300.0
+        client = FakeCodexClient()
+        adapter = await started_adapter(
+            {ROOM_ID: client}, silence_guarded(turn_timeout_s=total_s)
+        )
+        tools = ToolSchemaFakeTools()
+
+        async with running_turn(adapter, tools) as turn:
+            await client.turn_started.wait()
+            for _ in range(2):
+                await asyncio.sleep((total_s - IDLE_S) / 2)
+                client.emit_turn(FIRST_TURN_ID, thinking())
+            await asyncio.sleep(IDLE_S - MARGIN_S)
+            assert not turn.done()
+            assert failures(tools) == []
+
+            await asyncio.sleep(2 * MARGIN_S)
+            assert failures(tools) == past_its_total(total_s)
+            with pytest.raises(TurnResultAlreadyReported):
+                await turn

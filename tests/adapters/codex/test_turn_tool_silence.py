@@ -19,6 +19,7 @@ from tests.adapters.codex.activity.kit import (
 )
 from tests.adapters.codex.kit import ROOM_ID, ToolSchemaFakeTools, answered_turn
 from tests.adapters.codex.silentturn import (
+    CEILING_S,
     IDLE_S,
     silence_guarded,
     silent_for,
@@ -184,3 +185,27 @@ class TestTurnToolSilence:
         assert [(error["loc"], error["type"]) for error in refused.value.errors()] == [
             ((), "value_error")
         ]
+
+    async def test_a_tool_allowance_below_the_idle_limit_is_refused(self) -> None:
+        """It is the longer of the two: a shorter one would stop a running tool
+        sooner than a quiet model."""
+        with pytest.raises(ValidationError, match=TOOL_LIMIT) as refused:
+            silence_guarded(turn_tool_idle_timeout_s=IDLE_S - 1)
+
+        assert [(error["loc"], error["type"]) for error in refused.value.errors()] == [
+            ((), "value_error")
+        ]
+
+    @pytest.mark.parametrize(
+        "allowance_s",
+        [IDLE_S, CEILING_S, 2 * CEILING_S],
+        ids=["equal-to-the-idle-limit", "equal-to-the-total", "above-the-total"],
+    )
+    async def test_a_tool_allowance_from_the_idle_limit_up_is_accepted(
+        self, allowance_s: float
+    ) -> None:
+        """At or above the total limit it says: never stop a running tool for
+        silence."""
+        config = silence_guarded(turn_tool_idle_timeout_s=allowance_s)
+
+        assert config.turn_tool_idle_timeout_s == allowance_s

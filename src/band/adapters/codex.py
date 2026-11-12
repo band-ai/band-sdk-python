@@ -985,14 +985,24 @@ class CodexAdapterConfig(EnvAdapterConfig):
         )
 
     @model_validator(mode="after")
-    def _check_tool_silence_extends_a_limit(self) -> Self:
-        if (
-            self.turn_tool_idle_timeout_s is not None
-            and self.turn_idle_timeout_s is None
-        ):
+    def _check_silence_limits_can_apply(self) -> Self:
+        idle, tool = self.turn_idle_timeout_s, self.turn_tool_idle_timeout_s
+        if idle is None:
+            if tool is not None:
+                raise ValueError(
+                    "turn_tool_idle_timeout_s only extends turn_idle_timeout_s; "
+                    "set turn_idle_timeout_s too"
+                )
+            return self
+        if idle >= self.turn_timeout_s:
             raise ValueError(
-                "turn_tool_idle_timeout_s only extends turn_idle_timeout_s; "
-                "set turn_idle_timeout_s too"
+                "turn_idle_timeout_s must be below turn_timeout_s; the total "
+                "limit would always end the turn first"
+            )
+        if tool is not None and tool < idle:
+            raise ValueError(
+                "turn_tool_idle_timeout_s must not be below turn_idle_timeout_s; "
+                "it is the longer allowance, for a turn whose tool is running"
             )
         return self
 
