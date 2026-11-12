@@ -15,7 +15,7 @@ from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import StrEnum
 from functools import partial
-from typing import Any, ClassVar, Literal, NamedTuple, Protocol
+from typing import Any, ClassVar, Literal, NamedTuple, Protocol, Self
 
 from band_sdk_core import AgentFailure
 from pydantic import (
@@ -24,6 +24,7 @@ from pydantic import (
     Field,
     ValidationError,
     field_validator,
+    model_validator,
 )
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
@@ -622,6 +623,10 @@ class NativeTurn:
     def lost(self) -> bool:
         return self.loss is not None
 
+    def started(self, identity: tuple[str, str, str]) -> bool:
+        """Whether the item ``identity`` names began in this native turn."""
+        return identity[:2] == (self.thread_id, self.turn_id)
+
     def owns(self, event: RpcEvent) -> bool:
         # Every event a turn handles names its turn; thread-scoped ones do not.
         if _native_turn_id(event) == self.turn_id:
@@ -889,6 +894,12 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # bounds its total. Answering the turn's own request -- a Band tool call, a
     # parked approval -- is not silence. None (the default) never checks.
     turn_idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    # The silence allowed instead while a command or tool item the turn started
+    # is still open: a command that prints nothing sends no event until it ends.
+    # None gives such a turn ``turn_idle_timeout_s`` like any other.
+    turn_tool_idle_timeout_s: float | None = Field(
+        default=None, gt=0, allow_inf_nan=False
+    )
     client_name: str = "band_codex_adapter"
     client_title: str = "Band Codex Adapter"
     client_version: str = "0.1.0"
@@ -969,6 +980,18 @@ class CodexAdapterConfig(EnvAdapterConfig):
                 "can cancel that work."
             ),
         )
+
+    @model_validator(mode="after")
+    def _check_tool_silence_extends_a_limit(self) -> Self:
+        if (
+            self.turn_tool_idle_timeout_s is not None
+            and self.turn_idle_timeout_s is None
+        ):
+            raise ValueError(
+                "turn_tool_idle_timeout_s only extends turn_idle_timeout_s; "
+                "set turn_idle_timeout_s too"
+            )
+        return self
 
     @field_validator("codex_command", mode="before")
     @classmethod
@@ -1720,7 +1743,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         try:
             while True:
                 event = await self._next_turn_event(
-                    native, remaining=max(0.0, deadline - loop.time())
+                    room_id, native, remaining=max(0.0, deadline - loop.time())
                 )
                 if isinstance(event, Exception):
                     raise event
@@ -2023,7 +2046,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         return result
 
     async def _next_turn_event(
-        self, native: NativeTurn, *, remaining: float
+        self, room_id: str, native: NativeTurn, *, remaining: float
     ) -> RpcEvent | Exception:
         """Wait for the turn's next event: at most ``remaining`` of its total
         limit, and no longer than it may stay silent.
@@ -2031,13 +2054,37 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         Silence is measured from the start of each wait, so the time the
         adapter takes to answer the turn's own request never counts.
         """
-        silence = self.config.turn_idle_timeout_s
+        silence, setting = self._silence_allowance(room_id, native)
         if silence is None or remaining <= silence:
             return await asyncio.wait_for(native.events.get(), timeout=remaining)
         try:
             return await asyncio.wait_for(native.events.get(), timeout=silence)
         except TimeoutError:
-            raise TurnSilent(silence, "turn_idle_timeout_s") from None
+            raise TurnSilent(silence, setting) from None
+
+    def _silence_allowance(
+        self, room_id: str, native: NativeTurn
+    ) -> tuple[float | None, str]:
+        """How long the turn may stay silent now, and the setting that says so.
+
+        The reader records an item's start and end before it queues that
+        event for the turn, so each wait sees the items open at its start.
+        Codex closes an item only with its ``item/completed``; one it never
+        closes keeps the turn on the tool allowance, which still ends it.
+        """
+        tool_silence = self.config.turn_tool_idle_timeout_s
+        if tool_silence is not None and self._has_open_item(room_id, native):
+            return tool_silence, "turn_tool_idle_timeout_s"
+        return self.config.turn_idle_timeout_s, "turn_idle_timeout_s"
+
+    def _has_open_item(self, room_id: str, native: NativeTurn) -> bool:
+        """Whether a command or tool item this turn started is still open; a
+        command an earlier turn left running is not this turn's work."""
+        room = self._room_clients.get(room_id)
+        return room is not None and any(
+            native.started(identity)
+            for identity in (*room.commands, *room.item_activity)
+        )
 
     async def _answer_native_request(
         self,
@@ -2508,7 +2555,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         finally:
             room.turn = None
             for identity, activity in tuple(room.item_activity.items()):
-                if identity[:2] == (native.thread_id, native.turn_id):
+                if native.started(identity):
                     del room.item_activity[identity]
                     await end_activity(activity[0], activity[1])
             await self._refuse_undelivered(room, native)
