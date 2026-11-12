@@ -15,7 +15,6 @@ import asyncio
 import codecs
 import re
 import string
-import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -291,6 +290,9 @@ class AgentSetup:
     # None keeps the adapter's own feature defaults.
     features: AdapterFeatures | None = None
     approval: ApprovalMode = MANUAL_APPROVAL
+    # A disposable directory the caller owns, for a backend's own config; Cursor
+    # saves "allow always" grants there, which would otherwise outlive the cell.
+    native_home: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -484,17 +486,15 @@ def cursor_test_adapter(
         CursorACPAdapterConfig,
     )
 
+    if setup.native_home is None:
+        raise ValueError("Cursor needs a disposable native_home for its config")
     config_kwargs: dict[str, Any] = {
         **cursor_config_kwargs(settings, prompt=custom_section),
         "approval_mode": setup.approval,
         "plan_mode": "auto_accept",
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
-        # Cursor saves an "allow always" grant to its config dir, which would
-        # let later cells run that command unasked.
-        "env": {
-            "CURSOR_CONFIG_DIR": tempfile.mkdtemp(prefix="band-e2e-cursor-config-")
-        },
+        "env": {"CURSOR_CONFIG_DIR": str(setup.native_home)},
     }
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),

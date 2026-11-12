@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -20,18 +21,26 @@ from band.adapters.cursor_acp import (
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.execution import ExecutionContext
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME, mcp_tool_spelling
 from band.runtime.tools.types import BandTool
 from band.testing import FakeAgentTools
+from tests.adapters.waiting import UNTIL_TIMEOUT_S
+from tests.conftest import make_message_event
 from tests.integrations.acp.acp_toolkit.agent import (
     FakeACPAgent,
     Gate,
+    allow_or_reject,
 )
 from tests.integrations.acp.acp_toolkit.harness import (
     accepted_work_finished,
     pending_decisions,
 )
+from tests.runtime.activityownership.kit import ActivityPlatform, deliver_event
+from tests.runtime.helpers import ALICE, ROOM_ID
 from tests.testing.support import seeded_participant
+
+ALLOW_ONCE = "allow-once"
 
 
 def room_participants() -> list[dict[str, Any]]:
@@ -121,6 +130,42 @@ def said(tools: FakeAgentTools) -> list[str]:
 
 def permission_requests(tools: FakeAgentTools) -> list[str]:
     return [message for message in said(tools) if "needs permission" in message]
+
+
+@dataclass
+class ScopedCursorRoom:
+    """A Cursor room run by a real execution context, as the runtime runs it:
+    each delivery gets that context's scoped tools and control handling."""
+
+    adapter: CursorACPAdapter
+    agent: FakeACPAgent
+    ctx: ExecutionContext
+    platform: ActivityPlatform
+
+    async def deliver(self, message_id: str, content: str = "run it") -> None:
+        await deliver_event(
+            self.ctx,
+            make_message_event(room_id=ROOM_ID, msg_id=message_id, content=content),
+        )
+
+    async def turn_ended(self) -> None:
+        """Wait for the room's turn to end, including after its release."""
+        async with asyncio.timeout(UNTIL_TIMEOUT_S):
+            await accepted_work_finished(self.adapter._rooms[ROOM_ID])
+
+
+def asks_then_replies(reply: str) -> FakeACPAgent:
+    """An agent that asks for one permission, then answers through Band MCP
+    whatever the room decided."""
+    return (
+        FakeACPAgent()
+        .will_ask_permission(title="shell", options=allow_or_reject(ALLOW_ONCE))
+        .will_call_mcp_tool(
+            "reply",
+            BandTool.SEND_MESSAGE,
+            arguments={"content": reply, "mentions": [f"@{ALICE['handle']}"]},
+        )
+    )
 
 
 class CursorRoom:
