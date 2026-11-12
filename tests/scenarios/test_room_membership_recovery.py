@@ -30,5 +30,9 @@ class TestRoomMembershipRecovery:
         await world.until_told("r1", f"processed {missed}")
         await world.until(lambda: world.serving("r2"))
 
-        assert world.serving("r1")
+        assert world.story("r1") == [
+            f"processing {missed}",
+            "turn missed",
+            f"processed {missed}",
+        ]
         assert world.server.connection_count == 1

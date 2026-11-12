@@ -19,7 +19,7 @@ from band_sdk_core import (
 )
 
 from band.client.streaming import WebSocketClient
-from band.client.streaming.readiness import RoomReadyCallback
+from band.client.streaming.readiness import ResumedCallback, RoomReadyCallback
 
 if TYPE_CHECKING:
     from band.client.streaming import (
@@ -115,7 +115,7 @@ class SubscriptionManager:
         *,
         on_room_added: Callable[[RoomAddedPayload], Awaitable[None]],
         on_room_removed: Callable[[RoomRemovedPayload], Awaitable[None]],
-        on_resumed: Callable[[], None] | None = None,
+        on_resumed: ResumedCallback | None = None,
     ) -> None:
         """Subscribe to agent room events (room_added/removed)."""
         await self._subscribe_agent_topic(

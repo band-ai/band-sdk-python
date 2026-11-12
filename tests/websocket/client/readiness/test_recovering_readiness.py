@@ -30,7 +30,6 @@ class TestRecoveringReadiness:
         ):
             await join_room(client, timeline)
             assert client.client is not None
-            client.client.join_timeout_s = 2
             with server.defer_join(ROOM_TOPIC) as deferred:
                 await server.abort_connection()
                 await clock.run_io(deferred.ready.wait())
@@ -56,7 +55,6 @@ class TestRecoveringReadiness:
             readiness_session(timeline) as (server, client),
         ):
             assert client.client is not None
-            client.client.join_timeout_s = 2
             with server.defer_join(ROOM_TOPIC) as deferred:
                 async with clock.background(join_room(client, timeline)) as joining:
                     await clock.run_io(deferred.ready.wait())

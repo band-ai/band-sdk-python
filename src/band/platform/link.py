@@ -543,8 +543,13 @@ class BandLink:
 
     def _catch_up(self, event: ReconnectedEvent) -> None:
         """Queue ``event`` ahead of the rejoined topic's own events."""
-        if not self._socket_reconnect_pending:
-            self._queue_event(event)
+        if self._socket_reconnect_pending:
+            logger.debug(
+                "Catch-up for %s left to the socket reconnect's reconcile",
+                event.room_id or "all rooms",
+            )
+            return
+        self._queue_event(event)
 
     async def _on_message_created(
         self, room_id: str, payload: MessageCreatedPayload

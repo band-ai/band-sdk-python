@@ -30,6 +30,7 @@ class RoomReadiness:
 
 
 RoomReadyCallback = Callable[[RoomReadiness], None]
+ResumedCallback = Callable[[], None]
 
 
 class JoinHook:

@@ -7,9 +7,8 @@ import asyncio
 from band_sdk_core import AgentTopicKind
 
 from band.client.streaming import RoomAddedPayload, RoomRemovedPayload
+from tests.identifiers import AGENT_ID
 from tests.websocket.client.readiness.kit import Timeline, readiness_session
-
-AGENT_ID = "agent-1"
 
 
 async def ignore(payload: RoomAddedPayload | RoomRemovedPayload) -> None:

@@ -34,6 +34,7 @@ from band.client.streaming.disconnect import (
 )
 from band.client.streaming.readiness import (
     JoinHook,
+    ResumedCallback,
     RoomReadiness,
     RoomReadyCallback,
     is_after_gap,
@@ -733,7 +734,7 @@ class WebSocketClient:
         on_room_added: Callable[[RoomAddedPayload], Awaitable[None]],
         on_room_removed: Callable[[RoomRemovedPayload], Awaitable[None]],
         *,
-        on_resumed: Callable[[], None] | None = None,
+        on_resumed: ResumedCallback | None = None,
     ):
         """Subscribe to agent rooms topic with async callbacks.
 
@@ -756,11 +757,7 @@ class WebSocketClient:
             if on_resumed is not None and is_after_gap(generation):
                 on_resumed()
 
-        result = await self._join_topic(
-            topic,
-            message_handler,
-            on_join_response=JoinHook(topic=topic, on_join=on_join),
-        )
+        result = await self._join_topic(topic, message_handler, on_join=on_join)
         logger.info("[WebSocket] Subscribed to topic: %s", topic)
         return result
 
@@ -798,11 +795,7 @@ class WebSocketClient:
             if on_ready is not None:
                 on_ready(RoomReadiness(room_id=chat_room_id, generation=generation))
 
-        return await self._join_topic(
-            topic,
-            message_handler,
-            on_join_response=JoinHook(topic=topic, on_join=on_join),
-        )
+        return await self._join_topic(topic, message_handler, on_join=on_join)
 
     def is_chat_room_ready(self, chat_room_id: str) -> bool:
         """Whether the room is confirmed joined; false while recovering."""
@@ -883,11 +876,14 @@ class WebSocketClient:
         topic: str,
         handler: Callable[[Message], Awaitable[None]],
         *,
-        on_join_response: JoinHook | None = None,
+        on_join: Callable[[int], None] | None = None,
     ) -> None:
         client = self._require_client()
         if topic in self.joined_topics():
             raise ChannelError(f"Topic {topic} already has a live channel")
+        on_join_response = (
+            None if on_join is None else JoinHook(topic=topic, on_join=on_join)
+        )
         channel = client.channel(topic, on_join_response=on_join_response)
         channel.on_any(handler)
         self._channels[topic] = channel

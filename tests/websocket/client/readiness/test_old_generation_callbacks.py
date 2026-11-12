@@ -33,7 +33,9 @@ class TestOldGenerationCallbacks:
             await push_message(server, "m1")
             await clock.run_io(timeline.wait_for(Started("m1")))
             await server.abort_connection()
-            await clock.run_io(server.wait_for_connection(2))
+            replacement = await clock.run_io(server.wait_for_connection(2))
+            await clock.elapse(client.client.callback_drain_timeout_s / 2)
+            assert ROOM_TOPIC not in replacement.joined_topics
             assert readiness(2) not in timeline.entries
 
             release.set()

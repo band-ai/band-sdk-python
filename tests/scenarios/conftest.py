@@ -9,6 +9,7 @@ import pytest_asyncio
 from tests.core.retention.kit import ResidenceHost
 from tests.scenarios.oneshot import OneShotRig, oneshot_rig
 from tests.scenarios.world import BandWorld, band_world
+from tests.toolkit.resync import periodic_wake_after_the_full_interval  # noqa: F401
 
 # Function-scoped loops: the socket server and client must share the test's
 # loop, which the repo-wide session default would not give them.
