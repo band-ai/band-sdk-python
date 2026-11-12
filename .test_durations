@@ -5230,7 +5230,6 @@
   "tests/framework_conformance/test_reap_on_exit.py::TestReapOnExit::test_body_error_survives_a_failed_reap": 0.0,
   "tests/framework_conformance/test_reap_on_exit.py::TestReapOnExit::test_disabled_does_not_reap": 0.0,
   "tests/framework_conformance/test_reap_on_exit.py::TestReapOnExit::test_reaps_on_normal_exit": 0.0,
-  "tests/framework_conformance/test_reply_boundary.py::TestReplyBoundary::test_every_reply_call_carries_the_model_words": 2.7,
   "tests/framework_conformance/test_resource_work_settlement.py::TestResourceWorkSettlement::test_cancelled_work_records_settlement_with_its_client_open[scope]": 0.2,
   "tests/framework_conformance/test_resource_work_settlement.py::TestResourceWorkSettlement::test_cancelled_work_records_settlement_with_its_client_open[task]": 0.2,
   "tests/framework_conformance/test_resource_work_settlement.py::TestResourceWorkSettlement::test_release_and_settle_completes_held_work_after_a_failed_body": 0.2,
