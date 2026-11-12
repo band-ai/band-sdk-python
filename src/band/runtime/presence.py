@@ -230,7 +230,7 @@ class RoomPresence:
                 await self._handle_room_added(event)
             case RoomRemovedEvent() | RoomDeletedEvent():
                 await self._handle_room_left(event)
-            case ReconnectedEvent():
+            case ReconnectedEvent(room_id=None):
                 await self._handle_reconnect()
             case WebSocketDisconnectedEvent():
                 # Terminal for this connection (e.g. another consumer of the

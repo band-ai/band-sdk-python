@@ -71,6 +71,7 @@ async def test_reconnect_reconciles_room_membership_over_a_real_socket_drop() ->
             joined: list[str] = []
             left: list[str] = []
             resynced: list[str] = []
+            caught_up: list[str] = []
             reconnected = asyncio.Event()
 
             presence.on_room_joined = AsyncMock(
@@ -81,7 +82,9 @@ async def test_reconnect_reconciles_room_membership_over_a_real_socket_drop() ->
             )
 
             async def on_event(room_id: str, event) -> None:
-                resynced.append(room_id)
+                # A room-scoped event is the rejoined room's own catch-up; the
+                # unscoped one is the reconcile's resync of survivors.
+                (caught_up if event.room_id else resynced).append(room_id)
 
             presence.on_room_event = on_event
 
@@ -104,6 +107,7 @@ async def test_reconnect_reconciles_room_membership_over_a_real_socket_drop() ->
             assert left == ["room-1"]
             assert joined == ["room-3"]
             assert resynced == ["room-2"]
+            assert sorted(caught_up) == ["room-1", "room-2"]
             assert set(presence.roster.tracked_room_ids()) == {"room-2", "room-3"}
 
 

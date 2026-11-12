@@ -63,6 +63,7 @@ if TYPE_CHECKING:
         ParticipantRemovedPayload,
         RoomAddedPayload,
         RoomDeletedPayload,
+        RoomReadiness,
         RoomRemovedPayload,
         SupersedePayload,
     )
@@ -315,6 +316,7 @@ class BandLink:
             on_participant_added=lambda p: self._on_participant_added(room_id, p),
             on_participant_removed=lambda p: self._on_participant_removed(room_id, p),
             on_room_deleted=lambda p: self._on_room_deleted(room_id, p),
+            on_ready=self._on_room_ready,
         )
 
     async def subscribe_agent_contacts(self, agent_id: str) -> None:
@@ -524,6 +526,16 @@ class BandLink:
             payload=payload,
         )
         self._queue_event(event)
+
+    def _on_room_ready(self, readiness: RoomReadiness) -> None:
+        """Ask the room to catch up after its subscription resumed from a gap.
+
+        Runs before the rejoined room's messages are dispatched, so the event
+        precedes them in the queue. Socket reconnects also trigger the global
+        reconcile; same-socket recovery has only this signal.
+        """
+        if readiness.after_gap:
+            self._queue_event(ReconnectedEvent(room_id=readiness.room_id))
 
     async def _on_message_created(
         self, room_id: str, payload: MessageCreatedPayload

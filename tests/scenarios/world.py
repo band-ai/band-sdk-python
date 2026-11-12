@@ -8,6 +8,8 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
+from band_sdk_core import chat_room_topic
+
 from band.client.streaming import ControlMode, WireEvent
 from band.platform.link import BandLink
 from band.runtime.execution import Execution, ExecutionContext
@@ -115,6 +117,10 @@ class BandWorld:
         """A newer process connects with the same key; the platform evicts
         this one with a terminal supersede."""
         await self.server.push(CONTROL_TOPIC, WireEvent.SUPERSEDE, TERMINAL_SUPERSEDE)
+
+    async def crash_room_channel(self, room_id: str) -> None:
+        """The platform crashes the room's channel; the socket stays up."""
+        await self.server.crash_channel(chat_room_topic(room_id))
 
     async def close_connection(self, code: int) -> None:
         """The platform closes the socket with ``code``."""

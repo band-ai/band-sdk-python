@@ -19,6 +19,7 @@ from band_sdk_core import (
 )
 
 from band.client.streaming import WebSocketClient
+from band.client.streaming.readiness import RoomReadyCallback
 
 if TYPE_CHECKING:
     from band.client.streaming import (
@@ -135,6 +136,7 @@ class SubscriptionManager:
         on_participant_added: Callable[[ParticipantAddedPayload], Awaitable[None]],
         on_participant_removed: Callable[[ParticipantRemovedPayload], Awaitable[None]],
         on_room_deleted: Callable[[RoomDeletedPayload], Awaitable[None]],
+        on_ready: RoomReadyCallback | None = None,
     ) -> None:
         """Subscribe to room messages and participants.
 
@@ -160,6 +162,7 @@ class SubscriptionManager:
                 await ws.join_chat_room_channel(
                     room_id,
                     on_message_created=on_message_created,
+                    on_ready=on_ready,
                 )
             except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
                 logger.warning("Failed to join chat_room:%s: %s", room_id, e)

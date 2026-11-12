@@ -53,6 +53,8 @@ class TestHeartbeatRecovery:
                 for topic in ROOM_TOPICS | {CONTROL_TOPIC}:
                     await replacement.wait_for_join(topic)
                 await gate.entered.wait()
+                # The rejoined room asks to catch up before the held reconcile.
+                assert await anext(link) == ReconnectedEvent(room_id=ROOM_ID)
                 async with background(anext(link)) as next_event:
                     for count in range(1, 4):
                         await clock.elapse(30)
@@ -61,7 +63,7 @@ class TestHeartbeatRecovery:
                     assert live_connection(link).close_code is None
                     assert not next_event.done()
                     gate.released.set()
-                    assert isinstance(await next_event, ReconnectedEvent)
+                    assert await next_event == ReconnectedEvent()
                 await server.push(
                     ROOM_TOPIC,
                     WireEvent.MESSAGE_CREATED,
