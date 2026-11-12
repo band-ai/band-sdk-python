@@ -12,6 +12,7 @@ from band.adapters.codex import (
     CodexAdapter,
     CodexAdapterConfig,
 )
+from band.client.streaming import ControlMode
 from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
 from band.integrations.codex.types import CodexRequestMethod, CodexSessionState
 from tests.adapters.codex.kit import (
@@ -143,6 +144,28 @@ class TestUnansweredStart:
             started["threadId"]
             for started in replacement.params_of(CodexRequestMethod.TURN_START)
         ] == [RECORDED_THREAD]
+        assert failures(tools) == []
+
+    async def test_a_stop_during_an_unanswered_thread_start_replaces_the_process(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """A stop before the bound must not leave the silent process for the
+        room's next message to wait on again."""
+        client = UnansweringClient(CodexRequestMethod.THREAD_START)
+        replacement = FakeCodexClient(events=answered_turn())
+        adapter = await started_codex(client, replacement)
+        stopped, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
+
+        async with running_turn(adapter, stopped):
+            await client.asked.wait()
+            await asyncio.sleep(CODEX_TRANSITION_TIMEOUT_S / 2)
+            await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
+        await send_bootstrap(adapter, tools=tools)
+
+        assert client.closed
+        assert len(client.params_of(CodexRequestMethod.THREAD_START)) == 1
+        assert len(replacement.params_of(CodexRequestMethod.TURN_START)) == 1
+        assert failures(stopped) == []
         assert failures(tools) == []
 
     async def test_a_seeded_thread_continues_after_an_unanswered_turn_start(

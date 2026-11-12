@@ -422,10 +422,7 @@ class CodexContinuityError(RuntimeError):
 class CodexUnanswered(TimeoutError):
     """Codex did not answer a request a turn waits on before it runs."""
 
-    def __init__(
-        self, client: CodexClientProtocol, method: str, seconds: float
-    ) -> None:
-        self.client = client
+    def __init__(self, method: str, seconds: float) -> None:
         self.method = method
         super().__init__(
             f"Codex turn timed out after {seconds}s of silence "
@@ -1398,13 +1395,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
                 raise
             except CodexUnanswered as unanswered:
-                # The room's next turn would wait on the same process.
                 logger.warning(
                     "Room %s: Codex did not answer %s; recovering its process",
                     room.room_id,
                     unanswered.method,
                 )
-                self._recover_process(CodexTurn(unanswered.client, "", ""))
                 await tools.send_failure(
                     AgentFailure(CODEX_PROVIDER, str(unanswered), FAILURE_CODE_TIMEOUT)
                 )
@@ -2439,14 +2434,19 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         ``turn/start``.
 
         Codex answers these before the model works, and no turn limit runs
-        yet, so the answer gets as long as a process gets to start.
+        yet, so the answer gets as long as a process gets to start. A wait
+        that ends without one, at its bound or at a stop, hands the process
+        to recovery: the room's next turn must not wait on it again.
         """
         bound = self.config.retention.transition_timeout_s
         try:
             async with asyncio.timeout(bound):
                 return await client.request(method, params)
-        except TimeoutError:
-            raise CodexUnanswered(client, method, bound) from None
+        except (TimeoutError, asyncio.CancelledError) as unanswered:
+            self._recover_process(CodexTurn(client, "", ""))
+            if isinstance(unanswered, TimeoutError):
+                raise CodexUnanswered(method, bound) from None
+            raise
 
     def _recover_process(self, turn: CodexTurn) -> None:
         """Hand the process running ``turn`` to recovery; the room's next
