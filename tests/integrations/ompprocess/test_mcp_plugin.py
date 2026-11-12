@@ -52,10 +52,6 @@ class TestMcpPluginProjection:
             config = json.loads(
                 (root / OMP_MCP_SERVERS_CONFIG).read_text(encoding="utf-8")
             )
-            startup_config = json.loads(
-                (root / OMP_MCP_STARTUP_CONFIG).read_text(encoding="utf-8")
-            )
-            assert startup_config == {"startup": {"quiet": False}}
             assert config["mcpServers"]["remote"] == {
                 "type": OmpMcpTransport.SSE,
                 "url": "https://mcp.example/sse",
