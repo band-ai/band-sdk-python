@@ -35,7 +35,11 @@ class TestDialectSetup:
         self, adapter: Adapter, tmp_path: Path
     ) -> None:
         setup = AgentSetup(
-            tmp_path, 1.0, features=SILENT_MEMORY, approval="auto_accept"
+            tmp_path,
+            1.0,
+            features=SILENT_MEMORY,
+            approval="auto_accept",
+            native_home=tmp_path,
         )
         built: SimpleAdapter[Any] = DIALECTS[adapter].build(BaselineSettings(), setup)
         assert (APPROVAL_OF[adapter](built.config), built.features) == (
@@ -48,7 +52,7 @@ class TestDialectSetup:
         self, adapter: Adapter, tmp_path: Path
     ) -> None:
         built: SimpleAdapter[Any] = DIALECTS[adapter].build(
-            BaselineSettings(), AgentSetup(tmp_path, 1.0)
+            BaselineSettings(), AgentSetup(tmp_path, 1.0, native_home=tmp_path)
         )
         assert (APPROVAL_OF[adapter](built.config), built.features) == (
             "manual",
@@ -58,7 +62,7 @@ class TestDialectSetup:
     def test_cursor_workflow_capabilities_replace_only_that_setup_feature(
         self, tmp_path: Path
     ) -> None:
-        setup = AgentSetup(tmp_path, 1.0, features=SILENT_MEMORY)
+        setup = AgentSetup(tmp_path, 1.0, features=SILENT_MEMORY, native_home=tmp_path)
         built = cursor_test_adapter(
             BaselineSettings(), setup, capabilities={Capability.CONTACTS}
         )

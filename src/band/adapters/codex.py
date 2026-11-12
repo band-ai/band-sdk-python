@@ -1285,7 +1285,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         owner_ready: asyncio.Future[TurnTask] = (
             asyncio.get_running_loop().create_future()
         )
-        turn = start_releasable_turn(
+        owner = start_releasable_turn(
             room.retained,
             partial(
                 self._run_turn,
@@ -1302,8 +1302,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             tools=tools,
             room_id=room_id,
         )
+        turn = owner.task
         self._turn_release[room_id] = release
-        self._turn_tasks[room_id] = owner = bind_turn_task(tools, turn)
+        self._turn_tasks[room_id] = owner
         owner_ready.set_result(owner)
         turn.add_done_callback(lambda task: self._forget_turn(room_id, task))
         try:

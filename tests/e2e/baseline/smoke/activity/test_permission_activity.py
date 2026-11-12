@@ -15,7 +15,6 @@ from tests.e2e.baseline.agents import (
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.behavior.approvals.kit import (
     approval_room,
-    readback_commands,
 )
 from tests.e2e.baseline.smoke.samples.approvals import (
     DIALECTS,
@@ -92,7 +91,6 @@ class TestPermissionActivity:
                     room.dialect.notice(Outcome.APPROVE, request),
                     since=after_request,
                     closing_reply=done,
-                    allowed_followup_commands=readback_commands(target),
                 )
                 assert written_lines(target) == [marker]
                 # The approval reply reached the agent mid-run (PLT-1731).

@@ -121,7 +121,6 @@ from band.core.turn_lifecycle import (
     BackendTurns,
     TurnSettleTimeout,
     TurnTask,
-    bind_turn_task,
     start_releasable_turn,
 )
 from band.core.types import (
@@ -1147,7 +1146,7 @@ class ClaudeSDKAdapter(
             if is_session_bootstrap
             else (None, None)
         )
-        turn_task = start_releasable_turn(
+        owner = start_releasable_turn(
             session.retained,
             partial(
                 self._run_turn,
@@ -1164,8 +1163,9 @@ class ClaudeSDKAdapter(
             tools=tools,
             room_id=room_id,
         )
+        turn_task = owner.task
         self._turn_release[room_id] = release_future
-        self._turn_tasks[room_id] = owner = bind_turn_task(tools, turn_task)
+        self._turn_tasks[room_id] = owner
         owner_ready.set_result(owner)
         try:
             await asyncio.wait(
