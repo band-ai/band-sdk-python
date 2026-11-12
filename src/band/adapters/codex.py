@@ -75,6 +75,7 @@ from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import detached_turn
 from band.core.turn_lifecycle import (
+    BACKEND_CANCEL_TIMEOUT_SECONDS,
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
     BackendTurns,
@@ -908,10 +909,9 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # disables the bound (legacy behavior); ``retention.transition_timeout_s``
     # still bounds how long a caller waits to learn the outcome.
     client_close_timeout_s: float | None = 10.0
-    # Also bounds a timed-out turn's wait for its turn/interrupt answer, and
-    # answering a finished turn's leftover native requests. Not Optional like
-    # client_close_timeout_s: a turn possibly stuck on real work must never
-    # defeat its bound.
+    # Also bounds answering a finished turn's leftover native requests. Not
+    # Optional like client_close_timeout_s: a turn possibly stuck on real work
+    # must never defeat its bound.
     turn_settle_timeout_s: TurnSettleTimeout = TURN_SETTLE_GRACE_S
     # Matching rules for session-level auto-approval (``/approve-session``).
     #
@@ -2394,12 +2394,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
     async def _interrupt_timed_out_turn(self, turn: CodexTurn) -> None:
         """Ask Codex to stop a turn past its limit, waiting for the answer no
-        longer than the turn's settle bound.
+        longer than a stop of the same turn waits for it.
 
         A process that answers keeps its room. One that does not would hold
-        the room for as long as it stays up, so recovery replaces it.
+        the room for as long as it stays up, so recovery replaces it. The
+        bound is fixed: no setting can shorten it under a healthy answer or
+        stretch it into a hold.
         """
-        bound = self.config.turn_settle_timeout_s
+        bound = BACKEND_CANCEL_TIMEOUT_SECONDS
         try:
             async with asyncio.timeout(bound):
                 await turn.client.request(

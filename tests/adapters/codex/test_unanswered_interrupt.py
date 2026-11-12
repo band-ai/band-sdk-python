@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
-from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
+from band.core.turn_lifecycle import BACKEND_CANCEL_TIMEOUT_SECONDS
 from band.integrations.codex.types import CodexRequestMethod
-from tests.adapters.codex.kit import ToolSchemaFakeTools, answered_turn, send_bootstrap
+from tests.adapters.codex.kit import (
+    AnswersAStepLaterClient,
+    ToolSchemaFakeTools,
+    answered_turn,
+    send_bootstrap,
+)
 from tests.adapters.codex.timedturn import (
     INTERRUPTED_FIRST_TURN,
     MARGIN_S,
@@ -47,14 +53,14 @@ class TestUnansweredInterrupt:
     async def test_the_timeout_is_reported_once_the_interrupt_goes_unanswered(
         self,
     ) -> None:
-        """The process gets one settle bound to answer; the room waits no longer."""
+        """The process gets as long to answer as a stop of the turn would wait."""
         client = deaf_to_interrupts()
         adapter = await started_adapter(client)
         tools = ToolSchemaFakeTools()
 
         async with running_turn(adapter, tools) as turn:
             await client.turn_started.wait()
-            await asyncio.sleep(TOTAL_S + TURN_SETTLE_GRACE_S - MARGIN_S)
+            await asyncio.sleep(TOTAL_S + BACKEND_CANCEL_TIMEOUT_SECONDS - MARGIN_S)
             assert not turn.done()
             assert failures(tools) == []
 
@@ -82,7 +88,7 @@ class TestUnansweredInterrupt:
 
         async with running_turn(adapter, timed_out) as turn:
             await client.turn_started.wait()
-            await asyncio.sleep(TOTAL_S + TURN_SETTLE_GRACE_S + MARGIN_S)
+            await asyncio.sleep(TOTAL_S + BACKEND_CANCEL_TIMEOUT_SECONDS + MARGIN_S)
             assert failures(timed_out) == past_its_total(TOTAL_S)
             with pytest.raises(TurnResultAlreadyReported):
                 await turn
@@ -99,6 +105,54 @@ class TestUnansweredInterrupt:
     async def test_a_process_that_answers_the_interrupt_keeps_its_room(self) -> None:
         client, spare = FakeCodexClient(), FakeCodexClient()
         adapter = await started_adapter(client, spare)
+        timed_out, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
+
+        async with running_turn(adapter, timed_out) as turn:
+            with pytest.raises(TurnResultAlreadyReported):
+                await turn
+        client.script(*answered_turn("turn-2"))
+        await send_bootstrap(adapter, tools=tools)
+
+        assert failures(timed_out) == past_its_total(TOTAL_S)
+        assert not client.closed
+        assert spare.requests == []
+        assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
+        assert failures(tools) == []
+
+    @pytest.mark.parametrize(
+        "settle_s", [0.0, 600.0], ids=["no-settle-grace", "long-settle-grace"]
+    )
+    async def test_the_wait_for_the_interrupt_ignores_the_settle_grace(
+        self,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
+        settle_s: float,
+    ) -> None:
+        """The settle grace is how long a leave or stop lets a turn wind down;
+        however short or long, an unanswered interrupt waits the same."""
+        client = deaf_to_interrupts()
+        adapter = await started_codex(
+            client, turn_timeout_s=TOTAL_S, turn_settle_timeout_s=settle_s
+        )
+        tools = ToolSchemaFakeTools()
+
+        async with running_turn(adapter, tools) as turn:
+            await client.turn_started.wait()
+            await asyncio.sleep(TOTAL_S + BACKEND_CANCEL_TIMEOUT_SECONDS - MARGIN_S)
+            assert not turn.done()
+            assert failures(tools) == []
+
+            await asyncio.sleep(2 * MARGIN_S)
+            assert failures(tools) == past_its_total(TOTAL_S)
+            with pytest.raises(TurnResultAlreadyReported):
+                await turn
+
+    async def test_an_answer_one_step_later_keeps_the_room_without_a_settle_grace(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        client, spare = AnswersAStepLaterClient(), FakeCodexClient()
+        adapter = await started_codex(
+            client, spare, turn_timeout_s=TOTAL_S, turn_settle_timeout_s=0
+        )
         timed_out, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
 
         async with running_turn(adapter, timed_out) as turn:
