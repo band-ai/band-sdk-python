@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from band.integrations.omprpc import OmpCompletionTimeout, OmpProcessError
+from band.integrations.omprpc.client import CALLBACK_EXIT_TIMEOUT_S
 from band.integrations.omprpc.custody import process_is_alive
 from band.integrations.ompwire import OmpEventType
 from tests.integrations.omppeers.base import COMPLETE
@@ -40,14 +41,30 @@ class TestAbortAcknowledgement:
             await turn.clock.run_io(turn.client.start())
             assert await turn.clock.run_io(follow_up_texts(turn.client)) == [COMPLETE]
 
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
+    async def test_parked_callback_does_not_shorten_abort_acknowledgement_budget(
+        self,
+        stopping_completion_turn: CompletionContext[StoppingObserver],
+        stopping_observer: StoppingObserver,
+    ) -> None:
+        stopping_observer.admit_sibling = True
+        async with stopping_completion_turn as turn:
+            await turn.observer.wait_for(OmpEventType.AGENT_END)
+            await snapshots_observed(turn.client)
+            await turn.clock.elapse(2 * CALLBACK_EXIT_TIMEOUT_S)
+
+            await turn.clock.run_io(turn.client.request(PeerCommand.RELEASE_ACK))
+            await turn.clock.run_io(turn.running)
+            assert turn.observer.assistant_texts == [COMPLETE]
+            assert await turn.clock.run_io(follow_up_texts(turn.client)) == [COMPLETE]
+
     async def test_delayed_abort_response_completes_the_stopped_turn(
         self, stopping_turn: RpcTurn[StoppingObserver]
     ) -> None:
         """Explicit stop_after_tool still ABORTs while the peer is unsettled.
 
-        Complements adapter POST_CHECK refuse (builtin recheck): this path has
-        no stop_commit / stop_recheck_backlog, so pending-async GET_STATE must
-        not block the historical ABORT.
+        Unlike a builtin decline, this explicit stop does not require an idle
+        backlog snapshot, so pending async work must not block its ABORT.
         """
         await stopping_turn.observer.wait_for(OmpEventType.AGENT_END)
         await snapshots_observed(stopping_turn.client)

@@ -74,13 +74,20 @@ class PromptRun:
         self.last_activity_sequence = 0
         self.settled_sequence = 0
         self.last_assistant: OmpMessage | None = None
+        self.assistant_message: OmpMessage | None = None
+        self.running_tools: set[str] = set()
+        # Cursor can finish direct calls before its buffered MESSAGE_START arrives.
+        self.finished_tools: set[str] = set()
         self.rejected = False
         self.callbacks: dict[tuple[OmpCallbackKind, str], PromptCallback] = {}
         self.callback_tasks: set[asyncio.Task[None]] = set()
         self.event_worker: asyncio.Task[None] | None = None
         self.stop_after_tool_id: str | None = None
         self.stop_commit: Callable[[], None] | None = None
-        self.stop_recheck_backlog = False
+        self.stop_tool_call_id: str | None = None
+        self.stop_resolved = asyncio.Event()
+        self.stop_resolved.set()
+        self.stop_aborting = False
         self.stop_task: asyncio.Task[None] | None = None
         self.stopped = False
         self.result_owed = True
@@ -93,19 +100,21 @@ class PromptRun:
         call_id: str,
         *,
         on_commit: Callable[[], None] | None = None,
-        recheck_backlog: bool = False,
+        tool_call_id: str | None = None,
     ) -> None:
         if self.stop_after_tool_id is None:
             self.stop_after_tool_id = call_id
             self.stop_commit = on_commit
-            self.stop_recheck_backlog = recheck_backlog
+            self.stop_tool_call_id = tool_call_id
+            self.stop_resolved.clear()
 
     def clear_stop(self, call_id: str, *, cancel_task: bool = True) -> None:
         if self.stop_after_tool_id != call_id:
             return
         self.stop_after_tool_id = None
         self.stop_commit = None
-        self.stop_recheck_backlog = False
+        self.stop_tool_call_id = None
+        self.stop_resolved.set()
         if cancel_task and self.stop_task is not None and not self.stop_task.done():
             self.stop_task.cancel()
 
@@ -125,10 +134,25 @@ class PromptRun:
             return error
         self.last_activity_sequence = sequence
         match event.type:
+            case OmpEventType.MESSAGE_START if (
+                event.message is not None and event.message.role == OMP_ASSISTANT_ROLE
+            ):
+                self.assistant_message = event.message
+            case OmpEventType.MESSAGE_UPDATE if (
+                event.message is not None and event.message.role == OMP_ASSISTANT_ROLE
+            ):
+                self.assistant_message = event.message
             case OmpEventType.MESSAGE_END if (
                 event.message is not None and event.message.role == OMP_ASSISTANT_ROLE
             ):
                 self.last_assistant = event.message
+                self.assistant_message = event.message
+            case OmpEventType.TOOL_START if event.toolCallId is not None:
+                self.running_tools.add(event.toolCallId)
+                self.finished_tools.discard(event.toolCallId)
+            case OmpEventType.TOOL_END if event.toolCallId is not None:
+                self.running_tools.discard(event.toolCallId)
+                self.finished_tools.add(event.toolCallId)
             case OmpEventType.AGENT_END:
                 self.terminal_seen = self.terminal_seen or event.isTerminal is True
                 self.awaiting_async = event.awaitingAsyncWork is True
@@ -189,12 +213,20 @@ class PromptRun:
     def boundary_reached(self) -> bool:
         return self.result.done() or self.terminal_seen or self.settled_proven()
 
-    def is_single_tool_call(self, tool_call_id: str) -> bool:
-        message = self.last_assistant
+    def is_only_pending_tool_call(self, tool_call_id: str, host_call_id: str) -> bool:
+        """Require live execution and no unfinished sibling, including queued callbacks."""
+        if self.running_tools != {tool_call_id}:
+            return False
+        if any(key != (OmpCallbackKind.TOOL, host_call_id) for key in self.callbacks):
+            return False
+        message = self.assistant_message
         if message is None or isinstance(message.content, str):
             return False
         calls = [
-            block for block in message.content if block.type == OmpContentKind.TOOL_CALL
+            block
+            for block in message.content
+            if block.type == OmpContentKind.TOOL_CALL
+            and block.id not in self.finished_tools
         ]
         return len(calls) == 1 and calls[0].id == tool_call_id
 
