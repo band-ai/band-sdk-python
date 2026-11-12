@@ -894,9 +894,10 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # disables the bound (legacy behavior); ``retention.transition_timeout_s``
     # still bounds how long a caller waits to learn the outcome.
     client_close_timeout_s: float | None = 10.0
-    # Also bounds answering a finished turn's leftover native requests. Not
-    # Optional like client_close_timeout_s: a turn possibly stuck on real work
-    # must never defeat its bound.
+    # Also bounds a timed-out turn's wait for its turn/interrupt answer, and
+    # answering a finished turn's leftover native requests. Not Optional like
+    # client_close_timeout_s: a turn possibly stuck on real work must never
+    # defeat its bound.
     turn_settle_timeout_s: TurnSettleTimeout = TURN_SETTLE_GRACE_S
     # Matching rules for session-level auto-approval (``/approve-session``).
     #
@@ -1954,16 +1955,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 thread_id,
                 turn_id,
             )
-            try:
-                await native.client.request(
-                    CodexRequestMethod.TURN_INTERRUPT,
-                    {"threadId": thread_id, "turnId": turn_id},
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to send turn/interrupt after timeout",
-                    exc_info=True,
-                )
+            await self._interrupt_timed_out_turn(
+                CodexTurn(native.client, thread_id, turn_id or "")
+            )
             timeout_message = (
                 f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )
@@ -2370,12 +2364,46 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
         finally:
             # An interrupt response does not prove native tool work has stopped.
-            for room in self._room_clients.values():
-                if room.client is turn.client:
-                    self.backend_turns.recovering(
-                        room.room_id, turn, room.retained, generation=room.generation
-                    )
-                    break
+            self._recover_process(turn)
+
+    async def _interrupt_timed_out_turn(self, turn: CodexTurn) -> None:
+        """Ask Codex to stop a turn past its limit, waiting for the answer no
+        longer than the turn's settle bound.
+
+        A process that answers keeps its room. One that does not would hold
+        the room for as long as it stays up, so recovery replaces it.
+        """
+        bound = self.config.turn_settle_timeout_s
+        try:
+            async with asyncio.timeout(bound):
+                await turn.client.request(
+                    CodexRequestMethod.TURN_INTERRUPT,
+                    {"threadId": turn.thread_id, "turnId": turn.turn_id},
+                )
+        except TimeoutError:
+            logger.warning(
+                "Codex did not answer turn/interrupt within %ss; recovering its "
+                "process (thread=%s, turn=%s)",
+                bound,
+                turn.thread_id,
+                turn.turn_id,
+            )
+            self._recover_process(turn)
+        except Exception:
+            logger.warning(
+                "Failed to send turn/interrupt after timeout",
+                exc_info=True,
+            )
+
+    def _recover_process(self, turn: CodexTurn) -> None:
+        """Hand the process running ``turn`` to recovery; the room's next
+        turn waits for its release and continues the thread on a new one."""
+        for room in self._room_clients.values():
+            if room.client is turn.client:
+                self.backend_turns.recovering(
+                    room.room_id, turn, room.retained, generation=room.generation
+                )
+                break
 
     @asynccontextmanager
     async def _native_turn(
