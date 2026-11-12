@@ -60,7 +60,10 @@ class TestModelSelectionCheck:
         error = rejection(ModelSelection(model="haiku", reasoning_effort="high"))
 
         assert (error.setting, error.value) == (ModelSetting.REASONING_EFFORT, "high")
-        assert str(error) == 'model "haiku" offers no reasoning effort'
+        assert str(error) == (
+            'reasoning effort "high" is not advertised for model "haiku"; '
+            "available: (none)"
+        )
 
     def test_unadvertised_effort_names_the_models_efforts(self) -> None:
         error = rejection(ModelSelection(reasoning_effort="xhigh"))

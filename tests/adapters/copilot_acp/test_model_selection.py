@@ -87,7 +87,8 @@ class TestCopilotACPModelSelection:
             pytest.param(
                 {"model": "claude-haiku-4.5", "reasoning_effort": "high"},
                 [(MODEL_OPTION_ID, "claude-haiku-4.5")],
-                'model "claude-haiku-4.5" offers no reasoning effort',
+                'reasoning effort "high" is not advertised for model '
+                '"claude-haiku-4.5"; available: (none)',
                 id="model-without-efforts",
             ),
             pytest.param(
@@ -127,7 +128,8 @@ class TestCopilotACPModelSelection:
                 await switch_room(session, reasoning_effort="high")
 
         assert str(rejected.value) == (
-            'model "claude-haiku-4.5" offers no reasoning effort'
+            'reasoning effort "high" is not advertised for model '
+            '"claude-haiku-4.5"; available: (none)'
         )
         assert agent.config_selections() == [(MODEL_OPTION_ID, "claude-haiku-4.5")]
 
@@ -184,7 +186,8 @@ class TestCopilotACPModelSelection:
                 await switch_room(session, reasoning_effort="high")
 
         assert str(rejected.value) == (
-            'model "claude-haiku-4.5" offers no reasoning effort'
+            'reasoning effort "high" is not advertised for model '
+            '"claude-haiku-4.5"; available: (none)'
         )
 
     @pytest.mark.asyncio

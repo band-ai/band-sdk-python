@@ -48,8 +48,9 @@ class CopilotACPAdapterConfig(ACPClientAdapterConfig):
     """Settings for the Copilot CLI ACP backend.
 
     Inherits every :class:`ACPClientAdapterConfig` setting. ``model`` and
-    ``reasoning_effort`` are only advertised by GitHub-hosted sessions; under
-    BYOK the provider env (``COPILOT_MODEL``) picks the model.
+    ``reasoning_effort`` are checked against what each session advertises:
+    the account's catalog when GitHub-hosted, and under BYOK (since Copilot
+    CLI 1.0.106) the provider's ``COPILOT_MODEL`` plus ``auto``.
 
     Attributes:
         command: The ``copilot`` launch command.
