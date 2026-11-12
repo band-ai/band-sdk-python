@@ -39,7 +39,11 @@ from band.runtime.presence import RoomPresence
 from tests.activitysupport import install_activity_support
 from tests.conftest import make_participant_mock, mirror_settlement_results
 from tests.runtime.helpers import AGENT_ID, WAIT_SECONDS
-from tests.toolkit.resync import periodic_wake_after_the_full_interval  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def pinned_periodic_wake(periodic_wake_after_the_full_interval: None) -> None:
+    """Every runtime test runs rooms with the pinned first periodic resync."""
 
 
 async def wait_for_condition(

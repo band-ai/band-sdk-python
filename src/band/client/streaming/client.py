@@ -33,6 +33,7 @@ from band.client.streaming.disconnect import (
     with_outcome,
 )
 from band.client.streaming.readiness import (
+    JoinCallback,
     JoinHook,
     ResumedCallback,
     RoomReadiness,
@@ -798,7 +799,11 @@ class WebSocketClient:
         return await self._join_topic(topic, message_handler, on_join=on_join)
 
     def is_chat_room_ready(self, chat_room_id: str) -> bool:
-        """Whether the room is confirmed joined; false while recovering."""
+        """Whether the room is confirmed joined.
+
+        False while recovering and during that join's ``on_ready``, which runs
+        just before the join is marked confirmed.
+        """
         channel = self._channels.get(chat_room_topic(chat_room_id))
         return channel is not None and channel.joined
 
@@ -876,7 +881,7 @@ class WebSocketClient:
         topic: str,
         handler: Callable[[Message], Awaitable[None]],
         *,
-        on_join: Callable[[int], None] | None = None,
+        on_join: JoinCallback | None = None,
     ) -> None:
         client = self._require_client()
         if topic in self.joined_topics():

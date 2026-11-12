@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
-from band_sdk_core import AgentTopicKind
-
 from band.client.streaming import RoomAddedPayload, RoomRemovedPayload
 from tests.identifiers import AGENT_ID
+from tests.platform.linkclose.kit import ROOMS_TOPIC
 from tests.websocket.client.readiness.kit import Timeline, readiness_session
 
 
@@ -32,7 +31,7 @@ class TestAgentRoomsResumed:
             )
             assert resumed == []
 
-            await server.crash_channel(AgentTopicKind.Rooms.topic(AGENT_ID))
+            await server.crash_channel(ROOMS_TOPIC)
             await signalled.wait()
             assert resumed == [None]
             assert server.connection_count == 1

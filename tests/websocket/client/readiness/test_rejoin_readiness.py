@@ -36,6 +36,5 @@ class TestRejoinReadiness:
             await timeline.wait_for(Delivered("m1"))
 
             assert timeline.entries == [readiness(1), readiness(2), Delivered("m1")]
-            assert timeline.entries[1].after_gap
             assert client.is_chat_room_ready(ROOM_ID)
             assert server.connection_count == connections

@@ -56,7 +56,6 @@ class TestOldGenerationCallbacks:
             readiness_session(timeline) as (server, client),
         ):
             await join_room(client, timeline)
-            assert client.client is not None
             await push_message(server, "m1")
             await clock.run_io(timeline.wait_for(Started("m1")))
             await server.abort_connection()

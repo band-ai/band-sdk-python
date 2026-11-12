@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from band_sdk_core import AgentTopicKind
 from websockets.frames import CloseCode
 
 from band.platform.event import (
@@ -12,7 +11,7 @@ from band.platform.event import (
 )
 from band.testing import fake_phoenix_server
 from tests.conftest import CLOSED_1008
-from tests.platform.linkclose.kit import AGENT_ID, connected, make_link
+from tests.platform.linkclose.kit import AGENT_ID, ROOMS_TOPIC, connected, make_link
 from tests.platform.recovery.kit import ROOM_ID, ROOM_TOPIC
 from tests.websocket.client.readiness.kit import (
     answer_join_then_push,
@@ -81,7 +80,7 @@ class TestLinkRoomReadiness:
             link = make_link(server.url)
             async with connected(link):
                 await link.subscribe_agent_rooms(AGENT_ID)
-                await server.crash_channel(AgentTopicKind.Rooms.topic(AGENT_ID))
+                await server.crash_channel(ROOMS_TOPIC)
 
                 assert await anext(link) == ReconnectedEvent()
                 assert server.connection_count == 1

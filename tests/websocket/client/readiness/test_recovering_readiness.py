@@ -21,7 +21,7 @@ from tests.websocket.client.readiness.kit import (
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
 class TestRecoveringReadiness:
-    async def test_same_socket_recovery_signals_after_on_reconnect(
+    async def test_a_rejoin_timing_out_in_the_reconnect_signals_once_it_recovers(
         self, timeline: Timeline
     ) -> None:
         async with (
@@ -29,7 +29,6 @@ class TestRecoveringReadiness:
             readiness_session(timeline) as (server, client),
         ):
             await join_room(client, timeline)
-            assert client.client is not None
             with server.defer_join(ROOM_TOPIC) as deferred:
                 await server.abort_connection()
                 await clock.run_io(deferred.ready.wait())
@@ -54,7 +53,6 @@ class TestRecoveringReadiness:
             controlled_clock() as clock,
             readiness_session(timeline) as (server, client),
         ):
-            assert client.client is not None
             with server.defer_join(ROOM_TOPIC) as deferred:
                 async with clock.background(join_room(client, timeline)) as joining:
                     await clock.run_io(deferred.ready.wait())

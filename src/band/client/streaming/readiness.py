@@ -31,15 +31,16 @@ class RoomReadiness:
 
 RoomReadyCallback = Callable[[RoomReadiness], None]
 ResumedCallback = Callable[[], None]
+JoinCallback = Callable[[int], None]
 
 
 class JoinHook:
     """Phoenix ``on_join_response``: counts confirmed joins, before their messages."""
 
-    def __init__(self, *, topic: str, on_join: Callable[[int], None]) -> None:
+    def __init__(self, *, topic: str, on_join: JoinCallback) -> None:
         self._topic = topic
         self._on_join = on_join
-        self._generation = 0
+        self._generation = INITIAL_GENERATION - 1
 
     def __call__(self, response: object) -> None:
         self._generation += 1

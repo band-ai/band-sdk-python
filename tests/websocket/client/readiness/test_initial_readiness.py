@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from phoenix_channels_python_client import ChannelError
 
+from band.client.streaming import RoomReadiness
 from band.testing import JoinOutcome
 from tests.toolkit.tasks import background
 from tests.websocket.client.readiness.kit import (
@@ -33,6 +34,21 @@ class TestInitialReadiness:
 
             await timeline.wait_for(Delivered("m1"))
             assert timeline.entries == [readiness(1), Delivered("m1")]
+
+    async def test_the_room_reads_ready_only_once_its_signal_returns(
+        self, timeline: Timeline
+    ) -> None:
+        during_signal: list[bool] = []
+        async with readiness_session(timeline) as (_, client):
+
+            def on_ready(signal: RoomReadiness) -> None:
+                during_signal.append(client.is_chat_room_ready(ROOM_ID))
+
+            await client.join_chat_room_channel(
+                ROOM_ID, timeline.deliver, on_ready=on_ready
+            )
+            assert during_signal == [False]
+            assert client.is_chat_room_ready(ROOM_ID)
 
     async def test_rejected_join_never_signals(self, timeline: Timeline) -> None:
         async with readiness_session(

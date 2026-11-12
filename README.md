@@ -941,7 +941,8 @@ await client.join_chat_room_channel(room_id, on_message, on_ready=on_ready)
 ```
 
 After `after_gap`, fetch the room's history and skip ids you already handled.
-`client.is_chat_room_ready(room_id)` reports the current state. `on_reconnect`
+`client.is_chat_room_ready(room_id)` reports the current state; it turns true
+only once `on_ready` returns. `on_reconnect`
 is socket-level and can run while rooms still recover. Not signalled: a room
 rejected for good, and messages dropped when a room's callbacks fall behind
 phoenix's per-topic queue limit.
