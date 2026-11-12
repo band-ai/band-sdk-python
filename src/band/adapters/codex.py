@@ -418,6 +418,20 @@ class CodexContinuityError(RuntimeError):
     """A retained Codex thread cannot continue as it was; its id is kept."""
 
 
+class CodexUnanswered(TimeoutError):
+    """Codex did not answer a request a turn waits on before it runs."""
+
+    def __init__(
+        self, client: CodexClientProtocol, method: str, seconds: float
+    ) -> None:
+        self.client = client
+        self.method = method
+        super().__init__(
+            f"Codex turn timed out after {seconds}s of silence "
+            f"({method.replace('/', '_')})"
+        )
+
+
 @dataclass(frozen=True)
 class CodexTurn:
     """What interrupting one room's running app-server turn needs."""
@@ -1377,6 +1391,18 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 # unlike an arbitrary caught exception, worth showing verbatim.
                 await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
                 raise
+            except CodexUnanswered as unanswered:
+                # The room's next turn would wait on the same process.
+                logger.warning(
+                    "Room %s: Codex did not answer %s; recovering its process",
+                    room.room_id,
+                    unanswered.method,
+                )
+                self._recover_process(CodexTurn(unanswered.client, "", ""))
+                await tools.send_failure(
+                    AgentFailure(CODEX_PROVIDER, str(unanswered), FAILURE_CODE_TIMEOUT)
+                )
+                raise TurnResultAlreadyReported(str(unanswered)) from None
             except TimeoutError as timeout:
                 # Only waiting on the room's process start or stop raises
                 # this; an abandoned start stays owned until recovery closes it.
@@ -2395,6 +2421,25 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 exc_info=True,
             )
 
+    async def _request_before_turn(
+        self,
+        client: CodexClientProtocol,
+        method: CodexRequestMethod,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Send a request a turn waits on before it runs: for its thread, then
+        ``turn/start``.
+
+        Codex answers these before the model works, and no turn limit runs
+        yet, so the answer gets as long as a process gets to start.
+        """
+        bound = self.config.retention.transition_timeout_s
+        try:
+            async with asyncio.timeout(bound):
+                return await client.request(method, params)
+        except TimeoutError:
+            raise CodexUnanswered(client, method, bound) from None
+
     def _recover_process(self, turn: CodexTurn) -> None:
         """Hand the process running ``turn`` to recovery; the room's next
         turn waits for its release and continues the thread on a new one."""
@@ -2473,7 +2518,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     ) -> None:
         """Start the native turn and claim the events that arrived before its id."""
         native.thread_id = params["threadId"]
-        started = await native.client.request(CodexRequestMethod.TURN_START, params)
+        started = await self._request_before_turn(
+            native.client, CodexRequestMethod.TURN_START, params
+        )
         turn_id = _result_id(started, "turn")
         if not turn_id:
             raise RuntimeError("Codex turn/start returned no turn id")
@@ -2655,7 +2702,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         """Resume the thread Band history names; None falls back to a new one."""
         room_id = room.room_id
         try:
-            result = await client.request(
+            result = await self._request_before_turn(
+                client,
                 CodexRequestMethod.THREAD_RESUME,
                 self._resume_params(room, named),
             )
@@ -2713,7 +2761,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         }
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
-        started = await client.request(CodexRequestMethod.THREAD_START, start_params)
+        started = await self._request_before_turn(
+            client, CodexRequestMethod.THREAD_START, start_params
+        )
         thread_id = _result_id(started, "thread")
         if not thread_id:
             raise RuntimeError("Codex thread/start returned no thread id")

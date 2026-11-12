@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from band.adapters.codex import CodexAdapter
 from band.core.protocols import FAILURE_CODE_TIMEOUT
+from band.integrations.codex.types import CodexSessionState
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.codex.kit import ROOM_ID, send_bootstrap
 from tests.adapters.codexturns import FIRST_THREAD_ID
@@ -34,11 +35,17 @@ def past_its_total(seconds: float) -> list[tuple[str, str]]:
 
 @asynccontextmanager
 async def running_turn(
-    adapter: CodexAdapter, tools: FakeAgentTools, room_id: str = ROOM_ID
+    adapter: CodexAdapter,
+    tools: FakeAgentTools,
+    room_id: str = ROOM_ID,
+    *,
+    history: CodexSessionState | None = None,
 ) -> AsyncIterator[asyncio.Task[None]]:
     """Deliver ``room_id`` a message and run its turn beside the test; the turn
     never outlives the block."""
-    turn = asyncio.create_task(send_bootstrap(adapter, room_id=room_id, tools=tools))
+    turn = asyncio.create_task(
+        send_bootstrap(adapter, room_id=room_id, tools=tools, history=history)
+    )
     try:
         yield turn
     finally:
