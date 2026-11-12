@@ -1988,9 +1988,13 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             timeout_message = (
                 f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )
-            await tools.send_failure(
-                AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
-            )
+            # Skipped when an earlier "error" notification in this same turn
+            # already reported one, so one incident isn't posted twice -- but
+            # the turn is still interrupted and fails either way.
+            if not failure_reported:
+                await tools.send_failure(
+                    AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
+                )
             result.turn_status = CodexTurnStatus.FAILED
             result.turn_error = timeout_message
             # A raise from here lands in this try's own except clauses, not the

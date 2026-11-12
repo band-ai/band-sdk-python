@@ -20,8 +20,11 @@ from tests.adapters.codex.kit import (
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
+    event_notification,
     make_codex_adapter,
 )
+
+REPORTED_ERROR = "Something went wrong"
 
 
 class TestTurnTimeout:
@@ -112,3 +115,33 @@ class TestTurnTimeout:
             for tools in deliveries
         ] == [[FAILURE_CODE_TIMEOUT], [FAILURE_CODE_TIMEOUT]]
         assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
+
+    @pytest.mark.asyncio
+    async def test_a_turn_that_reported_an_error_times_out_without_a_second_failure(
+        self,
+    ) -> None:
+        """Codex reports an error and never completes the turn. The limit still
+        interrupts it, and the error stays the turn's one failure."""
+        client = FakeCodexClient(
+            events=[
+                event_notification(
+                    "error",
+                    {"error": {"message": REPORTED_ERROR}, "willRetry": False},
+                )
+            ]
+        )
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(turn_timeout_s=0.01)
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(adapter, tools=tools)
+
+        assert [failure["message"] for failure in reported_failures(tools)] == [
+            REPORTED_ERROR
+        ]
+        assert client.params_of(CodexRequestMethod.TURN_INTERRUPT) == [
+            {"threadId": "thr-1", "turnId": "turn-1"}
+        ]
