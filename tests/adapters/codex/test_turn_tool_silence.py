@@ -12,6 +12,7 @@ from band.adapters.codex import CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex.types import CodexRequestMethod
 from tests.adapters.codex.activity.kit import (
+    COMPACTION,
     DOCS_LOOKUP,
     LIST_FILES,
     item_completed,
@@ -49,11 +50,15 @@ def tool_patient() -> CodexAdapterConfig:
 @pytest.mark.looptime
 class TestTurnToolSilence:
     @pytest.mark.parametrize(
-        "tool", [LIST_FILES, DOCS_LOOKUP], ids=["command", "mcp-tool"]
+        "tool",
+        [LIST_FILES, DOCS_LOOKUP, COMPACTION],
+        ids=["command", "mcp-tool", "context-compaction"],
     )
     async def test_a_tool_silent_past_the_idle_limit_is_left_running(
         self, tool: dict[str, Any]
     ) -> None:
+        """An open item of the turn says what it is working on: a command, a
+        tool call, or a context compaction, which is one long model call."""
         client = FakeCodexClient()
         adapter = await started_adapter({ROOM_ID: client}, tool_patient())
         tools = ToolSchemaFakeTools()

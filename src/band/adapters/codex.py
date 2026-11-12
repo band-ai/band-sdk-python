@@ -892,8 +892,9 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # bounds its total. Answering the turn's own request -- a Band tool call, a
     # parked approval -- is not silence. None (the default) never checks.
     turn_idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    # The silence allowed instead while a command or tool item the turn started
-    # is still open: a command that prints nothing sends no event until it ends.
+    # The silence allowed instead while an item the turn started is still open:
+    # a command, a tool call or a context compaction. Each can run for long and
+    # send no event until it ends, and its open item shows the turn is working.
     # None gives such a turn ``turn_idle_timeout_s`` like any other.
     turn_tool_idle_timeout_s: float | None = Field(
         default=None, gt=0, allow_inf_nan=False
@@ -2093,8 +2094,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         return self.config.turn_idle_timeout_s, "turn_idle_timeout_s"
 
     def _has_open_item(self, room_id: str, native: NativeTurn) -> bool:
-        """Whether a command or tool item this turn started is still open; a
-        command an earlier turn left running is not this turn's work."""
+        """Whether a command, tool or context-compaction item this turn started
+        is still open; a command an earlier turn left running is not this
+        turn's work."""
         room = self._room_clients.get(room_id)
         return room is not None and any(
             native.started(identity)
