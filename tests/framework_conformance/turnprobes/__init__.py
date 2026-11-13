@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 import pytest
@@ -67,14 +68,27 @@ class TurnScript:
     final_text: str = ""
 
 
-@dataclass(frozen=True)
+class TurnLoop(StrEnum):
+    """Who runs the model's tool loop, and so how a decline ends the turn.
+
+    The SDK stops its own loop after the decline's round. A provider runs its
+    loop past the decline, so the SDK refuses every later tool call instead.
+    """
+
+    SDK = "sdk"
+    PROVIDER = "provider"
+
+
+@dataclass(frozen=True, kw_only=True)
 class TurnOutcomeProbe:
-    """``run`` drives one scripted turn. ``settle``, for an adapter with a
-    control path, sends a message the adapter answers itself (a status or
-    busy reply) without running the model. ``relays`` marks an adapter that
-    posts the model's final text when no tool replied."""
+    """``run`` drives one scripted turn. ``loop`` says who runs the model's
+    tool loop. ``settle``, for an adapter with a control path, sends a message
+    the adapter answers itself (a status or busy reply) without running the
+    model. ``relays`` marks an adapter that posts the model's final text when
+    no tool replied."""
 
     run: Callable[[TurnScript, FakeAgentTools], Awaitable[None]]
+    loop: TurnLoop
     settle: Callable[[FakeAgentTools], Awaitable[None]] | None = None
     relays: bool = False
 

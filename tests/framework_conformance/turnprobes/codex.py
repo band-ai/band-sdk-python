@@ -13,6 +13,7 @@ from tests.adapters.codexturns import (
     turn_completed,
 )
 from tests.framework_conformance.turnprobes import (
+    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
@@ -48,5 +49,7 @@ async def ask_codex_status(tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "codex": TurnOutcomeProbe(run=run_codex, settle=ask_codex_status, relays=False),
+    "codex": TurnOutcomeProbe(
+        loop=TurnLoop.PROVIDER, run=run_codex, settle=ask_codex_status, relays=False
+    ),
 }

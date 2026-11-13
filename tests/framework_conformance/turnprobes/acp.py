@@ -13,6 +13,7 @@ from band.runtime.tools import CHAT_ID_FIELD_NAME
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.turnprobes import (
     ROOM_ID,
+    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
@@ -87,8 +88,11 @@ async def settle_cursor_acp(tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "acp": TurnOutcomeProbe(run=run_acp, relays=False),
+    "acp": TurnOutcomeProbe(loop=TurnLoop.PROVIDER, run=run_acp, relays=False),
     "cursor_acp": TurnOutcomeProbe(
-        run=run_cursor_acp, settle=settle_cursor_acp, relays=False
+        loop=TurnLoop.PROVIDER,
+        run=run_cursor_acp,
+        settle=settle_cursor_acp,
+        relays=False,
     ),
 }

@@ -38,5 +38,9 @@ unrelated external effects already initiated by tools.
 CrewAI and Strands keep their native early-stop behavior. Provider-owned loops,
 caller-created graphs/runners and native subprocess tool loops are explicit
 complete-round exemptions; their turn judgment still uses the existing ledger.
+The SDK cannot stop a provider-owned loop after a decline, so it refuses every
+later tool call at the point the call enters (`test_turn_termination.py`);
+a call already in flight when the decline lands is served
+(`mcp/test_decline_ordering.py`).
 This coverage is deterministic/scripted-provider evidence, not a claim of live
 provider reliability or cross-process exactly-once execution.

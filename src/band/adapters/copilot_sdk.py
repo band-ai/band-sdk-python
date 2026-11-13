@@ -74,6 +74,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.turn import declined_turn_refusal
 
 try:
     from copilot import (
@@ -899,6 +900,10 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         should_report = Emit.TOOL_CALLS in self.features.emit
         if should_report:
             await self._report_tool_call(room_tools, invocation, arguments)
+        if refusal := declined_turn_refusal(room_tools.turn):
+            return await self._fail_tool_call(
+                room_tools, invocation, refusal, report=should_report
+            )
 
         try:
             custom_tool = find_custom_tool(self._custom_tools, tool_name)

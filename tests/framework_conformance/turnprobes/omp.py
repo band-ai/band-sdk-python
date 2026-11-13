@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.ompadapter import started_omp_adapter
 from tests.framework_conformance.turnprobes import (
+    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
@@ -27,5 +28,5 @@ async def run_omp(script: TurnScript, tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "omp": TurnOutcomeProbe(run=run_omp, relays=False),
+    "omp": TurnOutcomeProbe(loop=TurnLoop.PROVIDER, run=run_omp, relays=False),
 }

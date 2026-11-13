@@ -13,6 +13,7 @@ from band.testing.fake_tools import FakeAgentTools
 from tests.baseline.decisions import ModelDecision
 from tests.framework_conformance.turnprobes import (
     ROOM_ID,
+    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
@@ -76,5 +77,7 @@ async def ask_claude_sdk_status(tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "claude_sdk": TurnOutcomeProbe(run=run_claude_sdk, settle=ask_claude_sdk_status),
+    "claude_sdk": TurnOutcomeProbe(
+        loop=TurnLoop.PROVIDER, run=run_claude_sdk, settle=ask_claude_sdk_status
+    ),
 }

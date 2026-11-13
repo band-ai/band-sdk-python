@@ -156,6 +156,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.turn import declined_turn_refusal
 from band.workspaces import (
     RoomWorkspaces,
     WorkspaceResolver,
@@ -3008,8 +3009,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 )
 
             try:
-                custom_tool = find_custom_tool(self._custom_tools, tool_name)
-                if custom_tool:
+                result: Any
+                if refusal := declined_turn_refusal(tools.turn):
+                    result, success = refusal, False
+                elif custom_tool := find_custom_tool(self._custom_tools, tool_name):
                     result = await execute_custom_tool(
                         custom_tool, arguments, tools=tools
                     )
