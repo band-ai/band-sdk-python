@@ -31,11 +31,8 @@ dependencies = [
     # exact pins drift apart -- band-mcp's moved ahead of the published
     # band-sdk's, so the released wheel could not install at all.
     "band-client-rest",
-    # Auto-bumped after every band-sdk release by release.yml's
-    # bump-mcp-sdk-floor job, so this always tracks the most recently
-    # published band-sdk version -- band-mcp is developed in lockstep in
-    # this monorepo and can depend on any already-released SDK feature.
-    "band-sdk>=9.0.2",
+    # Release Please updates the floor with both shared release candidates.
+    "band-sdk>=9.0.2", # x-release-please-version
     "uvicorn>=0.30.0",  # Required for SSE transport mode
 ]
 

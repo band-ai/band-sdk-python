@@ -618,3 +618,15 @@ Context7 will retrieve current documentation directly from official sources, ens
 ## 📄 License
 
 MIT
+
+### Coordinated releases
+
+`band-mcp` and `band-sdk` share a release version. A release-worthy change to
+either package prepares both in the standing release PR, including MCP's SDK
+minimum. The first shared release moves MCP from 2.x to the SDK's version line;
+consumers with an MCP `<3` constraint must update it to receive that release.
+
+MCP publication validates its wheel against the exact declared SDK minimum.
+If SDK publication or indexing is delayed, rerun `band-mcp-publish` after the
+SDK is available, or dispatch that workflow from main with the existing
+`band-mcp-vX.Y.Z` tag. No new version or dependency PR is needed for recovery.
