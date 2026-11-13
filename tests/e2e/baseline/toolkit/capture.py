@@ -418,8 +418,10 @@ class ReplyCapture:
         self, message_id: str, recipient_id: str, *, retries: int
     ) -> bool:
         """Whether the message is failed and the agent will not run it again."""
-        failures = self.delivery_history(message_id, recipient_id).count(
-            DeliveryStatus.FAILED
+        recipient = self._delivery.get(message_id, {}).get(recipient_id) or {}
+        failures = sum(
+            attempt.get("status") == DeliveryStatus.FAILED.value
+            for attempt in recipient.get("attempts") or []
         )
         return (
             self.delivery_status(message_id, recipient_id) is DeliveryStatus.FAILED
