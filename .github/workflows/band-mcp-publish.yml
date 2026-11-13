@@ -3,8 +3,7 @@
 # separate build/publish jobs, environment `release`, tag-anchored version
 # validation) with one addition: band-mcp declares a runtime floor on
 # band-sdk (packages/band-mcp/pyproject.toml's `band-sdk>=X.Y.Z`) that a
-# two-phase release bumps to the band-sdk version that first ships the code
-# band-mcp needs. Publishing can lag PyPI's index by a couple minutes, so the
+# shared release PR updates together with both package versions. Publishing can lag PyPI's index by a couple minutes, so the
 # build job waits for that exact version to actually resolve before
 # installing the freshly-built wheel against it.
 #
@@ -73,13 +72,28 @@ jobs:
       - name: Wait for the declared band-sdk floor to be indexed on PyPI
         run: |
           set -euo pipefail
-          FLOOR=$(python3 <<'PYEOF'
-          import re, tomllib
-          deps = tomllib.load(open('packages/band-mcp/pyproject.toml', 'rb'))['project']['dependencies']
-          band_sdk = next(d for d in deps if d.startswith('band-sdk'))
-          print(re.search(r'>=([0-9]+\.[0-9]+\.[0-9]+)', band_sdk).group(1))
+          if [ -f .github/scripts/releasecheck.py ]; then
+            uv run --no-project --with packaging python .github/scripts/releasecheck.py
+            WHEEL=$(find dist -name '*.whl' -print -quit)
+            uv run --no-project --with packaging python .github/scripts/releasecheck.py --wheel "$WHEEL" --output "${RUNNER_TEMP}/mcp-sdk-floor.txt"
+          else
+            FLOOR=$(python3 <<'PYEOF'
+          from email.parser import BytesParser
+          from pathlib import Path
+          from zipfile import ZipFile
+          wheel, = Path('dist').glob('*.whl')
+          with ZipFile(wheel) as archive:
+              name, = [n for n in archive.namelist() if n.endswith('.dist-info/METADATA')]
+              metadata = BytesParser().parsebytes(archive.read(name))
+          requirement, = [r for r in metadata.get_all('Requires-Dist', []) if r.startswith('band-sdk>=')]
+          version = requirement.removeprefix('band-sdk>=')
+          assert len(version.split('.')) == 3 and all(p.isdigit() for p in version.split('.')), requirement
+          print(version)
           PYEOF
-          )
+            )
+            echo "band-sdk==${FLOOR}" > "${RUNNER_TEMP}/mcp-sdk-floor.txt"
+          fi
+          FLOOR=$(cut -d= -f3 "${RUNNER_TEMP}/mcp-sdk-floor.txt")
           # Dry-run into a scratch venv: the runner's bare python3 is
           # Ubuntu's externally-managed interpreter, which uv refuses to
           # target, so probing it fails on every attempt regardless of
@@ -102,7 +116,7 @@ jobs:
         # PyPI-published floor — not this repo's workspace override.
         run: |
           uv venv /tmp/band-mcp-verify
-          uv pip install dist/*.whl --python /tmp/band-mcp-verify/bin/python
+          uv pip install dist/*.whl -r "${RUNNER_TEMP}/mcp-sdk-floor.txt" --python /tmp/band-mcp-verify/bin/python
 
       - name: Verify imports and CLI entry point
         run: |
@@ -113,6 +127,14 @@ jobs:
           print(f'band-mcp {__version__} imports successful')
           PYEOF
           /tmp/band-mcp-verify/bin/band-mcp --version
+
+      - name: Verify exact SDK version and installed MCP behavior
+        run: |
+          EXPECTED_SDK=$(cut -d= -f3 "${RUNNER_TEMP}/mcp-sdk-floor.txt")
+          /tmp/band-mcp-verify/bin/python -c "from importlib.metadata import version; assert version('band-sdk') == '$EXPECTED_SDK'"
+          if [ -f .github/scripts/mcp-wheel-smoke.py ]; then
+            /tmp/band-mcp-verify/bin/python -I .github/scripts/mcp-wheel-smoke.py
+          fi
 
       - name: Upload distributions
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
