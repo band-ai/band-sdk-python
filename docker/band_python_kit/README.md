@@ -1,5 +1,8 @@
 # Band Python workload for Docker Sandboxes
 
+For a Claude Code workload with its existing authentication, see the separate
+[Band Claude mixin prototype](../band-claude-mixin/README.md).
+
 Run a Band Python agent in a Docker Sandbox with locked project dependencies,
 an isolated SDK installation and default-deny network policy. The v3 kit is
 one OCI workload image; there is no separate kit artifact or image reference.

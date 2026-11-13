@@ -39,6 +39,20 @@ updates:
     reviewers:
       - "band/integrations-team"
 
+  - package-ecosystem: "uv"
+    directory: "/docker/band-claude-mixin"
+    target-branch: "main"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "python"]
+
+  - package-ecosystem: "docker"
+    directory: "/docker/band-claude-mixin"
+    target-branch: "main"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "docker"]
+
   # GitHub Actions. Dependabot resolves SHA-pinned actions (the kit publish
   # workflows pin full commit SHAs with a trailing version comment) the same
   # as tag pins, and updates both the hash and the comment in its PRs.

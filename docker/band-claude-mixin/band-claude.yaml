@@ -1,0 +1,26 @@
+# syntax=docker/sandbox-kit:3@sha256:e6a397771e865625047cf84256a914c7974b3e749d858259b5bc9c653ddb6f0d
+schemaVersion: "3"
+kind: mixin
+displayName: Band bridge for Claude Code
+description: Connect SDK-managed Claude Code sessions to Band rooms using the workload's Claude authentication.
+dockerfile: Dockerfile
+provides: ["band-claude-bridge@0.1.0"]
+capabilities:
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - app.band.ai:443
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Band agent key, used only when the bridge is started
+    config:
+      service: band
+      phase: runtime
+      apiKey:
+        name: BAND_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: app.band.ai
+            header: X-API-Key
+            format: "%s"
