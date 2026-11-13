@@ -73,18 +73,6 @@ logger = logging.getLogger(__name__)
 _PROVIDER = "letta"
 
 
-def _stop_reason(response_messages: Sequence[Any]) -> str | None:
-    """Why Letta ended the run, from the stream's ``stop_reason`` message."""
-    return next(
-        (
-            getattr(message, "stop_reason", None)
-            for message in response_messages
-            if getattr(message, "message_type", None) == "stop_reason"
-        ),
-        None,
-    )
-
-
 @dataclass(frozen=True)
 class LettaRun:
     """What cancelling one room's runs needs: the room's conversation in
@@ -654,11 +642,14 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         """
         final_text_parts: list[str] = []
         calls_awaiting_return: dict[str, Any] = {}
+        stop_reason: str | None = None
         for resp_msg in response_messages:
             match getattr(resp_msg, "message_type", None):
                 case "assistant_message":
                     if text := (getattr(resp_msg, "content", "") or ""):
                         final_text_parts.append(text)
+                case "stop_reason":
+                    stop_reason = resp_msg.stop_reason
                 case "tool_call_message":
                     # MCP tool calls executed server-side — observe only.
                     # tool_call alone holds only the first parallel call.
@@ -700,7 +691,7 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
                 logging.DEBUG if tools.turn.complete else logging.WARNING,
                 "Room %s: Letta turn produced no reply or text (stop_reason=%s)",
                 room_id,
-                _stop_reason(response_messages),
+                stop_reason,
             )
         elif not self.config.auto_relay:
             logger.error(

@@ -268,7 +268,7 @@ Gotcha: agents are created with `LETTA_EMBEDDING` (default
 without an embedding model.
 
 Gotcha: Letta runs the pinned `LETTA_SELF_HOSTED_MODEL` at reasoning effort
-`"none"`, so the builder sets `LETTA_SELF_HOSTED_REASONING_EFFORT`
+`"none"`, so the builder sets `LETTA_SELF_HOSTED_MODEL_SETTINGS`
 (`band.core.defaultmodels`) through `model_settings`. Overriding `LETTA_MODEL`
 drops that setting and runs the new model at Letta's own defaults.
 

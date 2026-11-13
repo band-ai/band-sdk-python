@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
-from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
-from tests.adapters.lettakit import make_mock_agent
+from band.adapters.letta import LettaAdapterConfig, LettaMCPConfig
+from tests.adapters.lettakit import make_mock_agent, ready_letta_adapter
 
 
 async def _agent_create_kwargs(
     config: LettaAdapterConfig | None = None, *, room_id: str = "room-1"
 ) -> dict[str, Any]:
     """The kwargs a started adapter sends to Letta's ``agents.create`` for a room."""
-    adapter = LettaAdapter(config)
-    mock_client = AsyncMock()
-    adapter._client = mock_client
-    adapter._system_prompt = "Test"
+    adapter, mock_client = ready_letta_adapter(config)
     adapter._mcp.tool_ids = []
-    adapter._mcp.server_id = "mcp-server-1"
     mock_client.agents.create.return_value = make_mock_agent()
 
     await adapter._create_agent(room_id)

@@ -20,9 +20,9 @@ from tests.framework_conformance.turnprobes import ROOM_ID, turn_input, turn_too
 _LOGGER = "band.adapters.letta"
 
 
-def _no_text_log_levels(caplog: pytest.LogCaptureFixture) -> list[int]:
+def _no_text_logs(caplog: pytest.LogCaptureFixture) -> list[tuple[int, str]]:
     return [
-        record.levelno
+        (record.levelno, record.getMessage())
         for record in caplog.records
         if record.name == _LOGGER and "produced no reply or text" in record.getMessage()
     ]
@@ -48,13 +48,11 @@ class TestEmptyTurn:
             await adapter.on_event(turn_input(tools))
 
         assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
-        assert (
-            logging.WARNING,
-            f"Room {ROOM_ID}: Letta turn produced no reply or text (stop_reason=end_turn)",
-        ) in [
-            (record.levelno, record.getMessage())
-            for record in caplog.records
-            if record.name == _LOGGER
+        assert _no_text_logs(caplog) == [
+            (
+                logging.WARNING,
+                f"Room {ROOM_ID}: Letta turn produced no reply or text (stop_reason=end_turn)",
+            )
         ]
 
     @pytest.mark.asyncio
@@ -71,4 +69,4 @@ class TestEmptyTurn:
             await adapter.on_event(turn_input(tools))
 
         assert failure_reports(tools) == []
-        assert _no_text_log_levels(caplog) == [logging.DEBUG]
+        assert [level for level, _ in _no_text_logs(caplog)] == [logging.DEBUG]
