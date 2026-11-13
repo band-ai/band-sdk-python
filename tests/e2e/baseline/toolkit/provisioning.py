@@ -38,6 +38,7 @@ from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
 from band.platform.link import BandLink
 from band.runtime.agentconfig import AgentConfig
+from band.runtime.contacts import ContactEventConfig
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.sessionconfig import SessionConfig
 from band.workspaces import WorkspaceResolver
@@ -246,6 +247,18 @@ class PeerActor:
     def __init__(self, peer: ProvisionedAgent, settings: BaselineSettings) -> None:
         self._peer = peer
         self._client = agent_rest_client(peer, settings)
+
+    async def handle(self) -> str:
+        """Return this peer's platform handle, the address contact requests use."""
+        response = await self._client.agent_api_identity.get_agent_me()
+        return response.data.handle
+
+    async def request_contact(self, handle: str, *, message: str) -> str:
+        """Send a contact request as this peer to ``handle``; return its id."""
+        response = await self._client.agent_api_contacts.add_agent_contact(
+            handle=handle, message=message
+        )
+        return response.data.id
 
     async def send_message(
         self, room_id: str, content: str, *, mention_id: str, mention_name: str
@@ -581,6 +594,7 @@ async def running_agent_with_handle(
     config: AgentConfig | None = None,
     session_config: SessionConfig | None = None,
     *,
+    contact_config: ContactEventConfig | None = None,
     link_factory: Callable[..., BandLink] = BandLink,
 ) -> AsyncGenerator[Agent, None]:
     """Like ``running_agent``, but yields the live ``Agent`` itself.
@@ -588,6 +602,7 @@ async def running_agent_with_handle(
     ``running_agent`` only yields the identity because no caller has needed the
     object itself — reconnect-behavior tests do, to reach the running agent's
     transport via ``agent.runtime.link`` (both already-public properties).
+    ``contact_config`` selects the runtime's contact-event strategy.
     """
     endpoints = settings.endpoints
     runtime = PlatformRuntime(
@@ -597,6 +612,7 @@ async def running_agent_with_handle(
         rest_url=endpoints.rest_url,
         config=config,
         session_config=session_config,
+        contact_config=contact_config,
         link_factory=link_factory,
     )
     agent = Agent(runtime=runtime, adapter=adapter)
