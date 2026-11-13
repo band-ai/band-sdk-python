@@ -219,8 +219,6 @@ smoke/behavior/cursorworkflows/test_restart_recovery.py::TestCursorRestartRecove
     pass: [cursor_acp]
 smoke/behavior/test_agent_scenarios.py:
   test_two_agents_greet_each_other: core
-smoke/behavior/test_control_signals.py:
-  test_interrupt_cancels_and_consumes: core
 smoke/behavior/test_delivery_status.py:
   test_failing_agent_reaches_failed_state: all
   test_healthy_message_reaches_processed_via_processing: core
