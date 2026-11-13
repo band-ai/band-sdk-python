@@ -3,7 +3,7 @@
 Two failure modes are pinned here because both would bite *inside a pytest
 collection hook*, killing entire runs instead of failing one test:
 
-* a set-but-empty gate var (``CI=``, as some CI wrappers export) must read as
+* a set-but-empty gate var (``E2E_TESTS_ENABLED=``, as some CI wrappers export) must read as
   disabled, not raise a ValidationError — the ``env_ignore_empty`` behavior;
 * the gate table must stay consistent with what it references: every field it
   names must exist on ``CollectionGateSettings``, and every marker it names
@@ -32,7 +32,7 @@ def registered_pytest_markers() -> set[str]:
 def test_empty_collection_gate_vars_read_as_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    gate_fields = ["ci", *GATED_MARKERS.values()]
+    gate_fields = list(GATED_MARKERS.values())
     for field in gate_fields:
         monkeypatch.setenv(field.upper(), "")
     gates = CollectionGateSettings()

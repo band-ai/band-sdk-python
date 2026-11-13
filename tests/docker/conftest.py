@@ -19,8 +19,7 @@ from tests.docker.toolkit.docker_cli import (
 )
 from tests.docker.toolkit.live_agent import live_containerized_echo_agent
 
-# Re-exported (not just imported) so pytest can find them as fixtures — mirrors
-# tests/integration/conftest.py's re-export of tests/conftest_integration.py.
+# Re-exported (not just imported) so pytest can find them as fixtures.
 # Deliberately NOT importing orphan_sweep/reap_leaked_agents (autouse in
 # tests/e2e/baseline/): those would force every test in this directory
 # (including the credential-free conflicting-pin test) to require live
