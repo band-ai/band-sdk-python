@@ -1,7 +1,7 @@
 """Proves the band-python-kit base image's core isolation guarantee.
 
-Gated behind DOCKER_TESTS_ENABLED (see tests/conftest.py); never runs by
-default, including in CI. Fixtures live in tests/docker/conftest.py /
+Gated behind DOCKER_TESTS_ENABLED (see tests/conftest.py); CI's docker-kit job
+opts in. Fixtures live in tests/docker/conftest.py /
 tests/docker/toolkit/ — this file is scenario only.
 """
 
@@ -36,116 +36,72 @@ _BUILD_TEST_TIMEOUT = BUILD_TIMEOUT_S + 60
 
 @pytest.mark.docker_build
 @pytest.mark.timeout(_BUILD_TEST_TIMEOUT)
-def test_pinned_uv_available_in_runtime_image(
-    band_python_kit_container: Container,
-) -> None:
-    """The runtime image must carry the build's pinned uv at $BAND_SDK_UV —
-    the sandbox launcher runs it for locked customer-venv sync and must never
-    download uv at runtime. Runs as the non-root agent user, the launcher's
-    image-configured uid."""
-    version = band_python_kit_container.exec(f'"{SDK_UV}" --version', user="agent")
-    assert version.startswith("uv "), (
-        f"expected {SDK_UV} to run and report a version, got {version!r}"
-    )
-
-
-@pytest.mark.docker_build
-@pytest.mark.timeout(_BUILD_TEST_TIMEOUT)
-def test_conflicting_customer_pin_does_not_break_sdk_venv(
-    band_python_kit_container: Container,
-) -> None:
-    """A conflicting dep pin in a second, customer-simulating venv must not
-    affect the baked SDK venv's own transport deps or ability to import."""
-    baseline_httpx = band_python_kit_container.run_python(
-        "import httpx; print(httpx.__version__)", interpreter=SDK_PYTHON
-    )
-    assert baseline_httpx, "expected the baked SDK venv to report an httpx version"
-
-    # Simulate the customer venv created at sandbox runtime, with a
-    # deliberately ancient, conflicting httpx pin.
-    band_python_kit_container.exec(
-        "python3 -m venv /tmp/customer-venv && "
-        f"/tmp/customer-venv/bin/pip install --quiet 'httpx=={CONFLICTING_HTTPX_VERSION}'"
-    )
-    customer_httpx = band_python_kit_container.run_python(
-        "import httpx; print(httpx.__version__)",
-        interpreter="/tmp/customer-venv/bin/python",
-    )
-    assert customer_httpx == CONFLICTING_HTTPX_VERSION, (
-        "expected the customer venv's conflicting pin to actually take, "
-        f"got {customer_httpx!r}"
-    )
-
-    # The baked SDK venv must be completely unaffected: same httpx version,
-    # SDK still importable.
-    sdk_httpx_after = band_python_kit_container.run_python(
-        "import httpx; print(httpx.__version__)", interpreter=SDK_PYTHON
-    )
-    assert sdk_httpx_after == baseline_httpx, (
-        "conflicting customer pin leaked into the SDK venv: expected "
-        f"{baseline_httpx!r}, got {sdk_httpx_after!r}"
-    )
-
-    band_version = band_python_kit_container.run_python(
-        "import band; print(band.__version__)", interpreter=SDK_PYTHON
-    )
-    assert band_version, "band must still import from the SDK venv"
-
-
-@pytest.mark.docker_build
-@pytest.mark.timeout(_BUILD_TEST_TIMEOUT)
-def test_workload_graph_conforms_on_both_architectures(
-    band_python_kit_layout: OciLayout, kit_tck: Path
-) -> None:
-    band_python_kit_layout.validate(tck=kit_tck)
-
-
-@pytest.mark.docker_build
-@pytest.mark.timeout(_BUILD_TEST_TIMEOUT)
-def test_workload_default_identity_and_launcher_failure(
-    band_python_kit_image: Image, band_python_kit_container: Container
-) -> None:
-    assert band_python_kit_container.exec("id -u") == "1000"
-    result = subprocess.run(
-        ["docker", "run", "--rm", band_python_kit_image.tag],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode != 0
-    assert "WORKSPACE_DIR is not set" in result.stderr
-
-
-@pytest.mark.docker_build
-@pytest.mark.timeout(_BUILD_TEST_TIMEOUT)
-def test_cli_workload_retains_agent_identity_and_real_tools() -> None:
-    with (
-        Image.build(BAND_PYTHON_KIT_DOCKERFILE, target="cli") as image,
-        Container.run(image) as container,
-    ):
-        assert container.exec("id -u") == "1000"
-        assert container.exec("codex --version").startswith("codex-cli ")
-        assert "Claude Code" in container.exec("claude --version")
-
-
-@pytest.mark.docker_build
-@pytest.mark.timeout(_BUILD_TEST_TIMEOUT)
-def test_custom_sdk_home_preserves_launcher_and_isolation() -> None:
-    with (
-        Image.build(
-            BAND_PYTHON_KIT_DOCKERFILE,
-            build_args={"BAND_SDK_HOME": "/opt/band-custom"},
-        ) as image,
-        Container.run(image) as container,
-    ):
-        assert (
-            container.exec('"$BAND_SDK_PYTHON" -c "import sys; print(sys.prefix)"')
-            == "/opt/band-custom/venv"
+class TestBandPythonKitImage:
+    def test_pinned_uv_available_in_runtime_image(
+        self,
+        band_python_kit_container: Container,
+    ) -> None:
+        """The runtime image must carry the build's pinned uv at $BAND_SDK_UV —
+        the sandbox launcher runs it for locked customer-venv sync and must never
+        download uv at runtime. Runs as the non-root agent user, the launcher's
+        image-configured uid."""
+        version = band_python_kit_container.exec(f'"{SDK_UV}" --version', user="agent")
+        assert version.startswith("uv "), (
+            f"expected {SDK_UV} to run and report a version, got {version!r}"
         )
-        assert container.exec('"$BAND_SDK_UV" --version').startswith("uv ")
+
+    def test_conflicting_customer_pin_does_not_break_sdk_venv(
+        self,
+        band_python_kit_container: Container,
+    ) -> None:
+        """A conflicting dep pin in a second, customer-simulating venv must not
+        affect the baked SDK venv's own transport deps or ability to import."""
+        baseline_httpx = band_python_kit_container.run_python(
+            "import httpx; print(httpx.__version__)", interpreter=SDK_PYTHON
+        )
+        assert baseline_httpx, "expected the baked SDK venv to report an httpx version"
+
+        # Simulate the customer venv created at sandbox runtime, with a
+        # deliberately ancient, conflicting httpx pin.
+        band_python_kit_container.exec(
+            "python3 -m venv /tmp/customer-venv && "
+            f"/tmp/customer-venv/bin/pip install --quiet 'httpx=={CONFLICTING_HTTPX_VERSION}'"
+        )
+        customer_httpx = band_python_kit_container.run_python(
+            "import httpx; print(httpx.__version__)",
+            interpreter="/tmp/customer-venv/bin/python",
+        )
+        assert customer_httpx == CONFLICTING_HTTPX_VERSION, (
+            "expected the customer venv's conflicting pin to actually take, "
+            f"got {customer_httpx!r}"
+        )
+
+        # The baked SDK venv must be completely unaffected: same httpx version,
+        # SDK still importable.
+        sdk_httpx_after = band_python_kit_container.run_python(
+            "import httpx; print(httpx.__version__)", interpreter=SDK_PYTHON
+        )
+        assert sdk_httpx_after == baseline_httpx, (
+            "conflicting customer pin leaked into the SDK venv: expected "
+            f"{baseline_httpx!r}, got {sdk_httpx_after!r}"
+        )
+
+        band_version = band_python_kit_container.run_python(
+            "import band; print(band.__version__)", interpreter=SDK_PYTHON
+        )
+        assert band_version, "band must still import from the SDK venv"
+
+    def test_workload_graph_conforms_on_both_architectures(
+        self, band_python_kit_layout: OciLayout, kit_tck: Path
+    ) -> None:
+        band_python_kit_layout.validate(tck=kit_tck)
+
+    def test_workload_default_identity_and_launcher_failure(
+        self, band_python_kit_image: Image, band_python_kit_container: Container
+    ) -> None:
+        assert band_python_kit_container.exec("id -u") == "1000"
         result = subprocess.run(
-            ["docker", "run", "--rm", image.tag],
+            ["docker", "run", "--rm", band_python_kit_image.tag],
             check=False,
             capture_output=True,
             text=True,
@@ -153,3 +109,35 @@ def test_custom_sdk_home_preserves_launcher_and_isolation() -> None:
         )
         assert result.returncode != 0
         assert "WORKSPACE_DIR is not set" in result.stderr
+
+    def test_cli_workload_retains_agent_identity_and_real_tools(self) -> None:
+        with (
+            Image.build(BAND_PYTHON_KIT_DOCKERFILE, target="cli") as image,
+            Container.run(image) as container,
+        ):
+            assert container.exec("id -u") == "1000"
+            assert container.exec("codex --version").startswith("codex-cli ")
+            assert "Claude Code" in container.exec("claude --version")
+
+    def test_custom_sdk_home_preserves_launcher_and_isolation(self) -> None:
+        with (
+            Image.build(
+                BAND_PYTHON_KIT_DOCKERFILE,
+                build_args={"BAND_SDK_HOME": "/opt/band-custom"},
+            ) as image,
+            Container.run(image) as container,
+        ):
+            assert (
+                container.exec('"$BAND_SDK_PYTHON" -c "import sys; print(sys.prefix)"')
+                == "/opt/band-custom/venv"
+            )
+            assert container.exec('"$BAND_SDK_UV" --version').startswith("uv ")
+            result = subprocess.run(
+                ["docker", "run", "--rm", image.tag],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode != 0
+            assert "WORKSPACE_DIR is not set" in result.stderr

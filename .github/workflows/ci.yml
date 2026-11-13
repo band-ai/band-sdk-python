@@ -486,6 +486,86 @@ jobs:
       run: /tmp/band-mcp-install/bin/band-mcp --version
 
 
+  cloudflare-worker:
+    # The example Worker's Python runs in a local workerd; no Cloudflare account.
+    if: *pr-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+    - name: Configure git to use HTTPS for GitHub
+      uses: ./.github/actions/git-https-auth
+
+    - name: Install uv
+      # Latest uv, no `version:` pin: pywrangler sync requires uv >= 0.13.4.
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+
+    - name: Set up Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+      with:
+        python-version: '3.12'
+
+    - name: Set up Node
+      # Wrangler 4 refuses to start on Node older than 22.
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      run: uv sync --all-packages --locked --extra dev
+
+    - name: Run the Python Worker runtime tests
+      env:
+        CLOUDFLARE_TESTS_ENABLED: 'true'
+      run: uv run --all-packages pytest tests/cloudflare/ --no-cov
+
+
+  docker-kit:
+    # Builds the band-python-kit image (and its multi-arch OCI layout) for real.
+    if: *pr-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+    - name: Configure git to use HTTPS for GitHub
+      uses: ./.github/actions/git-https-auth
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+
+    - name: Set up Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+      with:
+        python-version: '3.12'
+
+    - name: Set up QEMU
+      # The workload layout is built for linux/amd64 and linux/arm64.
+      uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+
+    - name: Set up Docker Buildx
+      # The default docker driver cannot export a multi-platform OCI layout.
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+    - name: Install dependencies
+      run: uv sync --all-packages --locked --extra dev
+
+    - name: Run the Docker image tests
+      # Image checks that also carry `e2e` need the live platform, not just Docker.
+      env:
+        DOCKER_TESTS_ENABLED: 'true'
+      run: uv run --all-packages pytest tests/docker/ -m "docker_build and not e2e" --no-cov
+
+
   wheel-extra-cases:
     if: *pr-only
     runs-on: ubuntu-latest
@@ -530,7 +610,7 @@ jobs:
     # allowed to skip are the ones omitted from the merge queue.
     # always(), not !cancelled(): a skipped required check counts as passing.
     if: always()
-    needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
+    needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, cloudflare-worker, docker-kit, wheel-extra-cases, wheel-extras]
     runs-on: ubuntu-latest
     steps:
     - name: Verify every CI job passed or was skipped
@@ -544,6 +624,8 @@ jobs:
           "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success|skipped" \
           "test-parlant:${{ needs.test-parlant.result }}:success" \
           "packaging:${{ needs.packaging.result }}:success|skipped" \
+          "cloudflare-worker:${{ needs.cloudflare-worker.result }}:success|skipped" \
+          "docker-kit:${{ needs.docker-kit.result }}:success|skipped" \
           "wheel-extra-cases:${{ needs.wheel-extra-cases.result }}:success|skipped" \
           "wheel-extras:${{ needs.wheel-extras.result }}:success|skipped"; do
           job="${entry%%:*}"

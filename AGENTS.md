@@ -417,7 +417,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (default: `ANTHROPIC_MODEL` — Sonnet handles ambiguous multi-agent turns that Haiku does not; must support structured outputs for the baseline judge)
 - `E2E_JUDGE_MODEL`: Anthropic model for the baseline LLM judge (default: falls back to `E2E_ANTHROPIC_MODEL`; must support structured outputs)
 - `E2E_TIMEOUT`: Per-turn response timeout in seconds for E2E tests (default: `120`; a slow test can add headroom with `@pytest.mark.timeout(extra=n)`)
-- `DOCKER_TESTS_ENABLED`: Set to `true` to run `docker_build`-marked tests (e.g. `tests/docker/test_band_python_kit.py`), which shell out to a real `docker build`/`docker run` (default: disabled everywhere, including CI — CI runners do have a Docker daemon, unlike the nested-virtualization `sbx` tests, so this needs the same explicit opt-in as `E2E_TESTS_ENABLED` rather than a plain Docker-availability check)
+- `DOCKER_TESTS_ENABLED`: Set to `true` to run `docker_build`-marked tests (e.g. `tests/docker/test_band_python_kit.py`), which shell out to a real `docker build`/`docker run` (default: disabled; CI's `docker-kit` job sets it — a Docker daemon alone never opts a run in, so this needs the same explicit opt-in as `E2E_TESTS_ENABLED`)
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
