@@ -81,6 +81,10 @@ DELIVERY_SNAPSHOT_TIMEOUT_S = 5.0
 DELIVERY_SNAPSHOT_HISTORY_LIMIT = 16
 
 
+class DeliveryFailedError(AssertionError):
+    """The agent failed a message more times than the test expects it to retry."""
+
+
 def _parse_status(raw: Any) -> DeliveryStatus | None:
     """Coerce a raw delivery-status string to ``DeliveryStatus`` (``None`` if
     missing or outside the known set)."""
@@ -302,7 +306,12 @@ class ReplyCapture:
         return reached
 
     async def wait_for_processed(
-        self, message_id: str, recipient_id: str, *, deadline_s: float | None = None
+        self,
+        message_id: str,
+        recipient_id: str,
+        *,
+        retries: int = 0,
+        deadline_s: float | None = None,
     ) -> None:
         """Block until ``recipient_id`` has ``PROCESSED`` ``message_id``.
 
@@ -314,19 +323,22 @@ class ReplyCapture:
         been captured — that frame is an independent, unordered platform event, so
         to assert on reply text wait on ``wait_for_reply`` instead.
 
-        ``PROCESSED`` is the only success terminal: ``FAILED`` is not terminal
-        (``/next`` serves it again, so a new agent context can run it), so we
-        wait through it rather than giving up. On
-        timeout the error reports the last status seen and any attempt error, so
-        a permanently-failing message is diagnosable instead of opaque.
+        ``PROCESSED`` is the only success terminal. A running agent does not
+        retry a message it failed unless its ``SessionConfig.max_message_retries``
+        allows it, so the barrier raises ``DeliveryFailedError`` at once when
+        the failures exceed ``retries``, the number of retries the test expects.
+        On timeout the error reports the last status seen and any attempt error.
         """
-        try:
-            await self.wait_for_delivery(
-                message_id,
-                recipient_id,
-                until={DeliveryStatus.PROCESSED},
-                deadline_s=deadline_s,
+
+        def settled(_messages: list[MessageCreatedPayload]) -> bool:
+            return self.delivery_status(
+                message_id, recipient_id
+            ) is DeliveryStatus.PROCESSED or self._retries_exhausted(
+                message_id, recipient_id, retries=retries
             )
+
+        try:
+            await self.wait_until(settled, deadline_s=deadline_s)
         except TimeoutError:
             last = self.delivery_status(message_id, recipient_id)
             error = TimeoutError(
@@ -337,6 +349,7 @@ class ReplyCapture:
             )
             await self._log_delivery_timeout(message_id, recipient_id)
             raise error from None
+        self._raise_if_failed(message_id, recipient_id, retries=retries)
 
     async def wait_for_reply(
         self,
@@ -344,6 +357,7 @@ class ReplyCapture:
         recipient_id: str,
         *,
         since: int = 0,
+        retries: int = 0,
         deadline_s: float | None = None,
     ) -> Replies:
         """Block until ``recipient_id`` has PROCESSED ``message_id`` *and* a reply by
@@ -367,16 +381,20 @@ class ReplyCapture:
         capture: pass the pre-send cursor as ``since`` so only this turn's replies count.
         On timeout the error says whether the turn never finished (stuck) or finished
         without a reply (silent), so a failure is diagnosable rather than a bare empty
-        buffer.
+        buffer. A failed turn raises at once, as in ``wait_for_processed``.
         """
 
         def window() -> Replies:
             return self.messages.since(since).from_sender(recipient_id)
 
         def ready(_messages: list[MessageCreatedPayload]) -> bool:
-            return self.delivery_status(
-                message_id, recipient_id
-            ) == DeliveryStatus.PROCESSED and bool(window())
+            processed = (
+                self.delivery_status(message_id, recipient_id)
+                is DeliveryStatus.PROCESSED
+            )
+            return (processed and bool(window())) or self._retries_exhausted(
+                message_id, recipient_id, retries=retries
+            )
 
         try:
             await self.wait_until(ready, deadline_s=deadline_s)
@@ -393,7 +411,32 @@ class ReplyCapture:
                 f"{status.value if status else 'none'}"
                 f"{self._delivery_error(message_id, recipient_id)}"
             ) from None
+        self._raise_if_failed(message_id, recipient_id, retries=retries)
         return window()
+
+    def _retries_exhausted(
+        self, message_id: str, recipient_id: str, *, retries: int
+    ) -> bool:
+        """Whether the message is failed and the agent will not run it again."""
+        recipient = self._delivery.get(message_id, {}).get(recipient_id) or {}
+        failures = sum(
+            attempt.get("status") == DeliveryStatus.FAILED.value
+            for attempt in recipient.get("attempts") or []
+        )
+        return (
+            self.delivery_status(message_id, recipient_id) is DeliveryStatus.FAILED
+            and failures > retries
+        )
+
+    def _raise_if_failed(
+        self, message_id: str, recipient_id: str, *, retries: int
+    ) -> None:
+        if self._retries_exhausted(message_id, recipient_id, retries=retries):
+            raise DeliveryFailedError(
+                f"{recipient_id} failed message {message_id} in room "
+                f"{self.room_id} and will not retry it (expected retries: "
+                f"{retries}){self._delivery_error(message_id, recipient_id)}"
+            )
 
     def _require_user_ops(self) -> UserOps:
         """Return the bound ``UserOps`` or raise (durable reads need it).

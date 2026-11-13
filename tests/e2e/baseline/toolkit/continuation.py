@@ -20,6 +20,10 @@ from tests.e2e.baseline.toolkit.control import (
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
+# One retry after the first failure: the agent gives up after this many failures.
+RETRYING_MAX_MESSAGE_RETRIES = 2
+EXPECTED_RETRIES = RETRYING_MAX_MESSAGE_RETRIES - 1
+
 
 class FailureContinuation(ControlRuntime):
     """Fail once, then expose whether the retry followed terminal confirmation."""
@@ -98,7 +102,10 @@ async def running_failure_continuation(
         settings,
         user_ops,
         control=control,
-        session_config=SessionConfig(max_message_retries=2, enable_working_state=False),
+        session_config=SessionConfig(
+            max_message_retries=RETRYING_MAX_MESSAGE_RETRIES,
+            enable_working_state=False,
+        ),
         link_factory=ConfirmationLink,
     ):
         try:
