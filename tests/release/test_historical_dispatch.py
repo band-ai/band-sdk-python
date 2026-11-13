@@ -8,9 +8,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-import yaml
-
-from tests.paths import REPO_ROOT
 
 
 class TestHistoricalDispatch:
@@ -24,22 +21,13 @@ class TestHistoricalDispatch:
         wheel_index: Callable[..., Path],
         requirements: tuple[str, ...],
         success: bool,
+        historical_floor_script: str,
     ) -> None:
         wheel = wheel_index("band_mcp", "2.2.15", requirements)
         (tmp_path / "dist").mkdir()
         wheel.rename(tmp_path / "dist" / wheel.name)
-        workflow = yaml.safe_load(
-            (REPO_ROOT / ".github/workflows/band-mcp-publish.yml").read_text()
-        )
-        step = next(
-            step
-            for step in workflow["jobs"]["build"]["steps"]
-            if step["name"]
-            == "Wait for the declared band-sdk floor to be indexed on PyPI"
-        )
-        script = step["run"].split("# Dry-run")[0]
         result = subprocess.run(
-            ["bash", "-c", script],
+            ["bash", "-c", historical_floor_script],
             cwd=tmp_path,
             env={**os.environ, "RUNNER_TEMP": str(tmp_path)},
             capture_output=True,
@@ -49,22 +37,16 @@ class TestHistoricalDispatch:
         assert (result.returncode == 0) is success, result.stderr
 
     def test_historical_floor_constraint_is_written(
-        self, tmp_path: Path, wheel_index: Callable[..., Path]
+        self,
+        tmp_path: Path,
+        wheel_index: Callable[..., Path],
+        historical_floor_script: str,
     ) -> None:
         wheel = wheel_index("band_mcp", "2.2.15", ("band-sdk>=9.0.2",))
         (tmp_path / "dist").mkdir()
         wheel.rename(tmp_path / "dist" / wheel.name)
-        workflow = yaml.safe_load(
-            (REPO_ROOT / ".github/workflows/band-mcp-publish.yml").read_text()
-        )
-        step = next(
-            step
-            for step in workflow["jobs"]["build"]["steps"]
-            if step["name"]
-            == "Wait for the declared band-sdk floor to be indexed on PyPI"
-        )
         subprocess.run(
-            ["bash", "-c", step["run"].split("# Dry-run")[0]],
+            ["bash", "-c", historical_floor_script],
             cwd=tmp_path,
             env={**os.environ, "RUNNER_TEMP": str(tmp_path)},
             check=True,

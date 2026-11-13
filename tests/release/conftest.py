@@ -13,8 +13,9 @@ from types import ModuleType
 from zipfile import ZipFile
 
 import pytest
+import yaml
 
-from tests.paths import CI_SCRIPTS
+from tests.paths import CI_SCRIPTS, REPO_ROOT
 
 
 @pytest.fixture
@@ -106,3 +107,22 @@ def candidate_gate(release_tree: Path, tmp_path: Path) -> Path:
     (binaries / "gh").chmod(0o755)
     (binaries / "uv").chmod(0o755)
     return binaries
+
+
+@pytest.fixture
+def mcp_publish_steps() -> dict[str, str]:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/band-mcp-publish.yml").read_text()
+    )
+    return {
+        step["name"]: step["run"]
+        for step in workflow["jobs"]["build"]["steps"]
+        if "run" in step
+    }
+
+
+@pytest.fixture
+def historical_floor_script(mcp_publish_steps: dict[str, str]) -> str:
+    return mcp_publish_steps[
+        "Wait for the declared band-sdk floor to be indexed on PyPI"
+    ].split("# Dry-run")[0]
