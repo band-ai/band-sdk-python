@@ -79,13 +79,16 @@ def runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WorkerRuntime]
     root = tmp_path_factory.mktemp("cloudflare")
     # xdist workers share the example's sync target; one syncs and copies at a time.
     with FileLock(tmp_path_factory.getbasetemp().parent / "cloudflare-sync.lock"):
-        subprocess.run(
+        sync = subprocess.run(
             ["uv", "run", "--locked", "pywrangler", "sync"],
             cwd=EXAMPLE,
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
         )
+        if sync.returncode:
+            # pywrangler explains itself (e.g. a too-old uv) only in its output.
+            pytest.fail("pywrangler sync failed:\n" + sync.stdout + sync.stderr)
         harness_project(root)
     # Hold both until chosen so they differ; wrangler's inspector defaults to a fixed port.
     with HeldPort() as http, HeldPort() as inspector:

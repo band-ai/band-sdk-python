@@ -198,8 +198,8 @@ root:
 CLOUDFLARE_TESTS_ENABLED=true uv run --all-packages pytest tests/cloudflare -q --no-cov
 ```
 
-They are opt-in, like the existing Docker and live tests, and add no live CI
-suite. Also run the repository's applicable author gate. Qualify local and
+They are opt-in locally; CI's `cloudflare-worker` job runs them on every ready
+pull request. Also run the repository's applicable author gate. Qualify local and
 deployed conversations, follow-ups, room isolation, replay, simultaneous cold
 starts, invalid ingress, blocked egress,
 startup recovery, idle stop/restart, rotation, a connected tool turn over 125
