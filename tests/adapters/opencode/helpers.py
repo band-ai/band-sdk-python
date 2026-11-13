@@ -23,14 +23,14 @@ from band.client.rest import MessageSentResponse
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
-from band.integrations.mcp.engine import EmbeddedResolver
+from band.integrations.mcp.backends import backend_tool_registrations
 from band.integrations.opencode import (
     ApprovalReply,
     OpencodePermissionRequest,
     OpencodeQuestionRequest,
 )
 from band.integrations.opencode.types import OpencodeSessionState
-from band.runtime.tools import TOOL_DEFINITIONS
+from band.runtime.tools import CHAT_ID_FIELD_NAME
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_event, deliver_message
@@ -603,8 +603,9 @@ class BandMCPCalls:
     ) -> ServerStep:
         async def call() -> None:
             assert self._starts.requested, "the adapter never started its backend"
-            resolver = EmbeddedResolver(get_tools=self._starts.requested[-1].get_tools)
-            await resolver.invoke(TOOL_DEFINITIONS[tool], room_id, arguments)
+            registrations = backend_tool_registrations(self._starts.requested[-1])
+            served = {registration.name: registration for registration in registrations}
+            await served[tool].execute({**arguments, CHAT_ID_FIELD_NAME: room_id})
 
         return call
 

@@ -15,6 +15,7 @@ import pytest
 
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.turnprobes import (
+    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
@@ -271,12 +272,12 @@ async def run_google_adk(script: TurnScript, tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "strands": TurnOutcomeProbe(run=run_strands),
-    "nooa": TurnOutcomeProbe(run=run_nooa),
-    "pydantic_ai": TurnOutcomeProbe(run=run_pydantic_ai),
-    "agno": TurnOutcomeProbe(run=run_agno),
-    "langgraph": TurnOutcomeProbe(run=run_langgraph),
-    "anthropic": TurnOutcomeProbe(run=run_anthropic),
-    "gemini": TurnOutcomeProbe(run=run_gemini),
-    "google_adk": TurnOutcomeProbe(run=run_google_adk),
+    "strands": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_strands),
+    "nooa": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_nooa),
+    "pydantic_ai": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_pydantic_ai),
+    "agno": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_agno),
+    "langgraph": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_langgraph),
+    "anthropic": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_anthropic),
+    "gemini": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_gemini),
+    "google_adk": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_google_adk),
 }

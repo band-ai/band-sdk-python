@@ -26,9 +26,10 @@ from pytest_httpx import HTTPXMock
 from typing_extensions import Unpack
 
 from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
+from band.core.exceptions import BandToolError
 from band.core.types import FeatureKwargs, PlatformMessage
 from band.integrations.letta.prompts import render_tool_enforcement
-from band.integrations.mcp.engine import build_resolved_band_mcp_tool_registrations
+from band.integrations.mcp.backends import backend_tool_registrations
 from band.runtime.tools import CHAT_ID_FIELD_NAME
 
 
@@ -173,10 +174,7 @@ def band_mcp_registrations(adapter: LettaAdapter) -> dict[str, Any]:
     reaches."""
     return {
         registration.name: registration
-        for registration in build_resolved_band_mcp_tool_registrations(
-            get_tools=adapter._get_room_tools,
-            capabilities=adapter.features.capabilities,
-        )
+        for registration in backend_tool_registrations(adapter._mcp._backend_settings())
     }
 
 
@@ -199,10 +197,14 @@ def scripted_letta_turn(
         messages: list[Any] = []
         for name, arguments in tool_calls:
             messages.append(make_tool_call_message(name, json.dumps(arguments)))
-            result = await registrations[name].execute(
-                {**arguments, CHAT_ID_FIELD_NAME: room_id}
-            )
-            messages.append(make_tool_return_message(name, result))
+            try:
+                result = await registrations[name].execute(
+                    {**arguments, CHAT_ID_FIELD_NAME: room_id}
+                )
+            except BandToolError as error:  # the MCP server returns it as a tool error
+                messages.append(make_tool_return_message(name, str(error), "error"))
+            else:
+                messages.append(make_tool_return_message(name, result))
         if final_text:
             messages.append(make_assistant_message(final_text))
         return make_letta_response(*messages)

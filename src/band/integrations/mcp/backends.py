@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Self
 
-from band.core.exceptions import CleanupIncompleteError
+from band.core.exceptions import BandToolError, CleanupIncompleteError
+from band.core.protocols import AgentToolsProtocol
 from band.core.retention.cleanup import (
     cleanup_deadline,
     finish_by,
@@ -20,6 +21,7 @@ from band.core.retention.cleanup import (
 )
 from band.core.retention.config import RoomRetentionConfig
 from band.integrations.mcp.engine import (
+    MCPToolRegistration,
     RoomToolResolver,
     build_resolved_band_mcp_tool_registrations,
 )
@@ -31,6 +33,7 @@ from band.integrations.mcp.local_server import (
 )
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
+from band.runtime.turn import declined_turn_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +130,36 @@ class BandMCPBackendSettings:
     port_max: int = LOCAL_MCP_PORT_MAX
 
 
+def _refusing_after_decline(get_tools: RoomToolResolver) -> RoomToolResolver:
+    """Resolve a room's turn tools, refusing a call its turn already declined.
+
+    Every adapter that owns a shared backend serves a provider-run loop with
+    per-turn tools; a door serving one long-lived ``AgentTools`` has no such
+    turn, so the engine itself does not refuse. The refusal is a tool error,
+    so the MCP session survives.
+    """
+
+    def resolve(room_id: str) -> AgentToolsProtocol | None:
+        tools = get_tools(room_id)
+        if tools is not None and (refusal := declined_turn_refusal(tools.turn)):
+            raise BandToolError(refusal)
+        return tools
+
+    return resolve
+
+
+def backend_tool_registrations(
+    settings: BandMCPBackendSettings,
+) -> list[MCPToolRegistration]:
+    """The tools a backend started from ``settings`` serves."""
+    return build_resolved_band_mcp_tool_registrations(
+        get_tools=_refusing_after_decline(settings.get_tools),
+        additional_tools=list(settings.additional_tools),
+        tool_definitions=settings.tool_definitions,
+        room_from_connection=settings.room_bound,
+    )
+
+
 def _build_allowed_tools(
     tool_definitions: Sequence[ToolDefinition],
     additional_tools: list[CustomToolDef],
@@ -150,12 +183,7 @@ async def create_band_mcp_backend(
     additional_tools = list(settings.additional_tools)
     local_server = LocalMCPServer(
         name=BAND_MCP_SERVER_NAME,
-        tool_registrations=build_resolved_band_mcp_tool_registrations(
-            get_tools=settings.get_tools,
-            additional_tools=additional_tools,
-            tool_definitions=settings.tool_definitions,
-            room_from_connection=settings.room_bound,
-        ),
+        tool_registrations=backend_tool_registrations(settings),
         auth_token=auth_token,
         host=settings.host,
         port_min=settings.port_min,

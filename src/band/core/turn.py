@@ -60,9 +60,11 @@ class Turn:
         self.posts_missing_reply = posts_missing_reply
         self.judged = False
         self._detached = False
+        self._declined = False
 
     def record(self, effect: TurnEffect) -> None:
         self._ledger.record(_core_effect(effect))
+        self._declined |= effect.ends_turn
 
     def settle(self) -> None:
         """The adapter ended this turn itself (a control reply, a busy notice)."""
@@ -79,6 +81,11 @@ class Turn:
     @property
     def detached(self) -> bool:
         return self._detached
+
+    @property
+    def declined(self) -> bool:
+        """A recorded call declined to reply, which ends the turn's work."""
+        return self._declined
 
     @property
     def replied(self) -> bool:

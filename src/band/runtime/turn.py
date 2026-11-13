@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import functools
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from band.core.turn import Turn
-from band.runtime.tools.effects import turn_effect
+from band.runtime.tools.effects import DECLINED_TURN_REFUSAL, turn_effect
 from band.runtime.tools.registry import ToolsClass, agent_tool_methods
 from band.runtime.tools.types import TurnEffect
+
+logger = logging.getLogger(__name__)
 
 
 def record_tool_result(turn: Turn, tool_name: str, result: Any) -> None:
@@ -21,6 +24,19 @@ def record_tool_result(turn: Turn, tool_name: str, result: Any) -> None:
     if effect is TurnEffect.REPLY and result is None:
         return
     turn.record(effect)
+
+
+def declined_turn_refusal(turn: Turn) -> str | None:
+    """The refusal for a model tool call made after ``turn`` declined, if any.
+
+    A provider-run loop keeps calling tools after the model declines; the SDK
+    cannot stop that loop, so it refuses the calls at the point they enter.
+    SDK-driven loops stop calling the model instead and never consult this.
+    """
+    if not turn.declined:
+        return None
+    logger.info("Refusing a model tool call: its turn already declined to reply")
+    return DECLINED_TURN_REFUSAL
 
 
 def _recording(

@@ -477,7 +477,9 @@ class FakeACPAgent:
     ) -> FakeACPAgent:
         """Call an advertised MCP tool between ACP call and result updates.
 
-        ``title`` models agents that report an intent phrase instead of a tool name.
+        A tool error is reported as a failed call and the turn goes on, as a
+        real agent hands it back to its model. ``title`` models agents that
+        report an intent phrase instead of a tool name.
         """
 
         async def _action(a: FakeACPAgent, sid: str) -> None:
@@ -489,13 +491,16 @@ class FakeACPAgent:
                     raw_input=arguments,
                 ),
             )
-            result = await a.call_mcp_tool(
-                session_id=sid,
-                server=server,
-                tool_name=tool_name,
-                arguments=arguments,
+            async with advertised_session(a.mcp_server(sid, server)) as client:
+                result = await client.call_tool(tool_name, arguments)
+            await a.emit(
+                sid,
+                update_tool_call(
+                    tool_call_id,
+                    raw_output=result.content,
+                    status="failed" if result.isError else None,
+                ),
             )
-            await a.emit(sid, update_tool_call(tool_call_id, raw_output=result))
 
         if requires_approval:
             return self.will_execute_if_approved(_action)
