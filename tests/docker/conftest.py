@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -74,6 +75,29 @@ async def live_containerized_agent(
         label="live-container",
     ) as result:
         yield result
+
+
+@pytest.fixture
+def failing_docker(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Make every ``docker`` command exit 1 with this stderr diagnostic.
+
+    Only the external Docker CLI is doubled, by a real failing process; every
+    other command still runs for real.
+    """
+    diagnostic = "docker: daemon rejected the request"
+    run = subprocess.run
+
+    def docker_peer(command: list[str], **kwargs: Any) -> Any:
+        if command[0] == "docker":
+            command = [
+                sys.executable,
+                "-c",
+                f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)",
+            ]
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", docker_peer)
+    return diagnostic
 
 
 @pytest.fixture(scope="session")

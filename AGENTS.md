@@ -418,6 +418,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 - `E2E_JUDGE_MODEL`: Anthropic model for the baseline LLM judge (default: falls back to `E2E_ANTHROPIC_MODEL`; must support structured outputs)
 - `E2E_TIMEOUT`: Per-turn response timeout in seconds for E2E tests (default: `120`; a slow test can add headroom with `@pytest.mark.timeout(extra=n)`)
 - `DOCKER_TESTS_ENABLED`: Set to `true` to run `docker_build`-marked tests (e.g. `tests/docker/test_band_python_kit.py`), which shell out to a real `docker build`/`docker run` (default: disabled; CI's `docker-kit` job sets it — a Docker daemon alone never opts a run in, so this needs the same explicit opt-in as `E2E_TESTS_ENABLED`)
+- `CLOUDFLARE_TESTS_ENABLED`: Set to `true` to run `tests/cloudflare/`, which serves the example Python Worker in a local `workerd` (no Cloudflare account; needs the Node and uv versions in `examples/cloudflare/README.md`) (default: disabled; CI's `cloudflare-worker` job sets it)
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 

@@ -1,4 +1,8 @@
-"""Proves the band-python-kit base image's core isolation guarantee.
+"""Proves the built band-python-kit image's runtime contract.
+
+The image carries its pinned uv, keeps the baked SDK venv isolated from a
+customer venv, runs as the agent user, and fails loudly without a workspace —
+for the default target, the ``cli`` target, and a custom ``BAND_SDK_HOME``.
 
 Gated behind DOCKER_TESTS_ENABLED (see tests/conftest.py); CI's docker-kit job
 opts in. Fixtures live in tests/docker/conftest.py /
@@ -8,16 +12,14 @@ tests/docker/toolkit/ — this file is scenario only.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import pytest
 
 from tests.docker.toolkit.docker_cli import (
     BAND_PYTHON_KIT_DOCKERFILE,
-    BUILD_TIMEOUT_S,
+    BUILD_TEST_TIMEOUT_S,
     Container,
     Image,
-    OciLayout,
 )
 
 SDK_PYTHON = "$BAND_SDK_PYTHON"
@@ -27,16 +29,10 @@ SDK_UV = "$BAND_SDK_UV"
 # own httpx (0.28.1 as of writing) — not just a different patch version.
 CONFLICTING_HTTPX_VERSION = "0.13.3"
 
-# The repo-wide 30s pytest-timeout default (pyproject.toml) covers fixture
-# setup too, so it bounds the session-scoped image build — well under
-# Image.build()'s own BUILD_TIMEOUT_S, on a machine with no cached layers.
-# +60 margin for the rest of this test's (fast) body.
-_BUILD_TEST_TIMEOUT = BUILD_TIMEOUT_S + 60
-
 
 @pytest.mark.docker_build
-@pytest.mark.timeout(_BUILD_TEST_TIMEOUT)
-class TestBandPythonKitImage:
+@pytest.mark.timeout(BUILD_TEST_TIMEOUT_S)
+class TestKitImageRuntimeContract:
     def test_pinned_uv_available_in_runtime_image(
         self,
         band_python_kit_container: Container,
@@ -90,11 +86,6 @@ class TestBandPythonKitImage:
             "import band; print(band.__version__)", interpreter=SDK_PYTHON
         )
         assert band_version, "band must still import from the SDK venv"
-
-    def test_workload_graph_conforms_on_both_architectures(
-        self, band_python_kit_layout: OciLayout, kit_tck: Path
-    ) -> None:
-        band_python_kit_layout.validate(tck=kit_tck)
 
     def test_workload_default_identity_and_launcher_failure(
         self, band_python_kit_image: Image, band_python_kit_container: Container
