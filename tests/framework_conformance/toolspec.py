@@ -21,11 +21,5 @@ class OptionalBeforeRequired(BaseModel):
     req: str
 
 
-class ContextField(BaseModel):
-    """Tool with a context-named argument."""
-
-    ctx: str
-
-
 def echo(args: SampleInput) -> str:
     return f"q={args.query} tags={args.tags} limit={args.limit} note={args.note}"

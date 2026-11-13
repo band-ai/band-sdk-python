@@ -2,8 +2,8 @@
 
 Define a custom tool **once** as a ``ToolSpec`` (an input model + a handler); the
 adapter builders translate it to whatever the framework needs — band
-``CustomToolDef`` for the tool-loop adapters, or a native callable for pydantic-ai
-and agno. So a test passes the *same* tool to ``@with_adapters`` / ``@per_adapter``
+``CustomToolDef`` for the tool-loop adapters (pydantic-ai included), or a native
+callable for agno. So a test passes the *same* tool to ``@with_adapters`` / ``@per_adapter``
 regardless of adapter, instead of hand-writing a different tool per framework.
 
 The tool *name* (used to register it and asserted via ``ToolCalls.assert_fired``) is
@@ -47,7 +47,7 @@ class ToolSpec:
         """band ``CustomToolDef`` form, for the tool-loop adapters (anthropic, …)."""
         return (self.model, self.handler)
 
-    def _build_signature(self, ctx_annotation: Any) -> tuple[list[str], dict[str, Any]]:
+    def _build_signature(self) -> tuple[list[str], dict[str, Any]]:
         """The parameter-string list and the matching ``exec`` namespace.
 
         Each non-required field's default value is baked into the namespace as
@@ -59,16 +59,6 @@ class ToolSpec:
         """
         ns: dict[str, Any] = {"_model": self.model}
         params: list[str] = []
-        if ctx_annotation is not None:
-            # The pydantic-ai path injects a leading ``ctx`` param; a model field
-            # also named ``ctx`` would shadow it (duplicate-argument SyntaxError and
-            # a RunContext/field mix-up). Fail loud with a clear message instead.
-            if "ctx" in self.model.model_fields:
-                raise ValueError(
-                    f"{self.name}: model field 'ctx' collides with the injected "
-                    "pydantic-ai context parameter; rename the field."
-                )
-            params.append("ctx")
         # Emit required params before optional ones, regardless of the model's field
         # order: a synthesized ``def`` cannot place a defaulted parameter before a
         # non-defaulted one (SyntaxError), and pydantic does not guarantee
@@ -85,34 +75,27 @@ class ToolSpec:
                 params.append(f"{fname}=_default_{fname}")
         return params, ns
 
-    def _annotations(self, ctx_annotation: Any) -> dict[str, Any]:
-        """The ``__annotations__`` map: optional ``ctx``, each field, ``return``."""
-        annotations: dict[str, Any] = (
-            {"ctx": ctx_annotation} if ctx_annotation is not None else {}
-        )
-        for fname, field in self.model.model_fields.items():
-            annotations[fname] = (
-                field.annotation if field.annotation is not None else Any
-            )
+    def _annotations(self) -> dict[str, Any]:
+        """The ``__annotations__`` map: each field, then ``return``."""
+        annotations: dict[str, Any] = {
+            fname: field.annotation if field.annotation is not None else Any
+            for fname, field in self.model.model_fields.items()
+        }
         annotations["return"] = str
         return annotations
 
-    def as_callable(
-        self, *, ctx_annotation: Any = None
-    ) -> Callable[..., Awaitable[str]]:
+    def as_callable(self) -> Callable[..., Awaitable[str]]:
         """An async native tool with a real signature built from the model fields.
 
-        For frameworks that take plain callables (pydantic-ai, agno). When
-        ``ctx_annotation`` is given a leading ``ctx`` parameter is prepended with
-        that annotation — pydantic-ai needs ``RunContext`` to recognise context;
-        agno passes ``None``. The function validates its kwargs through the model
-        and delegates to ``handler``, so behaviour matches the ``CustomToolDef`` path.
+        For frameworks that take plain callables (agno). The function validates
+        its kwargs through the model and delegates to ``handler``, so behaviour
+        matches the ``CustomToolDef`` path.
 
         The parameters must be *real* named params (not ``*args/**kwargs``): agno
-        reads ``inspect.signature`` and pydantic-ai reads the actual code object, so
-        both derive the tool's arg schema from a synthesized-then-``exec``'d def.
+        reads ``inspect.signature`` to derive the tool's arg schema from a
+        synthesized-then-``exec``'d def.
         """
-        params, ns = self._build_signature(ctx_annotation)
+        params, ns = self._build_signature()
         ns["_invoke"] = invoke_validated_custom_tool
         ns["_tool"] = self.as_custom_tool_def()
         construct = ", ".join(f"{f}={f}" for f in self.model.model_fields)
@@ -122,10 +105,10 @@ class ToolSpec:
         )
         exec(src, ns)  # noqa: S102 - synthesize a real signature the frameworks introspect
         tool: Callable[..., Awaitable[str]] = ns[self.name]
-        tool.__annotations__ = self._annotations(ctx_annotation)
+        tool.__annotations__ = self._annotations()
         tool.__doc__ = self.description
-        # Carry the declared turn effect so the callable path (pydantic-ai/agno)
-        # agrees with the CustomToolDef tuple path.
+        # Carry the declared turn effect so the callable path (agno) agrees with
+        # the CustomToolDef tuple path.
         if (effect := declared_effect(self.handler)) is not None:
             declares_turn_effect(effect)(tool)
         return tool

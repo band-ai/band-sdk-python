@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -13,6 +13,7 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel
 
+from tests.e2e.baseline.toolkit.observations.tool_calls import ToolCall
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 LOOKUP_PATH = "/users/1"
@@ -33,11 +34,18 @@ class ActivityLookupInput(BaseModel):
 
 @dataclass
 class Invocation:
+    repeats: int = 0
     started: bool = False
+    cancelled: bool = False
     entered: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
     settled: asyncio.Event = field(default_factory=asyncio.Event)
     result: str = ""
+
+
+def repeated_invocation(key: Operation) -> ValueError:
+    """What a second call of one operation raises, so the model sees it fail."""
+    return ValueError(f"Operation {key.value} already has an invocation")
 
 
 class ActivityWork:
@@ -59,7 +67,8 @@ class ActivityWork:
             raise ValueError("The operation requires its current private note")
         work = self.operations[request.key]
         if work.started:
-            raise ValueError(f"Operation {request.key.value} already has an invocation")
+            work.repeats += 1
+            raise repeated_invocation(request.key)
         work.started = True
         try:
             response = await self._client.get(f"{self._base_url}{LOOKUP_PATH}")
@@ -68,6 +77,9 @@ class ActivityWork:
             work.entered.set()
             await work.release.wait()
             return work.result
+        except asyncio.CancelledError:
+            work.cancelled = True
+            raise
         finally:
             work.settled.set()
 
@@ -81,6 +93,36 @@ class ActivityWork:
     async def settled(self, key: Operation) -> None:
         async with asyncio.timeout(self.deadline_s):
             await self[key].settled.wait()
+
+    async def completed(self, key: Operation) -> str:
+        """Wait for ``key``'s call to return; fail if it was cancelled instead."""
+        await self.settled(key)
+        if self[key].cancelled:
+            raise AssertionError(
+                f"Operation {key.value} was cancelled before the test released it"
+            )
+        return self[key].result
+
+    def assert_model_repeats(self, key: Operation, calls: Sequence[ToolCall]) -> None:
+        """Require a distinct model call for each repeated execution."""
+        repeats = self[key].repeats
+        if not repeats:
+            return
+        matching = [
+            call
+            for call in calls
+            if call.name == self.tool.name
+            and call.args.get("key") == key.value
+            and call.args.get("private_note") == self.note
+        ]
+        call_ids = [call.tool_call_id for call in matching]
+        assert (
+            len(call_ids) == repeats + 1
+            and all(call_ids)
+            and len(set(call_ids)) == len(call_ids)
+        ), (
+            f"Operation {key.value} repeated without a distinct model tool-call id: {call_ids}"
+        )
 
     @asynccontextmanager
     async def releasing_on_exit(self) -> AsyncIterator[None]:

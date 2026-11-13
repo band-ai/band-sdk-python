@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.core.types import AdapterFeatures
+from band.core.types import AdapterFeatures, Emit
 from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.agents import Adapter, not_applicable, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
@@ -58,7 +58,7 @@ class TestActivityLifecycle:
                 cell.run_as_with_handle(
                     identity,
                     prompt=PROMPT,
-                    features=AdapterFeatures(emit=frozenset()),
+                    features=AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS})),
                     tools=[work.tool],
                     link_factory=observed.link,
                     session_config=SessionConfig(
@@ -97,7 +97,7 @@ class TestActivityLifecycle:
 
                 a_finishing = observed.cursor()
                 work[Operation.A].release.set()
-                await work.settled(Operation.A)
+                await work.completed(Operation.A)
                 replies = await left.wait_for_reply(a, identity.id)
                 replies.assert_contains_exact(work[Operation.A].result)
                 await observed.finished(first, identity.id, since=a_finishing)
@@ -134,15 +134,19 @@ class TestActivityLifecycle:
                 )
                 c_finishing = observed.cursor()
                 work[Operation.C].release.set()
-                await work.settled(Operation.C)
+                await work.completed(Operation.C)
                 replies = await left.wait_for_reply(c, identity.id, since=reply_phase)
                 replies.assert_contains_exact(work[Operation.C].result)
                 replies.assert_contains_none(
                     [work[Operation.A].result, work[Operation.B].result]
                 )
                 await observed.finished(first, identity.id, since=c_finishing)
-                assert await left.tool_calls(sender_id=identity.id) == []
-                assert await right.tool_calls(sender_id=identity.id) == []
+                calls = await left.tool_calls(sender_id=identity.id)
+                work.assert_model_repeats(Operation.A, calls)
+                work.assert_model_repeats(Operation.C, calls)
+                work.assert_model_repeats(
+                    Operation.B, await right.tool_calls(sender_id=identity.id)
+                )
                 observed.assert_private(
                     work.note,
                     *(invocation.result for invocation in work.operations.values()),

@@ -1,12 +1,9 @@
-"""Native async tool signatures preserve model defaults and context boundaries."""
+"""Native async tool signatures preserve model defaults."""
 
 from __future__ import annotations
 
-import pytest
-
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 from tests.framework_conformance.toolspec import (
-    ContextField,
     OptionalBeforeRequired,
     SampleInput,
     echo,
@@ -33,10 +30,6 @@ class TestToolSpec:
         assert await tool(query="a") == "['X']"
         assert await tool(query="b") == "['X']"
 
-    async def test_ctx_param_is_prepended_when_requested(self) -> None:
-        tool = ToolSpec(SampleInput, echo).as_callable(ctx_annotation=object)
-        assert await tool(None, query="hi") == "q=hi tags=[] limit=5 note=None"
-
     async def test_optional_field_before_required_synthesizes_valid_signature(
         self,
     ) -> None:
@@ -45,13 +38,4 @@ class TestToolSpec:
 
         spec = ToolSpec(OptionalBeforeRequired, echo_fields)
         assert await spec.as_callable()(req="hi") == "req=hi opt=0"
-        assert (
-            await spec.as_callable(ctx_annotation=object)(None, req="hi", opt=3)
-            == "req=hi opt=3"
-        )
-
-    async def test_ctx_field_collision_raises_clear_error(self) -> None:
-        spec = ToolSpec(ContextField, lambda args: args.ctx)
-        assert await spec.as_callable()(ctx="hi") == "hi"
-        with pytest.raises(ValueError, match="collides with the injected"):
-            spec.as_callable(ctx_annotation=object)
+        assert await spec.as_callable()(req="hi", opt=3) == "req=hi opt=3"
