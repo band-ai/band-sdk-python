@@ -1,4 +1,4 @@
-"""A Letta turn whose model answered with nothing is reported missing and logs why Letta stopped."""
+"""A Letta turn with no final text logs why Letta stopped, loudly only when it is judged missing."""
 
 from __future__ import annotations
 
@@ -7,13 +7,25 @@ import logging
 import pytest
 
 from band.core.protocols import TurnResultAlreadyReported
+from band.runtime.tools import BandTool
 from band.testing import MISSING_REPLY_FAILURE, failure_reports
 from tests.adapters.lettakit import (
     make_letta_message,
     make_letta_response,
     ready_letta_adapter,
+    scripted_letta_turn,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input, turn_tools
+
+_LOGGER = "band.adapters.letta"
+
+
+def _no_text_log_levels(caplog: pytest.LogCaptureFixture) -> list[int]:
+    return [
+        record.levelno
+        for record in caplog.records
+        if record.name == _LOGGER and "produced no reply or text" in record.getMessage()
+    ]
 
 
 class TestEmptyTurn:
@@ -30,7 +42,7 @@ class TestEmptyTurn:
 
         tools = turn_tools()
         with (
-            caplog.at_level(logging.WARNING, logger="band.adapters.letta"),
+            caplog.at_level(logging.DEBUG, logger=_LOGGER),
             pytest.raises(TurnResultAlreadyReported),
         ):
             await adapter.on_event(turn_input(tools))
@@ -42,5 +54,21 @@ class TestEmptyTurn:
         ) in [
             (record.levelno, record.getMessage())
             for record in caplog.records
-            if record.name == "band.adapters.letta"
+            if record.name == _LOGGER
         ]
+
+    @pytest.mark.asyncio
+    async def test_a_turn_that_did_work_without_text_logs_it_quietly(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        adapter, mock_client = ready_letta_adapter(room_id=ROOM_ID)
+        mock_client.agents.messages.create.side_effect = scripted_letta_turn(
+            adapter, room_id=ROOM_ID, tool_calls=[(BandTool.CREATE_CHATROOM, {})]
+        )
+
+        tools = turn_tools()
+        with caplog.at_level(logging.DEBUG, logger=_LOGGER):
+            await adapter.on_event(turn_input(tools))
+
+        assert failure_reports(tools) == []
+        assert _no_text_log_levels(caplog) == [logging.DEBUG]

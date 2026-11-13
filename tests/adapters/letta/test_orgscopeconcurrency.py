@@ -1,4 +1,4 @@
-"""Concurrent starts of one Letta agent in a process share one org/user scope."""
+"""Concurrent starts of one Letta agent in a process create its org/user scope once."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ _BASE_URL = "http://localhost:8283"
 
 
 class TestOrgScopeConcurrency:
-    async def test_concurrent_starts_create_one_org_and_user_and_agree_on_it(
+    async def test_concurrent_starts_create_one_org_and_user(
         self, httpx_mock: HTTPXMock
     ) -> None:
         admin = LettaAdminPeer(httpx_mock, base_url=_BASE_URL)

@@ -941,7 +941,12 @@ def _letta_model_settings(model: str) -> dict[str, Any] | None:
     """Set the pinned self-hosted model's reasoning effort; other models keep Letta's defaults."""
     if model != LETTA_SELF_HOSTED_MODEL:
         return None
+    # Letta fills omitted fields with its settings defaults, not the model's,
+    # so restate the model's own values to change only the effort.
     return {
         "provider_type": "openai",
         "reasoning": {"reasoning_effort": LETTA_SELF_HOSTED_REASONING_EFFORT},
+        "temperature": 1.0,
+        "parallel_tool_calls": False,
+        "strict": False,
     }
