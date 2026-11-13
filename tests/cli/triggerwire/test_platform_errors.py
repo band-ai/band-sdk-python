@@ -13,9 +13,8 @@ from tests.cli.triggerwire.kit import (
     TARGET,
     AuthMode,
     answer,
+    answer_peer_pages,
     created_room,
-    page_params,
-    peers_page,
     platform_error,
     trigger_args,
     validation_error,
@@ -53,17 +52,6 @@ PARTICIPANT_REJECTIONS = [
 ]
 
 
-def find_target(httpx_mock: HTTPXMock, mode: AuthMode) -> None:
-    answer(
-        httpx_mock,
-        mode,
-        "GET",
-        "/peers",
-        peers_page([TARGET], page=1, total_pages=1),
-        params=page_params(1),
-    )
-
-
 class TestTriggerPlatformErrors:
     @pytest.mark.parametrize("mode", list(AuthMode))
     @pytest.mark.parametrize(("status", "body", "platform_message"), CHAT_REJECTIONS)
@@ -75,7 +63,7 @@ class TestTriggerPlatformErrors:
         body: dict[str, Any],
         platform_message: str,
     ) -> None:
-        find_target(httpx_mock, mode)
+        answer_peer_pages(httpx_mock, mode, [[TARGET]])
         answer(httpx_mock, mode, "POST", "/chats", body, status=status)
 
         with pytest.raises(RuntimeError) as caught:
@@ -95,7 +83,7 @@ class TestTriggerPlatformErrors:
         body: dict[str, Any],
         platform_message: str,
     ) -> None:
-        find_target(httpx_mock, mode)
+        answer_peer_pages(httpx_mock, mode, [[TARGET]])
         answer(httpx_mock, mode, "POST", "/chats", created_room())
         answer(
             httpx_mock,

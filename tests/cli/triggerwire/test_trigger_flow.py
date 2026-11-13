@@ -16,10 +16,10 @@ from tests.cli.triggerwire.kit import (
     WireCall,
     added_participant,
     answer,
+    answer_peer_pages,
     created_room,
     message_sent,
     page_params,
-    peers_page,
     trigger_args,
     wire_calls,
 )
@@ -31,22 +31,7 @@ class TestTriggerFlow:
         self, httpx_mock: HTTPXMock, mode: AuthMode
     ) -> None:
         prefix = API_PREFIX[mode]
-        answer(
-            httpx_mock,
-            mode,
-            "GET",
-            "/peers",
-            peers_page([BYSTANDER], page=1, total_pages=2),
-            params=page_params(1),
-        )
-        answer(
-            httpx_mock,
-            mode,
-            "GET",
-            "/peers",
-            peers_page([TARGET], page=2, total_pages=2),
-            params=page_params(2),
-        )
+        answer_peer_pages(httpx_mock, mode, [[BYSTANDER], [TARGET]])
         answer(httpx_mock, mode, "POST", "/chats", created_room())
         answer(
             httpx_mock,
@@ -94,22 +79,7 @@ class TestTriggerFlow:
         self, httpx_mock: HTTPXMock, mode: AuthMode
     ) -> None:
         prefix = API_PREFIX[mode]
-        answer(
-            httpx_mock,
-            mode,
-            "GET",
-            "/peers",
-            peers_page([BYSTANDER], page=1, total_pages=2),
-            params=page_params(1),
-        )
-        answer(
-            httpx_mock,
-            mode,
-            "GET",
-            "/peers",
-            peers_page([TARGET], page=2, total_pages=2),
-            params=page_params(2),
-        )
+        answer_peer_pages(httpx_mock, mode, [[BYSTANDER], [TARGET]])
 
         with pytest.raises(ValueError, match="'@owner/absent' not found"):
             await run(trigger_args(mode, target_handle="@owner/absent"))

@@ -119,6 +119,21 @@ def peers_page(
     }
 
 
+def answer_peer_pages(
+    httpx_mock: HTTPXMock, mode: AuthMode, pages: list[list[dict[str, str]]]
+) -> None:
+    """Serve the peer directory as ``pages``, one response per page."""
+    for page, peers in enumerate(pages, start=1):
+        answer(
+            httpx_mock,
+            mode,
+            "GET",
+            "/peers",
+            peers_page(peers, page=page, total_pages=len(pages)),
+            params=page_params(page),
+        )
+
+
 def created_room() -> dict[str, Any]:
     return {"data": {"id": ROOM_ID, "inserted_at": TIMESTAMP, "updated_at": TIMESTAMP}}
 
