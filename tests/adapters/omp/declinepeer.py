@@ -43,12 +43,14 @@ class DeclineScenario(StrEnum):
     HELD_STOP = "held-stop"
     BACKGROUND_PENDING = "background-pending"
     BACKGROUND_QUEUED = "background-queued"
+    BACKGROUND_BOTH = "background-both"
     BACKGROUND_COMPLETING = "background-completing"
     MIXED_BATCH = "mixed-batch"
     MISSING_BATCH = "missing-batch"
     STRING_CONTENT = "string-content"
     MISMATCHED_ID = "mismatched-id"
     POST_CHECK_PENDING = "post-check-pending"
+    POST_CHECK_QUEUED = "post-check-queued"
     CANCEL_SNAPSHOT = "cancel-snapshot"
     CANCEL_AFTER_ABORT = "cancel-after-abort"
 
@@ -174,8 +176,12 @@ class DeclinePeer(RpcPeer):
         self.background_pending = self.scenario_name in {
             DeclineScenario.BACKGROUND_PENDING,
             DeclineScenario.BACKGROUND_COMPLETING,
+            DeclineScenario.BACKGROUND_BOTH,
         }
-        self.background_queued = self.scenario_name == DeclineScenario.BACKGROUND_QUEUED
+        self.background_queued = self.scenario_name in {
+            DeclineScenario.BACKGROUND_QUEUED,
+            DeclineScenario.BACKGROUND_BOTH,
+        }
         self.cancel_snapshot_pending = (
             self.scenario_name == DeclineScenario.CANCEL_SNAPSHOT
         )
@@ -212,11 +218,17 @@ class DeclinePeer(RpcPeer):
                 self.call(BandTool.NO_REPLY, {}, SECOND_DECLINE_CALL)
                 self.respond(frame)
             case OmpCommandName.GET_STATE:
-                if self.scenario_name == DeclineScenario.POST_CHECK_PENDING:
+                if self.scenario_name in {
+                    DeclineScenario.POST_CHECK_PENDING,
+                    DeclineScenario.POST_CHECK_QUEUED,
+                }:
                     self.respond_with_state(frame)
                     if not self.stop_check_seen:
                         self.stop_check_seen = True
-                        self.post_check_pending = True
+                        if self.scenario_name == DeclineScenario.POST_CHECK_PENDING:
+                            self.post_check_pending = True
+                        else:
+                            self.background_queued = True
                     return
                 if self.cancel_snapshot_pending:
                     self.cancel_snapshot_pending = False

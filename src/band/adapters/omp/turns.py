@@ -30,7 +30,7 @@ from band.core.protocols import (
 )
 from band.core.types import Emit, MessageType, PlatformMessage
 from band.integrations import omproomask, omprpc
-from band.integrations.omprpc.prompt import BUSY_DECLINE_REFUSAL
+from band.integrations.omprpc.prompt import NATIVE_BACKLOG_YIELD_GUIDANCE
 from band.integrations.ompwire import (
     OmpEvent,
     OmpHostToolCall,
@@ -42,7 +42,6 @@ from band.integrations.ompwire import (
 from band.runtime.custom_tools import find_custom_tool
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
-    TURN_COMPLETION_GUIDANCE,
     render_system_prompt,
 )
 from band.runtime.sessionresume import fetch_transcript
@@ -50,6 +49,21 @@ from band.runtime.toolactivity import end_activity, suppress_tool_activity
 from band.runtime.tools import BandTool, TurnEffect
 
 logger = logging.getLogger(__name__)
+
+NATIVE_TURN_COMPLETION_GUIDANCE = (
+    "## Native OMP turn completion\n\n"
+    f"Deliver required room replies with {BandTool.SEND_MESSAGE}. "
+    f"Use {BandTool.NO_REPLY} only when the whole turn needs no reply, not to wait "
+    "for work or consume queued messages. A refused decline leaves the turn open: "
+    "handle the reported blocker instead of repeatedly retrying the tool or "
+    "claiming completion in plain text. "
+    f"{NATIVE_BACKLOG_YIELD_GUIDANCE} "
+    "Queued native messages may contain participant input, not just tool results; "
+    "read and act on them when delivered. Do not infer their contents from tool or "
+    "task inventory. Once all required "
+    "actions and input are handled, stop without sending a duplicate completion "
+    "notice. Plain text is not delivered to the Band room."
+)
 
 
 class OmpTurnMixin(OmpAdapterContract):
@@ -59,7 +73,10 @@ class OmpTurnMixin(OmpAdapterContract):
             agent_description=self.agent_description or "An AI assistant",
             custom_section=self.config.custom_section,
             include_base_instructions=False,
-            extra_sections=(COMMUNICATION_INSTRUCTIONS, TURN_COMPLETION_GUIDANCE),
+            extra_sections=(
+                COMMUNICATION_INSTRUCTIONS,
+                NATIVE_TURN_COMPLETION_GUIDANCE,
+            ),
             features=self.features,
         )
         return (
@@ -276,8 +293,10 @@ class OmpTurnMixin(OmpAdapterContract):
                     call.toolName == BandTool.NO_REPLY
                     and find_custom_tool(self._custom_tools, call.toolName) is None
                 )
-                if builtin_decline and not await room.client.can_stop_after_tool(call):
-                    return _text_tool_result(BUSY_DECLINE_REFUSAL, is_error=True)
+                if builtin_decline:
+                    refusal = await room.client.stop_after_tool_refusal(call)
+                    if refusal is not None:
+                        return _text_tool_result(refusal, is_error=True)
 
                 ledger_record = tools.turn.record
                 if builtin_decline:

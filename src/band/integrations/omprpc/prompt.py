@@ -25,10 +25,10 @@ from band.runtime.tools import BandTool
 
 EVENT_BACKLOG_LIMIT = 256
 
-BUSY_DECLINE_REFUSAL = (
-    "This turn still has background work, queued results, or other "
-    "tool calls to handle. Wait for and process their results, then call "
-    f"{BandTool.NO_REPLY} separately when no work remains."
+NATIVE_BACKLOG_YIELD_GUIDANCE = (
+    "If delivery is the only remaining action, end the current model step without "
+    "further tool calls so OMP can deliver queued follow-ups or async completions. "
+    "This native yield is not a Band decline or a claim that the turn is complete."
 )
 
 
@@ -215,6 +215,31 @@ class PromptRun:
 def state_has_async_backlog(state: OmpState) -> bool:
     """Native async work or queued messages still need a continuation."""
     return bool(state.hasPendingAsyncWork or state.queuedMessageCount > 0)
+
+
+def decline_backlog_refusal(state: OmpState) -> str | None:
+    """Describe only the native backlog observed in this snapshot."""
+    if not state_has_async_backlog(state):
+        return None
+    blockers: list[str] = []
+    recovery: list[str] = []
+    if state.hasPendingAsyncWork:
+        blockers.append("hasPendingAsyncWork=true")
+        recovery.append("Wait for the existing async work and handle its completion.")
+    if state.queuedMessageCount > 0:
+        blockers.append(f"queuedMessageCount={state.queuedMessageCount}")
+        recovery.append(
+            "Allow OMP to deliver the queued messages on continuation, then read and "
+            "handle them. They may include participant input, not just tool results; "
+            "their contents cannot be inferred from tool or task inventory."
+        )
+    return (
+        f"{BandTool.NO_REPLY} refused: native {'; '.join(blockers)}. "
+        f"{' '.join(recovery)} "
+        "This turn has not declined. Do not poll this tool or claim completion in "
+        f"plain text. {NATIVE_BACKLOG_YIELD_GUIDANCE} "
+        "Reconsider whether a reply is needed after processing the pending work and input."
+    )
 
 
 def state_is_idle(state: OmpState) -> bool:
