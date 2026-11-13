@@ -499,7 +499,7 @@ jobs:
       uses: ./.github/actions/git-https-auth
 
     - name: Install uv
-      # Unpinned: pywrangler sync needs a recent uv (floor in examples/cloudflare/README.md).
+      # uv version left unset (latest): pywrangler sync needs a recent uv; floor in examples/cloudflare/README.md.
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
         enable-cache: true

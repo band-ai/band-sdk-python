@@ -76,8 +76,9 @@ class Image:
         for key, value in (build_args or {}).items():
             command += ["--build-arg", f"{key}={value}"]
         command.append(str(REPO_ROOT))
-        run_cli_subprocess(command, timeout=BUILD_TIMEOUT_S)
+        # Remove the tag even if a timed-out build already loaded it.
         try:
+            run_cli_subprocess(command, timeout=BUILD_TIMEOUT_S)
             yield cls(tag)
         finally:
             subprocess.run(
@@ -196,8 +197,9 @@ class Container:
             run_command += ["--entrypoint", entrypoint]
         run_command.append(tag)
         run_command += command or ["-c", f"sleep {keep_alive_seconds}"]
-        run_cli_subprocess(run_command, timeout=30)
+        # Docker may create the container and then fail to start it.
         try:
+            run_cli_subprocess(run_command, timeout=30)
             yield cls(name)
         finally:
             subprocess.run(
