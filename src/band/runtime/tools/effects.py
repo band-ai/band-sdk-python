@@ -23,6 +23,12 @@ _BAND_EFFECTS: dict[str, TurnEffect] = {
 }
 _BAND_EFFECTS[LEGACY_SEND_MESSAGE_TOOL] = _BAND_EFFECTS[BandTool.SEND_MESSAGE]
 
+#: What a model reads when it calls a tool after declining to reply.
+DECLINED_TURN_REFUSAL = (
+    "This turn already ended when you declined to reply. Further tool calls "
+    "are refused and nothing more reaches the room; stop now."
+)
+
 
 def turn_effect(
     tool_name: str, *, custom_effects: Mapping[str, TurnEffect] | None = None

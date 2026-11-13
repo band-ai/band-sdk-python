@@ -29,6 +29,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.turn import declined_turn_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,8 @@ async def _run(
     Either kind of tool can fail without raising (bad args, an API error, a
     failure value) via ``ok=False``, which reaches Codex as a failed call.
     """
+    if refusal := declined_turn_refusal(tools.turn):
+        return text_tool_result(refusal, success=False), refusal
     try:
         if custom_tool := find_custom_tool(custom_tools, call.name):
             outcome = await run_custom_tool(custom_tool, call.arguments, tools=tools)

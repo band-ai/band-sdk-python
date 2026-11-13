@@ -15,6 +15,7 @@ import pytest
 from band.adapters.crewai import EMPTY_LLM_RESPONSE_MARKER, CrewAIAdapter
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.turnprobes import (
+    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
@@ -51,4 +52,6 @@ async def run_crewai(script: TurnScript, tools: FakeAgentTools) -> None:
     await adapter.on_event(turn_input(tools))
 
 
-PROBES: dict[str, TurnOutcomeProbe] = {"crewai": TurnOutcomeProbe(run=run_crewai)}
+PROBES: dict[str, TurnOutcomeProbe] = {
+    "crewai": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_crewai)
+}

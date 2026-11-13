@@ -5,6 +5,7 @@ from __future__ import annotations
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.turnprobes import (
     ROOM_ID,
+    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
@@ -28,5 +29,5 @@ async def run_letta_turn(script: TurnScript, tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "letta": TurnOutcomeProbe(run=run_letta_turn, relays=True)
+    "letta": TurnOutcomeProbe(loop=TurnLoop.PROVIDER, run=run_letta_turn, relays=True)
 }

@@ -18,6 +18,7 @@ from tests.adapters.opencode.helpers import (
 )
 from tests.framework_conformance.turnprobes import (
     ROOM_ID,
+    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
@@ -86,5 +87,7 @@ async def settle_opencode(tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "opencode": TurnOutcomeProbe(run=run_opencode, settle=settle_opencode, relays=True),
+    "opencode": TurnOutcomeProbe(
+        loop=TurnLoop.PROVIDER, run=run_opencode, settle=settle_opencode, relays=True
+    ),
 }
