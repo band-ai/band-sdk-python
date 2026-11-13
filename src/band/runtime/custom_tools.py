@@ -10,17 +10,22 @@ from __future__ import annotations
 import inspect
 import logging
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 from pydantic.json_schema import GenerateJsonSchema
 
-from band.core.exceptions import InvalidToolArgumentsError
+from band.core.exceptions import HOST_CONTROL_ERRORS, InvalidToolArgumentsError
 from band.core.protocols import AgentToolsProtocol
 from band.runtime.toolactivity import native_tool_activity
 from band.runtime.tools.registry import ALL_TOOL_NAMES
-from band.runtime.tools.schema import is_failed_tool_output
+from band.runtime.tools.schema import (
+    ToolCallOutcome,
+    is_failed_tool_output,
+    tool_execution_failure,
+    tool_result_text,
+)
 from band.runtime.tools.types import TurnEffect
 
 logger = logging.getLogger(__name__)
@@ -241,7 +246,8 @@ async def execute_custom_tool(
     Raises:
         InvalidToolArgumentsError: If arguments don't match InputModel schema
             (formatted for LLM)
-        Exception: Any exception from tool function (for adapter to catch)
+        Exception: Any exception from tool function; :func:`run_custom_tool`
+            reports it to the model instead
     """
     model, func = tool
 
@@ -299,3 +305,68 @@ async def invoke_validated_custom_tool(
     if tools is not None and not is_failed_tool_output(result):
         tools.turn.record(declared_effect(func) or TurnEffect.OBSERVE)
     return result
+
+
+async def run_custom_tool(
+    tool: CustomToolDef,
+    arguments: dict[str, Any],
+    *,
+    tools: AgentToolsProtocol | None,
+    strict: bool | None = None,
+    native_signals: tuple[type[Exception], ...] = (),
+) -> ToolCallOutcome:
+    """Run a custom tool and report any failure as a result the model reads.
+
+    The custom-tool counterpart of ``execute_tool_call_structured``, with the
+    same outcome shape: invalid arguments, a raising handler and a failure
+    value all come back as ``ok=False`` so the turn continues. Host control
+    and ``native_signals``, the exceptions the calling framework handles
+    itself (such as pydantic-ai's ``ModelRetry``), still propagate.
+    """
+    return await _outcome(
+        get_custom_tool_name(tool[0]),
+        execute_custom_tool(tool, arguments, tools=tools, strict=strict),
+        propagate=HOST_CONTROL_ERRORS + native_signals,
+    )
+
+
+async def run_validated_custom_tool(
+    tool: CustomToolDef,
+    validated: Any,
+    *,
+    tools: AgentToolsProtocol | None,
+    native_signals: tuple[type[Exception], ...] = (),
+) -> ToolCallOutcome:
+    """:func:`run_custom_tool` for arguments the framework already validated."""
+    return await _outcome(
+        get_custom_tool_name(tool[0]),
+        invoke_validated_custom_tool(tool, validated, tools=tools),
+        propagate=HOST_CONTROL_ERRORS + native_signals,
+    )
+
+
+async def _outcome(
+    tool_name: str,
+    execution: Awaitable[Any],
+    *,
+    propagate: tuple[type[Exception], ...],
+) -> ToolCallOutcome:
+    try:
+        result = await execution
+    except propagate:
+        raise
+    except InvalidToolArgumentsError as error:
+        logger.warning("%s rejected its arguments: %s", tool_name, error)
+        return _failed(str(error))
+    except Exception as error:
+        logger.exception("Custom tool %s failed", tool_name)
+        return _failed(tool_execution_failure(tool_name, error))
+    if is_failed_tool_output(result):
+        return ToolCallOutcome(
+            value=result, ok=False, error_message=tool_result_text(result)
+        )
+    return ToolCallOutcome(value=result, ok=True)
+
+
+def _failed(message: str) -> ToolCallOutcome:
+    return ToolCallOutcome(value=message, ok=False, error_message=message)

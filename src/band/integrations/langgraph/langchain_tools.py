@@ -15,21 +15,15 @@ from typing import Any
 from langchain_core.messages import ImageContentBlock, ToolMessage
 from langchain_core.tools import StructuredTool, ToolException
 
-from band.core.exceptions import (
-    BandToolError,
-    CleanupIncompleteError,
-    InputNotAccepted,
-    RoomExecutionStoppedError,
-    TerminalProviderFailure,
-)
+from band.core.exceptions import HOST_CONTROL_ERRORS, BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.custom_tools import (
     CustomToolDef,
-    execute_custom_tool,
     get_custom_tool_name,
+    run_custom_tool,
 )
 from band.runtime.toolactivity import WRAPPED_TOOL_ACTIVITY
 from band.runtime.tools import (
@@ -43,11 +37,8 @@ from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
-PASSTHROUGH_TOOL_ERRORS = (
-    InputNotAccepted,
-    RoomExecutionStoppedError,
-    CleanupIncompleteError,
-    TerminalProviderFailure,
+PASSTHROUGH_TOOL_ERRORS: tuple[type[Exception], ...] = (
+    *HOST_CONTROL_ERRORS,
     ToolException,
 )
 
@@ -208,7 +199,7 @@ def custom_tool_def_to_langchain(
     ``(InputModel, handler)`` — the same shape every other adapter takes, rather
     than only ready-made LangChain tools. The StructuredTool's schema is the
     ``InputModel`` and its body validates + runs the handler via
-    ``execute_custom_tool`` (which handles sync and async handlers alike) for
+    ``run_custom_tool`` (which handles sync and async handlers alike) for
     ``tools``: the tools of the room the tool is built for, or ``None`` for a
     tool not bound to a room.
     """
@@ -217,21 +208,12 @@ def custom_tool_def_to_langchain(
     description = input_model.__doc__ or f"Execute {name}"
 
     async def execute_custom(**kwargs: Any) -> Any:
-        try:
-            result = await execute_custom_tool(tool_def, kwargs, tools=tools)
-        except PASSTHROUGH_TOOL_ERRORS:
-            raise
-        except ValueError as e:
-            # Bad-argument / validation errors feed back to the LLM to retry.
-            raise ToolException(str(e)) from e
-        except Exception:
-            # Keep the message generic; the full traceback (paths, secrets)
-            # only lives in the agent log — see agent_tools_to_langchain.
-            logger.exception("Error executing custom tool %s", name)
-            raise ToolException(f"Error executing {name}: see agent logs.") from None
-        if is_failed_tool_output(result):
-            raise ToolException(str(result))
-        return result
+        outcome = await run_custom_tool(
+            tool_def, kwargs, tools=tools, native_signals=(ToolException,)
+        )
+        if not outcome.ok:
+            raise ToolException(str(outcome.value))
+        return outcome.value
 
     def on_validation_error(error: Any) -> str:
         # Schema validation runs before the coroutine; feed bad args back to the

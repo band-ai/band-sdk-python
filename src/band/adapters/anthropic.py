@@ -17,6 +17,7 @@ from typing_extensions import Unpack
 from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
+from band.core.exceptions import HOST_CONTROL_ERRORS
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import RoundOutcome
@@ -33,19 +34,19 @@ from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
     declared_effect,
-    execute_custom_tool,
     find_custom_tool,
+    run_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
+    ImageContentResult,
     TurnEffect,
     image_block_placeholder,
-    is_image_passthrough_result,
+    image_passthrough_result,
     redact_tool_call_args,
     turn_effect,
 )
-from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def _tool_names(content: list) -> str:
     return ",".join(names) if names else "-"
 
 
-def _image_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
+def _image_tool_result_content(result: ImageContentResult) -> list[dict[str, Any]]:
     """An image tool result as Anthropic ``ImageBlockParam`` dicts.
 
     No media_type validation: Anthropic's accepted set is exactly
@@ -511,37 +512,39 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                     )
 
             # Execute tool (check custom tools first, then platform tools)
+            effect = TurnEffect.OBSERVE
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    result = await execute_custom_tool(
+                    outcome = await run_custom_tool(
                         custom_tool, tool_input, tools=tools
                     )
-                    succeeded = not is_failed_tool_output(result)
                     effect = declared_effect(custom_tool[1]) or TurnEffect.OBSERVE
                 else:
                     outcome = await tools.execute_tool_call_structured(
                         tool_name, tool_input
                     )
-                    result = outcome.value
-                    succeeded = outcome.ok
                     effect = turn_effect(tool_name)
-                outcome_record.record(effect, succeeded)
-                if is_image_passthrough_result(tool_name, result):
-                    content = _image_tool_result_content(result)
-                    result_str = image_block_placeholder(len(content))
-                else:
-                    content = result_str = (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
-                    )
-                is_error = not succeeded
+                result, succeeded = outcome.value, outcome.ok
+            except HOST_CONTROL_ERRORS:
+                raise
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                outcome_record.record(TurnEffect.OBSERVE, False)
-                content = result_str = f"Error: {e}"
-                is_error = True
+                result, succeeded = f"Error: {e}", False
                 logger.error("Tool %s failed: %s", tool_name, e)
+
+            outcome_record.record(effect, succeeded)
+            if (
+                image_result := image_passthrough_result(tool_name, result)
+            ) is not None:
+                content = _image_tool_result_content(image_result)
+                result_str = image_block_placeholder(len(content))
+            else:
+                content = result_str = (
+                    json.dumps(result, default=str)
+                    if not isinstance(result, str)
+                    else result
+                )
+            is_error = not succeeded
 
             # Report tool result if enabled (JSON format with tool_call_id for linking)
             # Best-effort: event reporting must never crash tool execution

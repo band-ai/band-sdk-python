@@ -7,11 +7,20 @@ from decimal import Decimal
 
 import pytest
 
+from band.core.exceptions import BandError
 from band.integrations.parlant.sessiontools import (
     NO_SESSION_TOOLS_ERROR,
 )
-from band.testing import FakeAgentTools
-from tests.integrations.parlant.custommodels import PaintInput
+from band.runtime.tools import tool_result_text
+from band.runtime.tools.schema import tool_execution_failure
+from band.testing import FakeAgentTools, reported_failures
+from tests.hostcontrol import host_control_errors
+from tests.integrations.parlant.custommodels import (
+    MIX_FAILURE,
+    OUT_OF_STOCK,
+    MixInput,
+    PaintInput,
+)
 from tests.integrations.parlant.enginecontext import (
     activate_engine,
     bind_engine_tools,
@@ -22,6 +31,11 @@ from tests.integrations.parlant.samples import Shade
 pytest.importorskip(
     "parlant.sdk"
 )  # real p.tool and PluginServer; dev-parlant venv only
+
+
+from parlant.core.tools import ToolContext
+
+from band.integrations.parlant.customtools import build_custom_tool
 
 
 class TestCustomTools:
@@ -107,7 +121,7 @@ class TestCustomTools:
             "paint", session_id=SESSION_ID, arguments={"wall": "north", **invalid}
         )
 
-        assert result.startswith("Error running paint: Invalid arguments for paint:")
+        assert result.startswith("Invalid arguments for paint:")
         assert received == []
 
     async def test_effect_settles_only_the_calling_rooms_turn(self, custom_server):
@@ -148,3 +162,42 @@ class TestCustomTools:
         result = await custom_server.call("tally", session_id=SESSION_ID, arguments={})
 
         assert result == '{"2026-05-04": 2}'
+
+    async def test_raising_handler_reads_as_its_execution_failure(self, custom_server):
+        """Parlant's ToolResult has no error flag, so the failure text is the
+        model's only signal; the turn goes on rather than failing."""
+        tools = FakeAgentTools()
+        activate_engine(await bind_engine_tools(SESSION_ID, tools))
+
+        result = await custom_server.call(
+            "mix", session_id=SESSION_ID, arguments={"color": "teal"}
+        )
+
+        assert result == tool_execution_failure("mix", ValueError(MIX_FAILURE))
+        assert reported_failures(tools) == []
+
+    @pytest.mark.usefixtures("bound_room")
+    async def test_returned_failure_value_passes_through_as_its_text(
+        self, custom_server
+    ):
+        result = await custom_server.call("stock", session_id=SESSION_ID, arguments={})
+
+        assert result == tool_result_text(OUT_OF_STOCK)
+
+    @pytest.mark.usefixtures("bound_room")
+    @pytest.mark.parametrize("control", host_control_errors(), ids=type)
+    async def test_custom_tool_preserves_host_control_at_the_sdk_boundary(
+        self, control: BandError
+    ) -> None:
+        async def mix(args: MixInput) -> str:
+            raise control
+
+        entry = build_custom_tool((MixInput, mix))
+        context = ToolContext(
+            agent_id="agent", session_id=SESSION_ID, customer_id="user"
+        )
+
+        with pytest.raises(type(control)) as caught:
+            await entry.function(context, color="teal")
+
+        assert caught.value is control

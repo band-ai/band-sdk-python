@@ -16,6 +16,7 @@ from band.core.exceptions import InputNotAccepted, RoomExecutionStoppedError
 from band.core.types import Emit, ToolEventKey
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import BandTool, TurnEffect
+from band.runtime.tools.schema import tool_execution_failure
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
 from tests.integrations.langgraph.declinekit import (
@@ -103,9 +104,15 @@ class TestPortableDecline:
         }
         assert reported_failures(tools) == []
 
-    @pytest.mark.parametrize("error", [ValueError(FAILURE), ToolException(FAILURE)])
-    async def test_recoverable_error_keeps_safe_text_and_recovery(
-        self, error: Exception
+    @pytest.mark.parametrize(
+        ("error", "shown"),
+        [
+            (ValueError(FAILURE), tool_execution_failure(CUSTOM, ValueError(FAILURE))),
+            (ToolException(FAILURE), FAILURE),
+        ],
+    )
+    async def test_recoverable_error_reaches_the_model_and_keeps_recovery(
+        self, error: Exception, shown: str
     ) -> None:
         @declares_turn_effect(TurnEffect.DECLINE)
         async def decline(inp: CustomDeclineInput) -> str:
@@ -127,7 +134,7 @@ class TestPortableDecline:
         )
         await adapter.on_started("Bot", "Bot")
         await adapter.on_event(turn_input(FakeAgentTools(room_id=ROOM_ID)))
-        assert tool_results(model.inputs[1]) == [(CUSTOM, "decline", FAILURE, "error")]
+        assert tool_results(model.inputs[1]) == [(CUSTOM, "decline", shown, "error")]
         assert model.requests == 2
 
     @pytest.mark.parametrize("shadowed", [BandTool.NO_REPLY, CUSTOM])

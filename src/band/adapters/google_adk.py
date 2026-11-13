@@ -27,11 +27,8 @@ from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessa
 from band.core.adapterconfig import DEFAULT_MAX_TOOL_ROUNDS, BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
 from band.core.exceptions import (
-    CleanupIncompleteError,
-    InputNotAccepted,
+    HOST_CONTROL_ERRORS,
     ProviderRunError,
-    RoomExecutionStoppedError,
-    TerminalProviderFailure,
     ToolRoundsExceededError,
 )
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
@@ -50,8 +47,8 @@ from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
     declared_effect,
-    execute_custom_tool,
     find_custom_tool,
+    run_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
@@ -65,6 +62,7 @@ from band.runtime.tools.effects import turn_effect
 from band.runtime.tools.schema import (
     format_tool_validation_error,
     is_failed_tool_output,
+    tool_execution_failure,
 )
 from band.runtime.tools.types import TurnEffect
 
@@ -335,24 +333,16 @@ def _get_tool_bridge_class() -> type:
                 custom_tool = find_custom_tool(self._custom_tools, self.name)
                 if custom_tool:
                     effect = declared_effect(custom_tool[1]) or TurnEffect.OBSERVE
-                    result = await execute_custom_tool(
+                    outcome = await run_custom_tool(
                         custom_tool, args, tools=self._tools
                     )
-                    succeeded = not is_failed_tool_output(result)
                 else:
                     effect = turn_effect(self.name)
                     outcome = await self._tools.execute_tool_call_structured(
                         self.name, args
                     )
-                    result, succeeded = outcome.value, outcome.ok
-                if succeeded and not isinstance(result, str):
-                    result = json.dumps(result, default=str)
-            except (
-                InputNotAccepted,
-                RoomExecutionStoppedError,
-                CleanupIncompleteError,
-                TerminalProviderFailure,
-            ):
+                result, succeeded = outcome.value, outcome.ok
+            except HOST_CONTROL_ERRORS:
                 raise
             except ValidationError as exc:
                 # Platform validation can raise before a structured outcome exists.
@@ -364,8 +354,11 @@ def _get_tool_bridge_class() -> type:
                 result, succeeded = str(exc), False
             except Exception as exc:
                 logger.exception("Tool %s failed", self.name)
-                result = f"Error executing {self.name}: {exc}"
+                result = tool_execution_failure(self.name, exc)
                 succeeded = False
+
+            if succeeded and not isinstance(result, str):
+                result = json.dumps(result, default=str)
 
             if self._batch is not None:
                 self._batch.completed(

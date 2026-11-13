@@ -60,9 +60,9 @@ from band.core.types import (
 from band.runtime.custom_tools import (
     CustomToolDef,
     declared_effects,
-    execute_custom_tool,
     get_custom_tool_name,
     reject_conflicting_tool_names,
+    run_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt, with_system_updates
@@ -86,7 +86,7 @@ from band.runtime.tools import (
     turn_effect,
     validate_tool_arguments,
 )
-from band.runtime.tools.schema import is_failed_tool_output
+from band.runtime.tools.schema import is_failed_tool_output, tool_execution_failure
 
 logger = logging.getLogger(__name__)
 
@@ -298,18 +298,10 @@ class CustomToolBridge(StrandsToolBridge):
         **kwargs: Any,
     ) -> ToolGenerator:
         del invocation_state, kwargs
-        try:
-            result = await execute_custom_tool(
-                self._tool_def, dict(tool_use["input"] or {}), tools=self._tools
-            )
-        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-            yield _tool_result(
-                tool_use,
-                value=f"Error executing tool '{self.tool_name}': {error}",
-                ok=False,
-            )
-            return
-        yield _tool_result(tool_use, value=result, ok=not is_failed_tool_output(result))
+        outcome = await run_custom_tool(
+            self._tool_def, dict(tool_use["input"] or {}), tools=self._tools
+        )
+        yield _tool_result(tool_use, value=outcome.value, ok=outcome.ok)
 
 
 class PlatformToolBridge(StrandsToolBridge):
@@ -358,7 +350,7 @@ class PlatformToolBridge(StrandsToolBridge):
                 value = await method(**validated)
         except Exception as error:
             logger.exception("Platform tool %s failed", self.tool_name)
-            message = f"Error executing {self.tool_name}: {error}"
+            message = tool_execution_failure(self.tool_name, error)
             return ToolCallOutcome(value=message, ok=False, error_message=message)
         return ToolCallOutcome(value=serialize_tool_result(value), ok=True)
 
@@ -443,7 +435,7 @@ class BandTurnHooks(HookProvider):
             if effect.ends_turn:
                 # Strands records every concurrent sibling result before stopping.
                 event.invocation_state["request_state"]["stop_event_loop"] = True
-            # Portable tools record their own effect through execute_custom_tool.
+            # Portable tools record their own effect through run_custom_tool.
             if name in self._native_names:
                 self._tools.turn.record(effect)
         if not self._emit_execution:

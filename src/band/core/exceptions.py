@@ -219,3 +219,12 @@ class TerminalProviderFailure(BandError):
     def __init__(self, failure: AgentFailure) -> None:
         super().__init__(failure.message)
         self.failure = failure
+
+
+HOST_CONTROL_ERRORS: tuple[type[BandError], ...] = (
+    InputNotAccepted,
+    RoomExecutionStoppedError,
+    CleanupIncompleteError,
+    TerminalProviderFailure,
+)
+"""Host control raised through a tool call: never reported as a tool failure."""

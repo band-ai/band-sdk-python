@@ -83,6 +83,7 @@ from band.runtime.tools.registry import (
 from band.runtime.tools.schema import (
     ToolCallOutcome,
     serialize_tool_result,
+    tool_execution_failure,
     validate_tool_arguments,
 )
 from band.runtime.turn import records_turn_effects
@@ -2089,5 +2090,5 @@ class AgentTools(AgentToolsProtocol):
             # Stopped execution must escape ordinary tool-error conversion.
             raise
         except Exception as e:  # noqa: BLE001 -- BandToolError already re-raised above; this converts any other exception into a structured ToolCallOutcome(ok=False)
-            msg = f"Error executing {tool_name}: {e}"
+            msg = tool_execution_failure(tool_name, e)
             return ToolCallOutcome(value=msg, ok=False, error_message=msg)
