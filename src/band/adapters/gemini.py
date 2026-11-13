@@ -33,7 +33,11 @@ except ImportError as e:
 from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
 from band.core.adapterconfig import DEFAULT_MAX_TOOL_ROUNDS, BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
-from band.core.exceptions import ProviderRunError, ToolRoundsExceededError
+from band.core.exceptions import (
+    HOST_CONTROL_ERRORS,
+    ProviderRunError,
+    ToolRoundsExceededError,
+)
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import sanitize_tool_schema
@@ -591,6 +595,8 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                         else result
                     )
                 is_error = not succeeded
+            except HOST_CONTROL_ERRORS:
+                raise
             except ValidationError as exc:
                 errors = format_validation_error(exc)
                 result_str = f"Invalid arguments for {tool_name}: {errors}"

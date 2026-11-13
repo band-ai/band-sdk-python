@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
+from band.core.exceptions import BandError
 from band.integrations.ompwire import (
     OmpCommandName,
     OmpContent,
@@ -20,6 +21,7 @@ from band.runtime.tools.schema import tool_execution_failure
 from band.testing import FakeAgentTools, failure_reports
 from tests.adapters.omp.schemas import EchoDetail, EchoInput, EchoResult
 from tests.adapters.omp.turns import NativeTurnFactory, reply_call
+from tests.hostcontrol import host_control_errors
 from tests.integrations.omprpc.wirelog import checkpoint_frames
 
 ECHO_DOWN = "echo service down"
@@ -155,3 +157,20 @@ class TestCustomTools:
             await turn.callbacks.tool(reply_call("No echo for that"))
         assert result == failed_result(text)
         assert failure_reports(turn.tools) == []
+
+    @pytest.mark.parametrize("control", host_control_errors(), ids=type)
+    async def test_host_control_is_not_returned_as_a_tool_failure(
+        self, tmp_path: Path, control: BandError
+    ) -> None:
+        def echo(inp: EchoInput) -> str:
+            raise control
+
+        adapter = OmpAdapter(
+            OmpAdapterConfig(cwd=str(tmp_path)),
+            additional_tools=[(EchoInput, echo)],
+            emit=(),
+        )
+        with pytest.raises(type(control)) as caught:
+            await adapter._execute_tool(ECHO_CALL, FakeAgentTools())
+
+        assert caught.value is control

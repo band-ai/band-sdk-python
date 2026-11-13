@@ -29,7 +29,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from crewai.tools import BaseTool, ToolFailure
 
-from band.core.exceptions import BandToolError, InputNotAccepted
+from band.core.exceptions import HOST_CONTROL_ERRORS, BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
@@ -110,7 +110,7 @@ def _execute_tool(
     async def _execute() -> str | ToolFailure:
         try:
             return await coro_factory(tools)
-        except InputNotAccepted:
+        except HOST_CONTROL_ERRORS:
             raise
         except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             error_msg = str(e)

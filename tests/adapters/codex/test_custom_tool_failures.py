@@ -7,10 +7,12 @@ from typing import Any
 
 import pytest
 
+from band.core.exceptions import BandError
 from band.runtime.tools.schema import tool_execution_failure, tool_result_text
 from band.testing import failure_reports
 from tests.adapters.codex.kit import CodexTurn, run_codex_turn
 from tests.adapters.codexturns import tool_call_request, turn_completed
+from tests.hostcontrol import host_control_errors
 from tests.runtime.customtools.kit import API_UNAVAILABLE, WeatherInput, failing_tool
 
 NO_FORECAST = "no forecast for that city"
@@ -71,3 +73,15 @@ class TestCustomToolFailures:
         ]
         assert failure_reports(turn.tools) == []
         assert turn.tools.turn.replied
+
+    @pytest.mark.parametrize("control", host_control_errors(), ids=type)
+    async def test_host_control_is_not_returned_as_a_tool_failure(
+        self, control: BandError
+    ) -> None:
+        async def weather(args: WeatherInput) -> str:
+            raise control
+
+        with pytest.raises(type(control)) as caught:
+            await self.run_weather_turn(weather)
+
+        assert caught.value is control

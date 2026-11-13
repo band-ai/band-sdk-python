@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
+from band.core.exceptions import BandError
 from band.runtime.tools.schema import tool_execution_failure, tool_result_text
 from band.testing import failure_reports
 from tests.adapters.copilot_sdk.fakes import (
@@ -17,6 +18,7 @@ from tests.adapters.copilot_sdk.fakes import (
     requires_copilot_sdk,
     run_event,
 )
+from tests.hostcontrol import host_control_errors
 from tests.runtime.customtools.kit import API_UNAVAILABLE, WeatherInput, failing_tool
 
 pytestmark = requires_copilot_sdk
@@ -90,3 +92,15 @@ class TestCustomToolFailures:
         ]
         assert failure_reports(tools) == []
         assert tools.chat == [REPLY]
+
+    @pytest.mark.parametrize("control", host_control_errors(), ids=type)
+    async def test_host_control_is_not_returned_as_a_tool_failure(
+        self, control: BandError
+    ) -> None:
+        async def weather(args: WeatherInput) -> str:
+            raise control
+
+        with pytest.raises(type(control)) as caught:
+            await self.run_weather_turn(weather)
+
+        assert caught.value is control

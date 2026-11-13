@@ -33,7 +33,7 @@ from band.core.delivery import (
     finish_automatic_reply,
     reraise_delivery_cause,
 )
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import HOST_CONTROL_ERRORS, BandConfigError
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, send_event_safe
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
@@ -921,6 +921,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                     report=should_report,
                 )
             result = outcome.value
+        except HOST_CONTROL_ERRORS:
+            raise
         except ValidationError as exc:
             logger.error("Validation error for tool %s: %s", tool_name, exc)
             error_text = (

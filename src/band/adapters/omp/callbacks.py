@@ -25,7 +25,7 @@ from band.adapters.omp.turnstate import OmpTurn
 from band.converters.omp import OmpMetadataKey
 from band.core import delivery, exceptions
 from band.core.delivery import DeliveryFailedError
-from band.core.exceptions import InvalidToolArgumentsError
+from band.core.exceptions import HOST_CONTROL_ERRORS, InvalidToolArgumentsError
 from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import (
     PERMISSION_CANCELLED,
@@ -95,6 +95,8 @@ class OmpCallbackMixin(OmpAdapterContract):
                     ]
                 )
             return _text_tool_result(tool_result_text(value))
+        except HOST_CONTROL_ERRORS:
+            raise
         except DeliveryFailedError:
             raise
         except InvalidToolArgumentsError as error:

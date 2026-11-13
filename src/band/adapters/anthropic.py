@@ -17,6 +17,7 @@ from typing_extensions import Unpack
 from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
+from band.core.exceptions import HOST_CONTROL_ERRORS
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import RoundOutcome
@@ -534,6 +535,8 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                         else result
                     )
                 is_error = not succeeded
+            except HOST_CONTROL_ERRORS:
+                raise
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 outcome_record.record(TurnEffect.OBSERVE, False)
                 content = result_str = f"Error: {e}"

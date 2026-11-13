@@ -50,6 +50,7 @@ from band.core.delivery import (
     reraise_delivery_cause,
 )
 from band.core.exceptions import (
+    HOST_CONTROL_ERRORS,
     CleanupIncompleteError,
     InputNotAccepted,
     ProviderRunError,
@@ -1551,11 +1552,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     thread_id=thread_id,
                     turn_start=turn_start,
                 )
-            except (TurnResultAlreadyReported, TerminalProviderFailure):
-                # A nested handler (e.g. the turn-timeout branch) already
-                # reported this failure via send_failure; propagate it
-                # without emitting a friendly _emit_turn_outcome reply or
-                # a generic "Internal error" fallback.
+            except (TurnResultAlreadyReported, *HOST_CONTROL_ERRORS):
+                # Host control and already-reported failures belong to the
+                # runtime, not to the provider-failure fallback.
                 raise
             except CodexJsonRpcError as error:
                 await self._emit_failed_turn_outcome(
@@ -3043,6 +3042,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         ),
                         message_type="tool_result",
                     )
+            except HOST_CONTROL_ERRORS:
+                raise
             except ValidationError as exc:
                 errors = format_validation_error(exc)
                 error_text = f"Invalid arguments for {tool_name}: {errors}"
