@@ -52,7 +52,7 @@ from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
 )
 
 from band import LogSettings, LogStream
-from band.client.rest import aclose_rest_client
+from band.client.rest import aclose_rest_client, api_error_message
 from band.runtime.handles import normalize_handle
 
 logger = logging.getLogger(__name__)
@@ -111,9 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _format_api_error(err: ApiError, action: str) -> str:
     """Extract a human-readable message from a Fern ApiError."""
-    body = getattr(err, "body", None)
-    error_obj = getattr(body, "error", None)
-    message = getattr(error_obj, "message", None)
+    message = api_error_message(err.body)
     if message:
         return f"Failed to {action}: {message}"
     return f"Failed to {action}: HTTP {err.status_code}"
