@@ -444,10 +444,20 @@ class MessageLifecycle:
         return _platform_message(_accepted_response(response).data, room_id)
 
     async def get_actionable_page(
-        self, rest: AsyncRestClient, room_id: str, *, cursor: str | None = None
+        self,
+        rest: AsyncRestClient,
+        room_id: str,
+        *,
+        cursor: str | None = None,
+        status: DeliveryStatus | None = None,
     ) -> ActionablePage:
-        """Read one chronological page of outstanding deliveries; failures propagate."""
-        kwargs: dict[str, Any] = {"cursor": cursor} if cursor is not None else {}
+        """Read one chronological page of outstanding deliveries, optionally
+        only those in ``status``; failures propagate."""
+        kwargs: dict[str, Any] = {}
+        if cursor is not None:
+            kwargs["cursor"] = cursor
+        if status is not None:
+            kwargs["status"] = status.value
         response = await rest.agent_api_messages.list_agent_messages(
             chat_id=room_id,
             sort_order="asc",
@@ -487,24 +497,16 @@ class MessageLifecycle:
         processing messages and applies the platform's stopped-room gate.
         """
         try:
-            messages = []
-            page = 1
+            messages: list[PlatformMessage] = []
+            cursor: str | None = None
             while True:
-                response = await rest.agent_api_messages.list_agent_messages(
-                    chat_id=room_id,
-                    status="processing",
-                    page=page,
-                    request_options=DEFAULT_REQUEST_OPTIONS,
+                page = await self.get_actionable_page(
+                    rest, room_id, cursor=cursor, status=DeliveryStatus.PROCESSING
                 )
-                for item in response.data:
-                    messages.append(_platform_message(item, room_id))
-
-                total_pages = response.metadata.total_pages
-                if total_pages is None or page >= total_pages:
-                    break
-                page += 1
-
-            return messages
+                messages.extend(page.messages)
+                if page.next_cursor is None:
+                    return messages
+                cursor = page.next_cursor
         except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning(
                 "Failed to get stale processing messages for room %s: %s",
