@@ -303,7 +303,7 @@ class OmpRpcClient:
     ) -> None:
         """Arm prompt stop after a successful host tool; commit DECLINE on ABORT."""
         turn, _ = self._require_tool_callback(call.id)
-        turn.arm_stop(call.id, on_commit=on_commit, recheck_backlog=True)
+        turn.arm_stop(call.id, on_commit=on_commit, tool_call_id=call.toolCallId)
 
     def clear_stop_after_tool(self, call_id: str, *, cancel_task: bool = True) -> None:
         """Drop a previously armed stop that will not be committed."""
@@ -845,7 +845,7 @@ class OmpRpcClient:
         request_id: str,
         callback: Callable[[object], Awaitable[None]],
     ) -> None:
-        if self._closing or turn.failure.done() or turn.stop_after_tool_id is not None:
+        if self._closing or turn.failure.done() or turn.stop_aborting or turn.stopped:
             return
         key = (kind, request_id)
         if key in turn.callbacks:
@@ -895,11 +895,14 @@ class OmpRpcClient:
     async def _handle_tool(
         self, turn: PromptRun, call: OmpHostToolCall, identity: object
     ) -> None:
-        if turn.stop_after_tool_id is not None:
+        await turn.stop_resolved.wait()
+        if turn.stop_aborting or turn.stopped:
             return
         result = await turn.on_tool(call)
         if turn.stop_after_tool_id not in (None, call.id):
-            return
+            await turn.stop_resolved.wait()
+            if turn.stop_aborting or turn.stopped:
+                return
         if not self._callback_still_active(
             turn, OmpCallbackKind.TOOL, call.id, identity
         ):
@@ -921,27 +924,29 @@ class OmpRpcClient:
         assert turn.snapshot is not None
         _, state = turn.snapshot
         # A sibling tool can register background work after an idle snapshot.
-        return not state_has_async_backlog(state) and turn.is_single_tool_call(
-            call.toolCallId
+        return not state_has_async_backlog(state) and turn.is_only_pending_tool_call(
+            call.toolCallId, call.id
         )
 
     async def _stop_after_result(
         self, turn: PromptRun, result: dict[str, JsonValue]
     ) -> None:
-        # Builtin decline sets stop_recheck_backlog and must recheck before
-        # ABORT. Explicit stop_after_tool keeps the historical ABORT path.
+        # Builtin decline rechecks native work before ABORT. Explicit
+        # stop_after_tool keeps the historical unconditional ABORT path.
         call_id = turn.stop_after_tool_id
         if call_id is None:
             # Disarmed (cancel or refuse) — never fall through to ABORT.
             return
         commit = turn.stop_commit
-        if turn.stop_recheck_backlog:
+        if turn.stop_tool_call_id is not None:
             await self._refresh_completion_snapshot(turn, _STOP_PROTOCOL_ERROR)
             if self._turn is not turn or turn.stop_after_tool_id != call_id:
                 return
             assert turn.snapshot is not None
             _, state = turn.snapshot
-            if state_has_async_backlog(state):
+            if state_has_async_backlog(state) or not turn.is_only_pending_tool_call(
+                turn.stop_tool_call_id, call_id
+            ):
                 # Keep stop_after_tool_id so HOST_TOOL_CANCEL can still cancel
                 # this task mid-write; only drop the DECLINE commit.
                 turn.stop_commit = None
@@ -961,6 +966,9 @@ class OmpRpcClient:
         # The bridge must consume the result before abort cancels pending tools.
         # Commit DECLINE only after ABORT succeeds so cancel mid-ABORT cannot
         # leave an unpaired ledger decline.
+        turn.stop_aborting = True
+        # Parked callbacks can now retire without waiting for the abort acknowledgement.
+        turn.stop_resolved.set()
         try:
             await self._request_frame(OmpCommandName.ABORT, {}, preceding_frame=result)
         except (OmpProcessError, OmpRpcError) as error:
@@ -975,7 +983,8 @@ class OmpRpcClient:
     async def _handle_ui(
         self, turn: PromptRun, request: OmpUIRequest, identity: object
     ) -> None:
-        if turn.stop_after_tool_id is not None:
+        await turn.stop_resolved.wait()
+        if turn.stop_aborting or turn.stopped:
             return
         response = await turn.on_ui(request)
         if not self._callback_still_active(
