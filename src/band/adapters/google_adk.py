@@ -342,8 +342,6 @@ def _get_tool_bridge_class() -> type:
                         self.name, args
                     )
                 result, succeeded = outcome.value, outcome.ok
-                if succeeded and not isinstance(result, str):
-                    result = json.dumps(result, default=str)
             except HOST_CONTROL_ERRORS:
                 raise
             except ValidationError as exc:
@@ -358,6 +356,9 @@ def _get_tool_bridge_class() -> type:
                 logger.exception("Tool %s failed", self.name)
                 result = tool_execution_failure(self.name, exc)
                 succeeded = False
+
+            if succeeded and not isinstance(result, str):
+                result = json.dumps(result, default=str)
 
             if self._batch is not None:
                 self._batch.completed(

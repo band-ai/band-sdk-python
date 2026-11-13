@@ -40,9 +40,10 @@ from band.runtime.custom_tools import (
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
+    ImageContentResult,
     TurnEffect,
     image_block_placeholder,
-    is_image_passthrough_result,
+    image_passthrough_result,
     redact_tool_call_args,
     turn_effect,
 )
@@ -55,7 +56,7 @@ def _tool_names(content: list) -> str:
     return ",".join(names) if names else "-"
 
 
-def _image_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
+def _image_tool_result_content(result: ImageContentResult) -> list[dict[str, Any]]:
     """An image tool result as Anthropic ``ImageBlockParam`` dicts.
 
     No media_type validation: Anthropic's accepted set is exactly
@@ -511,6 +512,7 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                     )
 
             # Execute tool (check custom tools first, then platform tools)
+            effect = TurnEffect.OBSERVE
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
@@ -524,24 +526,25 @@ class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
                     )
                     effect = turn_effect(tool_name)
                 result, succeeded = outcome.value, outcome.ok
-                outcome_record.record(effect, succeeded)
-                if is_image_passthrough_result(tool_name, result):
-                    content = _image_tool_result_content(result)
-                    result_str = image_block_placeholder(len(content))
-                else:
-                    content = result_str = (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
-                    )
-                is_error = not succeeded
             except HOST_CONTROL_ERRORS:
                 raise
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                outcome_record.record(TurnEffect.OBSERVE, False)
-                content = result_str = f"Error: {e}"
-                is_error = True
+                result, succeeded = f"Error: {e}", False
                 logger.error("Tool %s failed: %s", tool_name, e)
+
+            outcome_record.record(effect, succeeded)
+            if (
+                image_result := image_passthrough_result(tool_name, result)
+            ) is not None:
+                content = _image_tool_result_content(image_result)
+                result_str = image_block_placeholder(len(content))
+            else:
+                content = result_str = (
+                    json.dumps(result, default=str)
+                    if not isinstance(result, str)
+                    else result
+                )
+            is_error = not succeeded
 
             # Report tool result if enabled (JSON format with tool_call_id for linking)
             # Best-effort: event reporting must never crash tool execution

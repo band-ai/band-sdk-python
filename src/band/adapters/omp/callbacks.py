@@ -83,18 +83,6 @@ class OmpCallbackMixin(OmpAdapterContract):
                 outcome = await tools.execute_tool_call_structured(
                     call.toolName, call.arguments
                 )
-            if not outcome.ok:
-                return _text_tool_result(
-                    outcome.error_message or str(outcome.value), is_error=True
-                )
-            value = outcome.value
-            if is_image_passthrough_result(call.toolName, value):
-                return OmpToolResult(
-                    content=[
-                        OmpContent.model_validate(block) for block in value["content"]
-                    ]
-                )
-            return _text_tool_result(tool_result_text(value))
         except HOST_CONTROL_ERRORS:
             raise
         except DeliveryFailedError:
@@ -105,6 +93,17 @@ class OmpCallbackMixin(OmpAdapterContract):
         except Exception as error:
             logger.exception("OMP host tool %s failed", call.toolName)
             return _text_tool_result(str(error), is_error=True)
+
+        if not outcome.ok:
+            return _text_tool_result(
+                outcome.error_message or str(outcome.value), is_error=True
+            )
+        value = outcome.value
+        if is_image_passthrough_result(call.toolName, value):
+            return OmpToolResult(
+                content=[OmpContent.model_validate(block) for block in value["content"]]
+            )
+        return _text_tool_result(tool_result_text(value))
 
     async def _ask_room(
         self,

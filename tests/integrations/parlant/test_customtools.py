@@ -7,15 +7,18 @@ from decimal import Decimal
 
 import pytest
 
+from band.core.exceptions import BandError
 from band.integrations.parlant.sessiontools import (
     NO_SESSION_TOOLS_ERROR,
 )
 from band.runtime.tools import tool_result_text
 from band.runtime.tools.schema import tool_execution_failure
 from band.testing import FakeAgentTools, reported_failures
+from tests.hostcontrol import host_control_errors
 from tests.integrations.parlant.custommodels import (
     MIX_FAILURE,
     OUT_OF_STOCK,
+    MixInput,
     PaintInput,
 )
 from tests.integrations.parlant.enginecontext import (
@@ -28,6 +31,11 @@ from tests.integrations.parlant.samples import Shade
 pytest.importorskip(
     "parlant.sdk"
 )  # real p.tool and PluginServer; dev-parlant venv only
+
+
+from parlant.core.tools import ToolContext
+
+from band.integrations.parlant.customtools import build_custom_tool
 
 
 class TestCustomTools:
@@ -175,3 +183,21 @@ class TestCustomTools:
         result = await custom_server.call("stock", session_id=SESSION_ID, arguments={})
 
         assert result == tool_result_text(OUT_OF_STOCK)
+
+    @pytest.mark.usefixtures("bound_room")
+    @pytest.mark.parametrize("control", host_control_errors(), ids=type)
+    async def test_custom_tool_preserves_host_control_at_the_sdk_boundary(
+        self, control: BandError
+    ) -> None:
+        async def mix(args: MixInput) -> str:
+            raise control
+
+        entry = build_custom_tool((MixInput, mix))
+        context = ToolContext(
+            agent_id="agent", session_id=SESSION_ID, customer_id="user"
+        )
+
+        with pytest.raises(type(control)) as caught:
+            await entry.function(context, color="teal")
+
+        assert caught.value is control

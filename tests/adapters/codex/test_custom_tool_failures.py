@@ -9,9 +9,14 @@ import pytest
 
 from band.core.exceptions import BandError
 from band.runtime.tools.schema import tool_execution_failure, tool_result_text
-from band.testing import failure_reports
-from tests.adapters.codex.kit import CodexTurn, run_codex_turn
-from tests.adapters.codexturns import tool_call_request, turn_completed
+from band.testing import FakeAgentTools, failure_reports
+from tests.adapters.codex.kit import ROOM_ID, CodexTurn, run_codex_turn
+from tests.adapters.codexturns import (
+    FakeCodexClient,
+    make_codex_adapter,
+    tool_call_request,
+    turn_completed,
+)
 from tests.hostcontrol import host_control_errors
 from tests.runtime.customtools.kit import API_UNAVAILABLE, WeatherInput, failing_tool
 
@@ -85,3 +90,26 @@ class TestCustomToolFailures:
             await self.run_weather_turn(weather)
 
         assert caught.value is control
+
+    async def test_failed_result_reporting_does_not_answer_the_tool_twice(self) -> None:
+        failure = RuntimeError("tool event transport unavailable")
+        tools = FakeAgentTools(room_id=ROOM_ID)
+
+        async def weather(args: WeatherInput) -> str:
+            tools.send_event_error = failure
+            return "sunny"
+
+        client = FakeCodexClient(events=[])
+        adapter = make_codex_adapter(client, additional_tools=[(WeatherInput, weather)])
+
+        with pytest.raises(RuntimeError) as caught:
+            await adapter._handle_server_request(
+                client=client,
+                tools=tools,
+                audience=[],
+                room_id=ROOM_ID,
+                event=tool_call_request(1, "weather", {"city": "Paris"}),
+            )
+
+        assert caught.value is failure
+        assert client.responses == [(1, self.answer("sunny", success=True))]

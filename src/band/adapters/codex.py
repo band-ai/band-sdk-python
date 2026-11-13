@@ -3017,31 +3017,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     outcome = await tools.execute_tool_call_structured(
                         tool_name, arguments
                     )
-                result, success = outcome.value, outcome.ok
-                if success and is_image_passthrough_result(tool_name, result):
-                    content_items = _image_content_items(result)
-                    text_result = image_block_placeholder(len(content_items))
-                else:
-                    text_result = (
-                        result
-                        if isinstance(result, str)
-                        else json.dumps(result, default=str)
-                    )
-                    content_items = [_text_item(text_result)]
-                await client.respond(
-                    event.id, _tool_response(content_items, success=success)
-                )
-                if should_report:
-                    await tools.send_event(
-                        content=json.dumps(
-                            {
-                                ToolEventKey.NAME: tool_name,
-                                ToolEventKey.OUTPUT: text_result,
-                                ToolEventKey.TOOL_CALL_ID: call_id,
-                            }
-                        ),
-                        message_type="tool_result",
-                    )
             except HOST_CONTROL_ERRORS:
                 raise
             except ValidationError as exc:
@@ -3060,6 +3035,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         ),
                         message_type="tool_result",
                     )
+                return
             except Exception as exc:
                 error_text = f"Error: {exc}"
                 logger.exception("Tool execution failed for %s", tool_name)
@@ -3075,6 +3051,34 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         ),
                         message_type="tool_result",
                     )
+
+                return
+
+            result, success = outcome.value, outcome.ok
+            if success and is_image_passthrough_result(tool_name, result):
+                content_items = _image_content_items(result)
+                text_result = image_block_placeholder(len(content_items))
+            else:
+                text_result = (
+                    result
+                    if isinstance(result, str)
+                    else json.dumps(result, default=str)
+                )
+                content_items = [_text_item(text_result)]
+            await client.respond(
+                event.id, _tool_response(content_items, success=success)
+            )
+            if should_report:
+                await tools.send_event(
+                    content=json.dumps(
+                        {
+                            ToolEventKey.NAME: tool_name,
+                            ToolEventKey.OUTPUT: text_result,
+                            ToolEventKey.TOOL_CALL_ID: call_id,
+                        }
+                    ),
+                    message_type="tool_result",
+                )
 
             return
 

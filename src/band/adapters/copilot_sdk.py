@@ -913,14 +913,6 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 outcome = await room_tools.execute_tool_call_structured(
                     tool_name, arguments
                 )
-            if not outcome.ok:
-                return await self._fail_tool_call(
-                    room_tools,
-                    invocation,
-                    outcome.error_message or str(outcome.value),
-                    report=should_report,
-                )
-            result = outcome.value
         except HOST_CONTROL_ERRORS:
             raise
         except ValidationError as exc:
@@ -937,11 +929,18 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 room_tools, invocation, f"Error: {exc}", report=should_report
             )
 
+        if not outcome.ok:
+            return await self._fail_tool_call(
+                room_tools,
+                invocation,
+                outcome.error_message or str(outcome.value),
+                report=should_report,
+            )
+        result = outcome.value
+
         binary_results: list[ToolBinaryResult] | None = None
         if is_image_passthrough_result(tool_name, result):
-            # Same failure path as the tool-execution try/except above: a
-            # malformed or future-extended content block must still route
-            # through _fail_tool_call, not raise uncaught past it.
+            # Malformed native image content must reach the model as a failure.
             try:
                 binary_results = [
                     ToolBinaryResult(
