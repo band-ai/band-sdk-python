@@ -34,10 +34,16 @@ class ActivityLookupInput(BaseModel):
 @dataclass
 class Invocation:
     started: bool = False
+    cancelled: bool = False
     entered: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
     settled: asyncio.Event = field(default_factory=asyncio.Event)
     result: str = ""
+
+
+def repeated_invocation(key: Operation) -> ValueError:
+    """What a second call of one operation raises, so the model sees it fail."""
+    return ValueError(f"Operation {key.value} already has an invocation")
 
 
 class ActivityWork:
@@ -59,7 +65,7 @@ class ActivityWork:
             raise ValueError("The operation requires its current private note")
         work = self.operations[request.key]
         if work.started:
-            raise ValueError(f"Operation {request.key.value} already has an invocation")
+            raise repeated_invocation(request.key)
         work.started = True
         try:
             response = await self._client.get(f"{self._base_url}{LOOKUP_PATH}")
@@ -68,6 +74,9 @@ class ActivityWork:
             work.entered.set()
             await work.release.wait()
             return work.result
+        except asyncio.CancelledError:
+            work.cancelled = True
+            raise
         finally:
             work.settled.set()
 
@@ -81,6 +90,15 @@ class ActivityWork:
     async def settled(self, key: Operation) -> None:
         async with asyncio.timeout(self.deadline_s):
             await self[key].settled.wait()
+
+    async def completed(self, key: Operation) -> str:
+        """Wait for ``key``'s call to return; fail if it was cancelled instead."""
+        await self.settled(key)
+        if self[key].cancelled:
+            raise AssertionError(
+                f"Operation {key.value} was cancelled before the test released it"
+            )
+        return self[key].result
 
     @asynccontextmanager
     async def releasing_on_exit(self) -> AsyncIterator[None]:

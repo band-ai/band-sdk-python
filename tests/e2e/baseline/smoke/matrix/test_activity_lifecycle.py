@@ -97,7 +97,7 @@ class TestActivityLifecycle:
 
                 a_finishing = observed.cursor()
                 work[Operation.A].release.set()
-                await work.settled(Operation.A)
+                await work.completed(Operation.A)
                 replies = await left.wait_for_reply(a, identity.id)
                 replies.assert_contains_exact(work[Operation.A].result)
                 await observed.finished(first, identity.id, since=a_finishing)
@@ -134,7 +134,7 @@ class TestActivityLifecycle:
                 )
                 c_finishing = observed.cursor()
                 work[Operation.C].release.set()
-                await work.settled(Operation.C)
+                await work.completed(Operation.C)
                 replies = await left.wait_for_reply(c, identity.id, since=reply_phase)
                 replies.assert_contains_exact(work[Operation.C].result)
                 replies.assert_contains_none(
