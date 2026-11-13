@@ -201,7 +201,8 @@ def validate_tool_arguments(
 
 @dataclass(frozen=True)
 class ToolCallOutcome:
-    """Structured result of :meth:`AgentTools.execute_tool_call_structured`.
+    """Structured result of :meth:`AgentTools.execute_tool_call_structured`
+    and :func:`band.runtime.custom_tools.run_custom_tool`.
 
     ``value`` is the JSON-serializable payload handed to the LLM (the
     success result, or an error string on failure so the model can still
@@ -215,6 +216,11 @@ class ToolCallOutcome:
     value: Any
     ok: bool
     error_message: str | None = None
+
+
+def tool_execution_failure(tool_name: str, error: Exception) -> str:
+    """The text a model reads when a tool raised instead of returning."""
+    return f"Error executing {tool_name}: {error}"
 
 
 def is_failed_tool_output(output: Any) -> bool:

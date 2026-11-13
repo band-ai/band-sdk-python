@@ -49,10 +49,10 @@ from band.core.types import (
 from band.runtime.custom_tools import (
     CustomToolDef,
     declared_effect,
-    execute_custom_tool,
     find_custom_tool,
     format_validation_error,
     get_custom_tool_name,
+    run_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
@@ -64,7 +64,6 @@ from band.runtime.tools import (
     redact_tool_call_args,
     turn_effect,
 )
-from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -571,18 +570,16 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    result = await execute_custom_tool(
+                    outcome = await run_custom_tool(
                         custom_tool, tool_input, tools=tools
                     )
-                    succeeded = not is_failed_tool_output(result)
                     effect = declared_effect(custom_tool[1]) or TurnEffect.OBSERVE
                 else:
                     outcome = await tools.execute_tool_call_structured(
                         tool_name, tool_input
                     )
-                    result = outcome.value
-                    succeeded = outcome.ok
                     effect = turn_effect(tool_name)
+                result, succeeded = outcome.value, outcome.ok
                 outcome_record.record(effect, succeeded)
                 if is_image_passthrough_result(tool_name, result):
                     response_parts = _image_function_response_parts(result)

@@ -9,6 +9,7 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
 )
 from tests.runtime.customtools.kit import (
+    API_UNAVAILABLE,
     CalculatorInput,
     SearchWebInput,
     WeatherInput,
@@ -103,7 +104,7 @@ class TestExecuteCustomTool:
         """Tool exceptions should bubble up for adapter to catch."""
         tool: CustomToolDef = (WeatherInput, failing_tool)
 
-        with pytest.raises(ValueError, match="API unavailable"):
+        with pytest.raises(ValueError, match=API_UNAVAILABLE):
             await execute_custom_tool(tool, {"city": "NYC"}, tools=None)
 
     @pytest.mark.asyncio

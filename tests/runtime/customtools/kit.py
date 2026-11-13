@@ -47,6 +47,13 @@ def sync_calculator(args: CalculatorInput) -> str:
     return str(result)
 
 
+API_UNAVAILABLE = "API unavailable"
+
+
+class FrameworkSignal(Exception):
+    """An exception the calling framework handles itself."""
+
+
 async def failing_tool(args: WeatherInput) -> str:
     """Tool that raises an exception."""
-    raise ValueError("API unavailable")
+    raise ValueError(API_UNAVAILABLE)

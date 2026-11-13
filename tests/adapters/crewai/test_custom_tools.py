@@ -5,7 +5,9 @@ import asyncio
 import pytest
 
 from band.core.types import Emit
+from band.runtime.tools.schema import tool_execution_failure
 from tests.adapters.crewai.kit import (
+    SERVICE_UNAVAILABLE,
     CalculatorInput,
     EchoInput,
     calculate,
@@ -149,9 +151,10 @@ class TestCustomTools:
         with room_context("room-123"):
             result = echo_tool._run(message="test")
 
-        result_data = tool_result_data(result)
-        assert result_data["status"] == "error"
-        assert "Service unavailable" in result_data["message"]
+        assert tool_result_data(result) == {
+            "status": "error",
+            "result": tool_execution_failure("echo", ValueError(SERVICE_UNAVAILABLE)),
+        }
 
     def test_custom_tool_reports_execution_when_enabled(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context

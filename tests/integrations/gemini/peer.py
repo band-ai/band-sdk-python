@@ -59,6 +59,7 @@ def call(
 
 
 WORK = "work"
+WORK_FAILURE = "work unavailable"
 
 
 class WorkInput(BaseModel):

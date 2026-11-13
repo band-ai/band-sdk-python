@@ -17,6 +17,7 @@ from band.adapters.pydantic_ai import PydanticAIAdapter
 from band.core.types import Emit, ToolEventKey
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import BandTool, TurnEffect
+from band.runtime.tools.schema import tool_execution_failure
 from band.testing import FakeAgentTools, events_of_type, reported_failures
 from tests.adapters.pydanticai.declinepeer import (
     CUSTOM,
@@ -97,9 +98,8 @@ class TestCustomDecline:
         }
         assert reported_failures(tools) == []
 
-    @pytest.mark.parametrize("register", [portable_registration, native_registration])
-    async def test_value_error_propagates_without_decline_or_retry(
-        self, register: Callable[..., Any]
+    async def test_native_value_error_propagates_without_decline_or_retry(
+        self,
     ) -> None:
         @declares_turn_effect(TurnEffect.DECLINE)
         async def decline(inp: CustomDeclineInput) -> str:
@@ -107,7 +107,7 @@ class TestCustomDecline:
 
         model = ScriptedModel([(CUSTOM, {"reason": REASON})], [(BandTool.NO_REPLY, {})])
         adapter = PydanticAIAdapter(
-            llm=model.model, additional_tools=[register(decline)]
+            llm=model.model, additional_tools=[native_registration(decline)]
         )
         await adapter.on_started("Bot", "Bot")
         tools = FakeAgentTools(room_id=ROOM_ID)
@@ -115,6 +115,28 @@ class TestCustomDecline:
             await adapter.on_event(turn_input(tools))
         assert len(model.requests) == 1
         assert not tools.turn.replied
+
+    async def test_portable_value_error_reaches_the_next_model_as_a_failed_result(
+        self,
+    ) -> None:
+        error = ValueError(FAILURE)
+
+        @declares_turn_effect(TurnEffect.DECLINE)
+        async def decline(inp: CustomDeclineInput) -> str:
+            raise error
+
+        model = ScriptedModel([(CUSTOM, {"reason": REASON})], [(BandTool.NO_REPLY, {})])
+        adapter = PydanticAIAdapter(
+            llm=model.model, additional_tools=[portable_registration(decline)]
+        )
+        await adapter.on_started("Bot", "Bot")
+        tools = FakeAgentTools(room_id=ROOM_ID)
+        await adapter.on_event(turn_input(tools))
+        assert tool_results(model.requests[1]) == [
+            (CUSTOM, "call-1-0", tool_execution_failure(CUSTOM, error), "success")
+        ]
+        assert tools.turn.replied
+        assert reported_failures(tools) == []
 
     @pytest.mark.parametrize("register", [portable_registration, native_registration])
     async def test_native_retry_allows_actual_recovery(

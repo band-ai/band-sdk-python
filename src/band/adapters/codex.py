@@ -127,9 +127,9 @@ from band.runtime.activity import permission_wait
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_to_openai_schema,
-    execute_custom_tool,
     find_custom_tool,
     format_validation_error,
+    run_custom_tool,
 )
 from band.runtime.decisions import (
     APPROVAL_NOT_PENDING_TEMPLATE,
@@ -3009,20 +3009,16 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
+                # Structured: either kind of tool can fail without raising (bad
+                # args, API error, a failure value) via ok=False, which must reach
+                # Codex as a failed call.
                 if custom_tool:
-                    result = await execute_custom_tool(
-                        custom_tool, arguments, tools=tools
-                    )
-                    success = True
+                    outcome = await run_custom_tool(custom_tool, arguments, tools=tools)
                 else:
-                    # Structured: a base tool (e.g. band_send_message) can fail without
-                    # raising (bad args, API error) via ok=False; the plain variant would
-                    # report that failure to Codex as success.
                     outcome = await tools.execute_tool_call_structured(
                         tool_name, arguments
                     )
-                    result = outcome.value
-                    success = outcome.ok
+                result, success = outcome.value, outcome.ok
                 if success and is_image_passthrough_result(tool_name, result):
                     content_items = _image_content_items(result)
                     text_result = image_block_placeholder(len(content_items))

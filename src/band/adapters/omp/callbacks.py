@@ -55,7 +55,7 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 from band.runtime.activity import retain_request_permission
-from band.runtime.custom_tools import execute_custom_tool, find_custom_tool
+from band.runtime.custom_tools import find_custom_tool, run_custom_tool
 from band.runtime.tools import (
     is_image_passthrough_result,
     iter_tool_definitions,
@@ -78,16 +78,16 @@ class OmpCallbackMixin(OmpAdapterContract):
         try:
             custom = find_custom_tool(self._custom_tools, call.toolName)
             if custom:
-                value = await execute_custom_tool(custom, call.arguments, tools=tools)
+                outcome = await run_custom_tool(custom, call.arguments, tools=tools)
             else:
                 outcome = await tools.execute_tool_call_structured(
                     call.toolName, call.arguments
                 )
-                if not outcome.ok:
-                    return _text_tool_result(
-                        outcome.error_message or str(outcome.value), is_error=True
-                    )
-                value = outcome.value
+            if not outcome.ok:
+                return _text_tool_result(
+                    outcome.error_message or str(outcome.value), is_error=True
+                )
+            value = outcome.value
             if is_image_passthrough_result(call.toolName, value):
                 return OmpToolResult(
                     content=[

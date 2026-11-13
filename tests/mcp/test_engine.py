@@ -33,6 +33,7 @@ from band.integrations.mcp.engine import (
     CustomToolSpec,
     EmbeddedResolver,
     EngineSpec,
+    MCPToolRegistration,
     SendEventWideInput,
     build_custom_tool_registration,
     build_engine,
@@ -587,11 +588,11 @@ async def test_unexpected_tool_failure_is_logged(
 ) -> None:
     """Unexpected execute failures keep a stack in agent logs."""
 
-    async def handler(_input_data: EchoInput) -> dict[str, str]:
+    async def execute(_arguments: dict[str, Any]) -> str:
         raise RuntimeError("boom")
 
-    registration = build_custom_tool_registration(
-        CustomToolSpec(input_model=EchoInput, handler=handler)
+    registration = MCPToolRegistration(
+        name="echo", description="Echo", input_model=EchoInput, execute=execute
     )
     mcp = build_engine(EngineSpec(name="test-fail-log", tools=(registration,)))
 

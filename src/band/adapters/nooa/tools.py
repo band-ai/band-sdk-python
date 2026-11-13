@@ -32,9 +32,9 @@ from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import MessageType, ToolEventKey
 from band.runtime.custom_tools import (
     CustomToolDef,
-    execute_custom_tool,
     get_custom_tool_name,
     reject_conflicting_tool_names,
+    run_custom_tool,
 )
 from band.runtime.tools import (
     ImageContentResult,
@@ -434,7 +434,10 @@ def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
     input_model, _ = tool_def
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
-        return await execute_custom_tool(tool_def, arguments, tools=tools)
+        outcome = await run_custom_tool(tool_def, arguments, tools=tools)
+        if not outcome.ok:
+            raise BandToolError(outcome.error_message or str(outcome.value))
+        return outcome.value
 
     name = get_custom_tool_name(input_model)
     return RoomToolSpec(

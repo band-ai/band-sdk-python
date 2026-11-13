@@ -16,11 +16,15 @@ from band.integrations.parlant.tools import create_parlant_tools
 from band.testing import FakeAgentTools
 from tests.integrations.parlant.custommodels import (
     AnswerInput,
+    MixInput,
     NoteInput,
     PaintInput,
     Receipt,
+    StockInput,
     TallyInput,
     answer,
+    mix,
+    stock,
     tally,
 )
 from tests.integrations.parlant.enginecontext import running_engine
@@ -152,6 +156,8 @@ async def custom_server(plugin_server, received):
                 (AnswerInput, answer),
                 (NoteInput, note),
                 (TallyInput, tally),
+                (MixInput, mix),
+                (StockInput, stock),
             ]
         )
     )

@@ -64,3 +64,27 @@ class AnswerInput(BaseModel):
 @declares_turn_effect(TurnEffect.REPLY)
 async def answer(args: AnswerInput) -> str:
     return f"answered {args.text}"
+
+
+class MixInput(BaseModel):
+    """Mix a paint color."""
+
+    color: str
+
+
+MIX_FAILURE = "the tint machine is jammed"
+
+
+async def mix(args: MixInput) -> str:
+    raise ValueError(MIX_FAILURE)
+
+
+class StockInput(BaseModel):
+    """Check a paint's stock."""
+
+
+OUT_OF_STOCK = {"ok": False, "reason": "out of stock"}
+
+
+async def stock(args: StockInput) -> dict[str, object]:
+    return OUT_OF_STOCK
