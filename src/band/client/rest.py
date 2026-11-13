@@ -83,6 +83,21 @@ async def aclose_rest_client(client: AsyncRestClient) -> None:
     await client._client_wrapper.httpx_client.httpx_client.aclose()
 
 
+def api_error_message(body: object) -> str | None:
+    """The platform's ``error.message`` from a Fern ``ApiError`` body.
+
+    Fern parses the body into a model only for the statuses an endpoint
+    declares; any other status (422 on most endpoints) leaves the decoded
+    JSON as a plain dict.
+    """
+    if isinstance(body, dict):
+        inner = body.get("error")
+        message = inner.get("message") if isinstance(inner, dict) else None
+    else:
+        message = getattr(getattr(body, "error", None), "message", None)
+    return message if isinstance(message, str) else None
+
+
 __all__ = [
     "DEFAULT_REQUEST_OPTIONS",
     "AddAgentContactResponseData",
@@ -132,4 +147,5 @@ __all__ = [
     "UnauthorizedError",
     "UnprocessableEntityError",
     "aclose_rest_client",
+    "api_error_message",
 ]

@@ -175,12 +175,13 @@ class ContactEventHandler:
             if self._hub_room_id is not None:
                 return self._hub_room_id
 
+            task_id = self._config.hub_task_id
             logger.info(
                 "Creating hub room for contact events at startup (task_id=%s)",
-                self._config.hub_task_id or "none",
+                task_id or "none",
             )
             response = await self._link.rest.agent_api_chats.create_agent_chat(
-                chat=ChatRoomRequest(task_id=self._config.hub_task_id or None),
+                chat=ChatRoomRequest(task_id=task_id) if task_id else ChatRoomRequest(),
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
             self._hub_room_id = response.data.id
