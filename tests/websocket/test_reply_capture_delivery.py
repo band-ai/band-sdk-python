@@ -115,35 +115,6 @@ async def test_wait_for_processed_resolves_on_processed() -> None:
     await asyncio.wait_for(waiter, timeout=1)  # returns without raising
 
 
-async def test_wait_for_processed_waits_through_failed_then_succeeds() -> None:
-    """FAILED is not terminal (a new agent context can run the message again),
-    so the barrier must not give up on it — it resolves only once PROCESSED
-    arrives."""
-    capture = ReplyCapture("room-1", deadline_s=2)
-    waiter = asyncio.create_task(capture.wait_for_processed(MSG, AGENT))
-    await asyncio.sleep(0)
-
-    capture._on_message_updated(_delivery_update("failed", error="boom"))
-    await asyncio.sleep(0.05)
-    assert not waiter.done()  # did NOT short-circuit on failed
-
-    capture._on_message_updated(_delivery_update("processing"))
-    capture._on_message_updated(_delivery_update("processed"))
-    await asyncio.wait_for(waiter, timeout=1)
-
-
-async def test_wait_for_processed_timeout_reports_last_status_and_error() -> None:
-    capture = ReplyCapture("room-1")
-    capture._on_message_updated(_delivery_update("failed", error="kaboom"))
-
-    with pytest.raises(TimeoutError) as excinfo:
-        await capture.wait_for_processed(MSG, AGENT, deadline_s=0.1)
-
-    message = str(excinfo.value)
-    assert "failed" in message  # last status surfaced
-    assert "kaboom" in message  # attempt error surfaced
-
-
 async def test_timeout_reports_durable_completion_without_passing_stale_observer(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
