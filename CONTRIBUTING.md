@@ -76,10 +76,10 @@ Thank you for your interest in contributing to the Band Python SDK! This documen
 
    ```bash
    # Run unit tests
-   uv run pytest tests/ --ignore=tests/integration/ -v
+   uv run pytest tests/ --ignore=tests/e2e/ -v
 
    # Run with coverage
-   uv run pytest tests/ --ignore=tests/integration/ --cov=src/band
+   uv run pytest tests/ --ignore=tests/e2e/ --cov=src/band
 
    # Run a specific test
    uv run pytest tests/ -k "test_name"
@@ -176,14 +176,16 @@ def process(value: str | None) -> list[str]: ...
 def get_items() -> dict[str, list[int]]: ...
 ```
 
-## Running Integration Tests
+## Running Live E2E Tests
 
-Integration tests require a valid Band API key:
+Tests that need the real platform live in the E2E baseline, which provisions
+its own agents from `BAND_API_KEY_USER` in `.env.test`:
 
 ```bash
-# Set up your API key in .env or agent_config.yaml
-uv run pytest tests/integration/ -v -s --no-cov
+E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov
 ```
+
+See `tests/e2e/baseline/README.md`.
 
 ## Naming Conventions
 

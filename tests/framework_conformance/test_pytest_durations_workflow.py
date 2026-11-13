@@ -37,7 +37,6 @@ class TestPytestDurationsWorkflow:
         assert CLEAN_FLAG in script
         assert f'{PATH_FLAG} "$DURATIONS_PATH"' in script
         assert "--ignore=tests/e2e" in script
-        assert "--ignore=tests/integration" in script
         assert "-n0" not in script
         assert "--splits" not in script
 

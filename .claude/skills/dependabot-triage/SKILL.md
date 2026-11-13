@@ -155,19 +155,17 @@ Step 6. It goes to Step 8 as an excluded bump.
 ## Step 5 — Run the full suite
 
 Prove the consolidated set. The lint/type gate and unit tests are the floor;
-integration and e2e run when their credentials are present (see AGENTS.md's
-Environment Variables — they need Band + LLM keys, and e2e needs
-`E2E_TESTS_ENABLED=true`).
+the live e2e baseline runs when its credentials are present (see AGENTS.md's
+Environment Variables — it needs Band + LLM keys and `E2E_TESTS_ENABLED=true`).
 
 ```bash
 uv sync --extra dev
 uv run pre-commit run --all-files                                     # ruff + pyrefly gate
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/  # unit
-uv run pytest tests/integration/ -v -s --no-cov                       # needs BAND_API_KEY_USER
+uv run pytest tests/ --ignore=tests/e2e/                              # unit
 E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov  # needs live platform + LLM keys
 ```
 
-**Actually run integration and e2e — don't pre-declare them "env-blocked."** If
+**Actually run e2e — don't pre-declare them "env-blocked."** If
 they fail, isolate the cause (Step 6) rather than assuming; a real config bug
 hides behind that assumption. The e2e baseline provisions its own agents (only
 needs `BAND_API_KEY_USER`) and can take a while.

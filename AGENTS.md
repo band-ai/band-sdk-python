@@ -275,12 +275,16 @@ tests/
 ├── converters/     # Unit tests per converter
 ├── core/           # Core logic tests
 ├── runtime/        # Runtime tests
-├── integration/    # Real API tests (skipped in CI)
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
 │   └── baseline/   # The only E2E suite: reusable toolkit + smokes (see baseline/README.md)
 ├── skills/         # Tests for .claude/skills scripts (paths via tests/paths.py anchors)
 └── conftest.py     # Shared fixtures
 ```
+
+Every test runs either in PR CI or in the nightly live E2E baseline
+(`tests/e2e/baseline`, run by `.github/workflows/e2e.yml`). A test that needs
+the real platform belongs in the baseline; anything else runs offline in CI
+against local peers. Do not add a suite that neither runs.
 
 `testpaths = ["tests"]`, so **every** test lives here — including tests for code
 outside `src/band` (`band-bridge` -> `tests/bridge`, `docker/band_python_kit` ->
@@ -344,19 +348,16 @@ uv sync --all-packages --locked --extra dev-strands-nooa
 uv sync --all-packages --locked --extra dev-parlant
 
 # Run unit tests (serial; use this for --pdb and whenever live gates are on)
-uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run --all-packages pytest tests/ --ignore=tests/e2e/ -v
 
 # Run unit tests the way CI does (xdist worksteal; never with --pdb or live gates)
-uv run --all-packages pytest -n 4 --dist worksteal --ignore=tests/e2e --ignore=tests/integration -q
+uv run --all-packages pytest -n 4 --dist worksteal --ignore=tests/e2e -q
 
 # Run single test
 uv run --all-packages pytest tests/ -k "test_name"
 
 # Run with coverage
-uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src/band
-
-# Run integration tests (requires API key)
-uv run --all-packages pytest tests/integration/ -v -s --no-cov
+uv run --all-packages pytest tests/ --ignore=tests/e2e/ --cov=src/band
 
 # Run E2E tests (requires live platform + LLM API keys)
 E2E_TESTS_ENABLED=true uv run --all-packages pytest tests/e2e/ -v -s --no-cov
@@ -544,7 +545,7 @@ Full Python gate (commands are a toolbox, not a requirement for prose changes):
 uv run --all-packages ruff check .
 uv run --all-packages ruff format --check .
 uv run --all-packages pyrefly check
-uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -q
+uv run --all-packages pytest tests/ --ignore=tests/e2e/ -q
 ```
 
 ## Git Workflow

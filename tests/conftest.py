@@ -37,7 +37,6 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import cache
 from itertools import count
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
@@ -137,7 +136,7 @@ class CollectionGateSettings(BaseSettings):
 
     Field name == env var (case-insensitive). Read via a fresh instance in the
     collection hooks so the current environment is always what decides.
-    ``env_ignore_empty`` treats a set-but-empty gate (``CI=``, as some CI
+    ``env_ignore_empty`` treats a set-but-empty gate (``E2E_TESTS_ENABLED=``, as some CI
     wrappers export) as unset instead of raising a ValidationError that would
     kill the whole run inside a collection hook.
     """
@@ -146,25 +145,10 @@ class CollectionGateSettings(BaseSettings):
         extra="ignore", case_sensitive=False, env_ignore_empty=True
     )
 
-    ci: bool = False  # CI
     e2e_tests_enabled: bool = False  # E2E_TESTS_ENABLED
     docker_tests_enabled: bool = False  # DOCKER_TESTS_ENABLED
     sandbox_tests_enabled: bool = False  # SANDBOX_TESTS_ENABLED
     vscode_chat_tests_enabled: bool = False  # VSCODE_CHAT_TESTS_ENABLED
-
-
-def pytest_ignore_collect(collection_path: Path) -> bool | None:
-    """Skip real-API integration tests (tests/integration/) in CI.
-
-    Matches the exact path segment: the substring check it replaces also
-    swallowed tests/integrations/ — the mocked framework-integration unit
-    tests — silently dropping them from every CI run. Returns None (not
-    False) when not ignoring, so other mechanisms like --ignore still
-    apply locally.
-    """
-    if CollectionGateSettings().ci and "integration" in collection_path.parts:
-        return True
-    return None
 
 
 # Opt-in suite gates: marker -> the CollectionGateSettings field that opens it.
