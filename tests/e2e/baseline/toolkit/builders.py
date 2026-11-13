@@ -24,6 +24,10 @@ from typing import TYPE_CHECKING, Any
 
 from band import create_room_workspace_resolver
 from band.adapters.codex import CodexSandboxMode, CodexWindowsSandbox
+from band.core.defaultmodels import (
+    LETTA_SELF_HOSTED_MODEL,
+    LETTA_SELF_HOSTED_MODEL_SETTINGS,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.omp import omp_provider_env
@@ -924,9 +928,17 @@ def _build_letta(
             provider_key=s.backends.letta_api_key or None,
             model=s.backends.letta_model,
             embedding=s.backends.letta_embedding or None,
+            model_settings=_letta_model_settings(s.backends.letta_model),
             mcp=mcp,
             custom_section=prompt or "",
             consolidate_memory_on_cleanup=False,
         ),
         **feature_kwargs(features),
+    )
+
+
+def _letta_model_settings(model: str) -> dict[str, Any] | None:
+    """The pinned self-hosted model's settings; other models keep Letta's defaults."""
+    return (
+        LETTA_SELF_HOSTED_MODEL_SETTINGS if model == LETTA_SELF_HOSTED_MODEL else None
     )
