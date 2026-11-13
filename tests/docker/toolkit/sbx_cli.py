@@ -6,8 +6,8 @@ the host-side proxy that injects the real credentials. That is what a bare
 `docker run` cannot exercise, and what the never-in-VM proof needs.
 
 The sandbox-driving methods need a Docker-Sandbox-capable host with the `sbx`
-CLI, and run only under the ``sandbox``-marked proof
-(``SANDBOX_TESTS_ENABLED=true``). The module itself imports cleanly (stdlib +
+CLI, and run only in the baseline kit lane's smokes
+(``tests/e2e/baseline/smoke/kit/``). The module itself imports cleanly (stdlib +
 yaml), so its pure helpers are unit-tested in CI: scoped secret commands and
 the absence-search command in ``tests/docker/test_nevervm_contracts.py``, and
 the proxy cert probe and the pty-attached process lifecycle in
@@ -114,10 +114,13 @@ def local_workload(image: str) -> Iterator[Path]:
     """Wrap a loaded workload in the canonical declarations for local sbx use.
 
     sbx builds local descriptors with their directory as context; the SDK
-    recipe needs repository-root inputs and is built with Buildx first.
+    recipe needs repository-root inputs and is built with Buildx first. sbx
+    names the workload after that directory and rejects an ``_`` in it, which
+    ``tempfile``'s random suffix often contains, so the name is hex-only.
     """
-    with tempfile.TemporaryDirectory(prefix="band-workload-") as temporary:
-        yield write_local_workload(image, Path(temporary))
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary) / f"band-workload-{uuid.uuid4().hex[:12]}"
+        yield write_local_workload(image, directory)
 
 
 def write_local_workload(image: str, directory: Path) -> Path:
@@ -295,7 +298,7 @@ def _spawn_pty_process(argv: list[str]) -> tuple[subprocess.Popen[bytes], int]:
     imported here rather than at module level, purely so this module still
     imports cleanly for collection on Windows CI — every actual caller of
     this function only ever runs on POSIX (real `sbx`-driving callers are
-    gated behind `sbx_available()`/`SANDBOX_TESTS_ENABLED` or their own
+    gated behind the kit lane's `Dep.SBX` requirement or their own
     documented prerequisites; the unit tests below are Windows-skipped via
     `markers.requires_posix_pty`).
     """
@@ -423,11 +426,8 @@ class Sandbox:
     ) -> Iterator[Sandbox]:
         """Create a positional workload, own its foreground PTY, then remove it."""
         name = name or sandbox_name()
-        subprocess.run(
+        run_sbx_subprocess(
             [SBX, "create", "--name", name, str(kit), str(workspace)],
-            capture_output=True,
-            text=True,
-            check=True,
             timeout=CREATE_TIMEOUT_S,
         )
         # `sbx create` above already succeeded, so `sbx rm` must run on any

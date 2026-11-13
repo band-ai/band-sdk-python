@@ -50,6 +50,9 @@ name: E2E (baseline)
 # - nooa         — NooaAdapter (NVIDIA NOOA). Shares the `dev-strands-nooa` extra, which installs
 #                  NOOA only on Python 3.12-3.13 off Windows (it imports fcntl), so
 #                  the lane is Linux-only.
+# - kit          — the band-python-kit image and its Docker Sandbox (no adapter;
+#                  `@lane`-pinned smokes). Linux-only: it builds a Linux image and
+#                  installs the `sbx` CLI on the runner's KVM.
 #
 # CopilotSDKAdapter (BYOK on Anthropic) runs in `core`: the SDK self-downloads its
 # CLI runtime (no setup step), so it needs no isolated lane or GitHub auth.
@@ -85,6 +88,7 @@ on:
           - strands
           - nooa
           - parlant
+          - kit
       os:
         description: "OS to run on (all = Linux + Windows)."
         type: choice
@@ -309,6 +313,15 @@ jobs:
     - name: Start the Letta server (letta)
       if: matrix.lane == 'letta'
       run: .github/scripts/setup-letta.sh
+
+    # sbx signs in with a Docker account; the kit image itself is built by the
+    # smokes on the runner's own Docker daemon.
+    - name: Install + sign in the Docker Sandboxes CLI (kit)
+      if: matrix.lane == 'kit'
+      env:
+        SBX_DOCKER_USERNAME: ${{ secrets.E2E_DOCKER_USERNAME }}
+        SBX_DOCKER_TOKEN: ${{ secrets.E2E_DOCKER_TOKEN }}
+      run: bash .github/scripts/setup-sbx.sh
 
     # -----------------------------------------------------------------------------
 

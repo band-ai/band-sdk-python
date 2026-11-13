@@ -35,7 +35,7 @@ crewai, parlant, and Strands/NOOA are kept out of the default venv, so there are
 
 | Extra | Command | Contains | Lanes it serves |
 |---|---|---|---|
-| `dev` | `uv sync --locked --all-packages --extra dev` | everything **except crewai, parlant, strands and nooa** (anthropic, claude_sdk, copilot_sdk, agno, langgraph, pydantic_ai, gemini, google_adk, ACP, opencode, letta) | core, google, backends, opencode, letta |
+| `dev` | `uv sync --locked --all-packages --extra dev` | everything **except crewai, parlant, strands and nooa** (anthropic, claude_sdk, copilot_sdk, agno, langgraph, pydantic_ai, gemini, google_adk, ACP, opencode, letta) | core, google, backends, opencode, letta, kit |
 | `dev-crewai` | `uv sync --locked --all-packages --extra dev-crewai` | crewai + test tooling only (**no** pydantic-ai/parlant/agno/gemini/...) | crewai |
 | `dev-strands-nooa` | `uv sync --locked --all-packages --extra dev-strands-nooa` | Strands, NOOA (Python 3.12–3.13, off Windows) and their LangGraph peer, on OpenAI 2 | strands, nooa |
 | `dev-parlant` | `uv sync --locked --all-packages --extra dev-parlant` | parlant + test tooling | parlant |
@@ -85,6 +85,7 @@ with `@lane(Lane.X)` (that's a `band-write-e2e-test` concern).
 | `strands` | **dev-strands-nooa** | strands | OPENAI key |
 | `nooa` | **dev-strands-nooa** | nooa | ANTHROPIC key; Python 3.12–3.13 on POSIX; Linux-only in CI |
 | `parlant` | **dev-parlant** | none — a bespoke `@lane(Lane.PARLANT)`-pinned smoke, no matrix adapter | OPENAI key; the smoke runs its own in-process Parlant server |
+| `kit` | dev | none — `@lane(Lane.KIT)`-pinned band-python-kit smokes (`smoke/kit/`); Linux-only in CI | a running Docker daemon, plus a signed-in `sbx` CLI on a KVM/Apple-silicon host for the sandbox smokes |
 
 ## Running — copy-paste
 

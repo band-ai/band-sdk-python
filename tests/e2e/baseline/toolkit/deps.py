@@ -39,6 +39,7 @@ from urllib.parse import urlparse
 
 from band.integrations.acp.cursor import CURSOR_CLI_BINARY
 from band.integrations.omp import OMP_MIN_BUN
+from tests.docker.toolkit.sbx_cli import sbx_available
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.antigravity import (
     antigravity_api_key,
@@ -92,6 +93,7 @@ class Lane(StrEnum):
     NOOA = "nooa"
     STRANDS = "strands"
     PARLANT = "parlant"
+    KIT = "kit"
 
 
 # The shared default lane: every provider-key adapter with no special isolation
@@ -136,6 +138,9 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     Lane.PARLANT: Extra.DEV_PARLANT,
     Lane.NOOA: Extra.DEV_STRANDS_NOOA,
     Lane.STRANDS: Extra.DEV_STRANDS_NOOA,
+    # The band-python-kit image and its Docker Sandbox: a Docker daemon plus the
+    # `sbx` CLI its job stands up. No adapter lives here; its smokes are `@lane`-pinned.
+    Lane.KIT: Extra.DEV,
 }
 
 
@@ -150,9 +155,13 @@ LANE_EXTRAS: dict[Lane, Extra] = {
 # (https://docs.letta.com/guides/server/source).
 #
 # NOOA imports ``fcntl`` unconditionally, so it cannot be imported on Windows and
-# the ``dev-strands-nooa`` extra does not install it there. Every other lane runs on every OS
-# the e2e matrix offers.
-LINUX_ONLY_LANES: frozenset[Lane] = frozenset({Lane.LETTA, Lane.NOOA})
+# the ``dev-strands-nooa`` extra does not install it there.
+#
+# The kit image is a Linux image (the Windows runner only runs Windows
+# containers), and Docker Sandboxes needs Windows 11 with the Hypervisor
+# Platform, which the Windows Server runner is not. Every other lane runs on
+# every OS the e2e matrix offers.
+LINUX_ONLY_LANES: frozenset[Lane] = frozenset({Lane.LETTA, Lane.NOOA, Lane.KIT})
 
 
 class Dep(Enum):
@@ -183,6 +192,8 @@ class Dep(Enum):
     OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
     OMP_NATIVE = "omp_native"  # the omp extra and native RPC backend
     SECOND_USER = "second_user"  # BAND_API_KEY_USER_2, a second human in the room
+    DOCKER = "docker"  # a reachable Docker daemon (builds and runs the kit image)
+    SBX = "sbx"  # the Docker Sandboxes `sbx` CLI on PATH
 
 
 @dataclass(frozen=True)
@@ -344,6 +355,20 @@ def _codex_cwd_available(settings: BaselineSettings) -> bool:
     return path != REPO_ROOT and REPO_ROOT not in path.parents
 
 
+def _docker_daemon_available(_settings: BaselineSettings) -> bool:
+    """``docker info`` reaches a daemon (the CLI alone cannot build or run)."""
+    try:
+        completed = subprocess.run(
+            ["docker", "info"],
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
 def _letta_llm_provider_available(settings: BaselineSettings) -> bool:
     """Keys the self-hosted Letta server needs for its configured model/embedding."""
     llm = settings.llm_credentials
@@ -476,6 +501,16 @@ _DEPS: dict[Dep, DepSpec] = {
         "nooa is not importable (dev-strands-nooa installs it on Python 3.12-3.13, "
         "off Windows)",
         lane=Lane.NOOA,
+    ),
+    Dep.DOCKER: DepSpec(
+        _docker_daemon_available,
+        "no reachable Docker daemon (`docker info` failed)",
+        lane=Lane.KIT,
+    ),
+    Dep.SBX: DepSpec(
+        lambda _s: sbx_available(),
+        "Docker Sandboxes `sbx` CLI not found on PATH (signed in, on a KVM host)",
+        lane=Lane.KIT,
     ),
 }
 
