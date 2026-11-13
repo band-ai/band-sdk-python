@@ -621,6 +621,54 @@ class SlowTurnStartClient(FakeCodexClient):
         return result
 
 
+class AnswersAStepLaterClient(FakeCodexClient):
+    """An app-server whose turn/interrupt answer arrives one loop step after
+    the request, as an answer read from a real process does."""
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == CodexRequestMethod.TURN_INTERRUPT:
+            await asyncio.sleep(0)
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+
+
+class UnansweringClient(FakeCodexClient):
+    """An app-server that stops answering one kind of request: it answers the
+    first ``answered`` of them, then takes each further one and says nothing."""
+
+    def __init__(
+        self, unanswered: CodexRequestMethod, *, answered: int = 0, **kwargs: Any
+    ) -> None:
+        super().__init__(**kwargs)
+        self._unanswered = unanswered
+        self._answered = answered
+        self.asked = asyncio.Event()
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == self._unanswered and len(self.params_of(self._unanswered)) >= (
+            self._answered
+        ):
+            self.requests.append((method, dict(params or {})))
+            self.asked.set()
+            await asyncio.Future[None]()
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+
+
 class CompletesWhileRefusingClient(SlowTurnStartClient):
     """An app-server that completes its turn while the adapter answers a
     request no turn owns."""

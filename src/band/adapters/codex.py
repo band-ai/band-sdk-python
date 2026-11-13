@@ -15,7 +15,7 @@ from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import StrEnum
 from functools import partial
-from typing import Any, ClassVar, Literal, NamedTuple, Protocol
+from typing import Any, ClassVar, Literal, NamedTuple, Protocol, Self
 
 from band_sdk_core import AgentFailure
 from pydantic import (
@@ -24,6 +24,7 @@ from pydantic import (
     Field,
     ValidationError,
     field_validator,
+    model_validator,
 )
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
@@ -75,6 +76,7 @@ from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import detached_turn
 from band.core.turn_lifecycle import (
+    BACKEND_CANCEL_TIMEOUT_SECONDS,
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
     BackendTurns,
@@ -442,8 +444,28 @@ class CodexClientProtocol(Protocol):
     async def close(self) -> None: ...
 
 
+class TurnSilent(TimeoutError):
+    """No event reached a turn for as long as ``setting`` allows."""
+
+    def __init__(self, seconds: float, setting: str) -> None:
+        super().__init__(
+            f"Codex turn timed out after {seconds}s of silence ({setting})"
+        )
+
+
 class CodexContinuityError(RuntimeError):
     """A retained Codex thread cannot continue as it was; its id is kept."""
+
+
+class CodexUnanswered(TimeoutError):
+    """Codex did not answer a request a turn waits on before it runs."""
+
+    def __init__(self, method: str, seconds: float) -> None:
+        self.method = method
+        super().__init__(
+            f"Codex turn timed out after {seconds}s of silence "
+            f"({method.replace('/', '_')})"
+        )
 
 
 @dataclass(frozen=True)
@@ -627,6 +649,10 @@ class NativeTurn:
     def lost(self) -> bool:
         return self.loss is not None
 
+    def started(self, identity: tuple[str, str, str]) -> bool:
+        """Whether the item ``identity`` names began in this native turn."""
+        return identity[:2] == (self.thread_id, self.turn_id)
+
     def owns(self, event: RpcEvent) -> bool:
         # Every event a turn handles names its turn; thread-scoped ones do not.
         if _native_turn_id(event) == self.turn_id:
@@ -746,6 +772,15 @@ class RoomCodexClient:
     seed: SessionSeed = dataclass_field(default_factory=SessionSeed)
     # Band history names the thread: its resume record was posted.
     recorded: bool = False
+    # A thread Band history names whose resume went unanswered. It is not the
+    # room's thread: the room's next turn tries it once more. Binding or
+    # forgetting a thread drops it.
+    unanswered_resume: str | None = None
+    # The thread the room gave up when that retry went unanswered too. Band
+    # history keeps naming it until a turn completes, and a host may hand the
+    # room that history with every message, so binding or forgetting a thread
+    # keeps it; the room's disposal ends it.
+    given_up_resume: str | None = None
     # Runtime commits these deltas even when a turn fails; its successor needs them.
     pending_system_context: list[str] = dataclass_field(default_factory=list)
     # Serializes this room's turns, local commands and their preparation; a
@@ -771,6 +806,7 @@ class RoomCodexClient:
         self.seed = seed
         self.restored = False
         self.recorded = False
+        self.unanswered_resume = None
 
     def forget_thread(self) -> None:
         self.bind_thread(
@@ -906,6 +942,29 @@ class CodexAdapterConfig(EnvAdapterConfig):
     approval_wait_timeout_s: float = 300.0
     approval_timeout_decision: ApprovalDecision = "decline"
     turn_timeout_s: float = 180.0
+    # Stops a turn that receives no event for this long. Answering the turn's own
+    # request -- a Band tool call, a parked approval -- is not silence. None (the
+    # default) never checks. ``turn_timeout_s`` stays the turn's total limit. It
+    # too is checked only while the turn waits for an event, but the time an
+    # answer takes counts toward it: a turn whose approval comes after the total
+    # has run out is stopped as soon as the approval returns.
+    # Set it above the model's longest single step: reasoning without summaries,
+    # the wait for the first output and the writing of a long tool argument send
+    # no event and open no item, and one such step can last most of a minute.
+    # The same holds for a retry: an ``error`` that Codex will retry restarts
+    # this clock and is not reported, so a backoff longer than the limit stops
+    # the turn as silence.
+    # Work the turn delegates is seen only through the turn's own collab item,
+    # which earns ``turn_tool_idle_timeout_s`` while it is open: a sub-agent's
+    # notifications name its own turn and do not restart this clock.
+    turn_idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    # The silence allowed instead while an item the turn started is still open:
+    # a command, a tool call or a context compaction. Each can run for long and
+    # send no event until it ends, and its open item shows the turn is working.
+    # None gives such a turn ``turn_idle_timeout_s`` like any other.
+    turn_tool_idle_timeout_s: float | None = Field(
+        default=None, gt=0, allow_inf_nan=False
+    )
     client_name: str = "band_codex_adapter"
     client_title: str = "Band Codex Adapter"
     client_version: str = "0.1.0"
@@ -977,7 +1036,7 @@ class CodexAdapterConfig(EnvAdapterConfig):
     def _require_safe_retention(
         cls, retention: RoomRetentionConfig
     ) -> RoomRetentionConfig:
-        return require_disabled_retention(
+        checked = require_disabled_retention(
             retention,
             reason=(
                 "Codex idle retention is unavailable: native idle and terminal state "
@@ -985,6 +1044,34 @@ class CodexAdapterConfig(EnvAdapterConfig):
                 "can cancel that work."
             ),
         )
+        if "transition_timeout_s" in checked.model_fields_set:
+            return checked
+        # The shared default is too short for a Codex start that resumes a thread.
+        return checked.model_copy(
+            update={"transition_timeout_s": CODEX_TRANSITION_TIMEOUT_S}
+        )
+
+    @model_validator(mode="after")
+    def _check_silence_limits_can_apply(self) -> Self:
+        idle, tool = self.turn_idle_timeout_s, self.turn_tool_idle_timeout_s
+        if idle is None:
+            if tool is not None:
+                raise ValueError(
+                    "turn_tool_idle_timeout_s only extends turn_idle_timeout_s; "
+                    "set turn_idle_timeout_s too"
+                )
+            return self
+        if idle >= self.turn_timeout_s:
+            raise ValueError(
+                "turn_idle_timeout_s must be below turn_timeout_s; the total "
+                "limit would always end the turn first"
+            )
+        if tool is not None and tool < idle:
+            raise ValueError(
+                "turn_tool_idle_timeout_s must not be below turn_idle_timeout_s; "
+                "it is the longer allowance, for a turn whose tool is running"
+            )
+        return self
 
     @field_validator("codex_command", mode="before")
     @classmethod
@@ -1424,6 +1511,16 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 # unlike an arbitrary caught exception, worth showing verbatim.
                 await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
                 raise
+            except CodexUnanswered as unanswered:
+                logger.warning(
+                    "Room %s: Codex did not answer %s; recovering its process",
+                    room.room_id,
+                    unanswered.method,
+                )
+                await tools.send_failure(
+                    AgentFailure(CODEX_PROVIDER, str(unanswered), FAILURE_CODE_TIMEOUT)
+                )
+                raise TurnResultAlreadyReported(str(unanswered)) from None
             except TimeoutError as timeout:
                 # Only waiting on the room's process start or stop raises
                 # this; an abandoned start stays owned until recovery closes it.
@@ -1722,13 +1819,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         turn_id = native.turn_id
         result = TurnResult()
         failure_reported = False
+        # The loop's clock, which the waits below run on.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.config.turn_timeout_s
         try:
             while True:
-                _remaining = max(
-                    0.0,
-                    self.config.turn_timeout_s - (_time.perf_counter() - turn_start),
+                event = await self._next_turn_event(
+                    room_id, native, remaining=max(0.0, deadline - loop.time())
                 )
-                event = await asyncio.wait_for(native.events.get(), timeout=_remaining)
                 if isinstance(event, Exception):
                     raise event
                 if event.is_request:
@@ -1995,29 +2093,23 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 turn_start=turn_start,
             )
             raise
-        except TimeoutError:
-            logger.error(
-                "Codex turn timed out after %ss (thread=%s, turn=%s)",
-                self.config.turn_timeout_s,
-                thread_id,
-                turn_id,
-            )
-            try:
-                await native.client.request(
-                    CodexRequestMethod.TURN_INTERRUPT,
-                    {"threadId": thread_id, "turnId": turn_id},
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to send turn/interrupt after timeout",
-                    exc_info=True,
-                )
+        except TimeoutError as expired:
             timeout_message = (
-                f"Codex turn timed out after {self.config.turn_timeout_s}s"
+                str(expired)
+                if isinstance(expired, TurnSilent)
+                else f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )
-            await tools.send_failure(
-                AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
+            logger.error("%s (thread=%s, turn=%s)", timeout_message, thread_id, turn_id)
+            await self._interrupt_timed_out_turn(
+                CodexTurn(native.client, thread_id, turn_id or "")
             )
+            # Skipped when an earlier "error" notification in this same turn
+            # already reported one, so one incident isn't posted twice -- but
+            # the turn is still interrupted and fails either way.
+            if not failure_reported:
+                await tools.send_failure(
+                    AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
+                )
             result.turn_status = CodexTurnStatus.FAILED
             result.turn_error = timeout_message
             # A raise from here lands in this try's own except clauses, not the
@@ -2038,6 +2130,48 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
             raise TurnResultAlreadyReported(timeout_message)
         return result
+
+    async def _next_turn_event(
+        self, room_id: str, native: NativeTurn, *, remaining: float
+    ) -> RpcEvent | Exception:
+        """Wait for the turn's next event: at most ``remaining`` of its total
+        limit, and no longer than it may stay silent.
+
+        Silence is measured from the start of each wait, so the time the
+        adapter takes to answer the turn's own request never counts.
+        """
+        silence, setting = self._silence_allowance(room_id, native)
+        if silence is None or remaining <= silence:
+            return await asyncio.wait_for(native.events.get(), timeout=remaining)
+        try:
+            return await asyncio.wait_for(native.events.get(), timeout=silence)
+        except TimeoutError:
+            raise TurnSilent(silence, setting) from None
+
+    def _silence_allowance(
+        self, room_id: str, native: NativeTurn
+    ) -> tuple[float | None, str]:
+        """How long the turn may stay silent now, and the setting that says so.
+
+        The reader records an item's start and end before it queues that
+        event for the turn, so each wait sees the items open at its start.
+        Codex closes an item only with its ``item/completed``; one it never
+        closes keeps the turn on the tool allowance, which still ends it.
+        """
+        tool_silence = self.config.turn_tool_idle_timeout_s
+        if tool_silence is not None and self._has_open_item(room_id, native):
+            return tool_silence, "turn_tool_idle_timeout_s"
+        return self.config.turn_idle_timeout_s, "turn_idle_timeout_s"
+
+    def _has_open_item(self, room_id: str, native: NativeTurn) -> bool:
+        """Whether a command, tool or context-compaction item this turn started
+        is still open; a command an earlier turn left running is not this
+        turn's work."""
+        room = self._room_clients.get(room_id)
+        return room is not None and any(
+            native.started(identity)
+            for identity in (*room.commands, *room.item_activity)
+        )
 
     async def _answer_native_request(
         self,
@@ -2419,12 +2553,72 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
         finally:
             # An interrupt response does not prove native tool work has stopped.
-            for room in self._room_clients.values():
-                if room.client is turn.client:
-                    self.backend_turns.recovering(
-                        room.room_id, turn, room.retained, generation=room.generation
-                    )
-                    break
+            self._recover_process(turn)
+
+    async def _interrupt_timed_out_turn(self, turn: CodexTurn) -> None:
+        """Ask Codex to stop a turn past its limit, waiting for the answer no
+        longer than a stop of the same turn waits for it.
+
+        A process that answers keeps its room. One that does not would hold
+        the room for as long as it stays up, so recovery replaces it. The
+        bound is fixed: no setting can shorten it under a healthy answer or
+        stretch it into a hold.
+        """
+        bound = BACKEND_CANCEL_TIMEOUT_SECONDS
+        try:
+            async with asyncio.timeout(bound):
+                await turn.client.request(
+                    CodexRequestMethod.TURN_INTERRUPT,
+                    {"threadId": turn.thread_id, "turnId": turn.turn_id},
+                )
+        except TimeoutError:
+            logger.warning(
+                "Codex did not answer turn/interrupt within %ss; recovering its "
+                "process (thread=%s, turn=%s)",
+                bound,
+                turn.thread_id,
+                turn.turn_id,
+            )
+            self._recover_process(turn)
+        except Exception:
+            logger.warning(
+                "Failed to send turn/interrupt after timeout",
+                exc_info=True,
+            )
+
+    async def _request_before_turn(
+        self,
+        client: CodexClientProtocol,
+        method: CodexRequestMethod,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Send a request a turn waits on before it runs: for its thread, then
+        ``turn/start``.
+
+        Codex answers these before the model works, and no turn limit runs
+        yet, so the answer gets as long as a process gets to start. A wait
+        that ends without one, at its bound or at a stop, hands the process
+        to recovery: the room's next turn must not wait on it again.
+        """
+        bound = self.config.retention.transition_timeout_s
+        try:
+            async with asyncio.timeout(bound):
+                return await client.request(method, params)
+        except (TimeoutError, asyncio.CancelledError) as unanswered:
+            self._recover_process(CodexTurn(client, "", ""))
+            if isinstance(unanswered, TimeoutError):
+                raise CodexUnanswered(method, bound) from None
+            raise
+
+    def _recover_process(self, turn: CodexTurn) -> None:
+        """Hand the process running ``turn`` to recovery; the room's next
+        turn waits for its release and continues the thread on a new one."""
+        for room in self._room_clients.values():
+            if room.client is turn.client:
+                self.backend_turns.recovering(
+                    room.room_id, turn, room.retained, generation=room.generation
+                )
+                break
 
     @asynccontextmanager
     async def _native_turn(
@@ -2456,7 +2650,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         finally:
             room.turn = None
             for identity, activity in tuple(room.item_activity.items()):
-                if identity[:2] == (native.thread_id, native.turn_id):
+                if native.started(identity):
                     del room.item_activity[identity]
                     await end_activity(activity[0], activity[1])
             await self._refuse_undelivered(room, native)
@@ -2494,7 +2688,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     ) -> None:
         """Start the native turn and claim the events that arrived before its id."""
         native.thread_id = params["threadId"]
-        started = await native.client.request(CodexRequestMethod.TURN_START, params)
+        started = await self._request_before_turn(
+            native.client, CodexRequestMethod.TURN_START, params
+        )
         turn_id = _result_id(started, "turn")
         if not turn_id:
             raise RuntimeError("Codex turn/start returned no turn id")
@@ -2669,9 +2865,21 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 self._confirm_restored_tools(room, tools, thread_id)
             return thread_id
         client = room.require_client()
-        if is_session_bootstrap and (named := history.room_to_thread.get(room_id)):
+        # Band history reaches only a room's first turn, so a thread whose
+        # resume went unanswered there gets its one retry from the room.
+        retry, room.unanswered_resume = room.unanswered_resume, None
+        named = retry
+        if named is None and is_session_bootstrap:
+            named = history.room_to_thread.get(room_id)
+            if named == room.given_up_resume:
+                named = None
+        if named:
             resumed = await self._resume_from_history(
-                room=room, client=client, named=named, tools=tools
+                room=room,
+                client=client,
+                named=named,
+                tools=tools,
+                last_try=retry is not None,
             )
             if resumed is not None:
                 return resumed
@@ -2705,14 +2913,33 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         client: CodexClientProtocol,
         named: str,
         tools: AgentToolsProtocol,
+        last_try: bool,
     ) -> str | None:
-        """Resume the thread Band history names; None falls back to a new one."""
+        """Resume the thread Band history names; None falls back to a new one.
+
+        An unanswered resume fails the turn. Unless ``last_try``, the room's
+        next turn tries the thread again on the new process; after that the
+        room gives the thread up, and a new thread takes its place.
+        """
         room_id = room.room_id
         try:
-            result = await client.request(
+            result = await self._request_before_turn(
+                client,
                 CodexRequestMethod.THREAD_RESUME,
                 self._resume_params(room, named),
             )
+        except CodexUnanswered:
+            if not last_try:
+                room.unanswered_resume = named
+            else:
+                room.given_up_resume = named
+                logger.warning(
+                    "Room %s: giving up Codex thread %s; its resume went "
+                    "unanswered twice",
+                    room_id,
+                    named,
+                )
+            raise
         except CodexJsonRpcError as exc:
             logger.warning(
                 "thread/resume failed for room %s thread %s: %s",
@@ -2767,7 +2994,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         }
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
-        started = await client.request(CodexRequestMethod.THREAD_START, start_params)
+        started = await self._request_before_turn(
+            client, CodexRequestMethod.THREAD_START, start_params
+        )
         thread_id = _result_id(started, "thread")
         if not thread_id:
             raise RuntimeError("Codex thread/start returned no thread id")

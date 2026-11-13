@@ -53,6 +53,14 @@ BAND_TOOL_CALL: dict[str, Any] = {
     "status": IN_PROGRESS,
 }
 COMPACTION: dict[str, Any] = {"type": CodexItemType.CONTEXT_COMPACTION, "id": "cc-1"}
+SUB_AGENT_WAIT: dict[str, Any] = {
+    "type": CodexItemType.COLLAB_AGENT_TOOL_CALL,
+    "id": "collab-1",
+    "tool": "wait",
+    "senderThreadId": FIRST_THREAD_ID,
+    "receiverThreadIds": ["thr-sub"],
+    "status": IN_PROGRESS,
+}
 
 
 def item_started(item: dict[str, Any]) -> RpcEvent:
