@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -126,3 +127,70 @@ def historical_floor_script(mcp_publish_steps: dict[str, str]) -> str:
     return mcp_publish_steps[
         "Wait for the declared band-sdk floor to be indexed on PyPI"
     ].split("# Dry-run")[0]
+
+
+@pytest.fixture
+def run_candidate_gate(
+    release_tree: Path, candidate_gate: Path
+) -> Callable[..., subprocess.CompletedProcess[bytes]]:
+    def run(event: str, head: str, queue: str) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            ["bash", str(CI_SCRIPTS / "check-release-candidate.sh")],
+            cwd=release_tree,
+            env={
+                **os.environ,
+                "PATH": str(candidate_gate) + os.pathsep + os.environ["PATH"],
+                "EVENT_NAME": event,
+                "PR_HEAD": head,
+                "FIXTURE_HEAD": head,
+                "QUEUE_REF": queue,
+                "REPO": "fixture/repo",
+                "BASE_SHA": "HEAD",
+            },
+            capture_output=True,
+            check=False,
+        )
+
+    return run
+
+
+@pytest.fixture
+def publisher_install(
+    tmp_path: Path, mcp_publish_steps: dict[str, str]
+) -> Callable[[Path], subprocess.CompletedProcess[str]]:
+    """Execute production wheel-constraint generation and the real install step offline."""
+    environment = {
+        **os.environ,
+        "RUNNER_TEMP": str(tmp_path),
+        "UV_NO_INDEX": "1",
+        "UV_FIND_LINKS": str(tmp_path),
+        "UV_PYTHON": sys.executable,
+    }
+
+    def install(wheel: Path) -> subprocess.CompletedProcess[str]:
+        subprocess.run(
+            [
+                sys.executable,
+                str(CI_SCRIPTS / "releasecheck.py"),
+                "--wheel",
+                str(wheel),
+                "--output",
+                str(tmp_path / "mcp-sdk-floor.txt"),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return subprocess.run(
+            [
+                "bash",
+                "-c",
+                mcp_publish_steps["Install band-mcp with band-sdk resolved from PyPI"],
+            ],
+            cwd=tmp_path,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    return install

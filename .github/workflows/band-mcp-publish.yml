@@ -115,25 +115,25 @@ jobs:
         # just built actually resolves and imports against its real,
         # PyPI-published floor — not this repo's workspace override.
         run: |
-          uv venv /tmp/band-mcp-verify
-          uv pip install dist/*.whl -r "${RUNNER_TEMP}/mcp-sdk-floor.txt" --python /tmp/band-mcp-verify/bin/python
+          uv venv "${RUNNER_TEMP}/band-mcp-verify"
+          uv pip install dist/*.whl -r "${RUNNER_TEMP}/mcp-sdk-floor.txt" --python "${RUNNER_TEMP}/band-mcp-verify"
 
       - name: Verify imports and CLI entry point
         run: |
-          /tmp/band-mcp-verify/bin/python <<'PYEOF'
+          "${RUNNER_TEMP}/band-mcp-verify/bin/python" <<'PYEOF'
           from band_mcp import __version__
           from band_mcp.server import run, standalone_spec
           from band_mcp.shared import StandaloneResolver, build_standalone_resolver
           print(f'band-mcp {__version__} imports successful')
           PYEOF
-          /tmp/band-mcp-verify/bin/band-mcp --version
+          "${RUNNER_TEMP}/band-mcp-verify/bin/band-mcp" --version
 
       - name: Verify exact SDK version and installed MCP behavior
         run: |
           EXPECTED_SDK=$(cut -d= -f3 "${RUNNER_TEMP}/mcp-sdk-floor.txt")
-          /tmp/band-mcp-verify/bin/python -c "from importlib.metadata import version; assert version('band-sdk') == '$EXPECTED_SDK'"
+          "${RUNNER_TEMP}/band-mcp-verify/bin/python" -c "from importlib.metadata import version; assert version('band-sdk') == '$EXPECTED_SDK'"
           if [ -f .github/scripts/mcp-wheel-smoke.py ]; then
-            /tmp/band-mcp-verify/bin/python -I .github/scripts/mcp-wheel-smoke.py
+            "${RUNNER_TEMP}/band-mcp-verify/bin/python" -I .github/scripts/mcp-wheel-smoke.py
           fi
 
       - name: Upload distributions

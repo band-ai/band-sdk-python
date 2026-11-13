@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-
-from tests.paths import CI_SCRIPTS
 
 
 class TestCandidateGate:
@@ -30,27 +28,25 @@ class TestCandidateGate:
     def test_mismatch_blocks_only_release_candidates(
         self,
         release_tree: Path,
-        candidate_gate: Path,
+        run_candidate_gate: Callable[..., subprocess.CompletedProcess[bytes]],
         event: str,
         head: str,
         queue: str,
         expected: int,
     ) -> None:
         (release_tree / "pyproject.toml").write_text('[project]\nversion="9.2.0"\n')
-        result = subprocess.run(
-            ["bash", str(CI_SCRIPTS / "check-release-candidate.sh")],
-            cwd=release_tree,
-            env={
-                **os.environ,
-                "PATH": str(candidate_gate) + os.pathsep + os.environ["PATH"],
-                "EVENT_NAME": event,
-                "PR_HEAD": head,
-                "FIXTURE_HEAD": head,
-                "QUEUE_REF": queue,
-                "REPO": "fixture/repo",
-                "BASE_SHA": "HEAD",
-            },
-            capture_output=True,
-            check=False,
-        )
+        result = run_candidate_gate(event, head, queue)
         assert result.returncode == expected, result.stderr
+
+    @pytest.mark.parametrize(
+        "event,queue",
+        [("pull_request", ""), ("merge_group", "gh-readonly-queue/main/pr-123-abc")],
+    )
+    def test_advancing_shared_candidate_is_accepted(
+        self,
+        run_candidate_gate: Callable[..., subprocess.CompletedProcess[bytes]],
+        event: str,
+        queue: str,
+    ) -> None:
+        result = run_candidate_gate(event, "release-please--branches--main", queue)
+        assert result.returncode == 0, result.stderr
