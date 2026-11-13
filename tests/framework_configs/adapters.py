@@ -862,6 +862,7 @@ _excluded = {
     "antigravity_acp",
     "copilot_acp",
     "cursor_acp",
+    "external_worker",
     "omp_acp",
     "slack",
 }

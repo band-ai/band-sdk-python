@@ -57,6 +57,7 @@ NO_BACKEND_TURN: dict[str, NoBackendTurn] = {
     "A2AGatewayAdapter": NoBackendTurn.GATEWAY,
     "BandACPServerAdapter": NoBackendTurn.GATEWAY,
     "SlackAdapter": NoBackendTurn.CHANNEL,
+    "ExternalWorkerAdapter": NoBackendTurn.EXTERNAL_WORKER,
 }
 
 #: The module each probe needs beyond the dev venv's always-installed core;

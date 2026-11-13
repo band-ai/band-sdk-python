@@ -40,7 +40,9 @@ class Adapter(StrEnum):
 
 # These modules bridge Band to another protocol or require a bespoke external
 # service lifecycle, so they are deliberately outside the shared agent matrix.
-NON_AGENT_ADAPTERS = frozenset({"a2a", "a2a_gateway", "acp", "slack", "parlant"})
+NON_AGENT_ADAPTERS = frozenset(
+    {"a2a", "a2a_gateway", "acp", "external_worker", "slack", "parlant"}
+)
 
 
 def discovered_agent_ids() -> set[str]:

@@ -114,6 +114,7 @@ PINNED_OUTSIDE_CONFIGS = {
     "A2AAdapter": "unjudged (tests/integrations/a2a)",
     "A2AGatewayAdapter": "unjudged (tests/integrations/a2a/gateway)",
     "BandACPServerAdapter": "unjudged (tests/integrations/acp)",
+    "ExternalWorkerAdapter": "unjudged (tests/adapters/externalworker)",
 }
 
 
