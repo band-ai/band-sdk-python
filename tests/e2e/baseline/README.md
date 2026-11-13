@@ -646,6 +646,7 @@ the `dev` extra but are split out for isolation.
 | `opencode` | `dev` | opencode | a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`) on Anthropic (`ANTHROPIC_API_KEY`) |
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 | `parlant` | `dev-parlant` | *(none — parlant is a bespoke smoke, not a registered matrix adapter; pinned via `@lane(Lane.PARLANT)`)* | provider keys; isolated venv (parlant's `griffe`/`griffelib` transitive deps collide with pydantic_ai's — `pyproject.toml [tool.uv] conflicts`); no server setup — the smoke spins up its own in-process Parlant server |
+| `kit` | `dev` | *(none — `@lane(Lane.KIT)`-pinned smokes in `smoke/kit/`)* | a Docker daemon (`Dep.DOCKER`) to build and run the band-python-kit image, and the Docker Sandboxes `sbx` CLI (`Dep.SBX` — `.github/scripts/setup-sbx.sh` installs it on the runner's KVM and signs in with `E2E_DOCKER_USERNAME`/`E2E_DOCKER_TOKEN`). **Linux-only** (`LINUX_ONLY_LANES`): the image is Linux, and sandboxes need Windows 11 with the Hypervisor Platform |
 
 The `backends` CI job installs a pinned Cursor `agent` on Ubuntu and Windows
 (`.github/scripts/setup-cursor.sh`; bump `CURSOR_CLI_VERSION` deliberately) and

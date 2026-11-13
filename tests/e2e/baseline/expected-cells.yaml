@@ -361,6 +361,16 @@ smoke/inspection/test_usage.py:
       adapters: [omp]
     - reason: usage lives in user-supplied flow internals
       adapters: [crewai_flow]
+smoke/kit/test_containerized_echo.py::TestContainerizedEcho:
+  test_containerized_agent_replies_over_live_platform: kit
+smoke/kit/test_owned_session.py::TestOwnedSandboxSession:
+  test_owned_session_completes_turns_and_restarts: kit
+smoke/kit/test_proxy_custody.py::TestProxyManagedCustody:
+  test_band_host_rides_the_injection_path: kit
+  test_real_band_key_never_enters_the_vm: kit
+  test_workload_identity_and_network_policy[False]: kit
+smoke/kit/test_self_registration.py::TestSelfRegistration:
+  test_self_registered_agent_round_trips_with_no_duplicate_on_reprovision: kit
 smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle:
   test_old_room_cleanup_preserves_a_fresh_followup:
     pass: [agno, anthropic, claude_sdk, copilot_sdk, crewai, gemini, google_adk, langgraph, nooa, pydantic_ai, strands]

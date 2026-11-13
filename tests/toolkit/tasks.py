@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Coroutine
-from contextlib import asynccontextmanager
+from contextlib import AbstractContextManager, asynccontextmanager
 from typing import Any, TypeVar
 
 Result = TypeVar("Result")
@@ -24,6 +24,25 @@ async def background(
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@asynccontextmanager
+async def off_loop(manager: AbstractContextManager[Result]) -> AsyncIterator[Result]:
+    """Enter and exit a blocking context manager in a worker thread.
+
+    A minutes-long setup (an image build, a microVM boot) run on the loop
+    thread starves every live connection on it, such as a session WebSocket.
+    """
+    value = await asyncio.to_thread(manager.__enter__)
+    try:
+        yield value
+    except BaseException as error:
+        if not await asyncio.to_thread(
+            manager.__exit__, type(error), error, error.__traceback__
+        ):
+            raise
+    else:
+        await asyncio.to_thread(manager.__exit__, None, None, None)
 
 
 def tasks_started_since(before: set[asyncio.Task[Any]]) -> set[asyncio.Task[Any]]:

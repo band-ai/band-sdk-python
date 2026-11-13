@@ -1,9 +1,9 @@
 """CI-run guards for the contracts the (gated) never-in-VM proof depends on.
 
-The proof in ``test_kit_proxy_managed_live.py`` runs only on sbx + staging, so
-the deterministic pieces it relies on are guarded here, where CI executes them —
-a broken scoped command, cert probe, or settings path fails fast here
-instead of lying dormant until a rare live run.
+The proof in ``tests/e2e/baseline/smoke/kit/`` runs only in the nightly kit
+lane, so the deterministic pieces it relies on are guarded here, where PR CI
+executes them — a broken scoped command, cert probe, or settings path fails
+fast here instead of waiting for the nightly.
 """
 
 from __future__ import annotations

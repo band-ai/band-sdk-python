@@ -35,10 +35,7 @@ from pydantic import ValidationError
 
 from band import LogSettings, LogStream
 from band.docker.provision import DEFAULT_BAND_HOST, read_agent_id
-from tests.docker.test_kit_proxy_managed_live import (
-    _deployment_hosts,
-    _prepare_workspace,
-)
+from tests.docker.toolkit.sandbox_agent import deployment_hosts, prepare_workspace
 from tests.docker.toolkit.sbx_cli import (
     allow_network_for_hosts,
     attached_run,
@@ -385,8 +382,8 @@ async def run(kit: str) -> None:
             tempfile.TemporaryDirectory(prefix=f"{RUN_NAME_PREFIX}-") as tmp_dir,
             workload_context as workload,
         ):
-            workspace = _prepare_workspace(Path(tmp_dir), endpoints=settings.endpoints)
-            hosts = _deployment_hosts(settings.endpoints)
+            workspace = prepare_workspace(Path(tmp_dir), endpoints=settings.endpoints)
+            hosts = deployment_hosts(settings.endpoints)
 
             with allow_network_for_hosts(hosts, kit=KIT_DIR):
                 logger.info(

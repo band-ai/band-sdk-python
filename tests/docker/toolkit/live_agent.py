@@ -16,6 +16,7 @@ from pathlib import Path
 from tests.docker.toolkit.docker_cli import Container, Image
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.toolkit.tasks import off_loop
 
 SDK_PYTHON = "$BAND_SDK_PYTHON"
 
@@ -55,7 +56,7 @@ async def live_containerized_echo_agent(
     agent = await resource_manager.provision_agent(label)
     room_id = await resource_manager.provision_room(participants=[agent.id])
 
-    with Container.run(
+    container_cm = Container.run(
         image,
         name_prefix="band-python-kit-live-test",
         env={
@@ -64,7 +65,8 @@ async def live_containerized_echo_agent(
             "BAND_WS_URL": baseline_settings.endpoints.ws_url,
             "BAND_REST_URL": baseline_settings.endpoints.rest_url,
         },
-    ) as container:
+    )
+    async with off_loop(container_cm) as container:
         container.run_python_background(
             ECHO_AGENT_SCRIPT, interpreter=SDK_PYTHON, user="agent"
         )
