@@ -17,6 +17,7 @@ import pytest
 import yaml
 
 from tests.paths import CI_SCRIPTS, REPO_ROOT
+from tests.shell import run_bash
 
 
 @pytest.fixture
@@ -101,9 +102,12 @@ def candidate_gate(release_tree: Path, tmp_path: Path) -> Path:
     manifest.write_text(candidate)
     binaries = tmp_path / "bin"
     binaries.mkdir()
-    (binaries / "gh").write_text('#!/usr/bin/env bash\nprintf "%s" "$FIXTURE_HEAD"\n')
+    (binaries / "gh").write_text(
+        '#!/usr/bin/env bash\nprintf "%s" "$FIXTURE_HEAD"\n', newline="\n"
+    )
     (binaries / "uv").write_text(
-        f'#!/usr/bin/env bash\n[[ "$1 $2 $3" = "run --all-packages python" ]] || exit 90\nshift 3\nexec "{sys.executable}" "$@"\n'
+        f'#!/usr/bin/env bash\n[[ "$1 $2 $3" = "run --all-packages python" ]] || exit 90\nshift 3\nexec "{sys.executable}" "$@"\n',
+        newline="\n",
     )
     (binaries / "gh").chmod(0o755)
     (binaries / "uv").chmod(0o755)
@@ -132,10 +136,10 @@ def historical_floor_script(mcp_publish_steps: dict[str, str]) -> str:
 @pytest.fixture
 def run_candidate_gate(
     release_tree: Path, candidate_gate: Path
-) -> Callable[..., subprocess.CompletedProcess[bytes]]:
-    def run(event: str, head: str, queue: str) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.run(
-            ["bash", str(CI_SCRIPTS / "check-release-candidate.sh")],
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    def run(event: str, head: str, queue: str) -> subprocess.CompletedProcess[str]:
+        return run_bash(
+            (CI_SCRIPTS / "check-release-candidate.sh").read_text(),
             cwd=release_tree,
             env={
                 **os.environ,
@@ -147,8 +151,6 @@ def run_candidate_gate(
                 "REPO": "fixture/repo",
                 "BASE_SHA": "HEAD",
             },
-            capture_output=True,
-            check=False,
         )
 
     return run
@@ -180,17 +182,10 @@ def publisher_install(
             check=True,
             capture_output=True,
         )
-        return subprocess.run(
-            [
-                "bash",
-                "-c",
-                mcp_publish_steps["Install band-mcp with band-sdk resolved from PyPI"],
-            ],
+        return run_bash(
+            mcp_publish_steps["Install band-mcp with band-sdk resolved from PyPI"],
             cwd=tmp_path,
             env=environment,
-            capture_output=True,
-            text=True,
-            check=False,
         )
 
     return install

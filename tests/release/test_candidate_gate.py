@@ -28,7 +28,7 @@ class TestCandidateGate:
     def test_mismatch_blocks_only_release_candidates(
         self,
         release_tree: Path,
-        run_candidate_gate: Callable[..., subprocess.CompletedProcess[bytes]],
+        run_candidate_gate: Callable[..., subprocess.CompletedProcess[str]],
         event: str,
         head: str,
         queue: str,
@@ -44,7 +44,7 @@ class TestCandidateGate:
     )
     def test_advancing_shared_candidate_is_accepted(
         self,
-        run_candidate_gate: Callable[..., subprocess.CompletedProcess[bytes]],
+        run_candidate_gate: Callable[..., subprocess.CompletedProcess[str]],
         event: str,
         queue: str,
     ) -> None:

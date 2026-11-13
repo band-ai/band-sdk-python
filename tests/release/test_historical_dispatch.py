@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+
+from tests.shell import run_bash
 
 
 class TestHistoricalDispatch:
@@ -26,13 +27,10 @@ class TestHistoricalDispatch:
         wheel = wheel_index("band_mcp", "2.2.15", requirements)
         (tmp_path / "dist").mkdir()
         wheel.rename(tmp_path / "dist" / wheel.name)
-        result = subprocess.run(
-            ["bash", "-c", historical_floor_script],
+        result = run_bash(
+            historical_floor_script,
             cwd=tmp_path,
             env={**os.environ, "RUNNER_TEMP": str(tmp_path)},
-            capture_output=True,
-            text=True,
-            check=False,
         )
         assert (result.returncode == 0) is success, result.stderr
 
@@ -45,10 +43,10 @@ class TestHistoricalDispatch:
         wheel = wheel_index("band_mcp", "2.2.15", ("band-sdk>=9.0.2",))
         (tmp_path / "dist").mkdir()
         wheel.rename(tmp_path / "dist" / wheel.name)
-        subprocess.run(
-            ["bash", "-c", historical_floor_script],
+        result = run_bash(
+            historical_floor_script,
             cwd=tmp_path,
             env={**os.environ, "RUNNER_TEMP": str(tmp_path)},
-            check=True,
         )
+        assert result.returncode == 0, result.stderr
         assert (tmp_path / "mcp-sdk-floor.txt").read_text() == "band-sdk==9.0.2\n"

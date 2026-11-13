@@ -115,7 +115,7 @@ jobs:
         # just built actually resolves and imports against its real,
         # PyPI-published floor — not this repo's workspace override.
         run: |
-          uv venv "${RUNNER_TEMP}/band-mcp-verify"
+          uv venv --clear "${RUNNER_TEMP}/band-mcp-verify"
           uv pip install dist/*.whl -r "${RUNNER_TEMP}/mcp-sdk-floor.txt" --python "${RUNNER_TEMP}/band-mcp-verify"
 
       - name: Verify imports and CLI entry point
