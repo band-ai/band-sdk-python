@@ -10,19 +10,17 @@ from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NoReturn
 
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
 from band.adapters.codex.approvals import (
-    APPROVAL_OPTIONS,
     ApprovalDecision,
     CodexApprovals,
     PendingApproval,
     approval_response,
     approval_summary,
-    approval_type,
     native_approval_key,
 )
 from band.adapters.codex.commands import (
@@ -56,20 +54,29 @@ from band.adapters.codex.items import (
 )
 from band.adapters.codex.models import supported_efforts, visible_model_ids
 from band.adapters.codex.narration import (
-    RAW_TASK_METHODS,
     TaskTitles,
     TurnRef,
+    approval_decided_by_policy,
+    approval_requested,
     approval_resolved,
+    context_compacted,
     diff_updated,
     error_notification,
     item_completed,
     plan_steps,
     raw_task_event,
+    stream_delta,
     task_event_content,
     token_usage,
     turn_error_message,
     turn_failed,
+    turn_lifecycle_finished,
+    turn_lifecycle_started,
+    turn_marker_finished,
+    turn_marker_started,
     turn_usage,
+    unfinished_turn_text,
+    unstreamed_messages,
 )
 from band.adapters.codex.roomstate import RoomCodexClient, ThreadSettings
 from band.adapters.codex.rpc import (
@@ -106,6 +113,7 @@ from band.adapters.codex.turnstate import (
     NativeMessage,
     NativeTurn,
     TurnResult,
+    TurnStart,
     audience_sender_ids,
     undelivered_events,
 )
@@ -115,7 +123,6 @@ from band.converters.helpers import (
     build_replay_messages,
     new_message_marker,
 )
-from band.core.content import has_visible_content
 from band.core.defaultmodels import OPENAI_MODEL
 from band.core.delivery import (
     DeliveryFailedError,
@@ -591,47 +598,24 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         # The turn keeps its originals, and so its audience, in this frame
         # through detached approval waits.
         audience = self._turn_audience(messages)
-        contacts_msg = "\n".join(room.pending_system_context) or None
-        thread_id = await self._ensure_thread(
+        start = await self._turn_start(
             room=room,
-            history=history,
+            messages=messages,
             tools=tools,
+            history=history,
+            participants_msg=participants_msg,
             is_session_bootstrap=is_session_bootstrap,
         )
-        seed = room.seed
-        replay = (
-            await self._replay_history(
-                room=room,
-                messages=messages,
-                tools=tools,
-                history=history,
-                is_session_bootstrap=is_session_bootstrap,
-            )
-            if seed.replay_due
-            else []
-        )
-        if seed.replay_due and participants_msg is None:
-            # The runtime sends the roster only when it changes, so a thread
-            # abandoned unseeded may have taken the latest one with it.
-            participants_msg = build_participants_message(tools.participants)
-        turn_input, has_pending_prompt_injection = self._build_turn_input(
-            messages=messages,
-            participants_msg=participants_msg,
-            contacts_msg=contacts_msg,
-            room_id=room_id,
-            replay=replay,
-        )
-        turn_params: dict[str, Any] = {"threadId": thread_id, "input": turn_input}
-        self._apply_turn_overrides(turn_params, room_id=room_id)
+        thread_id = start.thread_id
 
         async with (
             self.backend_turns.running(room_id),
             self._native_turn(room, tools, owner) as native,
         ):
             await self.backend_turns.started(
-                room_id, self._reveal_codex_turn(room, native, turn_params, thread_id)
+                room_id, self._reveal_codex_turn(room, native, start.params, thread_id)
             )
-            if has_pending_prompt_injection:
+            if start.injects_prompt:
                 self._prompt_injected_rooms.add(room_id)
             await self._emit_turn_started(
                 tools=tools,
@@ -700,18 +684,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     turn_start=turn_start,
                 )
                 raise TurnResultAlreadyReported(TURN_PROCESSING_ERROR) from None
-        if result.completed:
-            seed.confirm()
-            if not seed.replay_due:
-                room.pending_system_context.clear()
-        if not room.recorded:
-            room.recorded = await CODEX_RESUME_RECORD.post(
-                tools,
-                room_id=room_id,
-                seed=seed,
-                session=thread_id,
-                details={CodexMetadataKey.TRANSPORT: self.config.transport},
-            )
+        await self._settle_thread(room, tools, start, result)
         await self._emit_turn_outcome(
             tools=tools,
             audience=audience,
@@ -724,6 +697,73 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             duration_s=_time.perf_counter() - turn_start,
         )
 
+    async def _turn_start(
+        self,
+        *,
+        room: RoomCodexClient,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: CodexSessionState,
+        participants_msg: str | None,
+        is_session_bootstrap: bool,
+    ) -> TurnStart:
+        room_id = room.room_id
+        contacts_msg = "\n".join(room.pending_system_context) or None
+        thread_id = await self._ensure_thread(
+            room=room,
+            history=history,
+            tools=tools,
+            is_session_bootstrap=is_session_bootstrap,
+        )
+        seed = room.seed
+        replay = (
+            await self._replay_history(
+                room=room,
+                messages=messages,
+                tools=tools,
+                history=history,
+                is_session_bootstrap=is_session_bootstrap,
+            )
+            if seed.replay_due
+            else []
+        )
+        if seed.replay_due and participants_msg is None:
+            # The runtime sends the roster only when it changes, so a thread
+            # abandoned unseeded may have taken the latest one with it.
+            participants_msg = build_participants_message(tools.participants)
+        turn_input, has_pending_prompt_injection = self._build_turn_input(
+            messages=messages,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
+            room_id=room_id,
+            replay=replay,
+        )
+        turn_params: dict[str, Any] = {"threadId": thread_id, "input": turn_input}
+        self._apply_turn_overrides(turn_params, room_id=room_id)
+        return TurnStart(thread_id, turn_params, seed, has_pending_prompt_injection)
+
+    async def _settle_thread(
+        self,
+        room: RoomCodexClient,
+        tools: AgentToolsProtocol,
+        start: TurnStart,
+        result: TurnResult,
+    ) -> None:
+        """Seed the thread once a turn completed on it, and record it once."""
+        seed = start.seed
+        if result.completed:
+            seed.confirm()
+            if not seed.replay_due:
+                room.pending_system_context.clear()
+        if not room.recorded:
+            room.recorded = await CODEX_RESUME_RECORD.post(
+                tools,
+                room_id=room.room_id,
+                seed=seed,
+                session=start.thread_id,
+                details={CodexMetadataKey.TRANSPORT: self.config.transport},
+            )
+
     async def _emit_turn_started(
         self,
         *,
@@ -735,46 +775,12 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     ) -> None:
         if Emit.TASK_EVENTS not in self.features.emit:
             return
+        ref = TurnRef(room_id, thread_id, turn_id)
         if self.config.emit_turn_task_markers:
-            await send_event_safe(
-                tools,
-                content=task_event_content(
-                    task_id=turn_id,
-                    task="Codex turn",
-                    status="started",
-                    summary=f"Thread: {thread_id}",
-                ),
-                message_type="task",
-                metadata={
-                    CodexMetadataKey.THREAD: thread_id,
-                    CodexMetadataKey.TURN: turn_id,
-                    CodexMetadataKey.ROOM: room_id,
-                },
-                log_label="turn started task event",
-                log_level=logging.DEBUG,
-            )
+            await turn_marker_started(tools, ref)
         if self.config.emit_turn_lifecycle_events:
             input_summary = "\n".join(m.content or "" for m in messages)[:200]
-            await send_event_safe(
-                tools,
-                content=task_event_content(
-                    task_id=turn_id,
-                    task="Codex turn lifecycle",
-                    status="started",
-                    summary=f"Thread: {thread_id}",
-                ),
-                message_type="task",
-                metadata={
-                    "codex_event_type": "turn_lifecycle",
-                    CodexMetadataKey.ROOM: room_id,
-                    CodexMetadataKey.THREAD: thread_id,
-                    CodexMetadataKey.TURN: turn_id,
-                    "codex_turn_status": "started",
-                    "codex_input_summary": input_summary,
-                },
-                log_label="turn started lifecycle event",
-                log_level=logging.DEBUG,
-            )
+            await turn_lifecycle_started(tools, ref, input_summary)
 
     def _release_turn(self, room_id: str, tools: AgentToolsProtocol) -> None:
         """Release the input handler while the turn waits for a human reply."""
@@ -824,17 +830,23 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         turn_start: float,
     ) -> TurnResult:
         """Consume the events addressed to one native turn and return its result."""
-        turn_id = native.turn_id
-        ref = TurnRef(room_id, thread_id, turn_id)
+        ref = TurnRef(room_id, thread_id, native.turn_id)
         result = TurnResult()
-        failure_reported = False
+        fail = partial(
+            self._fail_turn,
+            tools=tools,
+            audience=audience,
+            ref=ref,
+            result=result,
+            turn_start=turn_start,
+        )
         try:
             while True:
-                _remaining = max(
+                remaining = max(
                     0.0,
                     self.config.turn_timeout_s - (_time.perf_counter() - turn_start),
                 )
-                event = await asyncio.wait_for(native.events.get(), timeout=_remaining)
+                event = await asyncio.wait_for(native.events.get(), timeout=remaining)
                 if isinstance(event, Exception):
                     raise event
                 if event.is_request:
@@ -845,256 +857,198 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         room_id=room_id,
                         event=event,
                     )
-                    continue
-
-                params = event_params(event)
-
-                if event.method in RAW_TASK_METHODS:
-                    if Emit.TASK_EVENTS in self.features.emit:
-                        await raw_task_event(
-                            tools, ref, event.method, params, self._task_titles
-                        )
-                    continue
-
-                if event.method == "error":
-                    reported = await error_notification(tools, ref, params)
-                    failure_reported = failure_reported or reported
-                    continue
-
-                # --- Phase 3: Real-time streaming ---
-                if event.method in {
-                    "item/reasoning/summaryTextDelta",
-                    "item/reasoning/textDelta",
-                }:
-                    if self.config.stream_reasoning_events:
-                        delta = params.get("delta", "")
-                        item_id = str(params.get("itemId") or "")
-                        await send_event_safe(
-                            tools,
-                            content=str(delta),
-                            message_type="thought",
-                            metadata={
-                                "streaming": True,
-                                "codex_item_id": item_id,
-                                "codex_event_type": event.method,
-                                **ref.metadata(),
-                            },
-                            log_label="reasoning delta",
-                            log_level=logging.DEBUG,
-                        )
-                    continue
-
-                if event.method == "item/plan/delta":
-                    if self.config.stream_plan_events:
-                        delta = params.get("delta", "")
-                        item_id = str(params.get("itemId") or "")
-                        await send_event_safe(
-                            tools,
-                            content=str(delta),
-                            message_type="thought",
-                            metadata={
-                                "streaming": True,
-                                "subtype": "plan",
-                                "codex_item_id": item_id,
-                                **ref.metadata(),
-                            },
-                            log_label="plan delta",
-                            log_level=logging.DEBUG,
-                        )
-                    continue
-
-                # --- Phase 2: Plan step tracking ---
-                if event.method == "turn/plan/updated":
-                    if self.config.stream_plan_events:
-                        await plan_steps(tools, ref, params)
-                    continue
-
-                # --- Phase 4: Token usage ---
-                if event.method == "thread/tokenUsage/updated":
-                    self._update_token_usage(thread_id, params)
-                    if self.config.emit_token_usage_events:
-                        await token_usage(tools, ref, self._token_usage.get(thread_id))
-                    continue
-
-                # --- Phase 2: Context compaction events ---
-                if event.method == "context/compacted":
-                    if (
-                        self.config.emit_turn_lifecycle_events
-                        and Emit.TASK_EVENTS in self.features.emit
-                    ):
-                        compacted_thread = str(params.get("threadId") or thread_id)
-                        compacted_turn = str(params.get("turnId") or turn_id or "")
-                        await send_event_safe(
-                            tools,
-                            content=task_event_content(
-                                task_id=compacted_turn or None,
-                                task="Codex context compaction",
-                                status="completed",
-                                summary=f"Thread: {compacted_thread}",
-                            ),
-                            message_type="task",
-                            metadata={
-                                "codex_event_type": "context_compaction",
-                                CodexMetadataKey.ROOM: room_id,
-                                CodexMetadataKey.THREAD: compacted_thread,
-                                CodexMetadataKey.TURN: compacted_turn or None,
-                            },
-                            log_label="context compaction event",
-                            log_level=logging.DEBUG,
-                        )
-                    continue
-
-                # --- Phase 4: Aggregated diffs ---
-                if event.method == "turn/diff/updated":
-                    if (
-                        self.config.emit_diff_events
-                        and Emit.TASK_EVENTS in self.features.emit
-                    ):
-                        await diff_updated(tools, ref, params)
-                    continue
-
-                if event.method == CodexNotificationMethod.ITEM_STARTED:
-                    item = params.get("item")
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("type") == CodexItemType.AGENT_MESSAGE:
-                        result.native_messages[str(item["id"])] = NativeMessage(
-                            phase=item.get("phase")
-                        )
-                    continue
-
-                if event.method == "item/agentMessage/delta":
-                    item_id = str(params.get("itemId") or "")
-                    message = result.native_messages.get(item_id)
-                    delta = params.get("delta")
-                    if (
-                        message is not None
-                        and message.phase == "commentary"
-                        and isinstance(delta, str)
-                        and self.config.stream_commentary_events
-                        and Emit.THOUGHTS in self.features.emit
-                    ):
-                        delivered = await send_event_safe(
-                            tools,
-                            content=delta,
-                            message_type="thought",
-                            metadata={
-                                "streaming": True,
-                                "subtype": "commentary",
-                                "codex_item_id": item_id,
-                                **ref.metadata(),
-                            },
-                            log_label="commentary delta",
-                            log_level=logging.DEBUG,
-                        )
-                        if delivered:
-                            message.streamed_text += delta
-                    continue
-
-                if event.method == CodexNotificationMethod.ITEM_COMPLETED:
-                    item = params.get("item")
-                    if isinstance(item, dict):
-                        if item.get("type") == CodexItemType.AGENT_MESSAGE:
-                            message = result.native_messages.setdefault(
-                                str(item["id"]), NativeMessage()
-                            )
-                            message.phase = item.get("phase")
-                            text = item.get("text")
-                            if isinstance(text, str):
-                                message.completed_text = text
-                        else:
-                            await item_completed(tools, ref, item, self.features.emit)
-                    continue
-
-                if event.method == TRANSPORT_CLOSED:
-                    result.turn_status = CodexTurnStatus.FAILED
-                    result.turn_error = TRANSPORT_LOST_ERROR
-                    # Skipped when an earlier "error" notification in this same
-                    # turn already reported one, so one incident isn't posted
-                    # twice -- but the turn still fails either way.
-                    if not failure_reported:
-                        await tools.send_failure(
-                            AgentFailure(
-                                CODEX_PROVIDER,
-                                result.turn_error,
-                                CODEX_TRANSPORT_CLOSED_FAILURE_CODE,
-                            )
-                        )
-                    raise TurnResultAlreadyReported(result.turn_error)
-
-                if event.method == "turn/completed":
-                    turn_payload = (
-                        params.get("turn")
-                        if isinstance(params.get("turn"), dict)
-                        else {}
-                    )
-                    result.turn_status = str(
-                        turn_payload.get("status") or CodexTurnStatus.FAILED
-                    )
-                    result.turn_error = turn_error_message(turn_payload)
-                    if result.turn_status != CodexTurnStatus.FAILED:
-                        break
-                    # Skipped when an earlier "error" notification in this same
-                    # turn already reported one, so one incident isn't posted
-                    # twice -- but the turn still fails either way.
-                    if not failure_reported:
-                        await turn_failed(tools, ref, turn_payload)
-                    raise TurnResultAlreadyReported(result.turn_error or "Turn failed")
+                elif await self._apply_notification(tools, ref, result, event):
+                    return result
         except TurnResultAlreadyReported as error:
-            result.turn_status = CodexTurnStatus.FAILED
-            result.turn_error = str(error)
-            await self._emit_failed_turn_outcome(
-                tools=tools,
-                audience=audience,
-                room_id=room_id,
-                thread_id=thread_id,
-                turn_id=turn_id,
-                result=result,
-                turn_start=turn_start,
-            )
+            await fail(str(error))
             raise
         except TimeoutError:
-            logger.error(
-                "Codex turn timed out after %ss (thread=%s, turn=%s)",
-                self.config.turn_timeout_s,
-                thread_id,
-                turn_id,
+            # Raised here, this would skip the sibling clause above, so the
+            # failed-turn events are emitted before raising.
+            message = await self._time_out_turn(native, tools, ref)
+            await fail(message)
+            raise TurnResultAlreadyReported(message)
+
+    async def _fail_turn(
+        self,
+        error: str,
+        *,
+        tools: AgentToolsProtocol,
+        audience: list[dict[str, str]],
+        ref: TurnRef,
+        result: TurnResult,
+        turn_start: float,
+    ) -> None:
+        result.turn_status = CodexTurnStatus.FAILED
+        result.turn_error = error
+        await self._emit_failed_turn_outcome(
+            tools=tools,
+            audience=audience,
+            room_id=ref.room_id,
+            thread_id=ref.thread_id,
+            turn_id=ref.turn_id,
+            result=result,
+            turn_start=turn_start,
+        )
+
+    async def _time_out_turn(
+        self, native: NativeTurn, tools: AgentToolsProtocol, ref: TurnRef
+    ) -> str:
+        """Interrupt a turn that ran past ``turn_timeout_s`` and report it."""
+        logger.error(
+            "Codex turn timed out after %ss (thread=%s, turn=%s)",
+            self.config.turn_timeout_s,
+            ref.thread_id,
+            ref.turn_id,
+        )
+        try:
+            await native.client.request(
+                CodexRequestMethod.TURN_INTERRUPT,
+                {"threadId": ref.thread_id, "turnId": ref.turn_id},
             )
-            try:
-                await native.client.request(
-                    CodexRequestMethod.TURN_INTERRUPT,
-                    {"threadId": thread_id, "turnId": turn_id},
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to send turn/interrupt after timeout", exc_info=True
-                )
-            timeout_message = (
-                f"Codex turn timed out after {self.config.turn_timeout_s}s"
-            )
+        except Exception:
+            logger.warning("Failed to send turn/interrupt after timeout", exc_info=True)
+        message = f"Codex turn timed out after {self.config.turn_timeout_s}s"
+        await tools.send_failure(
+            AgentFailure(CODEX_PROVIDER, message, FAILURE_CODE_TIMEOUT)
+        )
+        return message
+
+    async def _apply_notification(
+        self,
+        tools: AgentToolsProtocol,
+        ref: TurnRef,
+        result: TurnResult,
+        event: RpcEvent,
+    ) -> bool:
+        """Apply one notification to the turn; True once the turn completed.
+
+        Raises ``TurnResultAlreadyReported`` when it ends the turn as failed.
+        """
+        params = event_params(event)
+        emit = self.features.emit
+        match event.method:
+            case (
+                CodexNotificationMethod.TASK_STARTED
+                | CodexNotificationMethod.TASK_COMPLETE
+            ):
+                if Emit.TASK_EVENTS in emit:
+                    await raw_task_event(
+                        tools, ref, event.method, params, self._task_titles
+                    )
+            case CodexNotificationMethod.ERROR:
+                if await error_notification(tools, ref, params):
+                    result.failure_reported = True
+            case (
+                CodexNotificationMethod.REASONING_SUMMARY_DELTA
+                | CodexNotificationMethod.REASONING_TEXT_DELTA
+            ):
+                if self.config.stream_reasoning_events:
+                    await stream_delta(
+                        tools,
+                        ref,
+                        str(params.get("itemId") or ""),
+                        str(params.get("delta", "")),
+                        log_label="reasoning delta",
+                        codex_event_type=event.method,
+                    )
+            case CodexNotificationMethod.PLAN_DELTA:
+                if self.config.stream_plan_events:
+                    await stream_delta(
+                        tools,
+                        ref,
+                        str(params.get("itemId") or ""),
+                        str(params.get("delta", "")),
+                        log_label="plan delta",
+                        subtype="plan",
+                    )
+            case CodexNotificationMethod.PLAN_UPDATED:
+                if self.config.stream_plan_events:
+                    await plan_steps(tools, ref, params)
+            case CodexNotificationMethod.TOKEN_USAGE_UPDATED:
+                self._update_token_usage(ref.thread_id, params)
+                if self.config.emit_token_usage_events:
+                    await token_usage(tools, ref, self._token_usage.get(ref.thread_id))
+            case CodexNotificationMethod.CONTEXT_COMPACTED:
+                if self.config.emit_turn_lifecycle_events and Emit.TASK_EVENTS in emit:
+                    await context_compacted(tools, ref, params)
+            case CodexNotificationMethod.DIFF_UPDATED:
+                if self.config.emit_diff_events and Emit.TASK_EVENTS in emit:
+                    await diff_updated(tools, ref, params)
+            case CodexNotificationMethod.ITEM_STARTED:
+                result.message_started(params.get("item"))
+            case CodexNotificationMethod.AGENT_MESSAGE_DELTA:
+                await self._stream_commentary(tools, ref, result, params)
+            case CodexNotificationMethod.ITEM_COMPLETED:
+                item = params.get("item")
+                if isinstance(item, dict) and not result.message_completed(item):
+                    await item_completed(tools, ref, item, emit)
+            case CodexNotificationMethod.TURN_COMPLETED:
+                return await self._turn_completed(tools, ref, result, params)
+            case _ if event.method == TRANSPORT_CLOSED:
+                await self._transport_lost(tools, result)
+        return False
+
+    async def _stream_commentary(
+        self,
+        tools: AgentToolsProtocol,
+        ref: TurnRef,
+        result: TurnResult,
+        params: dict[str, Any],
+    ) -> None:
+        """Stream a commentary message's delta, remembering what was shown."""
+        item_id = str(params.get("itemId") or "")
+        message = result.native_messages.get(item_id)
+        delta = params.get("delta")
+        if not (
+            message is not None
+            and message.phase == "commentary"
+            and isinstance(delta, str)
+            and self.config.stream_commentary_events
+            and Emit.THOUGHTS in self.features.emit
+        ):
+            return
+        if await stream_delta(
+            tools,
+            ref,
+            item_id,
+            delta,
+            log_label="commentary delta",
+            subtype="commentary",
+        ):
+            message.streamed_text += delta
+
+    async def _turn_completed(
+        self,
+        tools: AgentToolsProtocol,
+        ref: TurnRef,
+        result: TurnResult,
+        params: dict[str, Any],
+    ) -> bool:
+        turn = params.get("turn")
+        payload = turn if isinstance(turn, dict) else {}
+        result.turn_status = str(payload.get("status") or CodexTurnStatus.FAILED)
+        result.turn_error = turn_error_message(payload)
+        if result.turn_status != CodexTurnStatus.FAILED:
+            return True
+        if not result.failure_reported:
+            await turn_failed(tools, ref, payload)
+        raise TurnResultAlreadyReported(result.turn_error or "Turn failed")
+
+    async def _transport_lost(
+        self, tools: AgentToolsProtocol, result: TurnResult
+    ) -> NoReturn:
+        result.turn_status = CodexTurnStatus.FAILED
+        result.turn_error = TRANSPORT_LOST_ERROR
+        if not result.failure_reported:
             await tools.send_failure(
-                AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
+                AgentFailure(
+                    CODEX_PROVIDER,
+                    TRANSPORT_LOST_ERROR,
+                    CODEX_TRANSPORT_CLOSED_FAILURE_CODE,
+                )
             )
-            result.turn_status = CodexTurnStatus.FAILED
-            result.turn_error = timeout_message
-            # A raise from here lands in this try's own except clauses, not the
-            # sibling `except TurnResultAlreadyReported` above -- Python never
-            # matches an exception raised inside one except against a sibling
-            # of the same try. Call the same failed-turn telemetry directly
-            # (as the input handler's CodexJsonRpcError branch already does) so a
-            # timeout still gets the "Codex turn"/lifecycle failed-status
-            # events every other TurnResultAlreadyReported path emits.
-            await self._emit_failed_turn_outcome(
-                tools=tools,
-                audience=audience,
-                room_id=room_id,
-                thread_id=thread_id,
-                turn_id=turn_id,
-                result=result,
-                turn_start=turn_start,
-            )
-            raise TurnResultAlreadyReported(timeout_message)
-        return result
+        raise TurnResultAlreadyReported(TRANSPORT_LOST_ERROR)
 
     async def _answer_native_request(
         self,
@@ -2065,14 +2019,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         ):
             room = self._room_clients.get(room_id)
             try:
-                mentions = await automatic_mentions(
-                    tools, audience_sender_ids(audience)
-                )
-                if (
-                    self._room_clients.get(room_id) is room
-                    and not self._room_closing(room_id)
-                    and mentions
-                ):
+                if mentions := await self._room_mentions(tools, audience, room):
                     await tools.send_notice(
                         f"Approval requested ({summary}). Policy decision: {decision}.",
                         mentions=mentions,
@@ -2081,20 +2028,20 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 logger.exception("Failed to send approval policy notification")
 
         if Emit.THOUGHTS in self.features.emit:
-            # Best-effort telemetry — never fail the turn on thought emission
-            # failures.
-            await send_event_safe(
-                tools,
-                content=(f"Codex approval request handled automatically ({decision})."),
-                message_type="thought",
-                metadata={
-                    "codex_approval_method": event.method,
-                    "codex_approval_type": approval_type(event.method),
-                    "codex_approval_options": list(APPROVAL_OPTIONS),
-                },
-                log_label="approval thought event",
-                log_level=logging.DEBUG,
-            )
+            await approval_decided_by_policy(tools, event.method, decision)
+
+    async def _room_mentions(
+        self,
+        tools: AgentToolsProtocol,
+        audience: list[dict[str, str]],
+        room: RoomCodexClient | None,
+    ) -> list[dict[str, str]] | None:
+        """Mentions for the turn's audience, or None once ``room`` was replaced
+        or began closing while they resolved."""
+        mentions = await automatic_mentions(tools, audience_sender_ids(audience))
+        if room is None or self._room_clients.get(room.room_id) is not room:
+            return None
+        return None if self._room_closing(room.room_id) else mentions
 
     async def _emit_turn_outcome(
         self,
@@ -2110,131 +2057,45 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         duration_s: float = 0.0,
         include_reply: bool = True,
     ) -> None:
-        # Look up token usage once for both marker and lifecycle events.
         room = self._room_clients.get(room_id)
+        ref = TurnRef(room_id, thread_id, turn_id)
         usage = self._token_usage.get(thread_id)
-        has_usage = usage is not None and usage.total_tokens > 0
-
-        # Emit this turn's usage through the unified Emit.USAGE seam so the
-        # toolkit's capture.usage() reads codex like every other adapter. This
-        # is independent of the codex-specific emit_token_usage_events path
-        # (which embeds codex_*_tokens on the marker/lifecycle task events);
-        # emit_usage no-ops unless Emit.USAGE is enabled and usage is non-empty.
+        # Emit.USAGE's unified record, independent of the codex_*_tokens the
+        # task events below carry.
         await self.emit_usage(tools, turn_usage(usage))
-
-        if (
-            Emit.TASK_EVENTS in self.features.emit
-            and self.config.emit_turn_task_markers
-        ):
-            summary = f"Thread: {thread_id}"
-            if turn_error:
-                summary += f" | Error: {turn_error}"
-            metadata: dict[str, Any] = {
-                CodexMetadataKey.ROOM: room_id,
-                CodexMetadataKey.THREAD: thread_id,
-                CodexMetadataKey.TURN: turn_id,
-                "codex_turn_status": turn_status,
-                "codex_error": turn_error or None,
-            }
-            if duration_s > 0:
-                metadata["codex_duration_s"] = round(duration_s, 2)
-            if has_usage:
-                metadata.update(usage.to_metadata())
-            await send_event_safe(
-                tools,
-                content=task_event_content(
-                    task_id=turn_id,
-                    task="Codex turn",
-                    status=turn_status,
-                    summary=summary,
-                ),
-                message_type="task",
-                metadata=metadata,
-                log_label="turn outcome task event",
-                log_level=logging.DEBUG,
+        if Emit.TASK_EVENTS in self.features.emit:
+            narrate = (
+                (self.config.emit_turn_task_markers, turn_marker_finished),
+                (self.config.emit_turn_lifecycle_events, turn_lifecycle_finished),
             )
-
-        # Phase 2: Enriched turn lifecycle events
-        if (
-            self.config.emit_turn_lifecycle_events
-            and Emit.TASK_EVENTS in self.features.emit
-        ):
-            lifecycle_metadata: dict[str, Any] = {
-                "codex_event_type": "turn_lifecycle",
-                CodexMetadataKey.ROOM: room_id,
-                CodexMetadataKey.THREAD: thread_id,
-                CodexMetadataKey.TURN: turn_id,
-                "codex_turn_status": turn_status,
-            }
-            # Match the marker path: only include duration once it's been
-            # measured.  Avoids a misleading "0.0s" on synthetic paths that
-            # emit lifecycle events without timing (e.g. future code paths
-            # that reuse _emit_turn_outcome without a real turn_start).
-            if duration_s > 0:
-                lifecycle_metadata["codex_duration_s"] = round(duration_s, 2)
-            if turn_error:
-                lifecycle_metadata["codex_error"] = turn_error
-            if has_usage:
-                lifecycle_metadata.update(usage.to_metadata())
-            await send_event_safe(
-                tools,
-                content=task_event_content(
-                    task_id=turn_id,
-                    task="Codex turn lifecycle",
-                    status=turn_status,
-                    summary=f"Duration: {duration_s:.1f}s | Thread: {thread_id}",
-                ),
-                message_type="task",
-                metadata=lifecycle_metadata,
-                log_label="turn lifecycle event",
-                log_level=logging.DEBUG,
-            )
-
+            for enabled, finished in narrate:
+                if enabled:
+                    await finished(
+                        tools,
+                        ref,
+                        turn_status,
+                        error=turn_error,
+                        duration_s=duration_s,
+                        usage=usage,
+                    )
         if not include_reply:
             return
 
-        if turn_status == CodexTurnStatus.COMPLETED:
-            if not tools.turn.replied and Emit.THOUGHTS in self.features.emit:
-                for item_id, message in native_messages.items():
-                    text = message.unstreamed_text
-                    if not has_visible_content(text):
-                        continue
-                    await send_event_safe(
-                        tools,
-                        content=text,
-                        message_type="thought",
-                        metadata={
-                            "codex_item_id": item_id,
-                            CodexMetadataKey.ROOM: room_id,
-                            CodexMetadataKey.THREAD: thread_id,
-                            CodexMetadataKey.TURN: turn_id,
-                        },
-                        log_label="Codex completed thought",
-                    )
-            if not tools.turn.complete:
-                mentions = await automatic_mentions(
-                    tools, audience_sender_ids(audience)
-                )
-                if self._room_clients.get(room_id) is not room or self._room_closing(
-                    room_id
-                ):
-                    return
-                await finish_automatic_reply(tools, None, mentions)
+        completed = turn_status == CodexTurnStatus.COMPLETED
+        if completed and not tools.turn.replied and Emit.THOUGHTS in self.features.emit:
+            await unstreamed_messages(tools, ref, native_messages)
+        if completed and tools.turn.complete:
             return
-
-        if turn_status == CodexTurnStatus.INTERRUPTED:
-            outcome_text = "I stopped before completing this request."
-        elif turn_error:
-            outcome_text = (
-                f"I couldn't complete this request ({turn_status}): {turn_error}"
-            )
-        else:
-            outcome_text = f"I couldn't complete this request ({turn_status})."
-        mentions = await automatic_mentions(tools, audience_sender_ids(audience))
-        if self._room_clients.get(room_id) is not room or self._room_closing(room_id):
+        mentions = await self._room_mentions(tools, audience, room)
+        if mentions is None:
+            return
+        if completed:
+            await finish_automatic_reply(tools, None, mentions)
             return
         if mentions:
-            await deliver_notice(tools, outcome_text, mentions=mentions)
+            await deliver_notice(
+                tools, unfinished_turn_text(turn_status, turn_error), mentions=mentions
+            )
         tools.turn.settle()
 
     async def _show_item_started(
@@ -2297,50 +2158,18 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 approval_msg = APPROVAL_REQUESTED_TEMPLATE.format(
                     summary=summary, token=token
                 )
-                # Emit enriched metadata as a task event for UI rendering
                 if Emit.TASK_EVENTS in self.features.emit:
-                    approval_metadata: dict[str, Any] = {
-                        "codex_event_type": "approval_request",
-                        "codex_approval_type": approval_type(event.method),
-                        "codex_approval_method": event.method,
-                        CodexMetadataKey.ROOM: room_id,
-                        "codex_approval_options": list(APPROVAL_OPTIONS),
-                    }
-                    if params.get("command"):
-                        approval_metadata["codex_command"] = params["command"]
-                    if params.get("cwd"):
-                        approval_metadata["codex_cwd"] = params["cwd"]
-                    if params.get("reason"):
-                        approval_metadata["codex_reason"] = params["reason"]
-                    # Network context (domains, IPs) when available
-                    net_ctx = params.get("networkContext") or params.get(
-                        "network_context"
-                    )
-                    if net_ctx:
-                        approval_metadata["codex_network_context"] = net_ctx
-                    await send_event_safe(
+                    await approval_requested(
                         tools,
-                        content=task_event_content(
-                            task_id=token,
-                            task="Codex approval request",
-                            status="pending",
-                            summary=summary,
-                        ),
-                        message_type="task",
-                        metadata=approval_metadata,
-                        log_label="approval request task event",
-                        log_level=logging.DEBUG,
+                        room_id,
+                        token=token,
+                        method=event.method,
+                        summary=summary,
+                        params=params,
                     )
                 try:
-                    mentions = await automatic_mentions(
-                        tools, audience_sender_ids(audience)
-                    )
-                    if (
-                        self._room_clients.get(room_id) is room
-                        and not self._room_closing(room_id)
-                        and mentions
-                        and entry in registry.unclaimed()
-                    ):
+                    mentions = await self._room_mentions(tools, audience, room)
+                    if mentions and entry in registry.unclaimed():
                         await tools.send_notice(approval_msg, mentions=mentions)
                     elif registry.withdraw(entry):
                         yield "decline"
@@ -2375,13 +2204,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     if decision is Timeout.TIMED_OUT:
                         decision = self.config.approval_timeout_decision
                         try:
-                            mentions = await automatic_mentions(
-                                tools, audience_sender_ids(audience)
-                            )
-                            if (
-                                self._room_clients.get(room_id) is room
-                                and not self._room_closing(room_id)
-                                and mentions
+                            if mentions := await self._room_mentions(
+                                tools, audience, room
                             ):
                                 await tools.send_notice(
                                     APPROVAL_TIMED_OUT_TEMPLATE.format(

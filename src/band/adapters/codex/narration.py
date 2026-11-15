@@ -12,6 +12,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
+from band.adapters.codex.approvals import APPROVAL_OPTIONS, approval_type
 from band.adapters.codex.items import (
     THOUGHT_ITEM_TYPES,
     TOOL_ITEM_TYPES,
@@ -20,12 +21,16 @@ from band.adapters.codex.items import (
     thought_text,
     tool_item,
 )
+from band.adapters.codex.turnstate import NativeMessage
+from band.core.content import has_visible_content
 from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import Emit, MessageType, ToolEventKey, TurnUsage
 from band.integrations.codex.types import (
     ApprovalAuditEntry,
     CodexMetadataKey,
+    CodexNotificationMethod,
     CodexTokenUsage,
+    CodexTurnStatus,
     build_agent_failure,
     parse_plan_steps,
 )
@@ -39,9 +44,6 @@ MAX_TASK_TITLES = 500
 # so multi-byte content cannot inflate the frame past it. Consumers that need
 # the full diff ask Codex for it.
 MAX_DIFF_METADATA_BYTES = 64 * 1024
-
-RAW_TASK_STARTED = "codex/event/task_started"
-RAW_TASK_METHODS = frozenset({RAW_TASK_STARTED, "codex/event/task_complete"})
 
 
 @dataclass(frozen=True)
@@ -238,7 +240,7 @@ async def raw_task_event(
     titles: TaskTitles,
 ) -> None:
     """Forward a raw task lifecycle event, titled from its start."""
-    is_started = method == RAW_TASK_STARTED
+    is_started = method == CodexNotificationMethod.TASK_STARTED
     task_phase = "started" if is_started else "completed"
     task_id = task_event_id(params)
     title = task_event_title(params)
@@ -268,6 +270,187 @@ async def raw_task_event(
     )
     if not is_started and task_id:
         titles.forget(ref.room_id, task_id)
+
+
+def _turn_measures(duration_s: float, usage: CodexTokenUsage | None) -> dict[str, Any]:
+    """A finished turn's duration, once measured, and token usage, once reported."""
+    measures: dict[str, Any] = {}
+    if duration_s > 0:
+        measures["codex_duration_s"] = round(duration_s, 2)
+    if usage is not None and usage.total_tokens > 0:
+        measures.update(usage.to_metadata())
+    return measures
+
+
+async def turn_marker_started(tools: AgentToolsProtocol, ref: TurnRef) -> None:
+    await send_event_safe(
+        tools,
+        content=task_event_content(
+            task_id=ref.turn_id,
+            task="Codex turn",
+            status="started",
+            summary=f"Thread: {ref.thread_id}",
+        ),
+        message_type="task",
+        metadata=ref.metadata(),
+        log_label="turn started task event",
+        log_level=logging.DEBUG,
+    )
+
+
+async def turn_marker_finished(
+    tools: AgentToolsProtocol,
+    ref: TurnRef,
+    status: str,
+    *,
+    error: str,
+    duration_s: float,
+    usage: CodexTokenUsage | None,
+) -> None:
+    summary = f"Thread: {ref.thread_id}" + (f" | Error: {error}" if error else "")
+    await send_event_safe(
+        tools,
+        content=task_event_content(
+            task_id=ref.turn_id, task="Codex turn", status=status, summary=summary
+        ),
+        message_type="task",
+        metadata={
+            **ref.metadata(),
+            "codex_turn_status": status,
+            "codex_error": error or None,
+            **_turn_measures(duration_s, usage),
+        },
+        log_label="turn outcome task event",
+        log_level=logging.DEBUG,
+    )
+
+
+async def turn_lifecycle_started(
+    tools: AgentToolsProtocol, ref: TurnRef, input_summary: str
+) -> None:
+    await send_event_safe(
+        tools,
+        content=task_event_content(
+            task_id=ref.turn_id,
+            task="Codex turn lifecycle",
+            status="started",
+            summary=f"Thread: {ref.thread_id}",
+        ),
+        message_type="task",
+        metadata={
+            "codex_event_type": "turn_lifecycle",
+            **ref.metadata(),
+            "codex_turn_status": "started",
+            "codex_input_summary": input_summary,
+        },
+        log_label="turn started lifecycle event",
+        log_level=logging.DEBUG,
+    )
+
+
+async def turn_lifecycle_finished(
+    tools: AgentToolsProtocol,
+    ref: TurnRef,
+    status: str,
+    *,
+    error: str,
+    duration_s: float,
+    usage: CodexTokenUsage | None,
+) -> None:
+    await send_event_safe(
+        tools,
+        content=task_event_content(
+            task_id=ref.turn_id,
+            task="Codex turn lifecycle",
+            status=status,
+            summary=f"Duration: {duration_s:.1f}s | Thread: {ref.thread_id}",
+        ),
+        message_type="task",
+        metadata={
+            "codex_event_type": "turn_lifecycle",
+            **ref.metadata(),
+            "codex_turn_status": status,
+            **({"codex_error": error} if error else {}),
+            **_turn_measures(duration_s, usage),
+        },
+        log_label="turn lifecycle event",
+        log_level=logging.DEBUG,
+    )
+
+
+async def unstreamed_messages(
+    tools: AgentToolsProtocol, ref: TurnRef, messages: dict[str, NativeMessage]
+) -> None:
+    """Show as thoughts the message text a completed turn never streamed."""
+    for item_id, message in messages.items():
+        text = message.unstreamed_text
+        if not has_visible_content(text):
+            continue
+        await send_event_safe(
+            tools,
+            content=text,
+            message_type="thought",
+            metadata={"codex_item_id": item_id, **ref.metadata()},
+            log_label="Codex completed thought",
+        )
+
+
+def unfinished_turn_text(status: str, error: str) -> str:
+    """What the room is told about a turn that did not complete."""
+    if status == CodexTurnStatus.INTERRUPTED:
+        return "I stopped before completing this request."
+    if error:
+        return f"I couldn't complete this request ({status}): {error}"
+    return f"I couldn't complete this request ({status})."
+
+
+async def stream_delta(
+    tools: AgentToolsProtocol,
+    ref: TurnRef,
+    item_id: str,
+    delta: str,
+    *,
+    log_label: str,
+    **labels: str,
+) -> bool:
+    """Stream one delta of an item as a thought; whether it was delivered."""
+    return await send_event_safe(
+        tools,
+        content=delta,
+        message_type="thought",
+        metadata={
+            "streaming": True,
+            **labels,
+            "codex_item_id": item_id,
+            **ref.metadata(),
+        },
+        log_label=log_label,
+        log_level=logging.DEBUG,
+    )
+
+
+async def context_compacted(
+    tools: AgentToolsProtocol, ref: TurnRef, params: dict[str, Any]
+) -> None:
+    """Forward context/compacted, which may name another thread or turn."""
+    thread_id = str(params.get("threadId") or ref.thread_id)
+    turn_id = str(params.get("turnId") or ref.turn_id or "") or None
+    await send_event_safe(
+        tools,
+        content=task_event_content(
+            task_id=turn_id,
+            task="Codex context compaction",
+            status="completed",
+            summary=f"Thread: {thread_id}",
+        ),
+        message_type="task",
+        metadata={
+            "codex_event_type": "context_compaction",
+            **TurnRef(ref.room_id, thread_id, turn_id).metadata(),
+        },
+        log_label="context compaction event",
+        log_level=logging.DEBUG,
+    )
 
 
 async def plan_steps(
@@ -354,6 +537,64 @@ async def diff_updated(
             **truncation,
         },
         log_label="diff event",
+        log_level=logging.DEBUG,
+    )
+
+
+async def approval_requested(
+    tools: AgentToolsProtocol,
+    room_id: str,
+    *,
+    token: str,
+    method: str,
+    summary: str,
+    params: dict[str, Any],
+) -> None:
+    """A pending approval as a task event a UI can render as a prompt."""
+    metadata: dict[str, Any] = {
+        "codex_event_type": "approval_request",
+        "codex_approval_type": approval_type(method),
+        "codex_approval_method": method,
+        CodexMetadataKey.ROOM: room_id,
+        "codex_approval_options": list(APPROVAL_OPTIONS),
+    }
+    for key, field in (
+        ("command", "codex_command"),
+        ("cwd", "codex_cwd"),
+        ("reason", "codex_reason"),
+    ):
+        if params.get(key):
+            metadata[field] = params[key]
+    if network := params.get("networkContext") or params.get("network_context"):
+        metadata["codex_network_context"] = network
+    await send_event_safe(
+        tools,
+        content=task_event_content(
+            task_id=token,
+            task="Codex approval request",
+            status="pending",
+            summary=summary,
+        ),
+        message_type="task",
+        metadata=metadata,
+        log_label="approval request task event",
+        log_level=logging.DEBUG,
+    )
+
+
+async def approval_decided_by_policy(
+    tools: AgentToolsProtocol, method: str, decision: str
+) -> None:
+    await send_event_safe(
+        tools,
+        content=f"Codex approval request handled automatically ({decision}).",
+        message_type="thought",
+        metadata={
+            "codex_approval_method": method,
+            "codex_approval_type": approval_type(method),
+            "codex_approval_options": list(APPROVAL_OPTIONS),
+        },
+        log_label="approval thought event",
         log_level=logging.DEBUG,
     )
 

@@ -14,10 +14,22 @@ logger = logging.getLogger(__name__)
 
 
 class CodexNotificationMethod(StrEnum):
-    """Item lifecycle notifications shared by foreground and resource routing."""
+    """The app-server notifications a turn handles."""
 
     ITEM_STARTED = "item/started"
     ITEM_COMPLETED = "item/completed"
+    AGENT_MESSAGE_DELTA = "item/agentMessage/delta"
+    REASONING_SUMMARY_DELTA = "item/reasoning/summaryTextDelta"
+    REASONING_TEXT_DELTA = "item/reasoning/textDelta"
+    PLAN_DELTA = "item/plan/delta"
+    PLAN_UPDATED = "turn/plan/updated"
+    DIFF_UPDATED = "turn/diff/updated"
+    TURN_COMPLETED = "turn/completed"
+    TOKEN_USAGE_UPDATED = "thread/tokenUsage/updated"
+    CONTEXT_COMPACTED = "context/compacted"
+    ERROR = "error"
+    TASK_STARTED = "codex/event/task_started"
+    TASK_COMPLETE = "codex/event/task_complete"
 
 
 class CodexItemType(StrEnum):
