@@ -85,6 +85,19 @@ def tool_results(tmp_path: Path) -> list[dict[str, Any]]:
     ]
 
 
+def tool_result_errors(tmp_path: Path) -> dict[str, bool]:
+    """Map each host-tool result id to whether the host marked it an error."""
+    return {frame["id"]: bool(frame["isError"]) for frame in tool_results(tmp_path)}
+
+
+def tool_result_text(tmp_path: Path, call_id: str) -> str:
+    """Return the text payload of one host-tool result."""
+    for frame in tool_results(tmp_path):
+        if frame["id"] == call_id:
+            return frame["result"]["content"][0]["text"]
+    raise KeyError(call_id)
+
+
 def stop_commands(tmp_path: Path) -> list[dict[str, Any]]:
     return [
         frame
@@ -93,15 +106,16 @@ def stop_commands(tmp_path: Path) -> list[dict[str, Any]]:
     ]
 
 
-def admitted_declines_before_stop(tmp_path: Path) -> list[str]:
+def decline_ids_before_stop(tmp_path: Path) -> frozenset[str]:
+    """Decline host-tool call ids that appear before the owned ABORT."""
     frames = wire_frames(tmp_path)
     stop = next(frame for frame in frames if frame["type"] == OmpCommandName.ABORT)
-    return [
+    return frozenset(
         frame["id"]
         for frame in frames[: frames.index(stop)]
         if frame["type"] == OmpFrameType.HOST_TOOL_CALL
         and frame["toolName"] == BandTool.NO_REPLY
-    ]
+    )
 
 
 def wire_frames(tmp_path: Path) -> list[dict[str, Any]]:
