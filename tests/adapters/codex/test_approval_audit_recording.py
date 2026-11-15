@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from band.adapters.codex import (
-    CodexAdapter,
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.integrations.codex.types import CodexApprovalMethod
 from tests.adapters.codex.kit import ROOM_ID
 

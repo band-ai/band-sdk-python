@@ -6,9 +6,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import (
     CodexRequestMethod,
 )

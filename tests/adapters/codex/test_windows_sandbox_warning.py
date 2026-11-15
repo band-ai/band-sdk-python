@@ -7,11 +7,10 @@ from typing import Any
 
 import pytest
 
-from band.adapters.codex import (
+from band.adapters.codex import CodexAdapter, CodexSandboxMode, CodexWindowsSandbox
+from band.adapters.codex.sandbox import (
     WINDOWS_SANDBOX_MISSING_WARNING,
     WINDOWS_SANDBOX_SETUP_WARNING,
-    CodexSandboxMode,
-    CodexWindowsSandbox,
 )
 from band.integrations.codex import CodexJsonRpcError
 from band.integrations.codex.types import (
@@ -22,7 +21,7 @@ from band.integrations.codex.types import (
 from tests.adapters.codex.kit import StartCodex, ToolSchemaFakeTools, send_bootstrap
 from tests.adapters.codexturns import FakeCodexClient, turn_completed
 
-ADAPTER_LOGGER = "band.adapters.codex"
+ADAPTER_LOGGER = CodexAdapter.__module__
 
 
 def logged_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:

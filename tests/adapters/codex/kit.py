@@ -14,13 +14,8 @@ from uuid import uuid4
 import pytest_asyncio
 from pydantic import BaseModel
 
-from band.adapters.codex import (
-    ApprovalDecision,
-    CodexAdapter,
-    CodexAdapterConfig,
-    CodexCommand,
-    PendingApproval,
-)
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexCommand
+from band.adapters.codex.approvals import ApprovalDecision, PendingApproval
 from band.client.streaming import ControlMode
 from band.converters.codex import CODEX_RESUME_RECORD
 from band.converters.helpers import HISTORY_REPLAY_HEADING

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import PROCESS_NOT_READY_ERROR, CodexAdapterConfig
+from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex.turnstate import PROCESS_NOT_READY_ERROR
 from band.core.retention import RoomRetentionConfig
 from band.integrations.codex.types import CodexRequestMethod
 from band.runtime.tools import BandTool

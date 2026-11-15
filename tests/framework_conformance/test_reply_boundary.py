@@ -46,7 +46,7 @@ ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
         Counter(finish_automatic_reply=1),
         "silent completion only; no text is supplied",
     ),
-    "adapters/codex.py": (
+    "adapters/codex/adapter.py": (
         Counter(finish_automatic_reply=1),
         "silent completion only; no text is supplied",
     ),

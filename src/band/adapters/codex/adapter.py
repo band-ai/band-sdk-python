@@ -10,36 +10,96 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
-from dataclasses import dataclass, fields
-from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
-from enum import StrEnum
 from functools import partial
-from typing import Any, ClassVar, Literal, NamedTuple, Protocol
+from typing import Any, ClassVar
 
 from band_sdk_core import AgentFailure
-from pydantic import (
-    AliasChoices,
-    BaseModel,
-    Field,
-    ValidationError,
-    field_validator,
-)
-from pydantic.fields import FieldInfo
-from pydantic_settings import (
-    BaseSettings,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-)
+from pydantic import ValidationError
 from typing_extensions import Unpack
 
+from band.adapters.codex.approvals import (
+    ApprovalDecision,
+    PendingApproval,
+    approval_response,
+)
+from band.adapters.codex.commands import (
+    APPROVAL_COMMAND_DECISIONS,
+    APPROVAL_COMMANDS,
+    APPROVAL_REQUESTED_TEMPLATE,
+    APPROVAL_RESOLVED_TEMPLATE,
+    APPROVAL_TIMED_OUT_TEMPLATE,
+    COMMAND_WORDS,
+    HELP_TEXT,
+    MODEL_LIST_WORDS,
+    NO_APPROVALS_TO_RESOLVE_MESSAGE,
+    PROCESS_COMMANDS,
+    CodexCommand,
+    CodexSubcommand,
+)
+from band.adapters.codex.config import CodexAdapterConfig
+from band.adapters.codex.dynamictools import (
+    UNOWNED_TOOL_CALL_TEXT,
+    image_content_items,
+    text_tool_result,
+    tool_response,
+    tools_by_name,
+)
+from band.adapters.codex.items import (
+    ACTIVITY_ITEM_TYPES,
+    THOUGHT_ITEM_TYPES,
+    TOOL_ITEM_TYPES,
+    UNRENDERED_ITEM_TYPES,
+    CodexToolItem,
+    item_call_id,
+)
+from band.adapters.codex.roomstate import RoomCodexClient, ThreadSettings
+from band.adapters.codex.rpc import (
+    CodexClientProtocol,
+    event_params,
+    event_thread_id,
+    event_turn_id,
+    loss_reason,
+    refuse_unhandled_request,
+    result_entry_id,
+    text_item,
+)
+from band.adapters.codex.sandbox import (
+    ENFORCED_SANDBOX_MODES,
+    EXTERNAL_SANDBOX_KEY,
+    EXTERNAL_SANDBOX_POLICY_TYPE,
+    SANDBOX_CONFIRM_FLAG,
+    SANDBOX_KEY_ALIASES,
+    SANDBOX_MODE_CHOICES,
+    SANDBOX_MODES,
+    WINDOWS_SANDBOX_MISSING_WARNING,
+    WINDOWS_SANDBOX_SETUP_WARNING,
+    CodexSandboxMode,
+)
+from band.adapters.codex.selfconfig import (
+    REASONING_SUMMARIES,
+    SILENT_REPORTING_TOOLS,
+    SetModelInput,
+    SetReasoningInput,
+)
+from band.adapters.codex.turnstate import (
+    PROCESS_NOT_READY_ERROR,
+    TRANSPORT_LOST_ERROR,
+    TURN_PROCESSING_ERROR,
+    CodexContinuityError,
+    CodexTurn,
+    NativeMessage,
+    NativeTurn,
+    TurnResult,
+    audience_sender_ids,
+    undelivered_events,
+)
 from band.converters.codex import CODEX_RESUME_RECORD, CodexHistoryConverter
 from band.converters.helpers import (
     HISTORY_REPLAY_HEADER,
     build_replay_messages,
     new_message_marker,
 )
-from band.core.adapterconfig import EnvAdapterConfig
 from band.core.content import has_visible_content
 from band.core.defaultmodels import OPENAI_MODEL
 from band.core.delivery import (
@@ -63,24 +123,15 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
     send_event_safe,
 )
-from band.core.retention import (
-    ReleaseCause,
-    ReleaseOutcome,
-    RetainedRoom,
-    RoomRetention,
-    RoomRetentionConfig,
-    require_disabled_retention,
-)
+from band.core.retention import ReleaseCause, ReleaseOutcome, RoomRetention
 from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import detached_turn
 from band.core.turn_lifecycle import (
-    TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
     BackendTurns,
     TaskRole,
-    TurnSettleTimeout,
     TurnTask,
     bind_turn_task,
     drain_turn_tasks,
@@ -88,7 +139,6 @@ from band.core.turn_lifecycle import (
     start_releasable_turn,
 )
 from band.core.types import (
-    ApprovalMode,
     Capability,
     Emit,
     FeatureKwargs,
@@ -157,164 +207,18 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
-from band.workspaces import (
-    RoomWorkspaces,
-    WorkspaceResolver,
-    is_host_absolute,
-)
+from band.workspaces import RoomWorkspaces
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_CONTEXT_PREFIX = "[System]:"
 
 
-def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
-    """An image tool result as Codex app-server ``inputImage`` content items.
-
-    Inlined as a data: URI -- the protocol's ``imageUrl`` is a bare string with
-    no documented inline-vs-http distinction.
-    """
-    return [
-        {
-            "type": "inputImage",
-            "imageUrl": f"data:{block['mimeType']};base64,{block['data']}",
-        }
-        for block in result["content"]
-    ]
-
-
-TransportKind = Literal["stdio", "ws"]
-ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
-_REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
-
-# Codex-local slash commands, which surface their outcome in the room themselves.
-_SILENT_REPORTING_TOOLS: frozenset[str] = frozenset({"setmodel", "setreasoning"})
-
-
-class CodexCommand(StrEnum):
-    """The `/<word>` room commands this adapter handles itself, rather than
-    forwarding to Codex -- the single source for parsing, dispatch, and the
-    command names quoted back in room messages."""
-
-    HELP = "help"
-    STATUS = "status"
-    MODEL = "model"
-    MODELS = "models"
-    REASONING = "reasoning"
-    APPROVALS = "approvals"
-    APPROVE = "approve"
-    APPROVE_SESSION = "approve-session"
-    DECLINE = "decline"
-    SANDBOX = "sandbox"
-    PERMISSIONS = "permissions"
-    THREADS = "threads"
-    THREAD = "thread"
-    USAGE = "usage"
-
-
-# The decision each resolving approval command sends back to Codex.
-_APPROVAL_COMMAND_DECISIONS: dict[CodexCommand, ApprovalDecision] = {
-    CodexCommand.APPROVE: "accept",
-    CodexCommand.APPROVE_SESSION: "acceptForSession",
-    CodexCommand.DECLINE: "decline",
-}
-_APPROVAL_COMMANDS = frozenset({*_APPROVAL_COMMAND_DECISIONS, CodexCommand.APPROVALS})
-# Local commands that ask the room's Codex process.
-_PROCESS_COMMANDS = frozenset(
-    {CodexCommand.MODEL, CodexCommand.MODELS, CodexCommand.REASONING}
-)
-# Membership by plain string: Python 3.11's Enum rejects `"word" in CodexCommand`.
-_COMMAND_WORDS = frozenset(CodexCommand)
-
-APPROVAL_REQUESTED_TEMPLATE = (
-    "Approval requested ({summary}). Approval id: `{token}`. "
-    f"Reply `/{CodexCommand.APPROVE} {{token}}` or "
-    f"`/{CodexCommand.DECLINE} {{token}}` or "
-    f"`/{CodexCommand.APPROVE_SESSION} {{token}}` "
-    "(approve all similar for this session). "
-    f"Use `/{CodexCommand.APPROVALS}` to list pending approvals."
-)
-APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as `{decision}`."
-APPROVAL_TIMED_OUT_TEMPLATE = "Approval `{token}` timed out. Applied `{decision}`."
-NO_APPROVALS_TO_RESOLVE_MESSAGE = "No pending approvals to resolve."
-
-
-class CodexSubcommand(StrEnum):
-    """Second words of `/model` and `/thread`."""
-
-    LIST = "list"
-    LS = "ls"
-    INFO = "info"
-    ARCHIVE = "archive"
-
-
-_MODEL_LIST_WORDS = frozenset({CodexSubcommand.LIST, CodexSubcommand.LS})
-
-
-class CodexSandboxMode(StrEnum):
-    """thread/start's kebab-case ``SandboxMode`` values -- also exactly what
-    ``/sandbox`` accepts."""
-
-    READ_ONLY = "read-only"
-    WORKSPACE_WRITE = "workspace-write"
-    DANGER_FULL_ACCESS = "danger-full-access"
-
-
-class CodexWindowsSandbox(StrEnum):
-    """Codex's ``[windows] sandbox`` backends: without one, a Windows app-server
-    cannot enforce ``read-only`` or ``workspace-write``."""
-
-    ELEVATED = "elevated"
-    UNELEVATED = "unelevated"
-
-
-# Membership by plain string: Python 3.11's Enum rejects `"word" in CodexSandboxMode`.
-_SANDBOX_MODES = frozenset(CodexSandboxMode)
-# Sandboxes Codex enforces itself; on Windows they need a Windows sandbox backend.
-_ENFORCED_SANDBOX_MODES = frozenset(
-    {CodexSandboxMode.READ_ONLY, CodexSandboxMode.WORKSPACE_WRITE}
-)
-# A sandbox kind expressible only as a turn/start sandboxPolicy, not a mode.
-_EXTERNAL_SANDBOX_KEY = "external-sandbox"
-_EXTERNAL_SANDBOX_POLICY_TYPE = "externalSandbox"
-# Config spellings accepted without the dashes, e.g. "readonly".
-_SANDBOX_KEY_ALIASES = {
-    key.replace("-", ""): key for key in (*CodexSandboxMode, _EXTERNAL_SANDBOX_KEY)
-}
-_SANDBOX_CONFIRM_FLAG = "--confirm"
-_SANDBOX_MODE_CHOICES = "|".join(CodexSandboxMode)
-WINDOWS_SANDBOX_MISSING_WARNING = (
-    "Codex on Windows has no sandbox configured, so it cannot enforce a "
-    "read-only or workspace-write sandbox: with approval_policy 'never' it "
-    "refuses every shell command and file edit, and otherwise it asks approval "
-    "for each. Set windows_sandbox (or CODEX_WINDOWS_SANDBOX) to "
-    f"'{CodexWindowsSandbox.UNELEVATED}' or '{CodexWindowsSandbox.ELEVATED}', "
-    "or set [windows] sandbox in the Codex config."
-)
-WINDOWS_SANDBOX_SETUP_WARNING = (
-    f"Codex's {CodexWindowsSandbox.ELEVATED} Windows sandbox has not finished "
-    "its setup, so sandboxed commands fail. Complete the setup in Codex, or set "
-    f"windows_sandbox (or CODEX_WINDOWS_SANDBOX) to '{CodexWindowsSandbox.UNELEVATED}'."
-)
-
-_HELP_TEXT = (
-    "Codex commands: "
-    f"`/{CodexCommand.STATUS}`, `/{CodexCommand.MODEL}`, `/{CodexCommand.MODELS}`, "
-    f"`/{CodexCommand.MODEL} {CodexSubcommand.LIST}`, "
-    f"`/{CodexCommand.MODELS} {CodexSubcommand.LIST}`, `/{CodexCommand.MODEL} <id>`, "
-    f"`/{CodexCommand.REASONING} [effort]`, "
-    f"`/{CodexCommand.APPROVALS}`, `/{CodexCommand.APPROVE} <id>`, "
-    f"`/{CodexCommand.APPROVE_SESSION} <id>`, `/{CodexCommand.DECLINE} <id>`, "
-    f"`/{CodexCommand.THREADS}`, `/{CodexCommand.THREAD} {CodexSubcommand.INFO}`, "
-    f"`/{CodexCommand.THREAD} {CodexSubcommand.ARCHIVE}`, "
-    f"`/{CodexCommand.SANDBOX} <mode>`, `/{CodexCommand.PERMISSIONS}`, "
-    f"`/{CodexCommand.USAGE}`, `/{CodexCommand.HELP}`."
-)
-
 # Upper bound on cached task titles (room-lifecycle map used to preserve the
 # title between task_started and task_complete events).  500 covers bursty
 # conversations while keeping memory bounded.
 _MAX_TASK_TITLES = 500
+
 
 # Cap on the raw diff string forwarded in ``turn/diff/updated`` task metadata,
 # expressed in UTF-8 bytes.  Diffs can be megabytes on large refactors;
@@ -324,702 +228,6 @@ _MAX_TASK_TITLES = 500
 # size uniformly regardless of whether the diff contains ASCII or heavy
 # multi-byte content (emoji, CJK).
 _MAX_DIFF_METADATA_BYTES = 64 * 1024
-
-# item/completed "type" values gated on Emit.TOOL_CALLS; dispatched in
-# _extract_tool_item.
-_TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
-    {
-        CodexItemType.COMMAND_EXECUTION,
-        CodexItemType.FILE_CHANGE,
-        CodexItemType.MCP_TOOL_CALL,
-        CodexItemType.WEB_SEARCH,
-        CodexItemType.IMAGE_VIEW,
-        CodexItemType.COLLAB_AGENT_TOOL_CALL,
-    }
-)
-
-# Tools Codex asks the adapter to run (item/tool/call). The adapter reports them
-# there, with the real result, so their item/completed is the same call again.
-_REQUESTED_TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
-    {CodexItemType.DYNAMIC_TOOL_CALL}
-)
-
-# The prompt and the reply; the reply's text is read by the turn loop.
-_MESSAGE_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
-    {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
-)
-
-# Read only to attribute a sub-agent's requests to its turn; never rendered.
-_ROUTING_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
-    {CodexItemType.SUB_AGENT_ACTIVITY}
-)
-
-# Items that show as the turn's activity from item/started to item/completed.
-_ACTIVITY_ITEM_TYPES = _TOOL_ITEM_TYPES | {CodexItemType.CONTEXT_COMPACTION}
-
-_UNRENDERED_ITEM_TYPES = (
-    _REQUESTED_TOOL_ITEM_TYPES | _MESSAGE_ITEM_TYPES | _ROUTING_ITEM_TYPES
-)
-
-# item/completed "type" values gated on Emit.THOUGHTS; dispatched in
-# _extract_thought_text.
-_THOUGHT_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
-    {
-        CodexItemType.REASONING,
-        CodexItemType.PLAN,
-        CodexItemType.CONTEXT_COMPACTION,
-        CodexItemType.ENTERED_REVIEW_MODE,
-        CodexItemType.EXITED_REVIEW_MODE,
-    }
-)
-
-
-class CodexToolItem(NamedTuple):
-    """(name, args, output) for one tool-like item/completed entry."""
-
-    name: str
-    args: dict[str, Any]
-    output: str
-
-
-# ---------------------------------------------------------------------------
-# Self-configuration tools — let Codex change its own model/reasoning at runtime
-# ---------------------------------------------------------------------------
-
-
-class SetModelInput(BaseModel):
-    """Switch the model used for subsequent turns. Call this when a different model would be more appropriate for the task (e.g. a faster model for simple queries, a stronger model for complex reasoning)."""
-
-    model: str = Field(description="Model ID to use (e.g. 'gpt-5.5').")
-
-
-class SetReasoningInput(BaseModel):
-    """Adjust reasoning effort and summary detail for subsequent turns. Use higher effort for complex problems and lower effort for straightforward tasks."""
-
-    effort: str | None = Field(
-        default=None,
-        description="Reasoning effort level supported by the current model (for example low, medium, or high). Omit to keep current.",
-    )
-    summary: str | None = Field(
-        default=None,
-        description="Reasoning summary detail: auto, concise, detailed, or none. Omit to keep current.",
-    )
-
-
-class CodexClientProtocol(Protocol):
-    async def connect(self) -> None: ...
-
-    async def initialize(
-        self,
-        *,
-        client_name: str,
-        client_title: str,
-        client_version: str,
-        experimental_api: bool = False,
-        opt_out_notification_methods: list[str] | None = None,
-    ) -> dict[str, Any]: ...
-
-    async def request(
-        self,
-        method: str,
-        params: dict[str, Any] | None = None,
-        *,
-        retry_on_overload: bool = True,
-    ) -> dict[str, Any]: ...
-
-    async def recv_event(self, timeout_s: float | None = None) -> RpcEvent: ...
-
-    async def respond(self, request_id: int | str, result: dict[str, Any]) -> None: ...
-
-    async def respond_error(
-        self,
-        request_id: int | str,
-        *,
-        code: int,
-        message: str,
-        data: Any | None = None,
-    ) -> None: ...
-
-    async def close(self) -> None: ...
-
-
-class CodexContinuityError(RuntimeError):
-    """A retained Codex thread cannot continue as it was; its id is kept."""
-
-
-@dataclass(frozen=True)
-class CodexTurn:
-    """What interrupting one room's running app-server turn needs."""
-
-    client: CodexClientProtocol
-    thread_id: str
-    turn_id: str
-
-
-_METHOD_NOT_FOUND = -32601
-# How a turn whose Codex process was lost reports its failure.
-TRANSPORT_LOST_ERROR = "Codex transport closed unexpectedly"
-# How a turn that failed for an unexpected reason reports its failure.
-TURN_PROCESSING_ERROR = "Internal error during turn processing"
-# How a turn reports a room process that did not start or stop within
-# ``retention.transition_timeout_s``.
-PROCESS_NOT_READY_ERROR = "Codex process did not become ready in time"
-# One acquisition starts the process, refreshes ``model/list`` online and
-# strictly resumes the thread's whole rollout.
-CODEX_TRANSITION_TIMEOUT_S = 60.0
-_UNOWNED_TOOL_CALL_TEXT = (
-    "No Band turn started this Codex turn, so Band tools are unavailable to it."
-)
-
-
-def _text_item(text: str) -> dict[str, Any]:
-    return {"type": "inputText", "text": text}
-
-
-def _tool_response(items: list[dict[str, Any]], *, success: bool) -> dict[str, Any]:
-    """A dynamic tool call's response."""
-    return {"contentItems": items, "success": success}
-
-
-def _tool_result(text: str, *, success: bool) -> dict[str, Any]:
-    """A dynamic tool call's response carrying one text item."""
-    return _tool_response([_text_item(text)], success=success)
-
-
-def _approval_response(decision: ApprovalDecision) -> dict[str, Any]:
-    return {"decision": decision}
-
-
-async def _refuse_unhandled_request(
-    client: CodexClientProtocol, *, request_id: int | str, method: str
-) -> None:
-    await client.respond_error(
-        request_id,
-        code=_METHOD_NOT_FOUND,
-        message=f"Unhandled server request: {method}",
-    )
-
-
-@dataclass
-class PendingApproval:
-    request_id: int | str
-    method: str
-    summary: str
-    created_at: datetime
-    future: asyncio.Future[ApprovalDecision]
-    session_key: str = ""
-    native_key: str = ""
-
-
-@dataclass
-class NativeMessage:
-    """One agent-message item's streamed and authoritative completed text."""
-
-    phase: str | None = None
-    streamed_text: str = ""
-    completed_text: str | None = None
-
-    @property
-    def unstreamed_text(self) -> str:
-        text = self.completed_text or ""
-        if text.startswith(self.streamed_text):
-            return text[len(self.streamed_text) :]
-        return text
-
-
-@dataclass
-class TurnResult:
-    """Aggregated result from processing a single Codex turn's event stream."""
-
-    native_messages: dict[str, NativeMessage] = dataclass_field(default_factory=dict)
-    turn_status: str = CodexTurnStatus.FAILED
-    turn_error: str = ""
-
-    @property
-    def completed(self) -> bool:
-        """Whether the turn completed: only then is a seeding turn's thread seeded.
-
-        An interrupted seed is abandoned like a failed one.
-        """
-        return self.turn_status == CodexTurnStatus.COMPLETED
-
-
-def _audience_sender_ids(audience: Sequence[dict[str, str]]) -> list[str]:
-    """Project the current turn audience onto sender IDs."""
-    return [person["id"] for person in audience]
-
-
-def _event_params(event: RpcEvent) -> dict[str, Any]:
-    return event.params if isinstance(event.params, dict) else {}
-
-
-def _native_turn_id(event: RpcEvent) -> str | None:
-    """The native turn ``event`` belongs to: its ``turnId``, or the ``turn.id``
-    that ``turn/started`` and ``turn/completed`` carry instead."""
-    params = _event_params(event)
-    turn_id = params.get("turnId")
-    if turn_id is None and isinstance(turn := params.get("turn"), dict):
-        turn_id = turn.get("id")
-    return str(turn_id) if turn_id else None
-
-
-def _loss_reason(cause: RpcEvent | Exception) -> str:
-    """Why a process's events stopped: the transport's stated reason, if any."""
-    if isinstance(cause, Exception):
-        return repr(cause)
-    params = _event_params(cause)
-    return str(params.get("reason") or cause.method)
-
-
-def _thread_id(event: RpcEvent) -> str | None:
-    params = _event_params(event)
-    thread_id = params.get("threadId")
-    return str(thread_id) if thread_id else None
-
-
-def _item_id(item: dict[str, Any]) -> str:
-    return str(item.get("id") or item.get("callId") or item.get("toolCallId") or "")
-
-
-def _delegated_threads(event: RpcEvent) -> set[str]:
-    """Sub-agent threads an item says the turn spawned or addressed."""
-    item = _event_params(event).get("item")
-    if not isinstance(item, dict):
-        return set()
-    match item.get("type"):
-        case CodexItemType.COLLAB_AGENT_TOOL_CALL:
-            threads = item.get("receiverThreadIds") or ()
-        case CodexItemType.SUB_AGENT_ACTIVITY:
-            threads = (item.get("agentThreadId"),)
-        case _:
-            return set()
-    return {str(thread) for thread in threads if thread}
-
-
-@dataclass
-class NativeTurn:
-    """The Band turn that started one native turn, and the events addressed to it.
-
-    Codex names the turn only when ``turn/start`` answers, so events that
-    arrive first wait in ``early`` until ``turn_id`` is known. Sub-agents
-    the turn delegates to ask under their own thread and turn, and Codex
-    names their thread only in the turn's own items, so their requests
-    wait in ``unattributed`` until one does.
-    """
-
-    client: CodexClientProtocol
-    generation: int
-    owner: TurnTask
-    tools: AgentToolsProtocol | None = None
-    thread_id: str | None = None
-    turn_id: str | None = None
-    # An exception is the reader's own failure, which ends the turn.
-    events: asyncio.Queue[RpcEvent | Exception] = dataclass_field(
-        default_factory=asyncio.Queue
-    )
-    early: list[RpcEvent] = dataclass_field(default_factory=list)
-    sub_agents: set[str] = dataclass_field(default_factory=set)
-    unattributed: list[RpcEvent] = dataclass_field(default_factory=list)
-    # Why the process stopped -- its closing notice or the reader's failure,
-    # queued behind its requests.
-    loss: RpcEvent | Exception | None = None
-
-    @property
-    def lost(self) -> bool:
-        return self.loss is not None
-
-    def owns(self, event: RpcEvent) -> bool:
-        # Every event a turn handles names its turn; thread-scoped ones do not.
-        if _native_turn_id(event) == self.turn_id:
-            return True
-        # Only a sub-agent's requests: its own turn/completed must not end this turn.
-        return event.is_request and _thread_id(event) in self.sub_agents
-
-    def may_own(self, event: RpcEvent) -> bool:
-        """A request from another thread, which a later collab item may name."""
-        return event.is_request and _thread_id(event) not in (
-            None,
-            self.thread_id,
-        )
-
-    def deliver(self, event: RpcEvent) -> None:
-        """Queue an owned event, then the held requests it names a sub-agent for."""
-        self.events.put_nowait(event)
-        if not (receivers := _delegated_threads(event) - self.sub_agents):
-            return
-        self.sub_agents |= receivers
-        held, self.unattributed = self.unattributed, []
-        for request in held:
-            if self.owns(request):
-                self.events.put_nowait(request)
-            else:
-                self.unattributed.append(request)
-
-    def claim(self, event: RpcEvent) -> bool:
-        """Deliver or hold ``event``; False when this turn can never own it."""
-        if self.owns(event):
-            self.deliver(event)
-        elif self.may_own(event):
-            self.unattributed.append(event)
-        else:
-            return False
-        return True
-
-
-def _result_id(result: Any, key: str) -> str:
-    """The ``id`` of ``result[key]``, or "" when Codex returned none."""
-    entry = result.get(key) if isinstance(result, dict) else None
-    return str(entry.get("id") or "") if isinstance(entry, dict) else ""
-
-
-def _undelivered(native: NativeTurn) -> list[RpcEvent]:
-    """Events still waiting for the native turn when its Band turn ends."""
-    queued = [native.events.get_nowait() for _ in range(native.events.qsize())]
-    return [
-        *native.early,
-        *(item for item in queued if isinstance(item, RpcEvent)),
-        *native.unattributed,
-    ]
-
-
-def _tools_by_name(tools: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {str(tool.get("name")): tool for tool in tools}
-
-
-@dataclass(frozen=True)
-class ThreadSettings:
-    """Settings Codex reports for a thread that ``turn/start`` does not re-send;
-    a restored thread must report the ones it was started with."""
-
-    model_provider: str | None = None
-    cwd: str | None = None
-
-    @classmethod
-    def reported_by(cls, result: dict[str, Any]) -> ThreadSettings:
-        provider, cwd = result.get("modelProvider"), result.get("cwd")
-        return cls(
-            model_provider=provider if isinstance(provider, str) else None,
-            cwd=cwd if isinstance(cwd, str) else None,
-        )
-
-    def changes_in(self, restored: ThreadSettings) -> list[str]:
-        return [
-            f"{setting.name} {retained!r} became {current!r}"
-            for setting in fields(self)
-            if (retained := getattr(self, setting.name)) is not None
-            and (current := getattr(restored, setting.name)) != retained
-        ]
-
-
-@dataclass
-class RoomCodexClient:
-    """One Band room's Codex process and what its thread was started with.
-
-    ``retained`` owns admission and every physical transition. ``client`` and
-    ``reader`` are cleared only once the process is confirmed closed; the
-    room's thread id stays in the adapter's ``_room_threads`` across process
-    replacement until the room is finally disposed.
-    """
-
-    room_id: str
-    workspace: str
-    retained: RetainedRoom = dataclass_field(init=False)
-    client: CodexClientProtocol | None = None
-    reader: asyncio.Task[None] | None = None
-    turn: NativeTurn | None = None
-    commands: dict[tuple[str, str, str], CommandResource] = dataclass_field(
-        default_factory=dict
-    )
-    item_activity: dict[tuple[str, str, str], tuple[AgentToolsProtocol, object]] = (
-        dataclass_field(default_factory=dict)
-    )
-    routing_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
-    selected_model: str | None = None
-    reasoning_effort: str | None = None
-    reasoning_summary: str | None = None
-    # The dynamic tools the thread was started with: resume restores these and
-    # ignores any others. None when the thread came from Band history.
-    registration: list[dict[str, Any]] | None = None
-    settings: ThreadSettings = ThreadSettings()
-    # The thread was resumed into this process; a turn confirms its tools.
-    restored: bool = False
-    # Whether the thread holds the room's context yet.
-    seed: SessionSeed = dataclass_field(default_factory=SessionSeed)
-    # Band history names the thread: its resume record was posted.
-    recorded: bool = False
-    # Runtime commits these deltas even when a turn fails; its successor needs them.
-    pending_system_context: list[str] = dataclass_field(default_factory=list)
-    # Serializes this room's turns, local commands and their preparation; a
-    # turn parked on a manual approval blocks only this room. Approval
-    # replies are handled without it so they can resolve that wait.
-    rpc_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
-
-    @property
-    def generation(self) -> int:
-        """The residency the room's current process belongs to."""
-        return self.retained.generation
-
-    def bind_thread(
-        self,
-        *,
-        registration: list[dict[str, Any]] | None,
-        settings: ThreadSettings,
-        seed: SessionSeed,
-    ) -> None:
-        """Record what the thread this process now runs was started with."""
-        self.registration = registration
-        self.settings = settings
-        self.seed = seed
-        self.restored = False
-        self.recorded = False
-
-    def forget_thread(self) -> None:
-        self.bind_thread(
-            registration=None, settings=ThreadSettings(), seed=SessionSeed()
-        )
-
-    async def retain_system_context(self, latest: str | None) -> None:
-        """Keep system context until a native turn completes with it."""
-        if latest:
-            self.pending_system_context.append(latest)
-
-    def require_client(self) -> CodexClientProtocol:
-        if self.client is None:
-            raise RuntimeError(f"Room {self.room_id} has no Codex process")
-        return self.client
-
-    async def stop_reader(self) -> None:
-        if (reader := self.reader) is None:
-            return
-        reader.cancel()
-        await asyncio.wait({reader})
-        self.reader = None
-
-
-class _WithoutCwdBinding(PydanticBaseSettingsSource):
-    """Drops ``cwd``'s implicit env binding from a settings source.
-
-    ``populate_by_name=True`` makes pydantic-settings honor a field's bare
-    name as an env alias alongside any explicit ``validation_alias`` -- which
-    for a field literally named ``cwd`` means the plain, generically-meaningful
-    ``CODEX_CWD`` is always live, however it's aliased. ``cwd`` exists on
-    ``CodexAdapterConfig`` only to reject the legacy explicit kwarg (see
-    ``CodexAdapter.__init__``), so an ambient ``CODEX_CWD`` set for something
-    unrelated (e.g. a Codex CLI convention, or this repo's own E2E harness)
-    must never silently populate it and trip that rejection.
-    """
-
-    def __init__(self, source: PydanticBaseSettingsSource) -> None:
-        super().__init__(source.settings_cls)
-        self._source = source
-
-    def get_field_value(
-        self, field: FieldInfo, field_name: str
-    ) -> tuple[Any, str, bool]:
-        return self._source.get_field_value(field, field_name)
-
-    def __call__(self) -> dict[str, Any]:
-        values = dict(self._source())
-        values.pop("cwd", None)
-        return values
-
-
-class CodexAdapterConfig(EnvAdapterConfig):
-    """Runtime configuration for Codex adapter sessions.
-
-    Every field can be set explicitly (highest priority) or via a
-    ``CODEX_``-prefixed environment variable (e.g. ``CODEX_MODEL``,
-    ``CODEX_TRANSPORT``, ``CODEX_APPROVAL_MODE``); ``codex_ws_url`` is
-    sourced from ``CODEX_WS_URL`` (the field name already carries the
-    ``codex_`` part), ``emit_turn_task_markers`` also accepts the legacy
-    ``CODEX_TURN_TASK_MARKERS``, and ``codex_command`` is sourced from the
-    established ``CODEX_COMMAND`` (not the doubly-prefixed
-    ``CODEX_CODEX_COMMAND``), parsed the same way as an explicit tuple: a
-    whitespace-split shell string (e.g. ``"custom-codex --args"``). An
-    explicit constructor kwarg always wins over the environment.
-
-    Windows sandbox:
-        Codex leaves its Windows sandbox off unless configured, and then
-        treats ``workspace-write`` as read-only and, under
-        ``approval_policy="never"``, refuses every command. ``windows_sandbox``
-        picks a backend for each thread; unset keeps Codex's own
-        ``[windows] sandbox`` config. It is opt-in because both backends
-        change the host: ``unelevated`` grants ACL entries on the workspace
-        and temp directory, and ``elevated`` needs administrator setup that
-        creates sandbox users. Keep room workspaces under a directory with
-        inherited permissions; one created with mode ``0o700`` (such as
-        ``tempfile.mkdtemp``) can block the sandbox from the workspace.
-        Codex does not recognize a Windows sandbox denial, so an approved
-        command it first runs sandboxed is not retried outside the sandbox:
-        with ``read-only``, an approved write still fails.
-
-    Turn task events:
-        ``emit_turn_task_markers`` and ``emit_turn_lifecycle_events`` are
-        independent channels.  Enabling both will produce **two** task
-        events per completed turn: one "Codex turn" marker and one
-        enriched "Codex turn lifecycle" event (plus a "started" lifecycle
-        event at turn start).  Consumers that render task timelines
-        should pick exactly one channel — typically the lifecycle channel
-        when its extra metadata is desired.
-    """
-
-    # populate_by_name: an aliased field stays constructible by its field name
-    # and keeps its prefix-derived environment variable.
-    model_config = SettingsConfigDict(
-        env_prefix="CODEX_",
-        populate_by_name=True,
-        arbitrary_types_allowed=True,
-    )
-
-    transport: TransportKind = "stdio"
-    retention: RoomRetentionConfig = Field(
-        default_factory=lambda: RoomRetentionConfig(
-            transition_timeout_s=CODEX_TRANSITION_TIMEOUT_S
-        )
-    )
-    model: str | None = None
-    # Not validated here: the supported efforts vary by model and Codex CLI
-    # version (model/list reports them), and the backend rejects unknown ones.
-    reasoning_effort: str | None = None
-    reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
-    # Explicit-kwarg-only (see settings_customise_sources): rejected outright
-    # in CodexAdapter.__init__ -- never populated from CODEX_CWD.
-    cwd: str | None = None
-    workspace_for_room: WorkspaceResolver | None = Field(default=None, exclude=True)
-    approval_policy: str = "never"
-    personality: Literal["friendly", "pragmatic", "none"] = "pragmatic"
-    sandbox: str | None = None
-    sandbox_policy: dict[str, Any] | None = None
-    windows_sandbox: CodexWindowsSandbox | None = None
-    system_prompt: str | None = None
-    custom_section: str = ""
-    include_base_instructions: bool = True
-    experimental_api: bool = True
-    # A validation_alias names an environment variable verbatim (env_prefix is
-    # not applied), so aliases must be full CODEX_* names — an unprefixed alias
-    # would read a bare env var set for something else entirely.
-    emit_turn_task_markers: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("CODEX_TURN_TASK_MARKERS"),
-    )
-    approval_mode: ApprovalMode = "manual"
-    approval_text_notifications: bool = True
-    approval_wait_timeout_s: float = 300.0
-    approval_timeout_decision: ApprovalDecision = "decline"
-    turn_timeout_s: float = 180.0
-    client_name: str = "band_codex_adapter"
-    client_title: str = "Band Codex Adapter"
-    client_version: str = "0.1.0"
-    codex_command: tuple[str, ...] | None = Field(
-        default=None,
-        validation_alias=AliasChoices("CODEX_COMMAND"),
-    )
-    codex_env: dict[str, str] | None = None
-    codex_ws_url: str = Field(
-        default="ws://127.0.0.1:8765",
-        validation_alias=AliasChoices("CODEX_WS_URL"),
-    )
-    enable_self_config_tools: bool = False
-    additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)
-    # CODEX_SKILL_ROOTS is a JSON list.
-    skill_roots: list[str] = Field(default_factory=list)
-    # Replay the room's transcript into a thread Codex did not resume: none
-    # was recorded, resume failed, or an earlier seeding turn did not complete.
-    inject_history_on_resume_failure: bool = True
-    max_history_messages: int = 50
-    max_pending_approvals_per_room: int = Field(default=50, ge=1)
-    max_approval_audit_per_room: int = 100
-    # Upper bound on session-level approvals retained per room
-    # (``/approve-session`` patterns).  Evicted LRU-style when exceeded so a
-    # long-lived room that approves many distinct commands can't grow this
-    # set without bound.
-    max_session_approved_per_room: int = 100
-    # Upper bound for one attempt at closing the transport client; a close
-    # that runs over stays owned and the next cleanup retries it. ``None``
-    # disables the bound (legacy behavior); ``retention.transition_timeout_s``
-    # still bounds how long a caller waits to learn the outcome.
-    client_close_timeout_s: float | None = 10.0
-    # Also bounds answering a finished turn's leftover native requests. Not
-    # Optional like client_close_timeout_s: a turn possibly stuck on real work
-    # must never defeat its bound.
-    turn_settle_timeout_s: TurnSettleTimeout = TURN_SETTLE_GRACE_S
-    # Matching rules for session-level auto-approval (``/approve-session``).
-    #
-    # ``"full_command"`` (default, more restrictive) — the key is the exact
-    #     command string after ``.strip()`` on the single ``command`` field
-    #     of the approval payload.  Matching is byte-exact and case-sensitive;
-    #     only leading/trailing whitespace is normalised.  ``npm test`` does
-    #     NOT match ``npm  test`` (double space), ``NPM TEST`` (case), or
-    #     ``npm test --watch`` (trailing args).
-    #
-    # ``"binary"`` (less restrictive) — the key is just the first whitespace-
-    #     delimited token of the command.  ``/approve-session`` on ``npm test``
-    #     auto-approves every future command starting with ``npm`` in that
-    #     room, regardless of subcommand or arguments.  Intended for
-    #     trusted-binary shortcuts (``npm``, ``git``) where per-argv friction
-    #     outweighs the safety margin.  Not recommended for commands that can
-    #     take destructive flags (``rm``, ``git push --force``).
-    #
-    # File-change approvals always key on the sorted set of paths being
-    # modified, independent of this flag.
-    session_approval_granularity: Literal["binary", "full_command"] = "full_command"
-    # --- Phase 2: Plan & task lifecycle ---
-    stream_plan_events: bool = False
-    emit_turn_lifecycle_events: bool = False
-    # --- Phase 3: Real-time streaming ---
-    stream_reasoning_events: bool = False
-    stream_commentary_events: bool = False
-    # --- Phase 4: Diffs & token usage ---
-    emit_diff_events: bool = False
-    emit_token_usage_events: bool = False
-
-    @field_validator("retention")
-    @classmethod
-    def _require_safe_retention(
-        cls, retention: RoomRetentionConfig
-    ) -> RoomRetentionConfig:
-        return require_disabled_retention(
-            retention,
-            reason=(
-                "Codex idle retention is unavailable: native idle and terminal state "
-                "do not account for asynchronous hooks and delegated work; shutdown "
-                "can cancel that work."
-            ),
-        )
-
-    @field_validator("codex_command", mode="before")
-    @classmethod
-    def _split_codex_command(cls, value: Any) -> Any:
-        """CODEX_COMMAND is a shell string; an explicit tuple/list kwarg
-        passes through unchanged."""
-        if isinstance(value, str):
-            return value.split()
-        return value
-
-    @field_validator("skill_roots")
-    @classmethod
-    def _require_absolute_paths(cls, roots: list[str]) -> list[str]:
-        if relative := [root for root in roots if not is_host_absolute(root)]:
-            raise ValueError(f"skill_roots must be absolute paths: {relative}")
-        return roots
-
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Keep ``cwd`` constructible only via an explicit kwarg -- see
-        ``_WithoutCwdBinding``."""
-        return (
-            init_settings,
-            _WithoutCwdBinding(env_settings),
-            _WithoutCwdBinding(dotenv_settings),
-            file_secret_settings,
-        )
 
 
 class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState]):
@@ -1053,8 +261,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._config = config or CodexAdapterConfig()
 
         super().__init__(
-            history_converter=history_converter or CodexHistoryConverter(),
-            **features,
+            history_converter=history_converter or CodexHistoryConverter(), **features
         )
         self.config = self._config
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
@@ -1200,10 +407,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 adapter._require_active_client_state().reasoning_effort = inp.effort
                 parts.append(f"effort={inp.effort}")
             if inp.summary is not None:
-                if inp.summary not in _REASONING_SUMMARIES:
+                if inp.summary not in REASONING_SUMMARIES:
                     return (
                         f"Invalid reasoning summary '{inp.summary}'. "
-                        f"Valid: {', '.join(sorted(_REASONING_SUMMARIES))}."
+                        f"Valid: {', '.join(sorted(REASONING_SUMMARIES))}."
                     )
                 adapter._require_active_client_state().reasoning_summary = inp.summary
                 parts.append(f"summary={inp.summary}")
@@ -1279,7 +486,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if command is None:
             return False
         room_id = msg.room_id
-        if command[0] in _APPROVAL_COMMANDS:
+        if command[0] in APPROVAL_COMMANDS:
             # Resolves a decision its turn already owns: no room or process.
             try:
                 handled = await self._handle_approval_command(
@@ -1298,11 +505,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             return False
         self._active_room.set(room_id)
         await self._handle_local_command(
-            tools=tools,
-            msg=msg,
-            room_id=room_id,
-            command=command[0],
-            args=command[1],
+            tools=tools, msg=msg, room_id=room_id, command=command[0], args=command[1]
         )
         tools.turn.settle()
         return True
@@ -1385,10 +588,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         async with room.rpc_lock:
             try:
                 if command is not None and await self._run_local_command(
-                    room=room,
-                    msg=messages[0],
-                    tools=tools,
-                    command=command,
+                    room=room, msg=messages[0], tools=tools, command=command
                 ):
                     return
                 async with (
@@ -1456,14 +656,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         that ask it: the rest must work while it cannot start, as
         ``/thread archive`` must after Codex refuses to restore the thread."""
         name, args = command
-        lease = room.retained.use() if name in _PROCESS_COMMANDS else nullcontext()
+        lease = room.retained.use() if name in PROCESS_COMMANDS else nullcontext()
         async with lease:
             handled = await self._handle_local_command(
-                tools=tools,
-                msg=msg,
-                room_id=room.room_id,
-                command=name,
-                args=args,
+                tools=tools, msg=msg, room_id=room.room_id, command=name, args=args
             )
         if handled:
             tools.turn.settle()
@@ -1522,8 +718,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             self._native_turn(room, tools, owner) as native,
         ):
             await self.backend_turns.started(
-                room_id,
-                self._reveal_codex_turn(room, native, turn_params, thread_id),
+                room_id, self._reveal_codex_turn(room, native, turn_params, thread_id)
             )
             if has_pending_prompt_injection:
                 self._prompt_injected_rooms.add(room_id)
@@ -1740,7 +935,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     )
                     continue
 
-                params = _event_params(event)
+                params = event_params(event)
 
                 if event.method in {
                     "codex/event/task_started",
@@ -1830,9 +1025,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     self._update_token_usage(thread_id, params)
                     if self.config.emit_token_usage_events:
                         await self._emit_token_usage_event(
-                            tools=tools,
-                            thread_id=thread_id,
-                            room_id=room_id,
+                            tools=tools, thread_id=thread_id, room_id=room_id
                         )
                     continue
 
@@ -1885,7 +1078,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         continue
                     if item.get("type") == CodexItemType.AGENT_MESSAGE:
                         result.native_messages[str(item["id"])] = NativeMessage(
-                            phase=item.get("phase"),
+                            phase=item.get("phase")
                         )
                     continue
 
@@ -1924,8 +1117,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     if isinstance(item, dict):
                         if item.get("type") == CodexItemType.AGENT_MESSAGE:
                             message = result.native_messages.setdefault(
-                                str(item["id"]),
-                                NativeMessage(),
+                                str(item["id"]), NativeMessage()
                             )
                             message.phase = item.get("phase")
                             text = item.get("text")
@@ -2008,8 +1200,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 )
             except Exception:
                 logger.warning(
-                    "Failed to send turn/interrupt after timeout",
-                    exc_info=True,
+                    "Failed to send turn/interrupt after timeout", exc_info=True
                 )
             timeout_message = (
                 f"Codex turn timed out after {self.config.turn_timeout_s}s"
@@ -2148,7 +1339,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         result = await client.request(
             CodexRequestMethod.THREAD_RESUME, self._resume_params(room, thread_id)
         )
-        resumed = _result_id(result, "thread")
+        resumed = result_entry_id(result, "thread")
         if resumed != thread_id:
             raise CodexContinuityError(
                 f"Codex resumed thread {resumed or 'none'!r} instead of {thread_id!r}"
@@ -2168,14 +1359,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             CodexNotificationMethod.ITEM_COMPLETED,
         }:
             return
-        params = _event_params(event)
+        params = event_params(event)
         item = params.get("item")
-        if not isinstance(item, dict) or item.get("type") not in _ACTIVITY_ITEM_TYPES:
+        if not isinstance(item, dict) or item.get("type") not in ACTIVITY_ITEM_TYPES:
             return
         identity = (
-            _thread_id(event) or "",
-            _native_turn_id(event) or "",
-            _item_id(item),
+            event_thread_id(event) or "",
+            event_turn_id(event) or "",
+            item_call_id(item),
         )
         if item.get("type") != CodexItemType.COMMAND_EXECUTION:
             await self._observe_foreground_item(room, generation, event, identity, item)
@@ -2325,7 +1516,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 logger.warning(
                     "Room %s: Codex transport closed (%s); recovering generation %s",
                     room.room_id,
-                    _loss_reason(event),
+                    loss_reason(event),
                     generation,
                 )
                 self._lose_process(room, generation, event)
@@ -2357,8 +1548,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         reader's own failure. Recovery closes the process once that turn unwinds.
         """
         room.retained.recover(
-            generation=generation,
-            reason=f"Codex events stopped: {_loss_reason(cause)}",
+            generation=generation, reason=f"Codex events stopped: {loss_reason(cause)}"
         )
         self._revoke_commands(room, generation)
         native = room.turn
@@ -2389,17 +1579,17 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             "Room %s: refusing Codex %s from native turn %s, which no Band turn started",
             room.room_id,
             event.method,
-            _native_turn_id(event),
+            event_turn_id(event),
         )
         try:
             if event.method == DYNAMIC_TOOL_CALL_METHOD:
                 await client.respond(
-                    event.id, _tool_result(_UNOWNED_TOOL_CALL_TEXT, success=False)
+                    event.id, text_tool_result(UNOWNED_TOOL_CALL_TEXT, success=False)
                 )
             elif event.method in CODEX_APPROVAL_METHODS:
-                await client.respond(event.id, _approval_response("decline"))
+                await client.respond(event.id, approval_response("decline"))
             else:
-                await _refuse_unhandled_request(
+                await refuse_unhandled_request(
                     client, request_id=event.id, method=event.method
                 )
         except Exception:
@@ -2470,7 +1660,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             return
         try:
             async with asyncio.timeout(self.config.turn_settle_timeout_s):
-                for event in _undelivered(native):
+                for event in undelivered_events(native):
                     await self._refuse_unowned(room, native.client, event)
         except TimeoutError:
             logger.warning(
@@ -2494,7 +1684,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         """Start the native turn and claim the events that arrived before its id."""
         native.thread_id = params["threadId"]
         started = await native.client.request(CodexRequestMethod.TURN_START, params)
-        turn_id = _result_id(started, "turn")
+        turn_id = result_entry_id(started, "turn")
         if not turn_id:
             raise RuntimeError("Codex turn/start returned no turn id")
         async with room.routing_lock:
@@ -2614,7 +1804,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         kind = policy.get("type") if policy is not None else self.config.sandbox
         if not isinstance(kind, str):
             return True
-        return self._canonical_sandbox_key(kind) in _ENFORCED_SANDBOX_MODES
+        return self._canonical_sandbox_key(kind) in ENFORCED_SANDBOX_MODES
 
     async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
         roots = self.config.skill_roots
@@ -2629,9 +1819,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
     def _build_client(self, workspace: str) -> CodexClientProtocol:
         return CodexStdioClient(
-            command=self.config.codex_command,
-            cwd=workspace,
-            env=self.config.codex_env,
+            command=self.config.codex_command, cwd=workspace, env=self.config.codex_env
         )
 
     async def _select_model(self, client: CodexClientProtocol) -> str:
@@ -2642,8 +1830,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             result = await client.request(CodexRequestMethod.MODEL_LIST, {})
         except Exception:
             logger.warning(
-                "model/list failed; using default Codex model",
-                exc_info=True,
+                "model/list failed; using default Codex model", exc_info=True
             )
             return OPENAI_MODEL
 
@@ -2685,8 +1872,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         ignores any others, so new ones would silently never reach the model.
         """
         if room.registration is not None:
-            offered = _tools_by_name(self._build_dynamic_tools(tools))
-            registered = _tools_by_name(room.registration)
+            offered = tools_by_name(self._build_dynamic_tools(tools))
+            registered = tools_by_name(room.registration)
             if offered != registered:
                 changed = sorted(offered.keys() ^ registered.keys())
                 raise CodexContinuityError(
@@ -2709,18 +1896,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         room_id = room.room_id
         try:
             result = await client.request(
-                CodexRequestMethod.THREAD_RESUME,
-                self._resume_params(room, named),
+                CodexRequestMethod.THREAD_RESUME, self._resume_params(room, named)
             )
         except CodexJsonRpcError as exc:
             logger.warning(
-                "thread/resume failed for room %s thread %s: %s",
-                room_id,
-                named,
-                exc,
+                "thread/resume failed for room %s thread %s: %s", room_id, named, exc
             )
             return None
-        thread_id = _result_id(result, "thread") or named
+        thread_id = result_entry_id(result, "thread") or named
         self._room_threads[room_id] = thread_id
         # Band history does not record which tools the thread was started with.
         room.bind_thread(
@@ -2767,7 +1950,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
         started = await client.request(CodexRequestMethod.THREAD_START, start_params)
-        thread_id = _result_id(started, "thread")
+        thread_id = result_entry_id(started, "thread")
         if not thread_id:
             raise RuntimeError("Codex thread/start returned no thread id")
 
@@ -2976,7 +2159,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if event.id is None:
             return
 
-        params = _event_params(event)
+        params = event_params(event)
 
         if event.method == DYNAMIC_TOOL_CALL_METHOD:
             tool_name = str(params.get("tool") or "")
@@ -2989,7 +2172,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             # surface their outcome in the room themselves.
             should_report = (
                 Emit.TOOL_CALLS in self.features.emit
-                and tool_name not in _SILENT_REPORTING_TOOLS
+                and tool_name not in SILENT_REPORTING_TOOLS
             )
 
             if should_report:
@@ -3023,7 +2206,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 errors = format_validation_error(exc)
                 error_text = f"Invalid arguments for {tool_name}: {errors}"
                 logger.error("Validation error for tool %s: %s", tool_name, exc)
-                await client.respond(event.id, _tool_result(error_text, success=False))
+                await client.respond(
+                    event.id, text_tool_result(error_text, success=False)
+                )
                 if should_report:
                     await tools.send_event(
                         content=json.dumps(
@@ -3039,7 +2224,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             except Exception as exc:
                 error_text = f"Error: {exc}"
                 logger.exception("Tool execution failed for %s", tool_name)
-                await client.respond(event.id, _tool_result(error_text, success=False))
+                await client.respond(
+                    event.id, text_tool_result(error_text, success=False)
+                )
                 if should_report:
                     await tools.send_event(
                         content=json.dumps(
@@ -3056,7 +2243,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
             result, success = outcome.value, outcome.ok
             if success and is_image_passthrough_result(tool_name, result):
-                content_items = _image_content_items(result)
+                content_items = image_content_items(result)
                 text_result = image_block_placeholder(len(content_items))
             else:
                 text_result = (
@@ -3064,9 +2251,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     if isinstance(result, str)
                     else json.dumps(result, default=str)
                 )
-                content_items = [_text_item(text_result)]
+                content_items = [text_item(text_result)]
             await client.respond(
-                event.id, _tool_response(content_items, success=success)
+                event.id, tool_response(content_items, success=success)
             )
             if should_report:
                 await tools.send_event(
@@ -3093,9 +2280,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
             return
 
-        await _refuse_unhandled_request(
-            client, request_id=event.id, method=event.method
-        )
+        await refuse_unhandled_request(client, request_id=event.id, method=event.method)
 
     async def _handle_approval_request(
         self,
@@ -3158,7 +2343,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 )
                 decided_by = f"policy:{self.config.approval_mode}"
 
-            await client.respond(event.id, _approval_response(decision))
+            await client.respond(event.id, approval_response(decision))
 
         audit_entry = self._record_approval_audit(
             room_id=room_id,
@@ -3170,9 +2355,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             session_level=session_hit,
         )
         await self._emit_approval_audit_event(
-            tools=tools,
-            room_id=room_id,
-            entry=audit_entry,
+            tools=tools, room_id=room_id, entry=audit_entry
         )
 
         if (
@@ -3182,7 +2365,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             room = self._room_clients.get(room_id)
             try:
                 mentions = await automatic_mentions(
-                    tools, _audience_sender_ids(audience)
+                    tools, audience_sender_ids(audience)
                 )
                 if (
                     self._room_clients.get(room_id) is room
@@ -3206,11 +2389,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 metadata={
                     "codex_approval_method": event.method,
                     "codex_approval_type": self._approval_type(event.method),
-                    "codex_approval_options": [
-                        "accept",
-                        "acceptForSession",
-                        "decline",
-                    ],
+                    "codex_approval_options": ["accept", "acceptForSession", "decline"],
                 },
                 log_label="approval thought event",
                 log_level=logging.DEBUG,
@@ -3354,7 +2533,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     )
             if not tools.turn.complete:
                 mentions = await automatic_mentions(
-                    tools, _audience_sender_ids(audience)
+                    tools, audience_sender_ids(audience)
                 )
                 if self._room_clients.get(room_id) is not room or self._room_closing(
                     room_id
@@ -3371,7 +2550,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
         else:
             outcome_text = f"I couldn't complete this request ({turn_status})."
-        mentions = await automatic_mentions(tools, _audience_sender_ids(audience))
+        mentions = await automatic_mentions(tools, audience_sender_ids(audience))
         if self._room_clients.get(room_id) is not room or self._room_closing(room_id):
             return
         if mentions:
@@ -3394,7 +2573,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         processing (e.g. a transient 403 from the load balancer).
         """
         item_type = item.get("type", "")
-        item_id = _item_id(item)
+        item_id = item_call_id(item)
         metadata: dict[str, Any] = {
             CodexMetadataKey.ROOM: room_id,
             CodexMetadataKey.THREAD: thread_id,
@@ -3424,7 +2603,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         item_type = item.get("type", "")
         if item_type == CodexItemType.CONTEXT_COMPACTION:
             await start_memory_activity(tools, token)
-        elif item_type in _TOOL_ITEM_TYPES:
+        elif item_type in TOOL_ITEM_TYPES:
             name = self._extract_tool_item(item_type, item).name
             await start_native_tool_activity(tools, token, name)
 
@@ -3439,7 +2618,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     ) -> None:
         """Inner dispatch for item events — may raise on API errors."""
         # Tool-like items gated on Emit.TOOL_CALLS
-        if item_type in _TOOL_ITEM_TYPES:
+        if item_type in TOOL_ITEM_TYPES:
             if Emit.TOOL_CALLS not in self.features.emit:
                 return
             name, args, output = self._extract_tool_item(item_type, item)
@@ -3468,7 +2647,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             return
 
         # Thought-like items gated on Emit.THOUGHTS
-        if item_type in _THOUGHT_ITEM_TYPES:
+        if item_type in THOUGHT_ITEM_TYPES:
             if Emit.THOUGHTS not in self.features.emit:
                 return
             text = self._extract_thought_text(item_type, item)
@@ -3477,13 +2656,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 # than posting a placeholder like "(reasoning)" / "(plan)".
                 return
             await tools.send_event(
-                content=text,
-                message_type="thought",
-                metadata=metadata,
+                content=text, message_type="thought", metadata=metadata
             )
             return
 
-        if item_type in _UNRENDERED_ITEM_TYPES:
+        if item_type in UNRENDERED_ITEM_TYPES:
             return
 
         logger.debug("Unhandled item/completed type: %s", item_type)
@@ -3529,9 +2706,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             changes = []
         file_paths = [c.get("path", "") for c in changes if isinstance(c, dict)]
         return CodexToolItem(
-            "file_edit",
-            {"files": file_paths},
-            str(item.get("status", "applied")),
+            "file_edit", {"files": file_paths}, str(item.get("status", "applied"))
         )
 
     @staticmethod
@@ -3566,9 +2741,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     def _extract_image_view(item: dict[str, Any]) -> CodexToolItem:
         path = item.get("path", "")
         return CodexToolItem(
-            "view_image",
-            {"path": path},
-            str(item.get("status", "viewed")),
+            "view_image", {"path": path}, str(item.get("status", "viewed"))
         )
 
     @staticmethod
@@ -3759,7 +2932,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     )
                 try:
                     mentions = await automatic_mentions(
-                        tools, _audience_sender_ids(audience)
+                        tools, audience_sender_ids(audience)
                     )
                     if (
                         self._room_clients.get(room_id) is room
@@ -3802,7 +2975,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         decision = self.config.approval_timeout_decision
                         try:
                             mentions = await automatic_mentions(
-                                tools, _audience_sender_ids(audience)
+                                tools, audience_sender_ids(audience)
                             )
                             if (
                                 self._room_clients.get(room_id) is room
@@ -3852,10 +3025,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             if not summary:
                 summary = f"Method: {method}"
         content = self._build_task_event_content(
-            task_id=task_id,
-            task=title,
-            status=task_phase,
-            summary=summary,
+            task_id=task_id, task=title, status=task_phase, summary=summary
         )
 
         metadata: dict[str, Any] = {
@@ -3870,11 +3040,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if params:
             metadata["codex_event_params"] = params
 
-        await tools.send_event(
-            content=content,
-            message_type="task",
-            metadata=metadata,
-        )
+        await tools.send_event(content=content, message_type="task", metadata=metadata)
         if not is_started and task_id:
             self._task_titles_by_id.pop(task_id, None)
 
@@ -4006,11 +3172,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         usage.update(params)
 
     async def _emit_token_usage_event(
-        self,
-        *,
-        tools: AgentToolsProtocol,
-        thread_id: str,
-        room_id: str,
+        self, *, tools: AgentToolsProtocol, thread_id: str, room_id: str
     ) -> None:
         """Emit a task event with current token usage."""
         usage = self._token_usage.get(thread_id)
@@ -4088,10 +3250,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         await send_event_safe(
             tools,
             content=self._build_task_event_content(
-                task_id=turn_id,
-                task="Codex diff",
-                status="updated",
-                summary=summary,
+                task_id=turn_id, task="Codex diff", status="updated", summary=summary
             ),
             message_type="task",
             metadata=metadata,
@@ -4149,11 +3308,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         return entry
 
     async def _emit_approval_audit_event(
-        self,
-        *,
-        tools: AgentToolsProtocol,
-        room_id: str,
-        entry: ApprovalAuditEntry,
+        self, *, tools: AgentToolsProtocol, room_id: str, entry: ApprovalAuditEntry
     ) -> None:
         """Emit a task event for an approval decision."""
         if Emit.TASK_EVENTS not in self.features.emit:
@@ -4192,7 +3347,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         mention = self._sender_mention(msg)
 
         if command == CodexCommand.HELP:
-            await deliver_notice(tools, _HELP_TEXT, mentions=mention)
+            await deliver_notice(tools, HELP_TEXT, mentions=mention)
             return True
 
         if command == CodexCommand.STATUS:
@@ -4240,7 +3395,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 )
                 return True
 
-            if model_arg.lower() in _MODEL_LIST_WORDS:
+            if model_arg.lower() in MODEL_LIST_WORDS:
                 client = self._require_active_client_state().require_client()
                 result = await client.request(CodexRequestMethod.MODEL_LIST, {})
                 models = self._visible_model_ids(result)
@@ -4319,20 +3474,20 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 await deliver_notice(
                     tools,
                     f"Current sandbox: `{effective}`. "
-                    f"Use `/{CodexCommand.SANDBOX} <{_SANDBOX_MODE_CHOICES}>` to change.",
+                    f"Use `/{CodexCommand.SANDBOX} <{SANDBOX_MODE_CHOICES}>` to change.",
                     mentions=mention,
                 )
                 return True
             # Parse tokens explicitly so "--confirm-anything-else" is surfaced
             # as an unknown mode instead of silently stripped away.
             tokens = mode_arg.split()
-            confirm_flag = _SANDBOX_CONFIRM_FLAG in tokens
-            mode_tokens = [tok for tok in tokens if tok != _SANDBOX_CONFIRM_FLAG]
+            confirm_flag = SANDBOX_CONFIRM_FLAG in tokens
+            mode_tokens = [tok for tok in tokens if tok != SANDBOX_CONFIRM_FLAG]
             if len(mode_tokens) != 1:
                 await deliver_notice(
                     tools,
-                    f"Usage: `/{CodexCommand.SANDBOX} <{_SANDBOX_MODE_CHOICES}> "
-                    f"[{_SANDBOX_CONFIRM_FLAG}]`.",
+                    f"Usage: `/{CodexCommand.SANDBOX} <{SANDBOX_MODE_CHOICES}> "
+                    f"[{SANDBOX_CONFIRM_FLAG}]`.",
                     mentions=mention,
                 )
                 return True
@@ -4351,8 +3506,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 await deliver_notice(
                     tools,
                     f"Escalating to `{normalized}` removes all sandbox "
-                    f"restrictions. Re-run with `{_SANDBOX_CONFIRM_FLAG}` to proceed:\n"
-                    f"`/{CodexCommand.SANDBOX} {normalized} {_SANDBOX_CONFIRM_FLAG}`",
+                    f"restrictions. Re-run with `{SANDBOX_CONFIRM_FLAG}` to proceed:\n"
+                    f"`/{CodexCommand.SANDBOX} {normalized} {SANDBOX_CONFIRM_FLAG}`",
                     mentions=mention,
                 )
                 return True
@@ -4458,9 +3613,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             usage = self._token_usage.get(mapped_thread)
             if not usage or usage.total_tokens == 0:
                 await deliver_notice(
-                    tools,
-                    "No token usage recorded for this thread.",
-                    mentions=mention,
+                    tools, "No token usage recorded for this thread.", mentions=mention
                 )
                 return True
             await deliver_notice(
@@ -4496,14 +3649,12 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             await deliver_notice(tools, "\n".join(lines), mentions=mention)
             return True
 
-        if (decision_value := _APPROVAL_COMMAND_DECISIONS.get(command)) is None:
+        if (decision_value := APPROVAL_COMMAND_DECISIONS.get(command)) is None:
             return False
 
         if not pending:
             await deliver_notice(
-                tools,
-                NO_APPROVALS_TO_RESOLVE_MESSAGE,
-                mentions=mention,
+                tools, NO_APPROVALS_TO_RESOLVE_MESSAGE, mentions=mention
             )
             return True
 
@@ -4644,7 +3795,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             params["sandbox"] = sandbox_mode
             return
 
-        if self._canonical_sandbox_key(effective) == _EXTERNAL_SANDBOX_KEY:
+        if self._canonical_sandbox_key(effective) == EXTERNAL_SANDBOX_KEY:
             # externalSandbox is only representable via sandboxPolicy on
             # turn/start; thread/start does not accept it.
             logger.debug(
@@ -4685,8 +3836,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 params["sandboxPolicy"] = {"type": policy_type}
             return
 
-        if self._canonical_sandbox_key(effective) == _EXTERNAL_SANDBOX_KEY:
-            params["sandboxPolicy"] = {"type": _EXTERNAL_SANDBOX_POLICY_TYPE}
+        if self._canonical_sandbox_key(effective) == EXTERNAL_SANDBOX_KEY:
+            params["sandboxPolicy"] = {"type": EXTERNAL_SANDBOX_POLICY_TYPE}
             return
 
         logger.warning("Ignoring unsupported Codex sandbox value: %s", effective)
@@ -4702,7 +3853,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     @classmethod
     def _normalize_sandbox_mode(cls, sandbox: str) -> CodexSandboxMode | None:
         key = cls._canonical_sandbox_key(sandbox)
-        return CodexSandboxMode(key) if key in _SANDBOX_MODES else None
+        return CodexSandboxMode(key) if key in SANDBOX_MODES else None
 
     @classmethod
     def _normalize_sandbox_policy(
@@ -4717,14 +3868,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         camel = cls._SANDBOX_MODE_TO_POLICY_TYPE.get(key)
         if camel:
             normalized["type"] = camel
-        elif key == _EXTERNAL_SANDBOX_KEY:
-            normalized["type"] = _EXTERNAL_SANDBOX_POLICY_TYPE
+        elif key == EXTERNAL_SANDBOX_KEY:
+            normalized["type"] = EXTERNAL_SANDBOX_POLICY_TYPE
         return normalized
 
     @staticmethod
     def _canonical_sandbox_key(value: str) -> str:
         compact = value.strip().lower().replace("_", "-").replace(" ", "")
-        return _SANDBOX_KEY_ALIASES.get(compact, compact)
+        return SANDBOX_KEY_ALIASES.get(compact, compact)
 
     @staticmethod
     def _extract_turn_error(turn_payload: dict[str, Any]) -> str:
@@ -4878,11 +4029,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
     @staticmethod
     def _build_task_event_content(
-        *,
-        task_id: str | None,
-        task: str,
-        status: str,
-        summary: str | None = None,
+        *, task_id: str | None, task: str, status: str, summary: str | None = None
     ) -> str:
         lines: list[str] = []
         if task_id:
@@ -4925,7 +4072,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         # reaches the command it belongs to.
         parts = stripped.removeprefix("/").split(maxsplit=1)
         word = parts[0].lower() if parts else ""
-        if word not in _COMMAND_WORDS:
+        if word not in COMMAND_WORDS:
             return None
         return CodexCommand(word), parts[1].strip() if len(parts) > 1 else ""
 
@@ -4988,8 +4135,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if not isinstance(data, list):
             return []
         entry = next(
-            (e for e in data if isinstance(e, dict) and e.get("id") == model_id),
-            None,
+            (e for e in data if isinstance(e, dict) and e.get("id") == model_id), None
         )
         efforts = entry.get("supportedReasoningEfforts") if entry else None
         if not isinstance(efforts, list):

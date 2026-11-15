@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexApprovalMethod
 from band.testing import (
     reported_failures,
