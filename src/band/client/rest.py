@@ -83,8 +83,17 @@ async def aclose_rest_client(client: AsyncRestClient) -> None:
     await client._client_wrapper.httpx_client.httpx_client.aclose()
 
 
+def chat_room_request(task_id: str | None = None) -> ChatRoomRequest:
+    """Build a chat-creation body, omitting ``task_id`` when it is unset.
+
+    The Fern client sends an explicit ``None`` as ``null``, which the
+    platform's REST rules forbid.
+    """
+    return ChatRoomRequest(task_id=task_id) if task_id else ChatRoomRequest()
+
+
 def api_error_message(body: object) -> str | None:
-    """The platform's ``error.message`` from a Fern ``ApiError`` body.
+    """Return the platform's ``error.message`` from a Fern ``ApiError`` body.
 
     Fern parses the body into a model only for the statuses an endpoint
     declares; any other status (422 on most endpoints) leaves the decoded
@@ -148,4 +157,5 @@ __all__ = [
     "UnprocessableEntityError",
     "aclose_rest_client",
     "api_error_message",
+    "chat_room_request",
 ]

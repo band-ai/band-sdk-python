@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from enum import StrEnum
 from typing import Any, NamedTuple
 
 import httpx
 from pytest_httpx import HTTPXMock
+
+from band.cli.trigger import PEERS_PAGE_SIZE, AuthMode, build_parser
 
 REST_URL = "https://band.test/"
 API_KEY = "trigger-key"
@@ -17,7 +18,6 @@ MESSAGE = "Run the daily report"
 ROOM_ID = "6f1c2a4e-0b7d-4c55-9d3e-1a2b3c4d5e6f"
 MESSAGE_ID = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
 TIMESTAMP = "2026-01-01T00:00:00Z"
-PEERS_PAGE_SIZE = 100
 
 TARGET = {
     "id": "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
@@ -31,13 +31,6 @@ BYSTANDER = {
     "handle": "owner/bystander",
     "type": "Agent",
 }
-
-
-class AuthMode(StrEnum):
-    """band-trigger's ``--auth-mode`` choices."""
-
-    AGENT = "agent"
-    USER = "user"
 
 
 API_PREFIX: dict[AuthMode, str] = {
@@ -70,14 +63,19 @@ def wire_calls(requests: list[httpx.Request]) -> list[WireCall]:
 
 def trigger_args(mode: AuthMode, target_handle: str) -> argparse.Namespace:
     """The parsed CLI arguments for one trigger against the mocked platform."""
-    return argparse.Namespace(
-        api_key=API_KEY,
-        rest_url=REST_URL,
-        auth_mode=mode.value,
-        target_handle=target_handle,
-        message=MESSAGE,
-        timeout=120,
-        verbose=False,
+    return build_parser().parse_args(
+        [
+            "--api-key",
+            API_KEY,
+            "--rest-url",
+            REST_URL,
+            "--auth-mode",
+            mode,
+            "--target-handle",
+            target_handle,
+            "--message",
+            MESSAGE,
+        ]
     )
 
 

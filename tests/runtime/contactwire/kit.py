@@ -15,6 +15,16 @@ HUB_ROOM_ID = "hub-room-1"
 STAMP = "2026-02-09T10:30:00Z"
 
 
+HUB_ROOM_CREATED = {
+    "data": {
+        "id": HUB_ROOM_ID,
+        "title": "Contacts hub",
+        "inserted_at": STAMP,
+        "updated_at": STAMP,
+    }
+}
+
+
 def sent(request: httpx.Request) -> tuple[str, str, Any]:
     """The method, URL and JSON body of one request the platform received."""
     body = json.loads(request.content) if request.content else None

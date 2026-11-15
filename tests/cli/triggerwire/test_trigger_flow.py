@@ -5,14 +5,13 @@ from __future__ import annotations
 import pytest
 from pytest_httpx import HTTPXMock
 
-from band.cli.trigger import run
+from band.cli.trigger import AuthMode, run
 from tests.cli.triggerwire.kit import (
     API_PREFIX,
     BYSTANDER,
     MESSAGE,
     ROOM_ID,
     TARGET,
-    AuthMode,
     WireCall,
     added_participant,
     answer,

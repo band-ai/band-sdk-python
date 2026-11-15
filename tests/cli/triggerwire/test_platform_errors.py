@@ -7,11 +7,10 @@ from typing import Any
 import pytest
 from pytest_httpx import HTTPXMock
 
-from band.cli.trigger import run
+from band.cli.trigger import AuthMode, run
 from tests.cli.triggerwire.kit import (
     ROOM_ID,
     TARGET,
-    AuthMode,
     answer,
     answer_peer_pages,
     created_room,
@@ -26,7 +25,8 @@ UNKNOWN_PARTICIPANT = "Participant not found"
 INVALID_PARTICIPANT = "Participant cannot join this room"
 
 # 403/404 parse into Fern's ``Error`` model; an undeclared or ``Any``-typed
-# status such as 422 leaves the body a plain dict.
+# status such as 422 leaves the body a plain dict. A body without a usable
+# ``error.message`` falls back to the status.
 CHAT_REJECTIONS = [
     pytest.param(403, platform_error("forbidden", ROOM_LIMIT), ROOM_LIMIT, id="403"),
     pytest.param(
@@ -34,6 +34,12 @@ CHAT_REJECTIONS = [
         validation_error(INVALID_CHAT, {"/chat/title": ["is invalid"]}),
         INVALID_CHAT,
         id="422",
+    ),
+    pytest.param(
+        422, {"error": {"message": 42}}, "HTTP 422", id="422-non-string-message"
+    ),
+    pytest.param(
+        422, {"errors": {"title": ["is invalid"]}}, "HTTP 422", id="422-no-envelope"
     ),
 ]
 PARTICIPANT_REJECTIONS = [
@@ -54,14 +60,14 @@ PARTICIPANT_REJECTIONS = [
 
 class TestTriggerPlatformErrors:
     @pytest.mark.parametrize("mode", list(AuthMode))
-    @pytest.mark.parametrize(("status", "body", "platform_message"), CHAT_REJECTIONS)
+    @pytest.mark.parametrize(("status", "body", "reported"), CHAT_REJECTIONS)
     async def test_room_rejection_reports_the_platform_message(
         self,
         httpx_mock: HTTPXMock,
         mode: AuthMode,
         status: int,
         body: dict[str, Any],
-        platform_message: str,
+        reported: str,
     ) -> None:
         answer_peer_pages(httpx_mock, mode, [[TARGET]])
         answer(httpx_mock, mode, "POST", "/chats", body, status=status)
@@ -69,7 +75,7 @@ class TestTriggerPlatformErrors:
         with pytest.raises(RuntimeError) as caught:
             await run(trigger_args(mode, target_handle=f"@{TARGET['handle']}"))
 
-        assert str(caught.value) == f"Failed to create chatroom: {platform_message}"
+        assert str(caught.value) == f"Failed to create chatroom: {reported}"
 
     @pytest.mark.parametrize("mode", list(AuthMode))
     @pytest.mark.parametrize(
