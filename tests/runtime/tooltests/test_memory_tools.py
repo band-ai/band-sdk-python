@@ -15,16 +15,23 @@ from tests.runtime.helpers import rest_client_over
 
 class TestMemoryTools:
     @pytest.mark.parametrize(
-        ("content_query", "sent", "absent"),
-        [(None, "limit", "page_size"), ("coffee", "page_size", "limit")],
+        ("content_query", "expected_params"),
+        [
+            (None, {"limit": "25"}),
+            ("coffee", {"page_size": "25", "content_query": "coffee"}),
+        ],
         ids=["listing-pages-by-cursor-family", "search-keeps-offset-family"],
     )
     async def test_list_memories_caps_the_page_in_the_family_the_platform_accepts(
-        self, content_query: str | None, sent: str, absent: str
+        self, content_query: str | None, expected_params: dict[str, str]
     ) -> None:
         requests: list[httpx.Request] = []
 
         def answer(request: httpx.Request) -> httpx.Response:
+            assert (request.method, request.url.path) == (
+                "GET",
+                "/api/v1/agent/memories",
+            )
             requests.append(request)
             return httpx.Response(200, json={"data": []})
 
@@ -34,10 +41,7 @@ class TestMemoryTools:
             )
 
         [request] = requests
-        assert (request.url.params.get(sent), absent in request.url.params) == (
-            "25",
-            False,
-        )
+        assert dict(request.url.params) == expected_params
 
     @pytest.mark.asyncio
     async def test_list_memories_omits_none_filters(
