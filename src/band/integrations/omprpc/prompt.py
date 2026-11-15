@@ -131,11 +131,7 @@ class PromptRun:
             return error
         self.last_activity_sequence = sequence
         match event.type:
-            case OmpEventType.MESSAGE_START if (
-                event.message is not None and event.message.role == OMP_ASSISTANT_ROLE
-            ):
-                self.assistant_message = event.message
-            case OmpEventType.MESSAGE_UPDATE if (
+            case OmpEventType.MESSAGE_START | OmpEventType.MESSAGE_UPDATE if (
                 event.message is not None and event.message.role == OMP_ASSISTANT_ROLE
             ):
                 self.assistant_message = event.message
@@ -234,10 +230,6 @@ class PromptRun:
         return decline_sole_tool_refusal(
             message, tool_call_id, finished_tools=self.finished_tools
         )
-
-    def is_only_pending_tool_call(self, tool_call_id: str, host_call_id: str) -> bool:
-        """Require live execution and no unfinished sibling, including queued callbacks."""
-        return self.sole_pending_refusal(tool_call_id, host_call_id) is None
 
     def has_pending_native_work(self) -> bool:
         event_claims_pending_work = (

@@ -88,17 +88,6 @@ def unfinished_tool_calls(
     return tuple(block for block in calls if block.id not in finished_tools)
 
 
-def is_sole_tool_call(
-    message: OmpMessage | None,
-    tool_call_id: str,
-    *,
-    finished_tools: AbstractSet[str] = frozenset(),
-) -> bool:
-    """True when unfinished assistant tool calls prove exactly this host tool call."""
-    calls = unfinished_tool_calls(message, finished_tools)
-    return calls is not None and len(calls) == 1 and calls[0].id == tool_call_id
-
-
 def backlog_reconsider_clause(*, has_work: bool, has_input: bool) -> str:
     match (has_work, has_input):
         case (True, True):
