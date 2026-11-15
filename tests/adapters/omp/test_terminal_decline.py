@@ -9,7 +9,7 @@ import pytest
 
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.omprpc.errors import OmpPromptError
-from band.integrations.ompwire import OmpPromptStatus
+from band.integrations.ompwire import OmpCommandName, OmpFrameType, OmpPromptStatus
 from band.runtime.tools import BandTool
 from band.testing import failure_reports
 from tests.adapters.hold import Hold
@@ -23,10 +23,12 @@ from tests.adapters.omp.declinekit import (
     declining_adapter,
     executed,
     host_outcomes,
+    wire_frames,
 )
 from tests.adapters.omp.declinepeer import (
     ADMIT_SECOND_DECLINE,
     DECLINE_CALL,
+    LATE_CALL,
     REPLY_CALL,
     REPLY_TEXT,
     SECOND_DECLINE_CALL,
@@ -42,7 +44,9 @@ REFUSED_THEN_REPLY = {
 
 
 class TestTerminalDecline:
-    async def test_queued_declines_share_one_owned_stop(self, tmp_path: Path) -> None:
+    async def test_queued_decline_waits_for_sibling_before_stopping(
+        self, tmp_path: Path
+    ) -> None:
         hold = Hold()
         tools = DeclineTools(decline_hold=hold)
         async with declining_adapter(tmp_path, DeclineScenario.CONCURRENT) as adapter:
@@ -63,10 +67,14 @@ class TestTerminalDecline:
                 turn.cancel()
                 await asyncio.gather(turn, return_exceptions=True)
 
-            assert executed(tools) == [BandTool.NO_REPLY]
+            assert executed(tools) == [BandTool.NO_REPLY, BandTool.NO_REPLY]
             assert abort_count(tmp_path) == 1
-            assert host_outcomes(tmp_path) == {DECLINE_CALL: False}
+            assert tools.chat == []
             assert failure_reports(tools) == []
+            assert host_outcomes(tmp_path) == {
+                DECLINE_CALL: True,
+                SECOND_DECLINE_CALL: False,
+            }
             assert admitted_declines(tmp_path) == {
                 DECLINE_CALL,
                 SECOND_DECLINE_CALL,
@@ -92,6 +100,33 @@ class TestTerminalDecline:
     @pytest.mark.parametrize(
         "scenario",
         [
+            DeclineScenario.CURSOR_FIRST,
+            DeclineScenario.CURSOR_AFTER_TOOL,
+            DeclineScenario.CURSOR_LATE_START,
+        ],
+    )
+    async def test_cursor_decline_before_message_end_allows_next_turn(
+        self, tmp_path: Path, scenario: DeclineScenario
+    ) -> None:
+        declined = DeclineTools()
+        follow_up = DeclineTools()
+        async with declining_adapter(tmp_path, scenario) as adapter:
+            await run_turn(adapter, declined)
+
+            assert declined.chat == []
+            assert declined.turn.replied is True
+            assert failure_reports(declined) == []
+            assert executed(declined) == [BandTool.NO_REPLY]
+            assert abort_count(tmp_path) == 1
+            assert host_outcomes(tmp_path) == {DECLINE_CALL: False}
+
+            await run_turn(adapter, follow_up, bootstrap=False)
+            assert follow_up.chat == [REPLY_TEXT]
+            assert failure_reports(follow_up) == []
+
+    @pytest.mark.parametrize(
+        "scenario",
+        [
             DeclineScenario.BACKGROUND_PENDING,
             DeclineScenario.BACKGROUND_QUEUED,
             DeclineScenario.BACKGROUND_COMPLETING,
@@ -101,6 +136,10 @@ class TestTerminalDecline:
             DeclineScenario.MISSING_BATCH,
             DeclineScenario.STRING_CONTENT,
             DeclineScenario.MISMATCHED_ID,
+            DeclineScenario.CURSOR_PENDING,
+            DeclineScenario.CURSOR_QUEUED,
+            DeclineScenario.CURSOR_CONCURRENT,
+            DeclineScenario.CURSOR_UNSTARTED,
         ],
     )
     async def test_background_work_refuses_decline_and_keeps_reply_available(
@@ -119,11 +158,35 @@ class TestTerminalDecline:
         assert tools.chat == [REPLY_TEXT]
         assert failure_reports(tools) == []
 
+    async def test_host_callback_during_stop_recheck_is_not_lost(
+        self, tmp_path: Path
+    ) -> None:
+        tools = DeclineTools()
+        async with declining_adapter(
+            tmp_path, DeclineScenario.CURSOR_POST_CHECK_HOST
+        ) as adapter:
+            await run_turn(adapter, tools)
+
+            assert abort_count(tmp_path) == 0
+        assert tools.chat == [REPLY_TEXT]
+        assert failure_reports(tools) == []
+        assert executed(tools) == [
+            BandTool.NO_REPLY,
+            BandTool.GET_PARTICIPANTS,
+            BandTool.SEND_MESSAGE,
+        ]
+        assert host_outcomes(tmp_path) == {
+            DECLINE_CALL: True,
+            LATE_CALL: False,
+            REPLY_CALL: False,
+        }
+
     @pytest.mark.parametrize(
         "scenario",
         [
             DeclineScenario.POST_CHECK_PENDING,
             DeclineScenario.POST_CHECK_QUEUED,
+            DeclineScenario.CURSOR_POST_CHECK_CONCURRENT,
         ],
     )
     async def test_post_check_pending_work_refuses_after_execute(
@@ -131,12 +194,23 @@ class TestTerminalDecline:
         tmp_path: Path,
         scenario: DeclineScenario,
     ) -> None:
-        """Pending work that appears after the initial check must still block ABORT."""
+        """Work arriving after the initial check must still block ABORT."""
         tools = DeclineTools()
         async with declining_adapter(tmp_path, scenario) as adapter:
             await run_turn(adapter, tools)
             assert abort_count(tmp_path) == 0
             assert host_outcomes(tmp_path) == REFUSED_THEN_REPLY
+            frames = wire_frames(tmp_path)
+            decline_at = next(
+                i
+                for i, frame in enumerate(frames)
+                if frame.get("type") == OmpFrameType.HOST_TOOL_RESULT
+                and frame.get("id") == DECLINE_CALL
+            )
+            assert not any(
+                frame.get("type") == OmpCommandName.ABORT
+                for frame in frames[: decline_at + 1]
+            )
 
         assert decline_refused(tmp_path)
         assert executed(tools) == [BandTool.NO_REPLY, BandTool.SEND_MESSAGE]

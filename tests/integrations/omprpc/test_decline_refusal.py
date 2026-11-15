@@ -15,8 +15,11 @@ from band.integrations.omprpc.decline import (
     SOLE_TOOL_UNSTRUCTURED_RECOVERY,
     compose_decline_refusals,
     decline_backlog_refusal,
+    decline_running_tools_refusal,
+    decline_sibling_callback_refusal,
     decline_sole_tool_refusal,
     queued_message_count_label,
+    sole_tool_proof_diagnosis,
     tool_call_id_label,
 )
 from band.integrations.ompwire import (
@@ -149,4 +152,46 @@ class TestDeclineRefusal:
             f"{BandTool.NO_REPLY} refused: no sole-tool-call proof for {DECLINE_LABEL} "
             "(2 TOOL_CALL blocks in the assistant message). "
             f"{SOLE_TOOL_SIBLING_RECOVERY} {NATIVE_REFUSED_DECLINE_GUIDANCE}"
+        )
+
+    def test_finished_tools_are_excluded_from_sole_proof(self) -> None:
+        assert (
+            decline_sole_tool_refusal(
+                tools(DECLINE_ID, "earlier"),
+                DECLINE_ID,
+                finished_tools={"earlier"},
+            )
+            is None
+        )
+
+    def test_running_tools_refuse_when_decline_is_not_running(self) -> None:
+        assert decline_running_tools_refusal(DECLINE_ID, set()) == (
+            f"{BandTool.NO_REPLY} refused: "
+            f"{sole_tool_proof_diagnosis(DECLINE_ID, 'declining call is not a running native tool')}. "
+            f"{SOLE_TOOL_SIBLING_RECOVERY} {NATIVE_REFUSED_DECLINE_GUIDANCE}"
+        )
+
+    def test_running_tools_refuse_when_siblings_are_running(self) -> None:
+        assert decline_running_tools_refusal(DECLINE_ID, {DECLINE_ID, "sibling"}) == (
+            f"{BandTool.NO_REPLY} refused: "
+            f"{sole_tool_proof_diagnosis(DECLINE_ID, '2 native tools running')}. "
+            f"{SOLE_TOOL_SIBLING_RECOVERY} {NATIVE_REFUSED_DECLINE_GUIDANCE}"
+        )
+
+    def test_running_tools_allow_sole_running_decline(self) -> None:
+        assert decline_running_tools_refusal(DECLINE_ID, {DECLINE_ID}) is None
+
+    def test_sibling_callbacks_refuse_when_present(self) -> None:
+        assert decline_sibling_callback_refusal(
+            DECLINE_ID, has_sibling_callbacks=True
+        ) == (
+            f"{BandTool.NO_REPLY} refused: "
+            f"{sole_tool_proof_diagnosis(DECLINE_ID, 'other host callbacks remain')}. "
+            f"{SOLE_TOOL_SIBLING_RECOVERY} {NATIVE_REFUSED_DECLINE_GUIDANCE}"
+        )
+
+    def test_sibling_callbacks_allow_when_absent(self) -> None:
+        assert (
+            decline_sibling_callback_refusal(DECLINE_ID, has_sibling_callbacks=False)
+            is None
         )
