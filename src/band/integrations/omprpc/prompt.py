@@ -41,6 +41,39 @@ NATIVE_QUEUED_INPUT_GUIDANCE = (
     "their contents cannot be inferred from tool or task inventory."
 )
 
+PENDING_ASYNC_WORK_LABEL = "hasPendingAsyncWork=true"
+QUEUED_MESSAGE_COUNT_PREFIX = "queuedMessageCount="
+
+SOLE_TOOL_SIBLING_RECOVERY = (
+    "Finish the other outstanding tool calls and handle their results before "
+    f"calling {BandTool.NO_REPLY} alone."
+)
+SOLE_TOOL_UNSTRUCTURED_RECOVERY = (
+    "There are no sibling tool calls to finish from this message; retry "
+    f"{BandTool.NO_REPLY} only as a structured sole tool call when the whole "
+    "turn needs no reply."
+)
+SOLE_TOOL_ID_MISMATCH_RECOVERY = (
+    "The assistant message names a different tool call id; call "
+    f"{BandTool.NO_REPLY} only as the sole tool when the whole turn needs no reply."
+)
+
+
+def queued_message_count_label(count: int) -> str:
+    """Wire fragment naming a non-zero native queued-message backlog."""
+    return f"{QUEUED_MESSAGE_COUNT_PREFIX}{count}"
+
+
+def tool_call_id_label(tool_call_id: str) -> str:
+    """Wire fragment naming the decline tool-call id under proof."""
+    return f"toolCallId={tool_call_id}"
+
+
+def compose_decline_refusals(*parts: str | None) -> str | None:
+    """Join every observed decline refusal into one host-tool error text."""
+    texts = [part for part in parts if part is not None]
+    return " ".join(texts) if texts else None
+
 
 class OmpCallbackKind(StrEnum):
     TOOL = "tool"
@@ -227,17 +260,32 @@ def state_has_async_backlog(state: OmpState) -> bool:
     return bool(state.hasPendingAsyncWork or state.queuedMessageCount > 0)
 
 
+def _backlog_reconsider_clause(*, has_work: bool, has_input: bool) -> str:
+    match (has_work, has_input):
+        case (True, True):
+            pending = "pending work and input"
+        case (True, False):
+            pending = "pending work"
+        case (False, True):
+            pending = "pending input"
+        case _:
+            raise ValueError("backlog reconsider requires at least one blocker")
+    return f"Reconsider whether a reply is needed after processing the {pending}."
+
+
 def decline_backlog_refusal(state: OmpState) -> str | None:
     """Describe only the native backlog observed in this snapshot."""
     if not state_has_async_backlog(state):
         return None
+    has_work = state.hasPendingAsyncWork
+    has_input = state.queuedMessageCount > 0
     blockers: list[str] = []
     recovery: list[str] = []
-    if state.hasPendingAsyncWork:
-        blockers.append("hasPendingAsyncWork=true")
+    if has_work:
+        blockers.append(PENDING_ASYNC_WORK_LABEL)
         recovery.append("Wait for the existing async work and handle its completion.")
-    if state.queuedMessageCount > 0:
-        blockers.append(f"queuedMessageCount={state.queuedMessageCount}")
+    if has_input:
+        blockers.append(queued_message_count_label(state.queuedMessageCount))
         recovery.append(
             "Allow OMP to deliver the queued messages on continuation, then read and "
             f"handle them. {NATIVE_QUEUED_INPUT_GUIDANCE}"
@@ -246,7 +294,43 @@ def decline_backlog_refusal(state: OmpState) -> str | None:
         f"{BandTool.NO_REPLY} refused: native {'; '.join(blockers)}. "
         f"{' '.join(recovery)} "
         f"{NATIVE_REFUSED_DECLINE_GUIDANCE} {NATIVE_BACKLOG_YIELD_GUIDANCE} "
-        "Reconsider whether a reply is needed after processing the pending work and input."
+        f"{_backlog_reconsider_clause(has_work=has_work, has_input=has_input)}"
+    )
+
+
+def decline_sole_tool_refusal(
+    message: OmpMessage | None, tool_call_id: str
+) -> str | None:
+    """Describe why the decline is not the sole tool call, or None when it is."""
+    label = tool_call_id_label(tool_call_id)
+    if message is None or isinstance(message.content, str):
+        diagnosis = f"no sole-tool-call proof for {label} (string or missing content)"
+        recovery = SOLE_TOOL_UNSTRUCTURED_RECOVERY
+    else:
+        calls = [
+            block for block in message.content if block.type == OmpContentKind.TOOL_CALL
+        ]
+        if len(calls) == 1 and calls[0].id == tool_call_id:
+            return None
+        if len(calls) > 1:
+            diagnosis = (
+                f"no sole-tool-call proof for {label} "
+                f"({len(calls)} TOOL_CALL blocks in the assistant message)"
+            )
+            recovery = SOLE_TOOL_SIBLING_RECOVERY
+        elif len(calls) == 1:
+            other = calls[0].id or ""
+            diagnosis = (
+                f"no sole-tool-call proof for {label} "
+                f"(assistant {tool_call_id_label(other)})"
+            )
+            recovery = SOLE_TOOL_ID_MISMATCH_RECOVERY
+        else:
+            diagnosis = f"no sole-tool-call proof for {label} (no TOOL_CALL blocks)"
+            recovery = SOLE_TOOL_UNSTRUCTURED_RECOVERY
+    return (
+        f"{BandTool.NO_REPLY} refused: {diagnosis}. {recovery} "
+        f"{NATIVE_REFUSED_DECLINE_GUIDANCE}"
     )
 
 

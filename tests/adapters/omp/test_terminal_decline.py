@@ -9,6 +9,17 @@ import pytest
 
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.omprpc.errors import OmpPromptError
+from band.integrations.omprpc.prompt import (
+    NATIVE_BACKLOG_YIELD_GUIDANCE,
+    NATIVE_REFUSED_DECLINE_GUIDANCE,
+    PENDING_ASYNC_WORK_LABEL,
+    QUEUED_MESSAGE_COUNT_PREFIX,
+    SOLE_TOOL_ID_MISMATCH_RECOVERY,
+    SOLE_TOOL_SIBLING_RECOVERY,
+    SOLE_TOOL_UNSTRUCTURED_RECOVERY,
+    queued_message_count_label,
+    tool_call_id_label,
+)
 from band.integrations.ompwire import OmpCommandName, OmpFrameType, OmpPromptStatus
 from band.runtime.tools import BandTool
 from band.testing import failure_reports
@@ -33,6 +44,11 @@ from tests.adapters.omp.declinepeer import (
 )
 from tests.adapters.omp.mailboxkit import AdmissionMailbox, room_client
 from tests.adapters.omp.turns import run_turn
+
+DECLINE_TOOL_LABEL = tool_call_id_label(DECLINE_CALL)
+QUEUED_ONE_LABEL = queued_message_count_label(1)
+BACKLOG_YIELD_CUES = (NATIVE_REFUSED_DECLINE_GUIDANCE, NATIVE_BACKLOG_YIELD_GUIDANCE)
+SOLE_YIELD_CUES = (NATIVE_REFUSED_DECLINE_GUIDANCE,)
 
 
 class TestTerminalDecline:
@@ -92,23 +108,68 @@ class TestTerminalDecline:
             assert failure_reports(follow_up) == []
 
     @pytest.mark.parametrize(
-        ("scenario", "blockers"),
+        ("scenario", "present", "absent"),
         [
-            (DeclineScenario.BACKGROUND_PENDING, ("hasPendingAsyncWork=true",)),
-            (DeclineScenario.BACKGROUND_QUEUED, ("queuedMessageCount=1",)),
-            (DeclineScenario.BACKGROUND_COMPLETING, ("hasPendingAsyncWork=true",)),
+            (
+                DeclineScenario.BACKGROUND_PENDING,
+                (PENDING_ASYNC_WORK_LABEL, *BACKLOG_YIELD_CUES),
+                (QUEUED_MESSAGE_COUNT_PREFIX, SOLE_TOOL_SIBLING_RECOVERY),
+            ),
+            (
+                DeclineScenario.BACKGROUND_QUEUED,
+                (QUEUED_ONE_LABEL, *BACKLOG_YIELD_CUES),
+                (PENDING_ASYNC_WORK_LABEL, SOLE_TOOL_SIBLING_RECOVERY),
+            ),
+            (
+                DeclineScenario.BACKGROUND_COMPLETING,
+                (PENDING_ASYNC_WORK_LABEL, *BACKLOG_YIELD_CUES),
+                (QUEUED_MESSAGE_COUNT_PREFIX, SOLE_TOOL_SIBLING_RECOVERY),
+            ),
             (
                 DeclineScenario.BACKGROUND_BOTH,
-                ("hasPendingAsyncWork=true", "queuedMessageCount=1"),
+                (PENDING_ASYNC_WORK_LABEL, QUEUED_ONE_LABEL, *BACKLOG_YIELD_CUES),
+                (SOLE_TOOL_SIBLING_RECOVERY,),
             ),
-            (DeclineScenario.MIXED_BATCH, ("toolCallId=decline",)),
-            (DeclineScenario.MISSING_BATCH, ("toolCallId=decline",)),
-            (DeclineScenario.STRING_CONTENT, ("toolCallId=decline",)),
-            (DeclineScenario.MISMATCHED_ID, ("toolCallId=decline",)),
+            (
+                DeclineScenario.MIXED_BATCH,
+                (DECLINE_TOOL_LABEL, SOLE_TOOL_SIBLING_RECOVERY, *SOLE_YIELD_CUES),
+                (PENDING_ASYNC_WORK_LABEL, QUEUED_MESSAGE_COUNT_PREFIX),
+            ),
+            (
+                DeclineScenario.MISSING_BATCH,
+                (
+                    DECLINE_TOOL_LABEL,
+                    SOLE_TOOL_UNSTRUCTURED_RECOVERY,
+                    *SOLE_YIELD_CUES,
+                ),
+                (SOLE_TOOL_SIBLING_RECOVERY, PENDING_ASYNC_WORK_LABEL),
+            ),
+            (
+                DeclineScenario.STRING_CONTENT,
+                (
+                    DECLINE_TOOL_LABEL,
+                    SOLE_TOOL_UNSTRUCTURED_RECOVERY,
+                    *SOLE_YIELD_CUES,
+                ),
+                (SOLE_TOOL_SIBLING_RECOVERY, PENDING_ASYNC_WORK_LABEL),
+            ),
+            (
+                DeclineScenario.MISMATCHED_ID,
+                (
+                    DECLINE_TOOL_LABEL,
+                    SOLE_TOOL_ID_MISMATCH_RECOVERY,
+                    *SOLE_YIELD_CUES,
+                ),
+                (SOLE_TOOL_SIBLING_RECOVERY, PENDING_ASYNC_WORK_LABEL),
+            ),
         ],
     )
     async def test_background_work_refuses_decline_and_keeps_reply_available(
-        self, tmp_path: Path, scenario: DeclineScenario, blockers: tuple[str, ...]
+        self,
+        tmp_path: Path,
+        scenario: DeclineScenario,
+        present: tuple[str, ...],
+        absent: tuple[str, ...],
     ) -> None:
         tools = DeclineTools()
         async with declining_adapter(tmp_path, scenario) as adapter:
@@ -126,25 +187,32 @@ class TestTerminalDecline:
             (REPLY_CALL, False),
         ]
         refusal = results[0]["result"]["content"][0]["text"]
-        for blocker in blockers:
-            assert blocker in refusal
-        if scenario == DeclineScenario.BACKGROUND_QUEUED:
-            assert "hasPendingAsyncWork=true" not in refusal
-        if scenario in {
-            DeclineScenario.BACKGROUND_PENDING,
-            DeclineScenario.BACKGROUND_COMPLETING,
-        }:
-            assert "queuedMessageCount=" not in refusal
+        for cue in present:
+            assert cue in refusal
+        for cue in absent:
+            assert cue not in refusal
 
     @pytest.mark.parametrize(
-        ("scenario", "blocker"),
+        ("scenario", "present", "absent"),
         [
-            (DeclineScenario.POST_CHECK_PENDING, "hasPendingAsyncWork=true"),
-            (DeclineScenario.POST_CHECK_QUEUED, "queuedMessageCount=1"),
+            (
+                DeclineScenario.POST_CHECK_PENDING,
+                (PENDING_ASYNC_WORK_LABEL, *BACKLOG_YIELD_CUES),
+                (QUEUED_MESSAGE_COUNT_PREFIX,),
+            ),
+            (
+                DeclineScenario.POST_CHECK_QUEUED,
+                (QUEUED_ONE_LABEL, *BACKLOG_YIELD_CUES),
+                (PENDING_ASYNC_WORK_LABEL,),
+            ),
         ],
     )
     async def test_post_check_pending_work_refuses_after_execute(
-        self, tmp_path: Path, scenario: DeclineScenario, blocker: str
+        self,
+        tmp_path: Path,
+        scenario: DeclineScenario,
+        present: tuple[str, ...],
+        absent: tuple[str, ...],
     ) -> None:
         """Pending work that appears after the initial check must still block ABORT."""
         tools = DeclineTools()
@@ -163,7 +231,10 @@ class TestTerminalDecline:
             )
             assert stop_commands(tmp_path) == []
             refusal = tool_results(tmp_path)[0]["result"]["content"][0]["text"]
-            assert blocker in refusal
+            for cue in present:
+                assert cue in refusal
+            for cue in absent:
+                assert cue not in refusal
 
         assert tools.chat == [REPLY_TEXT]
         assert failure_reports(tools) == []

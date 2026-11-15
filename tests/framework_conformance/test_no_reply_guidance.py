@@ -7,6 +7,7 @@ import re
 import pytest
 from band_sdk_core import no_reply_tool
 
+from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.adapters.omp.turns import NATIVE_TURN_COMPLETION_GUIDANCE
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
 from band.integrations.omprpc.prompt import (
@@ -26,9 +27,6 @@ CANONICAL_DESCRIPTION = no_reply_tool()["description"]
 # A turn is judged over all its current inputs, never over one message of them.
 SINGLE_MESSAGE = re.compile(r"\b(?:latest|current|last) message\b", re.IGNORECASE)
 
-# CLI continue-nudge hosts advertise this; native OMP must not.
-CLI_DONE_NUDGE = 'for example, "Done."'
-
 ADVERTISED_GUIDANCE = {
     "base system prompt": lambda: render_system_prompt(),
     "codex and acp communication instructions": lambda: COMMUNICATION_INSTRUCTIONS,
@@ -43,7 +41,10 @@ TURN_GUIDANCE = {
     "copilot and acp turn completion": lambda: TURN_COMPLETION_GUIDANCE,
 }
 
-OMP_ADVERTISED = f"{COMMUNICATION_INSTRUCTIONS}\n\n{NATIVE_TURN_COMPLETION_GUIDANCE}"
+
+def omp_advertised_system_context() -> str:
+    """Drive the real OMP advertisement path, not a hand-built constant join."""
+    return OmpAdapter(OmpAdapterConfig(cwd="."), emit=())._build_system_context()
 
 
 class TestNoReplyGuidance:
@@ -70,11 +71,15 @@ class TestNoReplyGuidance:
     def test_omp_advertises_canonical_decline_and_native_yield_not_cli_done(
         self,
     ) -> None:
-        assert CANONICAL_DESCRIPTION in OMP_ADVERTISED
-        assert "One Band turn may span multiple native model steps" in OMP_ADVERTISED
-        assert NATIVE_BACKLOG_YIELD_GUIDANCE in OMP_ADVERTISED
-        assert NATIVE_REFUSED_DECLINE_GUIDANCE in OMP_ADVERTISED
-        assert NATIVE_QUEUED_INPUT_GUIDANCE in OMP_ADVERTISED
-        assert CLI_DONE_NUDGE not in OMP_ADVERTISED
-        assert TURN_COMPLETION_GUIDANCE not in OMP_ADVERTISED
-        assert SINGLE_MESSAGE.findall(OMP_ADVERTISED) == []
+        advertised = omp_advertised_system_context()
+        assert CANONICAL_DESCRIPTION in advertised
+        assert NATIVE_TURN_COMPLETION_GUIDANCE in advertised
+        assert "One Band turn may span multiple native model steps" in advertised
+        assert NATIVE_BACKLOG_YIELD_GUIDANCE in advertised
+        assert NATIVE_REFUSED_DECLINE_GUIDANCE in advertised
+        assert NATIVE_QUEUED_INPUT_GUIDANCE in advertised
+        assert TURN_COMPLETION_GUIDANCE not in advertised
+        # Decline/completion copy must not judge one message; other OMP context
+        # may name the history-replay marker's current message.
+        assert SINGLE_MESSAGE.findall(COMMUNICATION_INSTRUCTIONS) == []
+        assert SINGLE_MESSAGE.findall(NATIVE_TURN_COMPLETION_GUIDANCE) == []

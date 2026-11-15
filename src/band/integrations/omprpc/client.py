@@ -41,7 +41,9 @@ from band.integrations.omprpc.prompt import (
     OmpCallbackKind,
     PromptCallback,
     PromptRun,
+    compose_decline_refusals,
     decline_backlog_refusal,
+    decline_sole_tool_refusal,
 )
 from band.integrations.omprpc.scope import OmpProcessScope
 from band.integrations.ompwire import (
@@ -73,7 +75,6 @@ from band.integrations.ompwire import (
     OmpUIResponse,
     OmpWireModel,
 )
-from band.runtime.tools import BandTool
 
 TModel = TypeVar("TModel", bound=OmpWireModel)
 CloseProcess = Callable[[], Coroutine[Any, Any, None]]
@@ -303,19 +304,12 @@ class OmpRpcClient:
             raise asyncio.CancelledError
         assert turn.snapshot is not None
         _, state = turn.snapshot
-        refusal = decline_backlog_refusal(state)
-        if refusal is not None:
-            return refusal
-        # A sibling tool can register background work after an idle snapshot.
-        if not turn.is_single_tool_call(call.toolCallId):
-            return (
-                f"{BandTool.NO_REPLY} refused: no sole-tool-call proof for "
-                f"toolCallId={call.toolCallId} in the assistant message. "
-                "If other tool calls are outstanding, finish them and handle their "
-                f"results. Call {BandTool.NO_REPLY} separately only if no work or "
-                "input needs a reply."
-            )
-        return None
+        # Report every observed blocker in one refusal so backlog never masks
+        # a failed sole-tool proof (and the reverse).
+        return compose_decline_refusals(
+            decline_backlog_refusal(state),
+            decline_sole_tool_refusal(turn.last_assistant, call.toolCallId),
+        )
 
     def arm_stop_after_tool(
         self, call: OmpHostToolCall, *, on_commit: Callable[[], None]
