@@ -10,6 +10,7 @@ from band.integrations.omprpc import OmpCompletionTimeout, OmpProcessError
 from band.integrations.omprpc.client import CALLBACK_EXIT_TIMEOUT_S
 from band.integrations.omprpc.custody import process_is_alive
 from band.integrations.ompwire import OmpEventType
+from tests.integrations.omppeers.acknowledgements import STOP_CALL_ID, STOP_SIBLING_ID
 from tests.integrations.omppeers.base import COMPLETE
 from tests.integrations.omprpc.acknowledgements import StoppingObserver
 from tests.integrations.omprpc.completion import (
@@ -51,11 +52,14 @@ class TestAbortAcknowledgement:
         async with stopping_completion_turn as turn:
             await turn.observer.wait_for(OmpEventType.AGENT_END)
             await snapshots_observed(turn.client)
-            assert stopping_observer.sibling_parked is True
+            assert stopping_observer.sibling_admitted is True
+            assert stopping_observer.tool_call_ids == [STOP_CALL_ID]
+            assert STOP_SIBLING_ID not in stopping_observer.tool_call_ids
             await turn.clock.elapse(2 * CALLBACK_EXIT_TIMEOUT_S)
 
             await turn.clock.run_io(turn.client.request(PeerCommand.RELEASE_ACK))
             await turn.clock.run_io(turn.running)
+            assert stopping_observer.tool_call_ids == [STOP_CALL_ID]
             assert turn.observer.assistant_texts == [COMPLETE]
             assert await turn.clock.run_io(follow_up_texts(turn.client)) == [COMPLETE]
 
