@@ -8,6 +8,11 @@ import pytest
 from band_sdk_core import no_reply_tool
 
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
+from band.integrations.omprpc.prompt import (
+    NATIVE_BACKLOG_YIELD_GUIDANCE,
+    NATIVE_QUEUED_INPUT_GUIDANCE,
+    NATIVE_REFUSED_DECLINE_GUIDANCE,
+)
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
     TURN_COMPLETION_GUIDANCE,
@@ -36,13 +41,12 @@ TURN_GUIDANCE = {
 
 
 def omp_advertised_system_context() -> str:
-    """Drive the real OMP advertisement path, not a hand-built constant join.
-
-    Import lazily: framework_conformance is collected under adapter extras that
-    do not install OMP's psutil dependency.
-    """
+    """Drive the real OMP advertisement path, not a hand-built constant join."""
     pytest.importorskip("psutil")
-    from band.adapters.omp import OmpAdapter, OmpAdapterConfig
+    from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra is absent from other adapter lanes
+        OmpAdapter,
+        OmpAdapterConfig,
+    )
 
     return OmpAdapter(OmpAdapterConfig(cwd="."), emit=())._build_system_context()
 
@@ -71,12 +75,6 @@ class TestNoReplyGuidance:
     def test_omp_advertises_canonical_decline_and_native_yield_not_cli_done(
         self,
     ) -> None:
-        from band.integrations.omprpc.prompt import (
-            NATIVE_BACKLOG_YIELD_GUIDANCE,
-            NATIVE_QUEUED_INPUT_GUIDANCE,
-            NATIVE_REFUSED_DECLINE_GUIDANCE,
-        )
-
         advertised = omp_advertised_system_context()
         assert CANONICAL_DESCRIPTION in advertised
         assert "## Native OMP turn completion" in advertised
