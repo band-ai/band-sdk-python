@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time as _time
 from collections.abc import AsyncIterator, Callable, Sequence
@@ -14,7 +13,6 @@ from functools import partial
 from typing import Any, ClassVar
 
 from band_sdk_core import AgentFailure
-from pydantic import ValidationError
 from typing_extensions import Unpack
 
 from band.adapters.codex.approvals import (
@@ -44,9 +42,10 @@ from band.adapters.codex.commands import (
 from band.adapters.codex.config import CodexAdapterConfig
 from band.adapters.codex.dynamictools import (
     UNOWNED_TOOL_CALL_TEXT,
-    image_content_items,
+    DynamicToolCall,
+    answer_tool_call,
+    dynamic_tools,
     text_tool_result,
-    tool_response,
     tools_by_name,
 )
 from band.adapters.codex.items import (
@@ -81,7 +80,6 @@ from band.adapters.codex.rpc import (
     loss_reason,
     refuse_unhandled_request,
     result_entry_id,
-    text_item,
 )
 from band.adapters.codex.sandbox import (
     ENFORCED_SANDBOX_MODES,
@@ -96,10 +94,8 @@ from band.adapters.codex.sandbox import (
     normalize_sandbox_mode,
 )
 from band.adapters.codex.selfconfig import (
-    REASONING_SUMMARIES,
     SILENT_REPORTING_TOOLS,
-    SetModelInput,
-    SetReasoningInput,
+    self_config_tools,
 )
 from band.adapters.codex.turnstate import (
     PROCESS_NOT_READY_ERROR,
@@ -145,7 +141,6 @@ from band.core.protocols import (
 from band.core.retention import ReleaseCause, ReleaseOutcome, RoomRetention
 from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
-from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import detached_turn
 from band.core.turn_lifecycle import (
     ApprovalInterruptMixin,
@@ -162,7 +157,6 @@ from band.core.types import (
     Emit,
     FeatureKwargs,
     PlatformMessage,
-    ToolEventKey,
     distinct_sender_ids,
 )
 from band.integrations.codex import (
@@ -190,10 +184,6 @@ from band.integrations.codex.types import (
 from band.runtime.activity import permission_wait
 from band.runtime.custom_tools import (
     CustomToolDef,
-    custom_tool_to_openai_schema,
-    find_custom_tool,
-    format_validation_error,
-    run_custom_tool,
 )
 from band.runtime.decisions import (
     APPROVAL_NOT_PENDING_TEMPLATE,
@@ -209,12 +199,6 @@ from band.runtime.toolactivity import (
     end_activity,
     start_memory_activity,
     start_native_tool_activity,
-)
-from band.runtime.tools import (
-    get_band_tool_category,
-    image_block_placeholder,
-    is_image_passthrough_result,
-    redact_tool_call_args,
 )
 from band.workspaces import RoomWorkspaces
 
@@ -259,7 +243,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self.config = self._config
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         if self.config.enable_self_config_tools:
-            self._custom_tools.extend(self._build_self_config_tools())
+            self._custom_tools.extend(
+                self_config_tools(self._require_active_client_state, self.config)
+            )
         if self.config.cwd is not None:
             raise ValueError(
                 "cwd is not supported; use workspace_for_room or the default"
@@ -354,60 +340,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if state is None:
             raise RuntimeError("Codex client requires a room context")
         state.selected_model = value
-
-    @property
-    def _rpc_lock(self) -> asyncio.Lock:
-        state = self._active_client_state()
-        if state is None:
-            raise RuntimeError("Codex client requires a room context")
-        return state.rpc_lock
-
-    def _build_self_config_tools(self) -> list[CustomToolDef]:
-        """Build custom tools that let Codex change its own model/reasoning.
-
-        Note: ``_handle_set_model`` and ``_handle_set_reasoning`` closures
-        mutate adapter state (``config.model``, ``_selected_model``, etc.).
-        They are safe because they are always called inside the
-        ``_handle_server_request`` path which holds ``_rpc_lock``.
-        """
-        adapter = self
-
-        def _handle_set_model(inp: SetModelInput) -> str:
-            if not adapter._rpc_lock.locked():
-                raise RuntimeError("_handle_set_model must run under _rpc_lock")
-            adapter._selected_model = inp.model
-            return f"Model changed to {inp.model} for subsequent turns."
-
-        def _handle_set_reasoning(inp: SetReasoningInput) -> str:
-            if not adapter._rpc_lock.locked():
-                raise RuntimeError("_handle_set_reasoning must run under _rpc_lock")
-            parts: list[str] = []
-            if inp.effort is not None:
-                # Unlike /reasoning, this closure is sync and holds _rpc_lock, so it
-                # can't await a model/list round-trip to check the value live without
-                # risking deadlock -- same reason _handle_set_model never validates
-                # the model. An unsupported effort surfaces on the next turn instead.
-                adapter._require_active_client_state().reasoning_effort = inp.effort
-                parts.append(f"effort={inp.effort}")
-            if inp.summary is not None:
-                if inp.summary not in REASONING_SUMMARIES:
-                    return (
-                        f"Invalid reasoning summary '{inp.summary}'. "
-                        f"Valid: {', '.join(sorted(REASONING_SUMMARIES))}."
-                    )
-                adapter._require_active_client_state().reasoning_summary = inp.summary
-                parts.append(f"summary={inp.summary}")
-            if not parts:
-                return (
-                    f"No changes. Current: effort={adapter.config.reasoning_effort or 'default'}, "
-                    f"summary={adapter.config.reasoning_summary or 'default'}."
-                )
-            return f"Reasoning updated: {', '.join(parts)}."
-
-        return [
-            (SetModelInput, _handle_set_model),
-            (SetReasoningInput, _handle_set_reasoning),
-        ]
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         if self._retention.stopping:
@@ -1918,81 +1850,12 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         return thread_id
 
     def _build_dynamic_tools(self, tools: AgentToolsProtocol) -> list[dict[str, Any]]:
-        dynamic_tools: list[dict[str, Any]] = []
-        seen: set[str] = set()
-
-        for schema in tools.get_openai_tool_schemas(
-            capabilities=self.features.capabilities
-        ):
-            if not isinstance(schema, dict):
-                continue
-
-            if schema.get("type") == "function":
-                function = schema.get("function") if isinstance(schema, dict) else {}
-                if not isinstance(function, dict):
-                    continue
-                name = function.get("name")
-                if not isinstance(name, str) or not name or name in seen:
-                    continue
-                dynamic_tools.append(
-                    {
-                        "name": name,
-                        "description": str(function.get("description") or ""),
-                        "inputSchema": function.get("parameters")
-                        if isinstance(function.get("parameters"), dict)
-                        else {"type": "object", "properties": {}},
-                    }
-                )
-                seen.add(name)
-                continue
-
-            name = schema.get("name")
-            input_schema = schema.get("inputSchema") or schema.get("input_schema")
-            if not isinstance(name, str) or not name or name in seen:
-                continue
-            if not isinstance(input_schema, dict):
-                input_schema = {"type": "object", "properties": {}}
-            dynamic_tools.append(
-                {
-                    "name": name,
-                    "description": str(schema.get("description") or ""),
-                    "inputSchema": input_schema,
-                }
-            )
-            seen.add(name)
-
-        dynamic_tools = filter_tool_schemas(
-            dynamic_tools,
+        return dynamic_tools(
+            tools.get_openai_tool_schemas(capabilities=self.features.capabilities),
             self.features,
-            get_name=lambda schema: schema["name"],
-            get_category=lambda schema: get_band_tool_category(schema["name"]),
+            additional=self.config.additional_dynamic_tools,
+            custom_tools=self._custom_tools,
         )
-        for tool in self.config.additional_dynamic_tools:
-            if not isinstance(tool, dict):
-                continue
-            name = tool.get("name")
-            if not isinstance(name, str) or not name or name in seen:
-                continue
-            dynamic_tools.append(tool)
-            seen.add(name)
-
-        for model_cls, _ in self._custom_tools:
-            schema = custom_tool_to_openai_schema(model_cls)
-            function = schema.get("function", {})
-            name = function.get("name", "")
-            if not name or name in seen:
-                continue
-            dynamic_tools.append(
-                {
-                    "name": name,
-                    "description": str(function.get("description") or ""),
-                    "inputSchema": function.get("parameters")
-                    or {"type": "object", "properties": {}},
-                }
-            )
-            seen.add(name)
-
-        return dynamic_tools
 
     def _build_turn_input(
         self,
@@ -2093,111 +1956,20 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         params = event_params(event)
 
         if event.method == DYNAMIC_TOOL_CALL_METHOD:
-            tool_name = str(params.get("tool") or "")
-            arguments = params.get("arguments")
-            if not isinstance(arguments, dict):
-                arguments = {}
-            call_id = str(params.get("callId") or "")
-
-            # Don't emit reporting for codex-local slash commands — they already
-            # surface their outcome in the room themselves.
-            should_report = (
+            call = DynamicToolCall.from_params(params)
+            # Codex-local slash commands surface their outcome in the room.
+            report = (
                 Emit.TOOL_CALLS in self.features.emit
-                and tool_name not in SILENT_REPORTING_TOOLS
+                and call.name not in SILENT_REPORTING_TOOLS
             )
-
-            if should_report:
-                await tools.send_event(
-                    content=json.dumps(
-                        {
-                            ToolEventKey.NAME: tool_name,
-                            ToolEventKey.ARGS: redact_tool_call_args(
-                                tool_name, arguments
-                            ),
-                            ToolEventKey.TOOL_CALL_ID: call_id,
-                        }
-                    ),
-                    message_type="tool_call",
-                )
-
-            try:
-                custom_tool = find_custom_tool(self._custom_tools, tool_name)
-                # Structured: either kind of tool can fail without raising (bad
-                # args, API error, a failure value) via ok=False, which must reach
-                # Codex as a failed call.
-                if custom_tool:
-                    outcome = await run_custom_tool(custom_tool, arguments, tools=tools)
-                else:
-                    outcome = await tools.execute_tool_call_structured(
-                        tool_name, arguments
-                    )
-            except HOST_CONTROL_ERRORS:
-                raise
-            except ValidationError as exc:
-                errors = format_validation_error(exc)
-                error_text = f"Invalid arguments for {tool_name}: {errors}"
-                logger.error("Validation error for tool %s: %s", tool_name, exc)
-                await client.respond(
-                    event.id, text_tool_result(error_text, success=False)
-                )
-                if should_report:
-                    await tools.send_event(
-                        content=json.dumps(
-                            {
-                                ToolEventKey.NAME: tool_name,
-                                ToolEventKey.OUTPUT: error_text,
-                                ToolEventKey.TOOL_CALL_ID: call_id,
-                            }
-                        ),
-                        message_type="tool_result",
-                    )
-                return
-            except Exception as exc:
-                error_text = f"Error: {exc}"
-                logger.exception("Tool execution failed for %s", tool_name)
-                await client.respond(
-                    event.id, text_tool_result(error_text, success=False)
-                )
-                if should_report:
-                    await tools.send_event(
-                        content=json.dumps(
-                            {
-                                ToolEventKey.NAME: tool_name,
-                                ToolEventKey.OUTPUT: error_text,
-                                ToolEventKey.TOOL_CALL_ID: call_id,
-                            }
-                        ),
-                        message_type="tool_result",
-                    )
-
-                return
-
-            result, success = outcome.value, outcome.ok
-            if success and is_image_passthrough_result(tool_name, result):
-                content_items = image_content_items(result)
-                text_result = image_block_placeholder(len(content_items))
-            else:
-                text_result = (
-                    result
-                    if isinstance(result, str)
-                    else json.dumps(result, default=str)
-                )
-                content_items = [text_item(text_result)]
-            await client.respond(
-                event.id, tool_response(content_items, success=success)
+            await answer_tool_call(
+                client,
+                tools,
+                request_id=event.id,
+                call=call,
+                custom_tools=self._custom_tools,
+                report=report,
             )
-            if should_report:
-                await tools.send_event(
-                    content=json.dumps(
-                        {
-                            ToolEventKey.NAME: tool_name,
-                            ToolEventKey.OUTPUT: text_result,
-                            ToolEventKey.TOOL_CALL_ID: call_id,
-                        }
-                    ),
-                    message_type="tool_result",
-                )
-
             return
 
         if event.method in CODEX_APPROVAL_METHODS:
