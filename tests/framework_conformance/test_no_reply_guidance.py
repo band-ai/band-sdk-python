@@ -7,14 +7,7 @@ import re
 import pytest
 from band_sdk_core import no_reply_tool
 
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig
-from band.adapters.omp.turns import NATIVE_TURN_COMPLETION_GUIDANCE
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
-from band.integrations.omprpc.prompt import (
-    NATIVE_BACKLOG_YIELD_GUIDANCE,
-    NATIVE_QUEUED_INPUT_GUIDANCE,
-    NATIVE_REFUSED_DECLINE_GUIDANCE,
-)
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
     TURN_COMPLETION_GUIDANCE,
@@ -43,7 +36,14 @@ TURN_GUIDANCE = {
 
 
 def omp_advertised_system_context() -> str:
-    """Drive the real OMP advertisement path, not a hand-built constant join."""
+    """Drive the real OMP advertisement path, not a hand-built constant join.
+
+    Import lazily: framework_conformance is collected under adapter extras that
+    do not install OMP's psutil dependency.
+    """
+    pytest.importorskip("psutil")
+    from band.adapters.omp import OmpAdapter, OmpAdapterConfig
+
     return OmpAdapter(OmpAdapterConfig(cwd="."), emit=())._build_system_context()
 
 
@@ -71,9 +71,15 @@ class TestNoReplyGuidance:
     def test_omp_advertises_canonical_decline_and_native_yield_not_cli_done(
         self,
     ) -> None:
+        from band.integrations.omprpc.prompt import (
+            NATIVE_BACKLOG_YIELD_GUIDANCE,
+            NATIVE_QUEUED_INPUT_GUIDANCE,
+            NATIVE_REFUSED_DECLINE_GUIDANCE,
+        )
+
         advertised = omp_advertised_system_context()
         assert CANONICAL_DESCRIPTION in advertised
-        assert NATIVE_TURN_COMPLETION_GUIDANCE in advertised
+        assert "## Native OMP turn completion" in advertised
         assert NATIVE_BACKLOG_YIELD_GUIDANCE in advertised
         assert NATIVE_REFUSED_DECLINE_GUIDANCE in advertised
         assert NATIVE_QUEUED_INPUT_GUIDANCE in advertised
@@ -81,4 +87,6 @@ class TestNoReplyGuidance:
         # Decline/completion copy must not judge one message; other OMP context
         # may name the history-replay marker's current message.
         assert SINGLE_MESSAGE.findall(COMMUNICATION_INSTRUCTIONS) == []
-        assert SINGLE_MESSAGE.findall(NATIVE_TURN_COMPLETION_GUIDANCE) == []
+        assert SINGLE_MESSAGE.findall(NATIVE_BACKLOG_YIELD_GUIDANCE) == []
+        assert SINGLE_MESSAGE.findall(NATIVE_REFUSED_DECLINE_GUIDANCE) == []
+        assert SINGLE_MESSAGE.findall(NATIVE_QUEUED_INPUT_GUIDANCE) == []
