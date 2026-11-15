@@ -31,6 +31,16 @@ NATIVE_BACKLOG_YIELD_GUIDANCE = (
     "This native yield is not a Band decline or a claim that the turn is complete."
 )
 
+NATIVE_REFUSED_DECLINE_GUIDANCE = (
+    "This turn has not declined. Do not poll this tool or claim completion in "
+    "plain text."
+)
+
+NATIVE_QUEUED_INPUT_GUIDANCE = (
+    "Queued native messages may contain participant input, not just tool results; "
+    "their contents cannot be inferred from tool or task inventory."
+)
+
 
 class OmpCallbackKind(StrEnum):
     TOOL = "tool"
@@ -230,14 +240,12 @@ def decline_backlog_refusal(state: OmpState) -> str | None:
         blockers.append(f"queuedMessageCount={state.queuedMessageCount}")
         recovery.append(
             "Allow OMP to deliver the queued messages on continuation, then read and "
-            "handle them. They may include participant input, not just tool results; "
-            "their contents cannot be inferred from tool or task inventory."
+            f"handle them. {NATIVE_QUEUED_INPUT_GUIDANCE}"
         )
     return (
         f"{BandTool.NO_REPLY} refused: native {'; '.join(blockers)}. "
         f"{' '.join(recovery)} "
-        "This turn has not declined. Do not poll this tool or claim completion in "
-        f"plain text. {NATIVE_BACKLOG_YIELD_GUIDANCE} "
+        f"{NATIVE_REFUSED_DECLINE_GUIDANCE} {NATIVE_BACKLOG_YIELD_GUIDANCE} "
         "Reconsider whether a reply is needed after processing the pending work and input."
     )
 

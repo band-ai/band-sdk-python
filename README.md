@@ -587,14 +587,15 @@ call. Queued messages may contain participant input, not just tool results;
 allow OMP to deliver them on continuation, then read and handle them. Tool and
 task inventory cannot reveal their contents. Do not repeatedly poll
 `band_no_reply` or replace a refused decline with a plain-text "Done" — that
-does not decline the turn or reach the room. If delivery is the only remaining
-action, yield the native model step without further tool calls so OMP can
+does not decline the turn or reach the room. One Band turn may span multiple
+native model steps inside a single prompt: if delivery is the only remaining
+action, yield the current model step without further tool calls so OMP can
 deliver queued follow-ups or async completions. Yielding does not decline or
-complete the Band turn. After handling pending work and input, send any required
-reply with `band_send_message`, or call `band_no_reply`
-separately if the whole turn needs no reply. It ends the current prompt rather
-than waiting for background completion. Custom tools named `band_no_reply`
-retain their handler-defined behavior.
+complete the Band turn. After handling pending work and input, end the Band
+turn with `band_send_message`, or call `band_no_reply` separately if the whole
+turn needs no reply. `band_no_reply` ends the current prompt rather than
+waiting for background completion. Custom tools named `band_no_reply` retain
+their handler-defined behavior.
 
 #### Emit Telemetry
 

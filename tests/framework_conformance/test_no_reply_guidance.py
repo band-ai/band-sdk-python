@@ -7,7 +7,13 @@ import re
 import pytest
 from band_sdk_core import no_reply_tool
 
+from band.adapters.omp.turns import NATIVE_TURN_COMPLETION_GUIDANCE
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
+from band.integrations.omprpc.prompt import (
+    NATIVE_BACKLOG_YIELD_GUIDANCE,
+    NATIVE_QUEUED_INPUT_GUIDANCE,
+    NATIVE_REFUSED_DECLINE_GUIDANCE,
+)
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
     TURN_COMPLETION_GUIDANCE,
@@ -19,6 +25,9 @@ CANONICAL_DESCRIPTION = no_reply_tool()["description"]
 
 # A turn is judged over all its current inputs, never over one message of them.
 SINGLE_MESSAGE = re.compile(r"\b(?:latest|current|last) message\b", re.IGNORECASE)
+
+# CLI continue-nudge hosts advertise this; native OMP must not.
+CLI_DONE_NUDGE = 'for example, "Done."'
 
 ADVERTISED_GUIDANCE = {
     "base system prompt": lambda: render_system_prompt(),
@@ -33,6 +42,8 @@ TURN_GUIDANCE = {
     **ADVERTISED_GUIDANCE,
     "copilot and acp turn completion": lambda: TURN_COMPLETION_GUIDANCE,
 }
+
+OMP_ADVERTISED = f"{COMMUNICATION_INSTRUCTIONS}\n\n{NATIVE_TURN_COMPLETION_GUIDANCE}"
 
 
 class TestNoReplyGuidance:
@@ -55,3 +66,15 @@ class TestNoReplyGuidance:
         description = get_tool_description(BandTool.SEND_MESSAGE)
 
         assert BandTool.NO_REPLY not in description
+
+    def test_omp_advertises_canonical_decline_and_native_yield_not_cli_done(
+        self,
+    ) -> None:
+        assert CANONICAL_DESCRIPTION in OMP_ADVERTISED
+        assert "One Band turn may span multiple native model steps" in OMP_ADVERTISED
+        assert NATIVE_BACKLOG_YIELD_GUIDANCE in OMP_ADVERTISED
+        assert NATIVE_REFUSED_DECLINE_GUIDANCE in OMP_ADVERTISED
+        assert NATIVE_QUEUED_INPUT_GUIDANCE in OMP_ADVERTISED
+        assert CLI_DONE_NUDGE not in OMP_ADVERTISED
+        assert TURN_COMPLETION_GUIDANCE not in OMP_ADVERTISED
+        assert SINGLE_MESSAGE.findall(OMP_ADVERTISED) == []

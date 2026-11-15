@@ -30,7 +30,11 @@ from band.core.protocols import (
 )
 from band.core.types import Emit, MessageType, PlatformMessage
 from band.integrations import omproomask, omprpc
-from band.integrations.omprpc.prompt import NATIVE_BACKLOG_YIELD_GUIDANCE
+from band.integrations.omprpc.prompt import (
+    NATIVE_BACKLOG_YIELD_GUIDANCE,
+    NATIVE_QUEUED_INPUT_GUIDANCE,
+    NATIVE_REFUSED_DECLINE_GUIDANCE,
+)
 from band.integrations.ompwire import (
     OmpEvent,
     OmpHostToolCall,
@@ -52,17 +56,16 @@ logger = logging.getLogger(__name__)
 
 NATIVE_TURN_COMPLETION_GUIDANCE = (
     "## Native OMP turn completion\n\n"
-    f"Deliver required room replies with {BandTool.SEND_MESSAGE}. "
+    "One Band turn may span multiple native model steps inside a single prompt. "
+    f"{NATIVE_BACKLOG_YIELD_GUIDANCE} "
+    "After pending work and delivered input are handled, end the Band turn with "
+    f"{BandTool.SEND_MESSAGE} or {BandTool.NO_REPLY}. "
     f"Use {BandTool.NO_REPLY} only when the whole turn needs no reply, not to wait "
     "for work or consume queued messages. A refused decline leaves the turn open: "
-    "handle the reported blocker instead of repeatedly retrying the tool or "
-    "claiming completion in plain text. "
-    f"{NATIVE_BACKLOG_YIELD_GUIDANCE} "
-    "Queued native messages may contain participant input, not just tool results; "
-    "read and act on them when delivered. Do not infer their contents from tool or "
-    "task inventory. Once all required "
-    "actions and input are handled, stop without sending a duplicate completion "
-    "notice. Plain text is not delivered to the Band room."
+    "handle the reported blocker. "
+    f"{NATIVE_REFUSED_DECLINE_GUIDANCE} "
+    f"{NATIVE_QUEUED_INPUT_GUIDANCE} "
+    "Plain text is not a Band completion claim and is not delivered to the Band room."
 )
 
 
