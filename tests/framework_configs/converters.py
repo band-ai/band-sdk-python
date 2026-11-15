@@ -319,9 +319,9 @@ def _build_gemini_config() -> ConverterConfig:
 # parsing and helpers are internal utility modules (shared helpers, not converters).
 # a2a / a2a_gateway use the A2A protocol which has a different message schema.
 # acp_client / acp_server use ACP protocol session updates, not standard convert().
-# codex, letta, and opencode are metadata-only converters that extract session state
-# from task event metadata rather than converting message history. They don't implement
-# the standard convert() -> framework-format contract that conformance tests validate.
+# codex, omp, letta, and opencode extract session state from task-event metadata
+# rather than converting message history. They don't implement the standard
+# convert() -> framework-format contract that conformance tests validate.
 # crewai_flow is a metadata-only converter for orchestration state reconstructed from
 # task events; same exception as codex/letta/opencode.
 # slack is a metadata-only converter too: it recovers the Slack thread binding from the
@@ -335,6 +335,7 @@ CONVERTER_EXCLUDED_MODULES: frozenset[str] = frozenset(
         "acp_client",
         "acp_server",
         "codex",
+        "omp",
         "crewai_flow",
         "letta",
         "opencode",

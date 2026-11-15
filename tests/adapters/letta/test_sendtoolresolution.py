@@ -7,6 +7,7 @@ import pytest
 from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 from band.converters.letta import LettaSessionState
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.lettakit import (
     make_assistant_message,
     make_letta_response,
@@ -69,7 +70,7 @@ class TestSendToolResolution:
             make_assistant_message("Done!"),
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await adapter.on_message(
             make_platform_message(),
             tools,

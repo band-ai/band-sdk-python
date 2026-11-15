@@ -13,7 +13,9 @@ from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING
 
-from band_sdk_core import AgentTopicKind, SessionState
+from band_rest.types.agent_activity_detail import AgentActivityDetail
+from band_sdk_core import AgentTopicKind, SessionPolicy
+from phoenix_channels_python_client import SocketError
 
 from band.client.rest import AsyncRestClient
 from band.client.streaming import (
@@ -21,11 +23,15 @@ from band.client.streaming import (
     WebSocketDisconnectReason,
     WebSocketUpgradeError,
 )
-from band.client.streaming.client import ControlHook
+from band.client.streaming.client import (
+    DEFAULT_CONNECT_TIMEOUT_S,
+    ControlHook,
+    validate_connect_timeout,
+)
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.settlement import SettlementResult
-from band.core.types import ConflictPolicy, PlatformConnection
+from band.core.types import DEFAULT_CONFLICT_POLICY, ConflictPolicy, PlatformConnection
 from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -57,11 +63,14 @@ if TYPE_CHECKING:
         ParticipantRemovedPayload,
         RoomAddedPayload,
         RoomDeletedPayload,
+        RoomReadiness,
         RoomRemovedPayload,
         SupersedePayload,
     )
 
 logger = logging.getLogger(__name__)
+
+DROPPED_EVENTS_LOG = "Dropped %d unread event(s) from the ended session"
 
 
 def _duplicate_connection_error(agent_id: str) -> AgentAlreadyRunningError:
@@ -101,13 +110,17 @@ class BandLink:
         api_key: str,
         ws_url: str = DEFAULT_WS_URL,
         rest_url: str = DEFAULT_REST_URL,
-        conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE,
+        conflict_policy: ConflictPolicy = DEFAULT_CONFLICT_POLICY,
+        session_policy: SessionPolicy | None = None,
+        connect_timeout: float | None = DEFAULT_CONNECT_TIMEOUT_S,
     ):
         self.agent_id = agent_id
         self.api_key = api_key
         self.ws_url = ws_url
         self.rest_url = rest_url
         self.conflict_policy = conflict_policy
+        self._session_policy = session_policy
+        self._connect_timeout = validate_connect_timeout(connect_timeout)
 
         # REST client - exposed directly
         self.rest = AsyncRestClient(api_key=api_key, base_url=rest_url)
@@ -135,6 +148,9 @@ class BandLink:
 
         # Durable terminal disconnect reason for the current connection lifecycle.
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
+
+        # Rejoins until on_reconnect are covered by the reconnect's reconcile.
+        self._socket_reconnect_pending = False
 
         # Preemptive control-signal hook (interrupt/stop/play). Set by the
         # runtime. Never run via the serialized _event_queue, so a control
@@ -181,6 +197,7 @@ class BandLink:
     # --- Connection lifecycle ---
 
     async def connect(self) -> None:
+        """Connect as entering ``WebSocketClient`` does, then join agent_control."""
         if self._connecting or self._ws is not None:
             logger.warning("Already connected or connecting")
             return
@@ -192,16 +209,22 @@ class BandLink:
         self._connecting = True
         try:
             self._last_disconnect_reason = None
+            self._socket_reconnect_pending = False
             ws = WebSocketClient(
                 self.ws_url,
                 self.api_key,
                 self.agent_id,
                 on_reconnect=self._on_reconnected,
                 on_disconnect=self._on_disconnected,
+                session_policy=self._session_policy,
                 conflict_policy=self.conflict_policy,
+                connect_timeout=self._connect_timeout,
+                on_terminal=self._on_terminal,
             )
+            accepted = False
             try:
                 await ws.__aenter__()
+                accepted = True
                 await self._join_agent_control_channel(ws)
             except BaseException as exc:
                 # BaseException, not Exception: a cancellation reaching one
@@ -209,13 +232,17 @@ class BandLink:
                 # cancelled) must still close the half-opened client, or it
                 # leaks -- _ws itself was never assigned, so there's nothing
                 # to roll back on that side.
-                if ws.last_disconnect_reason is not None:
-                    # A Session-classified terminal initial-connect failure
-                    # (__aenter__ already called record_terminal_disconnect)
-                    # -- surface it the same way a terminal supersede does,
-                    # even though self._ws was never assigned.
-                    self._last_disconnect_reason = ws.last_disconnect_reason
-                await ws.__aexit__(None, None, None)
+                try:
+                    if isinstance(exc, SocketError):
+                        await ws.wait_for_disconnect_decision()
+                finally:
+                    if ws.last_disconnect_reason is not None:
+                        self._last_disconnect_reason = ws.last_disconnect_reason
+                    await ws.__aexit__(None, None, None)
+                    # Only an accepted session can have queued events; before
+                    # that, the queue holds only the caller's.
+                    if accepted:
+                        self._drop_queued_events()
                 if (
                     isinstance(exc, WebSocketUpgradeError)
                     and exc.is_connection_conflict
@@ -224,8 +251,8 @@ class BandLink:
                 raise
 
             self._ws = ws
-            # A supersede handled during the join has already ended it.
-            self._is_connected = not ws.transport_ended
+            # A verdict reached during the join has already ended it.
+            self._is_connected = self._last_disconnect_reason is None
             logger.info("Connected to platform")
         finally:
             self._connecting = False
@@ -234,7 +261,8 @@ class BandLink:
         if not self._ws:
             return
 
-        if not self._ws.transport_ended:
+        self._ws.end_session()
+        if self._last_disconnect_reason is None:
             try:
                 await self._ws.leave_agent_control_channel(self.agent_id)
             except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
@@ -242,6 +270,7 @@ class BandLink:
 
         await self._cancel_control_lane()
         await self._ws.__aexit__(None, None, None)
+        self._drop_queued_events()
         self._ws = None
         self._is_connected = False
         self._subscriptions_manager.end_session()
@@ -250,7 +279,7 @@ class BandLink:
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
         """Block until the connection ends.
 
-        ``install_signal_handlers`` goes to ``PHXChannelsClient.run_forever``;
+        ``install_signal_handlers`` goes to ``phoenix_channels_python_client.Client.run_forever``;
         see ``Agent.run_forever`` for when a host turns it off.
         """
         if not self._ws:
@@ -278,6 +307,7 @@ class BandLink:
             agent_id,
             on_room_added=self._on_room_added,
             on_room_removed=self._on_room_removed,
+            on_resumed=self._on_agent_rooms_resumed,
         )
 
     async def subscribe_room(self, room_id: str) -> None:
@@ -291,6 +321,7 @@ class BandLink:
             on_participant_added=lambda p: self._on_participant_added(room_id, p),
             on_participant_removed=lambda p: self._on_participant_removed(room_id, p),
             on_room_deleted=lambda p: self._on_room_deleted(room_id, p),
+            on_ready=self._on_room_ready,
         )
 
     async def subscribe_agent_contacts(self, agent_id: str) -> None:
@@ -356,10 +387,10 @@ class BandLink:
     # --- Event handlers ---
 
     async def _on_reconnected(self) -> None:
-        """Handle PHX client reconnection: PHXChannelsClient has already
-        re-subscribed previously joined topics by the time this fires, so
-        tracked rooms/topics can be reconciled against real server state
-        here without replaying duplicate joins.
+        """Reconcile after Phoenix's initial required topic rejoin attempts.
+
+        Recovering topics stay retained; retired topics need tracker repair
+        without replaying duplicate joins.
 
         Runs rejoin-failure detection before draining so a rejoin failure
         gets the same best-effort clean leave as every other ambiguous
@@ -368,6 +399,7 @@ class BandLink:
         that ambiguity is safely resolvable (see design doc).
         """
         logger.info("WebSocket reconnected — reconciling room state")
+        self._socket_reconnect_pending = False
         self._subscriptions_manager.mark_reconnected()
         ws = self._connected_ws()
         joined = ws.joined_topics()
@@ -385,42 +417,17 @@ class BandLink:
     async def _on_supersede(
         self, ws: WebSocketClient, payload: SupersedePayload
     ) -> None:
-        """Handle an agent_control supersede event before the platform closes
-        the socket. Session arbitrates whether this specific supersede is
-        actually current (not a stale notification about an epoch this
-        connection has already moved past) and, in principle, whether a
-        retryable supersede should keep the connection reconnecting --
-        though the platform hardcodes retryable=False today, so in practice
-        this still always resolves to Dead.
+        """Hand an agent_control supersede push to the client's session.
 
         ``ws`` is the client the push arrived on rather than ``_ws``, which
         ``connect()`` assigns only after the control channel is joined.
         """
-        outcome = ws.handle_supersede(payload.retryable, payload.retry_after)
-        reason = payload.to_disconnect_reason(outcome)
-        if outcome.state is not SessionState.Dead:
-            # outcome.retry_after_s is computed but intentionally not
-            # applied here: enforcing it would mean this SDK taking over
-            # firing the actual reconnect attempt, which is the phoenix
-            # client's auto_reconnect loop's job -- untouched reconnect keeps
-            # working exactly as it does for any other disconnect.
-            logger.info(
-                "Supersede reported retryable=True; Session kept the "
-                "connection reconnecting (state=%s, retry_after_s=%s), "
-                "not treating it as terminal.",
-                outcome.state,
-                outcome.retry_after_s,
-            )
-            return
-        ws.record_terminal_disconnect(reason)
+        await ws.handle_supersede(payload)
+
+    def _on_terminal(self, reason: WebSocketDisconnectReason) -> None:
+        """Report a session that ended for good: once, with its reason."""
         self._last_disconnect_reason = reason
         self._is_connected = False
-        logger.warning(
-            "WebSocket connection superseded: reason=%s retryable=%s correlation_id=%s",
-            reason.reason,
-            reason.retryable,
-            reason.correlation_id,
-        )
         self._queue_event(WebSocketDisconnectedEvent(payload=reason))
 
     async def _on_control(self, payload: AgentControlPayload) -> None:
@@ -480,13 +487,15 @@ class BandLink:
 
     async def _on_disconnected(self, error: Exception | None) -> None:
         """Handle PHX client disconnection."""
+        self._socket_reconnect_pending = True
         if self.last_disconnect_reason:
             logger.warning(
                 "WebSocket disconnected after terminal platform reason: %s",
                 self.last_disconnect_reason.reason,
             )
             return
-        logger.warning("WebSocket disconnected: %s", error)
+        # The session's own decision logs each close with its code and delay.
+        logger.info("WebSocket disconnected: %s", error)
 
     def _queue_event(self, event: PlatformEvent) -> None:
         """Queue event for async iteration. Logs warning if queue is full."""
@@ -498,6 +507,14 @@ class BandLink:
                 event.type,
                 event.room_id,
             )
+
+    def _drop_queued_events(self) -> None:
+        """Forget events the session that just ended left unread."""
+        dropped = self._event_queue.qsize()
+        while not self._event_queue.empty():
+            self._event_queue.get_nowait()
+        if dropped:
+            logger.info(DROPPED_EVENTS_LOG, dropped)
 
     def queue_event(self, event: PlatformEvent) -> None:
         """Queue a synthetic event for processing (public API)."""
@@ -515,6 +532,23 @@ class BandLink:
             room_id=payload.id,
             payload=payload,
         )
+        self._queue_event(event)
+
+    def _on_room_ready(self, readiness: RoomReadiness) -> None:
+        if readiness.after_gap:
+            self._catch_up(ReconnectedEvent(room_id=readiness.room_id))
+
+    def _on_agent_rooms_resumed(self) -> None:
+        self._catch_up(ReconnectedEvent())
+
+    def _catch_up(self, event: ReconnectedEvent) -> None:
+        """Queue ``event`` ahead of the rejoined topic's own events."""
+        if self._socket_reconnect_pending:
+            logger.debug(
+                "Catch-up for %s left to the socket reconnect's reconcile",
+                event.room_id or "all rooms",
+            )
+            return
         self._queue_event(event)
 
     async def _on_message_created(
@@ -622,6 +656,13 @@ class BandLink:
     async def mark_processing(self, room_id: str, message_id: str) -> bool:
         return await self._messages.mark_processing(self.rest, room_id, message_id)
 
+    async def mark_processing_result(
+        self, room_id: str, message_id: str
+    ) -> SettlementResult:
+        return await self._messages.mark_processing_result(
+            self.rest, room_id, message_id
+        )
+
     async def mark_processed(self, room_id: str, message_id: str) -> bool:
         return await self._messages.mark_processed(self.rest, room_id, message_id)
 
@@ -647,6 +688,7 @@ class BandLink:
         room_id: str,
         working: bool,
         *,
+        activity: AgentActivityDetail | None = None,
         timeout_seconds: int = 2,
         on_stopped: Callable[[], None] | None = None,
     ) -> bool:
@@ -654,6 +696,7 @@ class BandLink:
             self.rest,
             room_id,
             working,
+            activity=activity,
             timeout_seconds=timeout_seconds,
             on_stopped=on_stopped,
         )

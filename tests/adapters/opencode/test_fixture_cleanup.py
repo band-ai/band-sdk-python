@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.helpers import idle_client, run_single_turn
 from tests.adapters.opencode.ownership import AdapterOwner
 from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
@@ -32,7 +33,10 @@ class TestFixtureCleanup:
             ):
                 async with AdapterOwner() as adapters:
                     for client in clients:
-                        await run_single_turn(adapters.create(client), FakeAgentTools())
+                        await run_single_turn(
+                            adapters.create(client),
+                            FakeAgentTools(participants=ROOM_MEMBERS),
+                        )
                     if failure == "body":
                         raise AssertionError("test failed")
 
@@ -42,7 +46,10 @@ class TestFixtureCleanup:
 
             async with AdapterOwner() as adapters:
                 independent = idle_client()
-                await run_single_turn(adapters.create(independent), FakeAgentTools())
+                await run_single_turn(
+                    adapters.create(independent),
+                    FakeAgentTools(participants=ROOM_MEMBERS),
+                )
             assert independent.closed
             assert asyncio.all_tasks() == before
 
@@ -54,7 +61,9 @@ class TestFixtureCleanup:
             with backends_created_by(backend):
                 async with AdapterOwner() as adapters:
                     adapter = adapters.create(client)
-                    await run_single_turn(adapter, FakeAgentTools())
+                    await run_single_turn(
+                        adapter, FakeAgentTools(participants=ROOM_MEMBERS)
+                    )
                     backend.fail_stops = 1
                     with pytest.raises(OSError, match="stop failed"):
                         await adapter.on_cleanup("room-1")

@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from typing import Any
+
 import pytest
 
+from band.platform.link import BandLink
+from band.runtime.sessionconfig import SessionConfig
+from tests.e2e.baseline.toolkit import provisioning
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.framework_configs.adapters import ADAPTER_CONFIGS
 from tests.framework_configs.converters import CONVERTER_CONFIGS
+from tests.framework_conformance.invocationkit import StartedRun
+
+
+@pytest.fixture
+def collection_project(pytester: pytest.Pytester) -> pytest.Pytester:
+    """Keep synthetic collection inside its pytester-owned project."""
+    pytester.makeini("[pytest]")
+    return pytester
 
 
 @pytest.fixture(params=CONVERTER_CONFIGS, ids=lambda c: c.framework_id)
@@ -34,3 +50,24 @@ def make_converter(converter_config):
 def output(converter_config):
     """Output adapter for the current converter config."""
     return converter_config.output_adapter
+
+
+@pytest.fixture
+def started_with(monkeypatch: pytest.MonkeyPatch) -> list[StartedRun]:
+    """What each agent run was started with."""
+    runs: list[StartedRun] = []
+
+    @asynccontextmanager
+    async def running_agent(
+        provisioned: ProvisionedAgent,
+        adapter: Any,
+        settings: Any,
+        session_config: SessionConfig | None = None,
+        *,
+        link_factory: Callable[..., BandLink] = BandLink,
+    ) -> AsyncIterator[ProvisionedAgent]:
+        runs.append(StartedRun(session_config, link_factory))
+        yield provisioned
+
+    monkeypatch.setattr(provisioning, "running_agent", running_agent)
+    return runs

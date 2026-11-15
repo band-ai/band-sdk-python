@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from unittest.mock import AsyncMock
 
 import pytest
 from acp.helpers import update_agent_message_text
+from acp.schema import PromptResponse
 
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.core.retention import Residency
 from band.testing import FakeAgentTools, reported_failures
 from tests.integrations.acp.acp_toolkit.harness import (
+    END_TURN,
     released,
     send_to,
 )
@@ -21,15 +24,29 @@ from tests.integrations.acp.clientadapter.kit import AdapterOn, scripted_conn
 class TestACPClientAdapterDeadConnectionRecovery:
     """A provider failure recovers the room's process through its owner."""
 
+    @pytest.mark.skipif(os.name != "nt", reason="Windows paths are case-insensitive")
     @pytest.mark.asyncio
-    async def test_prompt_error_recovers_the_process_and_keeps_the_session(
+    async def test_scripted_connection_matches_case_canonicalized_workspace(
+        self,
+    ) -> None:
+        conn = scripted_conn({"room-a": "sess-a"})
+
+        response = await conn.new_session(
+            cwd=r"C:\repo\.band-workspaces\room-A", mcp_servers=[]
+        )
+
+        assert response.session_id == "sess-a"
+
+    @pytest.mark.asyncio
+    async def test_prompt_error_recovers_the_process_and_keeps_a_seeded_session(
         self, adapter_on: AdapterOn
     ) -> None:
         conn = scripted_conn({"room-1": "sess-1"})
-        conn.prompt = AsyncMock(side_effect=RuntimeError("Process died"))
+        conn.prompt = AsyncMock(side_effect=[END_TURN, RuntimeError("Process died")])
         adapter = adapter_on(conn)
         tools = FakeAgentTools()
 
+        await send_to(adapter, "room-1")
         with pytest.raises(RuntimeError, match="Process died"):
             await send_to(adapter, "room-1", tools)
         room = adapter._rooms["room-1"]
@@ -50,11 +67,12 @@ class TestACPClientAdapterDeadConnectionRecovery:
         conn = scripted_conn({"room-1": "sess-1"})
         adapter = adapter_on(conn)
 
-        async def prompt_with_reply(**kwargs: object) -> None:
+        async def prompt_with_reply(**kwargs: object) -> PromptResponse:
             client = adapter._rooms["room-1"].runtime.client
             await client.session_update(
                 kwargs["session_id"], update_agent_message_text("Here's the answer")
             )
+            return END_TURN
 
         conn.prompt = AsyncMock(side_effect=prompt_with_reply)
         tools = FakeAgentTools()
@@ -92,16 +110,17 @@ class TestACPClientAdapterDeadConnectionRecovery:
     ) -> None:
         """A timed-out room must not interrupt another room's prompt."""
         conn = scripted_conn({"room-a": "sess-a", "room-b": "sess-b"})
-        adapter = adapter_on(conn, turn_timeout_s=1)
+        adapter = adapter_on(conn, turn_timeout_s=60)
         b_started = asyncio.Event()
         release_b = asyncio.Event()
 
-        async def prompt(*, session_id: str, **kwargs: object) -> None:
+        async def prompt(*, session_id: str, **kwargs: object) -> PromptResponse:
             if session_id == "sess-b":
                 b_started.set()
                 await release_b.wait()
             else:
                 await asyncio.sleep(10)
+            return END_TURN
 
         conn.prompt = AsyncMock(side_effect=prompt)
         b_turn = asyncio.create_task(send_to(adapter, "room-b"))

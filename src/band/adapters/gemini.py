@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any, ClassVar, cast
 
 import httpx
@@ -30,12 +31,17 @@ except ImportError as e:
     ) from e
 
 from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
-from band.core.adapterconfig import BaseAdapterConfig
+from band.core.adapterconfig import DEFAULT_MAX_TOOL_ROUNDS, BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
-from band.core.exceptions import ProviderRunError
+from band.core.exceptions import (
+    HOST_CONTROL_ERRORS,
+    ProviderRunError,
+    ToolRoundsExceededError,
+)
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import sanitize_tool_schema
+from band.core.turn import RoundOutcome
 from band.core.types import (
     Capability,
     Emit,
@@ -46,17 +52,22 @@ from band.core.types import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
-    execute_custom_tool,
+    declared_effect,
     find_custom_tool,
     format_validation_error,
     get_custom_tool_name,
+    run_custom_tool,
 )
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    ImageContentResult,
+    TurnEffect,
     decode_image_blocks,
     image_block_placeholder,
-    is_image_passthrough_result,
+    image_passthrough_result,
     redact_tool_call_args,
+    turn_effect,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,7 +76,7 @@ _PROVIDER = "gemini"
 
 
 def _image_function_response_parts(
-    result: dict[str, Any],
+    result: ImageContentResult,
 ) -> list[types.FunctionResponsePart]:
     """Convert an MCP-content-shaped band_read_room_file result into Gemini
     FunctionResponsePart inline_data blocks, so the model receives real image
@@ -140,13 +151,13 @@ class GeminiAdapterConfig(BaseAdapterConfig):
     include_base_instructions: bool = True
     max_output_tokens: PositiveInt | None = None
     temperature: float | None = None
-    max_tool_rounds: PositiveInt = 20
+    max_tool_rounds: PositiveInt = DEFAULT_MAX_TOOL_ROUNDS
     max_retries: NonNegativeInt = 2
     retry_base_delay_s: NonNegativeFloat = 1.0
     max_history_messages: PositiveInt = 200
 
 
-class GeminiAdapter(SimpleAdapter[GeminiMessages]):
+class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
     """
     Gemini SDK adapter using SimpleAdapter pattern.
 
@@ -212,9 +223,9 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         )
         logger.info("Gemini adapter started for agent: %s", agent_name)
 
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: GeminiMessages,
         participants_msg: str | None,
@@ -223,7 +234,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Handle incoming message with explicit function-calling loop."""
+        """Handle one turn over its original messages with one function-calling loop."""
         if is_session_bootstrap:
             if history:
                 self._message_history[room_id] = list(history)
@@ -249,7 +260,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         if contacts_msg:
             user_parts.append(types.Part.from_text(text=f"[System]: {contacts_msg}"))
             logger.info("Room %s: Contacts broadcast received", room_id)
-        user_parts.append(types.Part.from_text(text=msg.format_for_llm()))
+        user_parts.append(types.Part.from_text(text=format_current_inputs(messages)))
         self._message_history[room_id].append(
             types.Content(role="user", parts=user_parts)
         )
@@ -263,12 +274,11 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         try:
             while True:
                 if tool_rounds >= self.config.max_tool_rounds:
-                    message = (
-                        f"Exceeded max tool rounds ({self.config.max_tool_rounds}) "
-                        f"in room {room_id}; tool sequence: {tool_sequence}"
+                    error = ToolRoundsExceededError(
+                        self.config.max_tool_rounds, room_id, tool_sequence
                     )
-                    await tools.send_failure(AgentFailure(_PROVIDER, message))
-                    raise RuntimeError(message)
+                    await tools.send_failure(AgentFailure(_PROVIDER, str(error)))
+                    raise error
 
                 try:
                     response = await self._call_gemini(
@@ -291,7 +301,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                     break
                 tool_sequence.append([call.name or "" for call in function_calls])
 
-                tool_response_parts = await self._process_function_calls(
+                tool_response_parts, declined = await self._process_function_calls(
                     function_calls=function_calls,
                     tools=tools,
                 )
@@ -301,6 +311,8 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                     )
 
                 tool_rounds += 1
+                if declined:
+                    break
         finally:
             # No-op unless Emit.USAGE is on; best-effort, never raises.
             await self.emit_usage(tools, turn_usage)
@@ -532,9 +544,10 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         self,
         function_calls: list[types.FunctionCall],
         tools: AgentToolsProtocol,
-    ) -> list[types.Part]:
-        """Execute model function calls and return function_response parts."""
+    ) -> tuple[list[types.Part], bool]:
+        """Retain every function response and stop only a successful decline batch."""
         tool_response_parts: list[types.Part] = []
+        outcome_record = RoundOutcome()
 
         for index, function_call in enumerate(function_calls):
             tool_name = function_call.name or ""
@@ -559,33 +572,43 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                     logger.warning("Failed to send tool_call event: %s", e)
 
             response_parts: list[types.FunctionResponsePart] | None = None
+            effect = TurnEffect.OBSERVE
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    result = await execute_custom_tool(
-                        custom_tool, tool_input, turn=tools.turn
+                    outcome = await run_custom_tool(
+                        custom_tool, tool_input, tools=tools
                     )
+                    effect = declared_effect(custom_tool[1]) or TurnEffect.OBSERVE
                 else:
-                    result = await tools.execute_tool_call(tool_name, tool_input)
-                if is_image_passthrough_result(tool_name, result):
-                    response_parts = _image_function_response_parts(result)
-                    result_str = image_block_placeholder(len(response_parts))
-                else:
-                    result_str = (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
+                    outcome = await tools.execute_tool_call_structured(
+                        tool_name, tool_input
                     )
-                is_error = False
+                    effect = turn_effect(tool_name)
+                result, succeeded = outcome.value, outcome.ok
+            except HOST_CONTROL_ERRORS:
+                raise
             except ValidationError as exc:
                 errors = format_validation_error(exc)
                 result_str = f"Invalid arguments for {tool_name}: {errors}"
-                is_error = True
+                result, succeeded = result_str, False
                 logger.warning("Validation error for tool %s: %s", tool_name, errors)
             except Exception as e:
-                result_str = f"Error: {e}"
-                is_error = True
+                result, succeeded = f"Error: {e}", False
                 logger.exception("Tool %s failed", tool_name)
+            outcome_record.record(effect, succeeded)
+            if (
+                image_result := image_passthrough_result(tool_name, result)
+            ) is not None:
+                response_parts = _image_function_response_parts(image_result)
+                result_str = image_block_placeholder(len(response_parts))
+            else:
+                result_str = (
+                    json.dumps(result, default=str)
+                    if not isinstance(result, str)
+                    else result
+                )
+            is_error = not succeeded
             if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
@@ -616,4 +639,4 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 )
             )
 
-        return tool_response_parts
+        return tool_response_parts, outcome_record.should_stop(complete=True)

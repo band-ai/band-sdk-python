@@ -30,25 +30,29 @@ from band.core.memory_types import (
     enum_values,
 )
 from band.core.types import AdapterFeatures, Capability
-from band.runtime.tools.inputs.chat import MENTION_IDENTIFIERS
+from band.runtime.tools.inputs.chat import MENTION_GUIDANCE
+from band.runtime.tools.schema import get_tool_description
 from band.runtime.tools.types import BandTool
 
 COMMUNICATION_INSTRUCTIONS = f"""Use `{BandTool.SEND_MESSAGE}(content, mentions)` to respond — a `{BandTool.SEND_MESSAGE}` call is the only way anything you say reaches the room. Any text you produce outside such a call is never delivered, and that includes a final answer you compose after using other tools. So deliver your answer by calling `{BandTool.SEND_MESSAGE}`; a turn that ends with the answer written as plain text delivers nothing.
-When the latest message needs no answer from you (it was addressed to someone else, it is an FYI or an acknowledgement, or another participant already answered it), call `{BandTool.NO_REPLY}` instead to end the turn deliberately. End every turn with one of the two.
-{MENTION_IDENTIFIERS}"""
+{BandTool.NO_REPLY}: {get_tool_description(BandTool.NO_REPLY)}
+End every turn with one of the two.
+{MENTION_GUIDANCE}"""
 
 
-# CLI coding runtimes need a tool-free completion after their Band actions.
+# CLI continue-nudge hosts only (ACP, Copilot SDK). Band turn ending stays
+# in COMMUNICATION_INSTRUCTIONS. Native-yield hosts (OMP) must not attach this.
 TURN_COMPLETION_GUIDANCE = (
     "## Turn completion\n\n"
     "This runtime may prompt you to continue after you act (for example, "
     '"continue from where you left off"). Treat that as a check, not a new '
-    "request. Your turn is complete once you have taken every action the current "
-    f"message requires — including sending your reply with {BandTool.SEND_MESSAGE}. "
-    "When nothing remains to do, end the turn with a brief plain-text response "
-    f'(for example, "Done."); do not call {BandTool.SEND_MESSAGE} again just to report '
-    "that you are finished. Plain text is not delivered to the room — which is "
-    "exactly why it cleanly ends a turn."
+    "request. Finish the Band turn first, as the communication instructions "
+    f"require, with {BandTool.SEND_MESSAGE} or {BandTool.NO_REPLY}. "
+    "Only after that, when nothing remains to do, answer the continue prompt "
+    'with a brief plain-text stop (for example, "Done."); do not call '
+    f"{BandTool.SEND_MESSAGE} again just to report that you are finished. "
+    "That plain text is a CLI idle stop. It is not a room reply and it does "
+    "not settle a Band turn that is still open."
 )
 
 # Base instructions appended to user's custom prompt
@@ -70,7 +74,8 @@ def with_system_updates(message: str, *updates: str | None) -> str:
 BASE_INSTRUCTIONS = f"""
 ## Environment
 
-Multi-participant chat. Messages show sender: [Name]: content.
+Multi-participant chat. This turn's messages arrive as current input messages,
+each with its own sender. Earlier messages show the sender as [Name]: content.
 Messages prefixed with {SYSTEM_UPDATE_PREFIX.strip()} are platform updates (participant changes, contact updates, etc.).
 {COMMUNICATION_INSTRUCTIONS}
 

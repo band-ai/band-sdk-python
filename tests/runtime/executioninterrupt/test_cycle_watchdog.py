@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     assert_fresh_cycle_still_propagates_shutdown_cancel,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 _WATCHDOG_TEST_DEADLINE = 0.05
 # Long enough that a handler blocking on it never finishes naturally within a test.
@@ -25,7 +28,7 @@ class TestCycleWatchdog:
     a handler never returns, unlike interrupt/stop which are external signals."""
 
     async def test_cycle_exceeding_max_cycle_seconds_is_cancelled_and_marked_failed(
-        self, mock_link
+        self, mock_link, caplog
     ):
         handler = BlockingHandler(block_seconds=_NEVER_RETURNS_SECONDS)
         ctx = ExecutionContext(
@@ -36,7 +39,7 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
-        result = await ctx._process_event(make_message_event(msg_id="watchdog-1"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="watchdog-1"))
 
         # Loop continues; the watchdog is a handled error.
         assert result is TurnOutcome.ADVANCED
@@ -45,14 +48,13 @@ class TestCycleWatchdog:
         mock_link.mark_failed.assert_awaited_once()
         room_id, msg_id, label = mock_link.mark_failed.await_args.args
         assert (room_id, msg_id) == ("room-123", "watchdog-1")
-        assert (
-            "max_cycle_seconds" in label
-        )  # a diagnosable reason, not just "TimeoutError"
+        assert label == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "max_cycle_seconds" in caplog.text
 
         # Loop stays alive: a fresh message still processes normally afterward.
         handler2 = BlockingHandler(block=False)
         ctx._on_execute = handler2
-        result2 = await ctx._process_event(make_message_event(msg_id="watchdog-2"))
+        result2 = await attempt_delivery(ctx, make_message_event(msg_id="watchdog-2"))
         assert result2 is TurnOutcome.ADVANCED
         assert handler2.completed == ["watchdog-2"]
 
@@ -63,7 +65,7 @@ class TestCycleWatchdog:
         handler = BlockingHandler(block_seconds=0.05)
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
-        result = await ctx._process_event(make_message_event(msg_id="no-watchdog"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="no-watchdog"))
 
         assert result is TurnOutcome.ADVANCED
         assert not handler.cancelled.is_set()
@@ -71,7 +73,7 @@ class TestCycleWatchdog:
         mock_link.mark_failed.assert_not_awaited()
 
     async def test_handlers_own_timeout_error_is_not_mistaken_for_the_watchdog(
-        self, mock_link
+        self, mock_link, caplog
     ):
         """A handler's own bare TimeoutError, raised well inside the budget, must
         propagate as a normal handler failure -- not the watchdog's warning."""
@@ -87,17 +89,18 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=_AMPLE_CYCLE_BUDGET_SECONDS),
         )
 
-        result = await ctx._process_event(make_message_event(msg_id="own-timeout"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="own-timeout"))
 
         assert result is TurnOutcome.ADVANCED
         mock_link.mark_failed.assert_awaited_once()
         room_id, msg_id, label = mock_link.mark_failed.await_args.args
         assert (room_id, msg_id) == ("room-123", "own-timeout")
-        assert label == "downstream call timed out"  # the handler's own message,
-        # not the watchdog's -- nothing here actually exceeded the 5s budget.
+        assert label == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "downstream call timed out" in caplog.text
+        assert "cycle exceeded max_cycle_seconds" not in caplog.text
 
     async def test_watchdog_cancellation_is_not_defeated_by_a_swallowed_cancel(
-        self, mock_link
+        self, mock_link, caplog
     ):
         """A handler that catches CancelledError and returns normally must still
         be reported as a watchdog failure, not a silent success."""
@@ -116,7 +119,7 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
-        result = await ctx._process_event(make_message_event(msg_id="swallowed"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="swallowed"))
 
         # Loop continues; the watchdog is a handled error.
         assert result is TurnOutcome.ADVANCED
@@ -124,7 +127,8 @@ class TestCycleWatchdog:
         mock_link.mark_failed.assert_awaited_once()
         room_id, msg_id, label = mock_link.mark_failed.await_args.args
         assert (room_id, msg_id) == ("room-123", "swallowed")
-        assert "max_cycle_seconds" in label
+        assert label == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "max_cycle_seconds" in caplog.text
 
     async def test_watchdog_expiry_honors_a_racing_interrupt_and_does_not_leak_it(
         self, mock_link
@@ -155,7 +159,7 @@ class TestCycleWatchdog:
                 await asyncio.sleep(0)
 
         ctx._on_execute = interrupted_cleanup
-        result = await ctx._process_event(make_message_event(msg_id="race-1"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="race-1"))
 
         assert result is TurnOutcome.ADVANCED
         # The interrupt won, not the watchdog: consumed/acked, not failed.
@@ -180,7 +184,7 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=1e-9),
         )
         assert (
-            await ctx._process_event(make_message_event(msg_id="boundary"))
+            await attempt_delivery(ctx, make_message_event(msg_id="boundary"))
             is TurnOutcome.ADVANCED
         )
         assert completed == ["reply"]
@@ -188,7 +192,7 @@ class TestCycleWatchdog:
         mock_link.mark_failed.assert_not_awaited()
 
     async def test_watchdog_does_not_wait_for_stuck_cancellation_cleanup(
-        self, mock_link
+        self, mock_link, caplog
     ):
         """A cycle whose cancellation cleanup wedges must not block the room."""
         cleanup_started = asyncio.Event()
@@ -213,7 +217,7 @@ class TestCycleWatchdog:
 
         with patch("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
             result = await asyncio.wait_for(
-                ctx._process_event(make_message_event(msg_id="stuck-cleanup")),
+                attempt_delivery(ctx, make_message_event(msg_id="stuck-cleanup")),
                 timeout=0.2,
             )
 
@@ -221,7 +225,10 @@ class TestCycleWatchdog:
         assert cleanup_started.is_set()
         mock_link.mark_processed.assert_not_awaited()
         mock_link.mark_failed.assert_awaited_once()
-        assert "max_cycle_seconds" in mock_link.mark_failed.await_args.args[2]
+        assert (
+            mock_link.mark_failed.await_args.args[2] == GENERIC_PROVIDER_FAILURE_MESSAGE
+        )
+        assert "max_cycle_seconds" in caplog.text
 
         release_cleanup.set()
         await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)

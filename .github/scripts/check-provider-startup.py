@@ -18,7 +18,9 @@ API_KEY = "test"
 
 async def start_pydantic_ai() -> None:
     import httpx2  # noqa: PLC0415 -- only modern consumers install HTTPX2
-    from pydantic_ai.models import infer_model  # noqa: PLC0415 -- optional consumer dependency
+    from pydantic_ai.models import (  # noqa: PLC0415 -- optional consumer dependency
+        infer_model,
+    )
 
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- only the Pydantic AI consumer installs this adapter
         PydanticAIAdapter,
@@ -37,25 +39,33 @@ async def start_pydantic_ai() -> None:
 
 
 async def start_crewai() -> None:
-    from crewai import LLM  # noqa: PLC0415 -- only the CrewAI consumer installs this provider
+    from crewai import (  # noqa: PLC0415 -- optional consumer dependency
+        LLM,
+    )
 
     LLM(model=f"openai/{MODEL_ID}", api_key=API_KEY)
 
 
 async def start_strands() -> None:
-    from strands.models.openai_responses import OpenAIResponsesModel  # noqa: PLC0415 -- only the Strands consumer installs this provider
+    from strands.models.openai_responses import (  # noqa: PLC0415 -- optional consumer dependency
+        OpenAIResponsesModel,
+    )
 
     OpenAIResponsesModel(model_id=MODEL_ID, client_args={"api_key": API_KEY})
 
 
 async def start_nooa() -> None:
-    from nooa.unifiedllm.registry import get_llm_client  # noqa: PLC0415 -- only the NOOA consumer installs this provider
+    from nooa.unifiedllm.registry import (  # noqa: PLC0415 -- optional consumer dependency
+        get_llm_client,
+    )
 
     get_llm_client(f"openai/{MODEL_ID}", api_key=API_KEY)
 
 
 async def start_langgraph() -> None:
-    from langchain_openai import ChatOpenAI  # noqa: PLC0415 -- only LangGraph consumers install this provider
+    from langchain_openai import (  # noqa: PLC0415 -- optional consumer dependency
+        ChatOpenAI,
+    )
 
     model = ChatOpenAI(model=MODEL_ID, api_key=API_KEY)
     await model.root_async_client.close()
@@ -64,10 +74,18 @@ async def start_langgraph() -> None:
 
 async def start_parlant() -> None:
     import httpx2  # noqa: PLC0415 -- only modern consumers install HTTPX2
-    from parlant.adapters.nlp.openai_service import OpenAIService  # noqa: PLC0415 -- only the Parlant consumer installs this provider
-    from parlant.core.loggers import StdoutLogger  # noqa: PLC0415 -- optional consumer dependency
-    from parlant.core.meter import LocalMeter  # noqa: PLC0415 -- optional consumer dependency
-    from parlant.core.tracer import LocalTracer  # noqa: PLC0415 -- optional consumer dependency
+    from parlant.adapters.nlp.openai_service import (  # noqa: PLC0415 -- optional consumer dependency
+        OpenAIService,
+    )
+    from parlant.core.loggers import (  # noqa: PLC0415 -- optional consumer dependency
+        StdoutLogger,
+    )
+    from parlant.core.meter import (  # noqa: PLC0415 -- optional consumer dependency
+        LocalMeter,
+    )
+    from parlant.core.tracer import (  # noqa: PLC0415 -- optional consumer dependency
+        LocalTracer,
+    )
 
     tracer = LocalTracer()
     provider_logger = StdoutLogger(tracer)

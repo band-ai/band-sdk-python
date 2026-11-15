@@ -25,13 +25,27 @@ codex login status
 # Codex's workspace-write sandbox runs every command through bwrap. The runner
 # image ships none, and Codex's bundled fallback needs the unprivileged user
 # namespaces Ubuntu 24.04's AppArmor blocks -- so each command fails before it
-# runs and the model only reports it couldn't. Setup per Codex's sandboxing docs,
-# except 24.04 ships the profile under extra-profiles, not /etc/apparmor.d. The
-# probe makes a still-broken sandbox fail here, not as a missing test file.
+# runs and the model only reports it couldn't. Setup per Codex's sandboxing docs.
+# 24.04 keeps the profile under extra-profiles; 26.04+ installs it under
+# /etc/apparmor.d (and may omit the old path entirely). Load whichever exists;
+# the probe below still fails the job if namespaces stay unusable.
 if [[ "$(uname -s)" == Linux* ]]; then
   sudo apt-get update -qq
   sudo apt-get install -y -qq bubblewrap apparmor-profiles
-  sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+  bwrap_profile=""
+  for candidate in \
+    /etc/apparmor.d/bwrap-userns-restrict \
+    /usr/share/apparmor/extra-profiles/bwrap-userns-restrict; do
+    if [[ -f "$candidate" ]]; then
+      bwrap_profile="$candidate"
+      break
+    fi
+  done
+  if [[ -n "$bwrap_profile" ]]; then
+    sudo apparmor_parser -r "$bwrap_profile"
+  else
+    echo "no bwrap-userns-restrict AppArmor profile found; probing bwrap directly" >&2
+  fi
   if ! bwrap --unshare-user --ro-bind / / true; then
     echo "bwrap cannot create a user namespace; Codex's sandbox is unusable" >&2
     exit 1

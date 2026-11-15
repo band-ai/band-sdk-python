@@ -37,6 +37,7 @@ from tests.framework_conformance.turnprobes import (
     copilotsdk,
     crewai,
     letta,
+    omp,
     opencode,
     toolloop,
     turn_tools,
@@ -49,12 +50,14 @@ TURN_OUTCOME_PROBES: dict[str, TurnOutcomeProbe] = {
     **copilotsdk.PROBES,
     **crewai.PROBES,
     **letta.PROBES,
+    **omp.PROBES,
     **opencode.PROBES,
     **toolloop.PROBES,
 }
 
 ANSWER = "The vault code is 4471-ECHO."
 REPLY = ToolCall(BandTool.SEND_MESSAGE, {"content": ANSWER, "mentions": ["@alice"]})
+DECLINE = ToolCall(BandTool.NO_REPLY, {"reason": "FYI only"})
 
 
 @dataclass(frozen=True)
@@ -83,7 +86,7 @@ def observed(tools: FakeAgentTools, verdict: TurnVerdict) -> TurnResult:
 
 
 COMPLETING_SCRIPTS = {
-    "decline": TurnScript((ToolCall(BandTool.NO_REPLY, {"reason": "FYI only"}),)),
+    "decline": TurnScript((DECLINE,)),
     "reply": TurnScript((REPLY,)),
     "act": TurnScript((ToolCall(BandTool.CREATE_CHATROOM),)),
 }

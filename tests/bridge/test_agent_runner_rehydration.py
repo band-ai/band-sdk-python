@@ -54,7 +54,9 @@ class TestAgentRunnerRehydration:
 
         await runner._rehydrate_backlog(["r1"])
         # Same message id then arrives live on the WS.
-        await runner._handle_event(make_message_event(message_id="m-dup", room_id="r1"))
+        await runner._safe_handle_event(
+            make_message_event(message_id="m-dup", room_id="r1")
+        )
 
         assert isinstance(fwd, FakeForwarder)
         assert len(fwd.forwarded) == 1

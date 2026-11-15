@@ -10,7 +10,9 @@ from tests.integrations.acp.acp_toolkit import (
     acp_adapter,
     fake_agent_config,
 )
-from tests.integrations.acp.clientbehavior.kit import band_mcp_url
+from tests.integrations.acp.clientbehavior.kit import (
+    band_mcp_url,
+)
 from tests.mcpclient import (
     STORE_MEMORY_ARGS,
     endpoint_path,

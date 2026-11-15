@@ -26,7 +26,7 @@ class NooaRoomAgent(Agent):
     room: RoomTools
 
     async def respond(self, message: str) -> None:
-        """Handle one incoming Band room message.
+        """Handle the current incoming Band room input.
 
         Reply with `await self.room.band_send_message(...)`, or decline with
         `await self.room.band_no_reply(...)` when no reply is needed. Call other

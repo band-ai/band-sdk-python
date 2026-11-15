@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from band.platform.link import BandLink
@@ -9,9 +11,11 @@ from band.runtime.oneshot import OneShotInvoker
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.preprocessing.handoffkit import HandoffAdapter
+from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import (
     AGENT_ID,
     ROOM_ID,
+    WAIT_SECONDS,
     PostingPlatform,
     rest_client_over,
     run_through,
@@ -19,11 +23,13 @@ from tests.runtime.helpers import (
 from tests.runtime.oneshot.kit import msg_body
 
 
+@pytest.mark.looptime
 class TestSetupFailureAccounting:
     @pytest.mark.parametrize("hosting", ["live", "recovery"])
     async def test_setup_failure_spends_normal_retry_budget(self, hosting: str) -> None:
         peer = PostingPlatform()
-        peer.add_message("B")
+        if hosting == "recovery":
+            peer.add_message("B")
         error = OSError("setup dependency unavailable")
         adapter = HandoffAdapter(error=error)
         async with rest_client_over(peer.answer) as rest:
@@ -40,14 +46,17 @@ class TestSetupFailureAccounting:
                 ),
             )
             try:
+                await ctx.start()
                 if hosting == "live":
-                    await ctx._process_event(
-                        make_message_event(room_id=ROOM_ID, msg_id="B")
+                    await wait_for_condition(
+                        lambda: bool(peer.next_reads), timeout=WAIT_SECONDS
                     )
-                else:
-                    await ctx._reconcile()
-                for _ in range(4):
-                    await ctx._reconcile()
+                    peer.add_message("B")
+                    await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="B"))
+                await wait_for_condition(
+                    lambda: len(adapter.received) == 2, timeout=WAIT_SECONDS
+                )
+                await asyncio.sleep(4 * ctx.config.idle_resync_seconds)
                 assert peer.marked("failed") == ["B", "B"]
                 assert peer.marked("processed") == []
                 assert len(adapter.received) == 2

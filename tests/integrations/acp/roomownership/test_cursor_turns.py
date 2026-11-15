@@ -74,9 +74,8 @@ class TestCursorTurns:
             with pytest.raises(asyncio.CancelledError):
                 await turn
             await session.adapter.backend_turns.drain()
-            assert agent.lifecycle == [
-                f"{CANCEL_RECORD} {session.session_id(DEFAULT_ROOM)}"
-            ]
+            (stopped,) = agent.session_ids()
+            assert agent.lifecycle == [f"{CANCEL_RECORD} {stopped}"]
             prompting.release.set()
 
     @pytest.mark.asyncio
@@ -131,6 +130,8 @@ class TestCursorTurns:
                 await session.send("next", tools=unwinding)
             cancelled.set()
             await accepted_work_finished(session.room())
+            # The worker can finish before its independent cancellation request.
+            await session.adapter.backend_turns.settled(DEFAULT_ROOM)
             busy = TranscriptTools()
             with pytest.raises(InputNotAccepted):
                 await session.send("next", tools=busy)

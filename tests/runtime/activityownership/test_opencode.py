@@ -20,6 +20,7 @@ from tests.adapters.opencode.helpers import (
 from tests.conftest import make_message_event
 from tests.mcpbackends import backends_created_by
 from tests.runtime.helpers import IDLE, KEEP_ALIVE, ROOM_ID, LifecyclePlatform
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestOpenCodeLifetime:
@@ -58,7 +59,7 @@ class TestOpenCodeLifetime:
             await adapter.on_started("Test", "Test")
             ctx = execution(handler)
             try:
-                await ctx._process_event(make_message_event(msg_id="original"))
+                await attempt_delivery(ctx, make_message_event(msg_id="original"))
                 assert activity_platform.activity_reports == [KEEP_ALIVE]
                 assert activity_platform.marked("processed") == ["original"]
                 assert ctx.interrupt(kind=mode)

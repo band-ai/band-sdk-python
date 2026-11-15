@@ -32,7 +32,9 @@ class TestStrandsNooaJobCoverage:
         assert expected <= {config.framework_id for config in ADAPTER_CONFIGS}
         assert expected <= {config.framework_id for config in CONVERTER_CONFIGS}
 
-    def test_job_selects_every_required_node(self, framework_environment: None) -> None:
+    def test_job_selects_every_required_node(
+        self, framework_environment: None, pytester: pytest.Pytester
+    ) -> None:
         needed = coverage.tests_needing_venv(
             coverage.needs_venv_pattern(frozenset({"strands", "nooa"}))
         )
@@ -41,7 +43,7 @@ class TestStrandsNooaJobCoverage:
         arguments = coverage.pytest_arguments(
             coverage.job_command("test-strands-nooa", "Run Strands and NOOA tests")
         )
-        selected = coverage.selected_nodes(arguments)
+        selected = coverage.selected_nodes(pytester, arguments)
         # Directory collection honors NOOA's supported-platform conftest gate.
         nooa_tests = REPO_ROOT / "tests/adapters/nooa"
         targets = {
@@ -49,7 +51,7 @@ class TestStrandsNooaJobCoverage:
             for path in needed
         }
         baseline = coverage.collected_nodes(
-            [*sorted(targets), "tests/framework_conformance/"]
+            pytester, [*sorted(targets), "tests/framework_conformance/"]
         )
         needed_files = {path.as_posix() for path in needed}
         required = {

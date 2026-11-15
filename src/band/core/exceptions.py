@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import asyncio
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
+from typing import Any
+
+from band_sdk_core import AgentFailure
+
+RECOVERY_HISTORY_UNAVAILABLE = "Room history is unavailable for session recovery"
 
 
 class BandError(Exception):
@@ -105,6 +111,10 @@ class InputNotAccepted(BandError):
     The host retains the input without reporting a failed turn.
     """
 
+    def __init__(self, *args: object, ready: asyncio.Future[Any] | None = None) -> None:
+        super().__init__(*args)
+        self.ready = ready
+
 
 class RoomClosingError(InputNotAccepted, RuntimeError):
     """A closing room, or a stopping residency owner, refused work before it
@@ -124,6 +134,28 @@ class ProviderRunError(BandError):
     def __init__(self, code: str, detail: str | None = None) -> None:
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
+
+    @classmethod
+    def session_lost(cls) -> ProviderRunError:
+        """Signal a provider session failure after its callbacks were revoked."""
+        return cls("session_lost")
+
+
+class ToolRoundsExceededError(BandError, RuntimeError):
+    """A turn's model kept requesting tools past its adapter's
+    ``max_tool_rounds``. Actionable by the adapter: report it, then raise it so
+    the turn is marked failed."""
+
+    def __init__(
+        self, max_rounds: int, room_id: str, tool_sequence: Sequence[Sequence[str]]
+    ) -> None:
+        self.max_rounds = max_rounds
+        self.room_id = room_id
+        self.tool_sequence = [list(names) for names in tool_sequence]
+        super().__init__(
+            f"Exceeded max tool rounds ({max_rounds}) in room {room_id}; "
+            f"tool sequence: {self.tool_sequence}"
+        )
 
 
 class RoomExecutionStoppedError(BandError):
@@ -179,3 +211,20 @@ def _closest_match(
         if best is None or distance < best[0]:
             best = (distance, candidate)
     return best[1] if best is not None else None
+
+
+class TerminalProviderFailure(BandError):
+    """Carry a room-safe terminal report to the runtime after effect revocation."""
+
+    def __init__(self, failure: AgentFailure) -> None:
+        super().__init__(failure.message)
+        self.failure = failure
+
+
+HOST_CONTROL_ERRORS: tuple[type[BandError], ...] = (
+    InputNotAccepted,
+    RoomExecutionStoppedError,
+    CleanupIncompleteError,
+    TerminalProviderFailure,
+)
+"""Host control raised through a tool call: never reported as a tool failure."""

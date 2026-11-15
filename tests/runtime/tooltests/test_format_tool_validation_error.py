@@ -3,9 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from band.runtime.tools import (
-    format_tool_validation_error,
-)
+from band.runtime.tools import format_tool_validation_error
 
 
 class TestFormatToolValidationError:
@@ -17,7 +15,7 @@ class TestFormatToolValidationError:
     wire contract, not just an internal formatting detail free to drift.
     """
 
-    def test_multiple_and_nested_field_errors_joined_with_comma(self):
+    def test_multiple_and_nested_field_errors_joined_with_comma(self) -> None:
         class Nested(BaseModel):
             name: str
 

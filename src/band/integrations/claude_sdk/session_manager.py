@@ -29,6 +29,7 @@ from band.core.retention import (
     RoomRetentionConfig,
 )
 from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
+from band.runtime.sessionresume import SessionSeed
 from band.workspaces import RoomWorkspaces
 
 try:
@@ -41,10 +42,12 @@ try:
     from claude_agent_sdk._internal.transport import Transport
     from claude_agent_sdk.types import (  # type: ignore[import-not-found]
         CanUseTool,
+        HookMatcher,
         McpServerConfig,
         Message,
     )
 
+    from band.integrations.claude_sdk.activity import SessionActivity
     from band.integrations.claude_sdk.transport import create_transport
 
     _CLAUDE_SDK_AVAILABLE = True
@@ -130,7 +133,8 @@ class ClaudeRoomSession:
     cleared only once closing them succeeds. ``session_id`` is the native
     conversation the next process resumes; final disposal erases it, and the
     crash policy (``recover(forget_session=True)``) drops it once the crashed
-    process is closed.
+    process is closed. ``seed`` says whether the running conversation already
+    holds the room's context.
     """
 
     def __init__(
@@ -138,12 +142,14 @@ class ClaudeRoomSession:
     ) -> None:
         self.room_id = room_id
         self.session_id: str | None = None
+        self.seed = SessionSeed()
         self.client: ClaudeSDKClient | None = None
         self.transport: Transport | None = None
         self._manager = manager
         self._reader: asyncio.Task[None] | None = None
         self._turn: TurnStream | None = None
         self._forget_session = False
+        self.activity: SessionActivity | None = None
         self.retained: RetainedRoom = retention.register(
             room_id, acquire=self.acquire, release=self.release, dispose=self.dispose
         )
@@ -206,6 +212,8 @@ class ClaudeRoomSession:
     def _retire(self, generation: int, reason: str, *, forget_session: bool) -> bool:
         if not self.retained.recover(generation=generation, reason=reason):
             return False
+        if self.activity is not None:
+            self.activity.revoke()
         self._forget_session = self._forget_session or forget_session
         return True
 
@@ -237,6 +245,7 @@ class ClaudeRoomSession:
             # The conversation is dropped only once a new one is running.
             await self._connect(generation, resume=None)
             self.session_id = None
+        self.seed = SessionSeed(restored=self.session_id is not None)
 
     def _may_start_fresh(self, resume: bool) -> bool:
         """Whether a failed resume may give way to a new session: never on a
@@ -264,6 +273,7 @@ class ClaudeRoomSession:
         self._manager.discard(self)
 
     async def _connect(self, generation: int, *, resume: str | None) -> None:
+        self.activity = SessionActivity(self, generation)
         options = self._manager.options_for(self, generation, resume=resume)
         transport = create_transport(options)
         client = ClaudeSDKClient(options=options, transport=transport)
@@ -298,12 +308,17 @@ class ClaudeRoomSession:
         """Close the retained CLI; a failure keeps every handle for a retry."""
         if self.client is None or self.transport is None:
             return
+        if self.activity is not None:
+            await self.activity.drain()
         try:
             await self.client.disconnect()
         finally:
             await self.transport.close()
         if self._reader is not None:
             await self._reader
+        if self.activity is not None:
+            await self.activity.closed()
+            self.activity = None
         self.client = self.transport = self._reader = None
 
     async def _read(self, client: ClaudeSDKClient, generation: int) -> None:
@@ -311,6 +326,8 @@ class ClaudeRoomSession:
         error: Exception | None = None
         try:
             async for message in client.receive_messages():
+                if self.activity is not None:
+                    await self.activity.observe(message)
                 if (turn := self._listener(generation)) is not None:
                     turn.deliver(message)
                 else:
@@ -369,6 +386,7 @@ class ClaudeSessionManager:
         can_use_tool_factory: Callable[[ClaudeRoomSession, int], CanUseTool]
         | None = None,
         mcp_servers_factory: Callable[[str], dict[str, McpServerConfig]] | None = None,
+        settings_factory: Callable[[], str] | None = None,
         workspaces: RoomWorkspaces | None = None,
         retention: RoomRetentionConfig | None = None,
         settle_grace_s: float = TURN_SETTLE_GRACE_S,
@@ -384,6 +402,9 @@ class ClaudeSessionManager:
                 generation.
             mcp_servers_factory: Optional factory that returns a room's
                 ``mcp_servers``, replacing ``base_options.mcp_servers``.
+            settings_factory: Optional factory for the ``settings`` one CLI
+                launch reads, called at each launch so a file it names exists
+                then.
             workspaces: Adapter-local claims; omit to preserve base_options.cwd.
             retention: Residency settings, including the transition reporting
                 budget, which defaults to ``CLI_STARTUP_TIMEOUT_S``; idle
@@ -396,6 +417,7 @@ class ClaudeSessionManager:
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
         self._mcp_servers_factory = mcp_servers_factory
+        self._settings_factory = settings_factory
         self._workspaces = workspaces
         self._on_disposed = on_disposed
         self._retention = RoomRetention(
@@ -431,12 +453,21 @@ class ClaudeSessionManager:
         ``dataclasses.replace()`` shallow-copies every base field.
         """
         overrides: dict[str, Any] = {"mcp_servers": self.mcp_servers(session.room_id)}
+        if session.activity is not None:
+            hooks = dict(self.base_options.hooks or {})
+            hooks["PreToolUse"] = [
+                HookMatcher(hooks=[session.activity.correlate]),
+                *hooks.get("PreToolUse", []),
+            ]
+            overrides["hooks"] = hooks
         if self._workspaces is not None:
             overrides["cwd"] = self._workspaces.claim(session.room_id)
         if resume:
             overrides["resume"] = resume
         if self._can_use_tool_factory:
             overrides["can_use_tool"] = self._can_use_tool_factory(session, generation)
+        if self._settings_factory is not None:
+            overrides["settings"] = self._settings_factory()
         return dataclasses.replace(self.base_options, **overrides)
 
     def discard(self, session: ClaudeRoomSession) -> None:

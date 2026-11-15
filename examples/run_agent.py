@@ -2,12 +2,18 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]>=4.0.0",
+#   "band-sdk[langgraph]>=6.0.1",
 #   "python-dotenv>=1.1.1",
 # ]
 # ///
 """
 Run Band SDK agents using the composition pattern.
+
+Standalone execution installs the default LangGraph adapter. Add another
+adapter with, for example,
+``uv run --with 'band-sdk[crewai]>=6.0.1' examples/run_agent.py --example crewai``.
+Run Pydantic AI, CrewAI and Parlant in separate environments; their dependencies
+cannot all be installed together.
 
 Usage:
     uv run python examples/run_agent.py                    # Default: langgraph

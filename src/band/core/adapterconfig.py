@@ -22,18 +22,23 @@ always be loaded from YAML or JSON with ``XAdapterConfig.model_validate(data)``.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Final
 
 from pydantic import BaseModel, ConfigDict
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Model calls one turn of an SDK-driven tool loop may make before it fails.
+DEFAULT_MAX_TOOL_ROUNDS: Final[int] = 20
 
 
 class BaseAdapterConfig(BaseModel):
     """Base for every adapter config: immutable once built, and an unknown
     field fails construction instead of silently vanishing, since configs are
-    typically built from many explicit keyword arguments."""
+    typically built from many explicit keyword arguments. A rejected value is
+    never echoed, because configs carry keys, tokens and environment; Pydantic
+    takes this from the outermost model, so it belongs on the base."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
 
 class EnvAdapterConfig(BaseAdapterConfig, BaseSettings):

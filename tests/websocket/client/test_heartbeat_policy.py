@@ -9,17 +9,16 @@ import pytest
 from band.client.streaming import WebSocketClient
 from band.testing import fake_phoenix_server
 from tests.platform.linkclose.kit import AGENT_ID, CONTROL_TOPIC
+from tests.sessionpolicies import millisecond_backoff, session_policy
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
 from tests.websocket.client.heartbeat import ControlProbe, socket_of
-from tests.websocket.conftest import fast_session_policy
 
 
 @pytest.mark.looptime(resolution=binary_clock_resolution())
-@pytest.mark.usefixtures("millisecond_reconnects")
 class TestHeartbeatPolicy:
     async def test_nondefault_interval_and_healthy_renewal(self) -> None:
-        policy = fast_session_policy(heartbeat_interval_s=4, dead_threshold_s=11)
+        policy = session_policy(heartbeat_interval_s=4, dead_threshold_s=11)
         probe = ControlProbe()
         async with (
             controlled_clock() as clock,
@@ -50,7 +49,7 @@ class TestHeartbeatPolicy:
     async def test_silence_closes_old_socket_despite_pong_and_control_traffic(
         self,
     ) -> None:
-        policy = fast_session_policy(heartbeat_interval_s=4, dead_threshold_s=11)
+        policy = millisecond_backoff(heartbeat_interval_s=4, dead_threshold_s=11)
         disconnected = asyncio.Event()
         reconnected = asyncio.Event()
         ordering: list[str] = []

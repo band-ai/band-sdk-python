@@ -4,7 +4,9 @@ from band.adapters.agno import (
     AgnoAdapter,
 )
 from band.testing import FakeAgentTools
-from tests.adapters.agno.adapter.kit import _msg
+from tests.adapters.agno.adapter.kit import (
+    _msg,
+)
 
 
 class TestSessionIsolation:

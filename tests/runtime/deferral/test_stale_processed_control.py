@@ -1,3 +1,5 @@
+"""A control the platform already processed cannot be reopened by a one-shot."""
+
 from __future__ import annotations
 
 from band.platform.link import BandLink
@@ -11,7 +13,9 @@ from tests.runtime.helpers import (
 
 
 class TestStaleProcessedControl:
-    async def test_stale_processed_control_cannot_be_reopened_by_oneshot(self) -> None:
+    async def test_stale_processed_control_cannot_be_reopened_by_oneshot(
+        self,
+    ) -> None:
         peer = LifecyclePlatform()
         peer.add_message("C")
         peer.messages[-1]["metadata"] = {

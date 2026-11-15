@@ -30,7 +30,6 @@ async def client_closes_normally(server: FakePhoenixServer, link: BandLink) -> N
     await close_transport(link)
 
 
-@pytest.mark.usefixtures("millisecond_reconnects")
 class TestCloseReconnect:
     @pytest.mark.parametrize(
         "close",

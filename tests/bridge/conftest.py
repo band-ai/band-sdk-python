@@ -116,3 +116,17 @@ def bridge_with_fakes(
         forwarders=forwarders,
         links=links,
     )
+
+
+@pytest.fixture
+def http_target() -> HTTPTarget:
+    return HTTPTarget(url="https://example.com/invocations", timeout=10.0)
+
+
+@pytest.fixture
+def agentcore_target() -> AgentCoreTarget:
+    return AgentCoreTarget(
+        runtime_arn="arn:aws:bedrock-agentcore:us-east-1:123:runtime/abc",
+        region="us-east-1",
+        timeout=10.0,
+    )

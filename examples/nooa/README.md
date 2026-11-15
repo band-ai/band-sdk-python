@@ -2,7 +2,7 @@
 
 Examples for running [NOOA](https://github.com/NVIDIA-NeMo/labs-OO-Agents)
 (NVIDIA-labs Object Oriented Agents) on the Band platform through `NooaAdapter`.
-See [docs/adapters/nooa.md](../../docs/adapters/nooa.md) for how the adapter works.
+The adapter implementation is in [`src/band/adapters/nooa/`](../../src/band/adapters/nooa/).
 
 ## Prerequisites
 

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
 from band.core.exceptions import BandConnectionError
-from band.integrations.codex.stdio_client import HELPER_PATH, CodexStdioClient
-from band.integrations.codex.winspawn import WindowsProcess
+from band.integrations.codex import winspawn
+from band.integrations.codex.stdio_client import CodexStdioClient
+from band.integrations.codex.winspawn import HELPER_PATH, WindowsProcess, command_in_job
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows job objects")
@@ -24,26 +27,25 @@ class TestWindowsJobCleanup:
         pythonpath.mkdir()
         client = CodexStdioClient(
             command=[
-                sys.executable,
+                sys._base_executable,  # type: ignore[attr-defined]
                 "-c",
                 (
-                    "import pathlib, sys; "
-                    "pathlib.Path('observed').write_text('\\n'.join(sys.path))"
+                    "import json, pathlib, sys; "
+                    "pathlib.Path('observed').write_text(json.dumps("
+                    "{'path': sys.path, 'prefix': sys.prefix}))"
                 ),
             ],
             cwd=str(workdir),
-            env={"PYTHONPATH": pythonpath.name},
+            env={"PYTHONPATH": pythonpath.name, "__PYVENV_LAUNCHER__": sys.executable},
         )
         try:
             await client.connect()
             assert client._proc is not None
             await client._proc.wait()
-            observed = {
-                Path(path).resolve()
-                for path in (workdir / "observed").read_text().splitlines()
-                if path
-            }
-            assert pythonpath.resolve() in observed
+            observed = json.loads((workdir / "observed").read_text())
+            paths = {Path(path).resolve() for path in observed["path"] if path}
+            assert pythonpath.resolve() in paths
+            assert Path(observed["prefix"]).samefile(sys.prefix)
         finally:
             await client.close()
 
@@ -57,12 +59,14 @@ class TestWindowsJobCleanup:
             command=[sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
             cwd=str(workdir),
         )
-        command_for = client._windows_command
+        command_for = command_in_job
         report = tmp_path / "helper-pid"
         owners: list[WindowsProcess] = []
 
-        def rejected_command(job_name: str, status_handle: int) -> list[str]:
-            command = command_for(job_name, status_handle)
+        def rejected_command(
+            child_command: Sequence[str], job_name: str, status_handle: int
+        ) -> list[str]:
+            command = command_for(child_command, job_name, status_handle)
             assert client._windows_process is not None
             owners.append(client._windows_process)
             return [
@@ -74,7 +78,7 @@ class TestWindowsJobCleanup:
                 *command[4:],
             ]
 
-        monkeypatch.setattr(client, "_windows_command", rejected_command)
+        monkeypatch.setattr(winspawn, "command_in_job", rejected_command)
         try:
             with pytest.raises(BandConnectionError):
                 await client.connect()

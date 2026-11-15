@@ -27,7 +27,7 @@ from tests.framework_conformance.stopprobes import (
     wait_until,
     waiting_on_stop,
 )
-from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
+from tests.framework_conformance.turnprobes import ALICE, ROOM_ID, turn_input
 
 AGENT_ID = "agent-1"
 CONVERSATION_ID = "conversation-1"
@@ -44,7 +44,7 @@ class JournaledTools(FakeAgentTools):
     """Room tools that log each failure post into the Letta client's journal."""
 
     def __init__(self, journal: list[str]) -> None:
-        super().__init__()
+        super().__init__(participants=[ALICE])
         self.journal = journal
 
     async def send_failure(self, failure: band_sdk_core.AgentFailure) -> Any:
@@ -92,7 +92,9 @@ def held_adapter(
 
 async def end_running_turn(mode: ControlMode, *, shared: bool = False) -> list[str]:
     adapter, client = held_adapter(shared=shared)
-    turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
+    turn = asyncio.create_task(
+        adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
+    )
     await wait_until(lambda: bool(client.sent))
     await end_turn(adapter, turn, ROOM_ID, mode)
     return client.cancels
@@ -102,7 +104,9 @@ async def server_rejects_cancel() -> list[str]:
     """Without Redis the cancel fails, is logged, and the room takes its next turn."""
     adapter, client = held_adapter()
     client.reject_cancels = True
-    turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
+    turn = asyncio.create_task(
+        adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
+    )
     await wait_until(lambda: bool(client.sent))
     warnings = WarningRecords()
     cleanup.logger.addHandler(warnings)
@@ -116,7 +120,7 @@ async def server_rejects_cancel() -> list[str]:
         if f"backend stop for room {ROOM_ID}" in record.getMessage()
     ]
     client.release.set()
-    next_tools = FakeAgentTools()
+    next_tools = FakeAgentTools(participants=[ALICE])
     await adapter.on_event(turn_input(next_tools))
     return [
         *client.cancels,
@@ -152,7 +156,10 @@ async def late_mcp_call_during_held_cancel() -> list[str]:
     )
 
     adapter, client = held_adapter()
-    stopped, replacement = FakeAgentTools(), FakeAgentTools()
+    stopped, replacement = (
+        FakeAgentTools(participants=[ALICE]),
+        FakeAgentTools(participants=[ALICE]),
+    )
     release_cancel = await stop_holding_cancel(adapter, client, stopped)
     next_turn = asyncio.create_task(adapter.on_event(turn_input(replacement)))
     # The turn blocks inside the context manager that owns the wait, where
@@ -182,7 +189,9 @@ async def late_mcp_call_during_held_cancel() -> list[str]:
 async def cleanup_waits_for_the_cancel() -> list[str]:
     """Leaving the room waits for the run cancel before it deletes the agent."""
     adapter, client = held_adapter(delete_agents=True)
-    release_cancel = await stop_holding_cancel(adapter, client, FakeAgentTools())
+    release_cancel = await stop_holding_cancel(
+        adapter, client, FakeAgentTools(participants=[ALICE])
+    )
     cleanup_room = asyncio.create_task(adapter.on_cleanup(ROOM_ID))
     await wait_until(lambda: waiting_on_stop(cleanup_room) or cleanup_room.done())
     release_cancel.set()
@@ -193,7 +202,9 @@ async def cleanup_waits_for_the_cancel() -> list[str]:
 async def shutdown_waits_for_the_cancel() -> list[str]:
     """Shutdown does not return while a run cancel is still in flight."""
     adapter, client = held_adapter()
-    release_cancel = await stop_holding_cancel(adapter, client, FakeAgentTools())
+    release_cancel = await stop_holding_cancel(
+        adapter, client, FakeAgentTools(participants=[ALICE])
+    )
 
     async def shut_down() -> None:
         await adapter.cleanup_all()

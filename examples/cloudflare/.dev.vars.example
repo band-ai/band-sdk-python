@@ -1,0 +1,3 @@
+BAND_API_KEY=replace-with-agent-key
+ANTHROPIC_API_KEY=replace-with-provider-key
+BRIDGE_TOKEN=replace-with-random-token

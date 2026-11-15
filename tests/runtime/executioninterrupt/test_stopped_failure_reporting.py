@@ -8,8 +8,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.core.exceptions import RoomExecutionStoppedError
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from tests.conftest import make_message_event
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestStoppedFailureReporting:
@@ -34,12 +36,16 @@ class TestStoppedFailureReporting:
             mock_link.rest.agent_api_events.create_agent_chat_event = AsyncMock(
                 side_effect=RoomExecutionStoppedError(ctx.room_id)
             )
-        assert (
-            await ctx._process_event(make_message_event(msg_id="failure"))
-            is TurnOutcome.ADVANCED
+        expected = (
+            TurnOutcome.RETRY_LATER if refusal == "mark" else TurnOutcome.ADVANCED
         )
         assert (
-            await ctx._process_event(make_message_event(msg_id="next"))
+            await attempt_delivery(ctx, make_message_event(msg_id="failure"))
+            is expected
+        )
+        assert ctx.claims.is_ack_pending(ctx.room_id, "failure") is (refusal == "mark")
+        assert (
+            await attempt_delivery(ctx, make_message_event(msg_id="next"))
             is TurnOutcome.ADVANCED
         )
         mock_link.mark_processed.assert_awaited_once_with("room-123", "next")

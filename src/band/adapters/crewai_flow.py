@@ -61,6 +61,7 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.exceptions import BandConfigError, BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.timestamps import assume_utc
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -231,13 +232,13 @@ class RestCrewAIFlowStateSource:
         if value is None:
             return None
         if isinstance(value, datetime):
-            return value if value.tzinfo else value.replace(tzinfo=UTC)
+            return assume_utc(value)
         if isinstance(value, str):
             try:
                 dt = datetime.fromisoformat(value)
             except ValueError:
                 return None
-            return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+            return assume_utc(dt)
         return None
 
     async def _full_fetch(
@@ -613,7 +614,7 @@ class CrewAIFlowCustomTools:
         await self._report_call(name, input_data)
         try:
             result = await execute_custom_tool(
-                tool=tool, arguments=input_data, turn=self._tools.turn
+                tool=tool, arguments=input_data, tools=self._tools
             )
         except Exception as exc:
             await self._report_result(name, str(exc), is_error=True)
@@ -1593,6 +1594,10 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     SUPPORTED_CAPABILITIES = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    # The Flow, not a model prompt, consumes the message: its run id, its reply
+    # matching to pending delegations and its ``message``/``requester`` inputs
+    # are all keyed to one original, so a batch is refused.
+    supports_batch_input = False
 
     @property
     def judges_turns(self) -> bool:

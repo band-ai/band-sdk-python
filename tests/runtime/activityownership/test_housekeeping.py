@@ -8,6 +8,7 @@ from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from tests.conftest import make_message_event, make_participant_added_event
+from tests.runtime.activityownership.kit import deliver_event
 from tests.runtime.helpers import IDLE, KEEP_ALIVE, LifecyclePlatform
 
 
@@ -25,7 +26,7 @@ class TestHousekeepingWorker:
             workers.append(bind_turn_task(AgentTools.from_context(ctx), worker))
 
         ctx = execution(handler)
-        await ctx._process_event(make_participant_added_event())
+        await deliver_event(ctx, make_participant_added_event())
         await ctx._join_activity_completion()
         assert not workers[0].task.done()
         assert activity_platform.activity_reports == []
@@ -49,8 +50,8 @@ class TestHousekeepingWorker:
             workers[kind] = bind_turn_task(AgentTools.from_context(ctx), worker)
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event())
-        await ctx._process_event(make_participant_added_event())
+        await deliver_event(ctx, make_message_event())
+        await deliver_event(ctx, make_participant_added_event())
         await ctx._join_activity_completion()
         assert activity_platform.activity_reports == [KEEP_ALIVE]
 

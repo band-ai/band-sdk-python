@@ -36,6 +36,7 @@ class OpencodeClientProtocol(Protocol):
         session_id: str,
         *,
         parts: list[dict[str, Any]],
+        message_id: str | None = None,
         system: str | None = None,
         model: dict[str, str] | None = None,
         agent: str | None = None,
@@ -53,7 +54,9 @@ class OpencodeClientProtocol(Protocol):
 
     async def abort_session(self, session_id: str) -> None: ...
 
-    async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]: ...
+    async def register_mcp_server(
+        self, *, name: str, url: str, headers: dict[str, str]
+    ) -> dict[str, Any]: ...
 
     async def disconnect_mcp_server(self, name: str) -> None: ...
 
@@ -137,6 +140,7 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         session_id: str,
         *,
         parts: list[dict[str, Any]],
+        message_id: str | None = None,
         system: str | None = None,
         model: dict[str, str] | None = None,
         agent: str | None = None,
@@ -144,6 +148,8 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         tools: dict[str, bool] | None = None,
     ) -> None:
         payload: dict[str, Any] = {"parts": parts}
+        if message_id is not None:
+            payload["messageID"] = message_id
         if system:
             payload["system"] = system
         if model:
@@ -194,13 +200,15 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         )
         response.raise_for_status()
 
-    async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]:
+    async def register_mcp_server(
+        self, *, name: str, url: str, headers: dict[str, str]
+    ) -> dict[str, Any]:
         response = await self._client.post(
             "/mcp",
             params=self._query_params(),
             json={
                 "name": name,
-                "config": {"type": "remote", "url": url},
+                "config": {"type": "remote", "url": url, "headers": headers},
             },
         )
         response.raise_for_status()

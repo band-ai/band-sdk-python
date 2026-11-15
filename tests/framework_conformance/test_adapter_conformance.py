@@ -274,6 +274,7 @@ IMAGE_PASSTHROUGH_EXCLUSIONS = (
         "execute_tool_call, so it inherits opencode's fix and has no "
         "adapter-local path to probe",
     ),
+    ExcludedAdapter(Adapter.ANTIGRAVITY_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
     ExcludedAdapter(Adapter.COPILOT_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
     ExcludedAdapter(Adapter.CURSOR_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
     ExcludedAdapter(Adapter.OMP_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
@@ -299,7 +300,7 @@ IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
 #   claude_sdk    tests/integrations/claude_sdk/test_tools.py (MCP passthrough)
 #   anthropic     test_anthropic_adapter.py (ImageBlockParam)
 #   opencode      tests/mcp/test_engine.py (the shared MCP engine's ImageContent)
-#   gemini        test_gemini_adapter.py (FunctionResponseBlob inline_data)
+#   gemini        gemini/test_readroomfileimagepassthrough.py (FunctionResponseBlob inline_data)
 #   langgraph     test_langchain_tools.py (langchain_core ImageContentBlock)
 #   agno          tests/adapters/agno/adapter/test_band_entrypoint_binding.py (agno.media.Image)
 #   strands       tests/adapters/strands/test_read_room_file_image_passthrough.py (ToolResultContent image block)
@@ -309,7 +310,7 @@ IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
 #                 verified against codex-cli's generated schema; whether
 #                 codex-rs accepts the data: URI isn't checkable from Python)
 #   pydantic_ai   test_pydantic_ai_adapter.py (messages.BinaryContent)
-#   crewai(_flow) test_crewai_tools.py (CrewAI's VISION_IMAGE: sentinel, parsed
+#   crewai(_flow) integrations/crewaitools/test_file_tools.py (CrewAI's VISION_IMAGE: sentinel, parsed
 #                 by StepExecutor; both adapters share one vision_sentinel())
 
 

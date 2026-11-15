@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=5.0.0"]
+# dependencies = ["band-sdk[acp]>=6.0.1"]
 # ///
 """
 GitHub Copilot in a Docker sandbox (sbx), driven by Band over stdio.

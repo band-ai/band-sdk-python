@@ -167,6 +167,9 @@ class OpencodeMessageInfo(OpencodeModel):
     id: str | None = None
     session_id: str | None = Field(default=None, alias="sessionID")
     role: str | None = None
+    parent_id: str | None = Field(default=None, alias="parentID")
+    summary: bool = False
+    agent: str | None = None
     tokens: OpencodeTokens | None = None
     error: OpencodeErrorInfo | None = None
 
@@ -204,6 +207,11 @@ class OpencodeToolStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     ERROR = "error"
+
+    @classmethod
+    def is_terminal(cls, status: str | None) -> bool:
+        """Recognize completed calls while tolerating unknown provider states."""
+        return status in (cls.COMPLETED, cls.ERROR)
 
 
 class OpencodePart(OpencodeModel):
@@ -271,6 +279,7 @@ class OpencodeQuestionRequest(OpencodeModel):
     id: str | None = None
     session_id: str | None = Field(default=None, alias="sessionID")
     questions: list[OpencodeQuestion] = Field(default_factory=list)
+    tool: OpencodePermissionToolRef | None = None
 
     _coerce_scalars = field_validator("id", "session_id", mode="before")(_coerce_str)
 

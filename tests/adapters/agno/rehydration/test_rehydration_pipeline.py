@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from agno.run.agent import RunOutput
 
-from band.runtime.formatters import format_history_for_llm
+from band.runtime.formatters import format_current_inputs, format_history_for_llm
 from tests.adapters.agno.helpers import make_agent_input, platform_msg, run_input
 from tests.framework_configs.fixtures import TOOL_CALL_SEARCH, TOOL_RESULT_SEARCH
 
@@ -61,7 +61,7 @@ class TestRehydrationPipeline:
         assert msgs[1].content == "Earlier answer"
         assert msgs[2].tool_calls[0]["function"]["name"] == "search"
         assert msgs[3].tool_call_id == "tc_1"
-        assert msgs[-1].content == sample_platform_message.format_for_llm()
+        assert msgs[-1].content == format_current_inputs([sample_platform_message])
 
     async def test_unsupported_kinds_are_dropped(
         self, make_started_adapter, sample_platform_message, tools
@@ -94,7 +94,7 @@ class TestRehydrationPipeline:
         # Only the plain text + current message survive; thought/unknown dropped.
         assert [m.content for m in msgs] == [
             "[Alice]: hello",
-            sample_platform_message.format_for_llm(),
+            format_current_inputs([sample_platform_message]),
         ]
 
     async def test_history_is_from_history_but_current_message_is_live(
@@ -140,5 +140,5 @@ class TestRehydrationPipeline:
         assert [m.content for m in msgs] == [
             "[System]: Alice and Bob are here",
             "[System]: Carol is now a contact",
-            sample_platform_message.format_for_llm(),
+            format_current_inputs([sample_platform_message]),
         ]

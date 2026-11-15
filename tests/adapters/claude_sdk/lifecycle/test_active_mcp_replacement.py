@@ -48,16 +48,18 @@ class TestActiveMcpReplacement:
         assert room.failures == other.failures == []
         assert room.claude.sessions[0].alive is False
 
-    async def test_an_unreplied_turn_using_the_dead_endpoint_fails_once_and_resumes(
+    async def test_an_unreplied_turn_using_the_dead_endpoint_fails_once_and_recovers(
         self, claude_room: OpenRoom
     ) -> None:
+        """The failed turn was the session's seed, so the room keeps no mapping
+        to it and recovers on a fresh session."""
         room = await claude_room()
         other = room.beside("room-2")
         active = Hold()
         room.claude.script(
             [active, UnavailableMcp(room.model_reply("unreachable reply"))],
             [other.model_reply("replacement room served")],
-            [room.model_reply("failed room resumed")],
+            [room.model_reply("failed room recovered")],
         )
         failed_tools = room.fresh_tools()
         sending = asyncio.create_task(room.send("long task", tools=failed_tools))
@@ -76,10 +78,10 @@ class TestActiveMcpReplacement:
             active.released.set()
             await asyncio.gather(sending, return_exceptions=True)
 
-        first, replacement, resumed = room.session_band_ports
-        assert first != replacement == resumed
-        assert room.claude.resumed == [None, None, "sess-1"]
-        assert room.chat == ["failed room resumed"]
+        first, replacement, recovered = room.session_band_ports
+        assert first != replacement == recovered
+        assert room.claude.resumed == [None, None, None]
+        assert room.chat == ["failed room recovered"]
         assert room.failures == [f"Claude SDK turn failed: {MCP_DISCONNECTED}"]
         assert other.chat == ["replacement room served"]
         assert other.failures == []

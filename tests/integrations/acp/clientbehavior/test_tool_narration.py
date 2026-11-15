@@ -33,7 +33,9 @@ class TestToolNarration:
         assert reply.tool_result_names == ["band_create_chatroom"]
 
     @pytest.mark.asyncio
-    async def test_prefixed_custom_tool_narrated_under_canonical_name(self) -> None:
+    async def test_prefixed_custom_tool_narrated_under_canonical_name(
+        self,
+    ) -> None:
         """A custom tool registered on the loopback server canonicalizes too."""
 
         class EchoInput(BaseModel):

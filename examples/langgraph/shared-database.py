@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=6.0.0", "aiosqlite>=0.21.0"]
+# dependencies = ["band-sdk[langgraph]>=6.0.1", "aiosqlite>=0.21.0"]
 # ///
 """Save and list team notes through one adapter-owned SQLite connection.
 

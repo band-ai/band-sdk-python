@@ -8,7 +8,7 @@ import pytest
 
 from band.client.streaming import ControlMode
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import ResyncOutcome
+from band.runtime.scheduler import ResyncOutcome
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import (
     ROOM_ID,
@@ -28,7 +28,7 @@ class TestStoppedRoomRecovery:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         ctx.stop_room()
         peer.stopped = True
         peer.add_message("resumed")
@@ -50,7 +50,7 @@ class TestStoppedRoomRecovery:
         gate = ResponseGate(peer, "/next")
         async with rest_client_over(gate.answer) as rest:
             ctx.link.rest = rest
-            recovery = asyncio.create_task(ctx._wait_until_resync_complete())
+            recovery = asyncio.create_task(ctx.scheduler.run_pass(recovery=True))
             await gate.entered.wait()
             if mode is ControlMode.PLAY:
                 await ctx.resume_room()
@@ -78,7 +78,7 @@ class TestStoppedRoomRecovery:
         gate = ResponseGate(peer, suffix)
         async with rest_client_over(gate.answer) as rest:
             ctx.link.rest = rest
-            recovery = asyncio.create_task(ctx._wait_until_resync_complete())
+            recovery = asyncio.create_task(ctx.scheduler.run_pass(recovery=True))
             await gate.entered.wait()
             ctx.stop_room()
             peer.stopped = True
@@ -96,7 +96,7 @@ class TestStoppedRoomRecovery:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         ctx.claims.remember_ack_pending(ROOM_ID, "completed")
         ctx.stop_room()
         peer.stopped = True
@@ -119,7 +119,7 @@ class TestStoppedRoomRecovery:
         peer.add_message("stuck")
         ctx.stop_room()
         peer.stopped = True
-        outcome = await ctx._wait_until_resync_complete()
+        outcome = await ctx.scheduler.run_pass(recovery=True)
         assert outcome is ResyncOutcome.STOPPED
         assert ctx.is_stopped
         assert invoked == []
@@ -147,7 +147,7 @@ class TestStoppedRoomRecovery:
         task.cancel()
         await cancelling.wait()
         ctx.current_scope = TurnScope(ctx._control_revision, observer_task=task)
-        recovery = asyncio.create_task(ctx._wait_until_resync_complete())
+        recovery = asyncio.create_task(ctx.scheduler.run_pass(recovery=True))
         await asyncio.sleep(0)
         ctx.stop_room()
         peer.stopped = True

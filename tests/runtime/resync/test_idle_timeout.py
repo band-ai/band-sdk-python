@@ -36,7 +36,7 @@ class TestIdleTimeout:
         config = SessionConfig(idle_resync_seconds=60)  # very long timeout
         ctx = ExecutionContext("room-1", mock_link, mock_handler, config=config)
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         call_count_after_phase1 = mock_link.get_next_message.call_count
 

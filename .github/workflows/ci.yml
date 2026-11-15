@@ -2,7 +2,10 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # `main` plus the branch prefixes a stacked pull request can be based on:
+    # the filter matches the PR's BASE branch, so without these a stack child
+    # never starts the required `ci-status` check and can never merge.
+    branches: [main, "feat/**", "fix/**", "refactor/**", "docs/**", "chore/**"]
     types: [opened, synchronize, reopened, ready_for_review]
   # Run on the merge queue's temporary branch so the required ci-status reports
   # against the queued merge result. Without this the queue would wait forever.
@@ -25,24 +28,29 @@ concurrency:
 jobs:
 
   lint:
+    permissions:
+      contents: read
+      pull-requests: read
     # Drafts get no CI; ready_for_review above fires the first real run.
     if: &not-draft github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 0
 
     - name: Configure git to use HTTPS for GitHub
       uses: ./.github/actions/git-https-auth
 
     - name: Install uv
-      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
       with:
         python-version: '3.12'
 
@@ -65,6 +73,16 @@ jobs:
       # every uv command in this workflow needs it, or tests/mcp/*.py (which
       # import band_mcp) fail to collect and pyrefly misses packages/band-mcp/src.
       run: uv sync --all-packages --locked --extra dev
+
+    - name: Validate release candidate metadata
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_HEAD: ${{ github.head_ref }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+      run: bash .github/scripts/check-release-candidate.sh
 
     - name: Run pre-commit hooks
       run: uv run --all-packages pre-commit run --all-files
@@ -103,13 +121,13 @@ jobs:
       uses: ./.github/actions/git-https-auth
 
     - name: Install uv
-      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -120,16 +138,19 @@ jobs:
       run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
 
     - name: Run tests
-      run: uv run --all-packages pytest
+      run: |
+        uv run --all-packages pytest \
+          -n 4 --dist worksteal \
+          --ignore=tests/e2e --ignore=tests/integration --ignore=tests/release/candidates
 
     - name: Run markdown doc tests
       # Linux-only: doc snippets are OS-independent, and this step relies on
       # git ls-files globbing that we don't need to re-run per platform.
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-      # NOOA snippets run in test-strands-nooa; examples/ READMEs are illustrative.
+      # examples/ READMEs are illustrative; other tracked Markdown is checked.
       run: |
         # shellcheck disable=SC2046  # word-splitting the ls-files output is the point
-        uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
+        uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
 
 
   test-crewai:
@@ -151,13 +172,13 @@ jobs:
       uses: ./.github/actions/git-https-auth
 
     - name: Install uv
-      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -180,13 +201,27 @@ jobs:
       # tests/framework_conformance/test_crewai_job_coverage.py keeps this honest.
       run: |
         uv run --all-packages pytest \
+          -n 4 --dist worksteal \
           tests/adapters/test_crewai_flow_phase3.py \
+          tests/adapters/crewai/test_batch_history.py \
+          tests/adapters/crewaiturnend/test_turn_ending.py \
+          tests/adapters/crewaiturnend/test_custom_batch.py \
+          tests/adapters/crewaiturnend/test_custom_decline.py \
+          tests/adapters/crewaiturnend/test_flow_continuation.py \
+          tests/adapters/crewaiturnend/test_native_failure_policy.py \
+          tests/adapters/crewaiturnend/test_retained_adapter.py \
           tests/adapters/crewaiworker/test_native_settlement.py \
           tests/adapters/crewaiworker/test_flow_admission.py \
           tests/adapters/crewaiworker/test_parallel_settlement.py \
           tests/integrations/test_crewai_flow_real_sdk.py \
-          tests/integrations/test_crewai_real_tools.py \
-          tests/integrations/test_crewai_completion.py \
+          tests/integrations/crewai/realtools/test_build.py \
+          tests/integrations/crewai/realtools/test_memory_validation.py \
+          tests/integrations/crewai/completion/test_blank_completion.py \
+          tests/integrations/crewai/activity/test_execution.py \
+          tests/integrations/crewai/activity/test_send_event.py \
+          tests/integrations/crewai/test_custom_identity.py \
+          tests/integrations/crewai/test_dependency_contract.py \
+          tests/integrations/crewai/test_failure_boundary.py \
           tests/test_capability_gating_e2e.py \
           tests/framework_conformance/test_files_image_passthrough_matrix.py \
           tests/framework_conformance/ -k crewai
@@ -220,13 +255,13 @@ jobs:
       uses: ./.github/actions/git-https-auth
 
     - name: Install uv
-      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -247,6 +282,7 @@ jobs:
         BAND_TEST_EXTRA: "dev-strands-nooa"
       run: |
         uv run --all-packages pytest \
+          -n 4 --dist worksteal \
           tests/adapters/strands/ \
           tests/adapters/nooa/ \
           tests/converters/test_strands.py \
@@ -257,10 +293,6 @@ jobs:
         BAND_ALLOW_MISSING_FRAMEWORKS: "1"
         BAND_TEST_EXTRA: "dev-strands-nooa"
       run: uv run --all-packages pytest tests/framework_conformance/test_strands_nooa_job_coverage.py
-
-    - name: Run NOOA markdown examples
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-      run: uv run --all-packages pytest --markdown-docs docs/adapters/nooa.md --no-cov
 
     - name: Pyrefly check (Strands and NOOA sources)
       run: |
@@ -290,13 +322,13 @@ jobs:
       uses: ./.github/actions/git-https-auth
 
     - name: Install uv
-      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -319,12 +351,16 @@ jobs:
       # tests/framework_conformance/test_parlant_job_coverage.py keeps this honest.
       run: |
         uv run --all-packages pytest \
+          -n 4 --dist worksteal \
           tests/integrations/parlant/test_catalog.py \
           tests/integrations/parlant/test_chattools.py \
           tests/integrations/parlant/test_contacttools.py \
           tests/integrations/parlant/test_customtools.py \
           tests/integrations/parlant/test_filetools.py \
           tests/integrations/parlant/test_guard.py \
+          tests/integrations/parlant/activity/test_execution.py \
+          tests/integrations/parlant/activity/test_send_event.py \
+          tests/integrations/parlant/activity/test_pluginownership.py \
           tests/integrations/parlant/test_preambletask.py \
           tests/integrations/parlant/test_selection.py \
           tests/integrations/parlant/test_server.py \
@@ -340,6 +376,19 @@ jobs:
           src/band/integrations/parlant/
 
 
+  release-config-test:
+    if: *not-draft
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+    - name: Install uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - name: Install pinned release fixture dependencies
+      run: npm ci --prefix tests/release/candidates --ignore-scripts
+    - name: Test real release candidate generation
+      run: uv run --locked --python 3.12 --all-packages --extra dev pytest tests/release/candidates -q --no-cov
+
   packaging:
     if: &pr-only github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
@@ -351,10 +400,10 @@ jobs:
       uses: ./.github/actions/git-https-auth
 
     - name: Install uv
-      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
     - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
       with:
         python-version: '3.12'
 
@@ -409,7 +458,7 @@ jobs:
         from band.integrations.mcp.local_server import LocalMCPServer
 
         async def main() -> None:
-            async with LocalMCPServer('smoke', [], port_min=0, port_max=0):
+            async with LocalMCPServer('smoke', [], auth_token='smoke', port_min=0, port_max=0):
                 pass
 
         asyncio.run(main())
@@ -451,11 +500,7 @@ jobs:
       run: uv build --package band-mcp --wheel -o dist-band-mcp
 
     - name: Install band-mcp from wheel (workspace band-sdk, isolated venv)
-      # band-mcp's published floor (band-sdk>=1.6.0) predates this repo's
-      # in-flight MCP engine migration, so a PyPI-only install can't exercise
-      # today's code yet -- install both freshly-built wheels together
-      # instead. band-mcp-publish.yml is the workflow that waits for the
-      # matching band-sdk release and checks the real PyPI floor.
+      # Validate unpublished candidates together without workspace imports.
       run: |
         uv venv /tmp/band-mcp-install
         uv pip install dist/*.whl dist-band-mcp/*.whl --python /tmp/band-mcp-install/bin/python
@@ -469,8 +514,8 @@ jobs:
         print(f'band-mcp {__version__} imports successful')
         PYEOF
 
-    - name: Verify band-mcp CLI entry point
-      run: /tmp/band-mcp-install/bin/band-mcp --version
+    - name: Verify installed MCP behavior
+      run: /tmp/band-mcp-install/bin/python -I .github/scripts/mcp-wheel-smoke.py
 
 
   wheel-extra-cases:
@@ -482,7 +527,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
     - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
       with:
         python-version: '3.12'
     - name: Resolve wheel consumer cases
@@ -499,9 +544,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
     - name: Install uv
-      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
     - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
       with:
         python-version: '3.12'
     - name: Build wheel
@@ -517,7 +562,7 @@ jobs:
     # allowed to skip are the ones omitted from the merge queue.
     # always(), not !cancelled(): a skipped required check counts as passing.
     if: always()
-    needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
+    needs: [lint, release-config-test, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
     runs-on: ubuntu-latest
     steps:
     - name: Verify every CI job passed or was skipped
@@ -526,6 +571,7 @@ jobs:
         failed=0
         for entry in \
           "lint:${{ needs.lint.result }}:success" \
+          "release-config-test:${{ needs.release-config-test.result }}:success" \
           "test:${{ needs.test.result }}:success" \
           "test-crewai:${{ needs.test-crewai.result }}:success" \
           "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success|skipped" \

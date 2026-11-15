@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from band.core.types import ConflictPolicy
+from band.core.types import DEFAULT_CONFLICT_POLICY, ConflictPolicy
 
 
 @dataclass
@@ -20,4 +20,4 @@ class AgentConfig:
     # Platform-side duplicate guard for the initial WebSocket connect (cross-host,
     # cross-TMPDIR); complements ``single_instance`` on this host. See
     # ``ConflictPolicy`` for semantics and limits.
-    conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE
+    conflict_policy: ConflictPolicy = DEFAULT_CONFLICT_POLICY

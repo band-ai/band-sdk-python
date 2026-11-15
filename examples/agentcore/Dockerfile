@@ -30,7 +30,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 WORKDIR /app
 
-COPY examples/agentcore/agentcore_llm_server.py examples/agentcore/agentcore_llm_server.py
+COPY examples/oneshot/server.py examples/oneshot/server.py
 
 RUN useradd --no-log-init --create-home --shell /bin/bash appuser
 
@@ -41,4 +41,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 USER appuser
 
-CMD ["python", "examples/agentcore/agentcore_llm_server.py"]
+CMD ["python", "examples/oneshot/server.py"]

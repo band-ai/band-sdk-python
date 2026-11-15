@@ -249,8 +249,11 @@ Every merge to `main` updates a standing **release PR** (the version bump +
 CHANGELOG) that Release Please maintains; nothing publishes until a maintainer
 merges that release PR. Merging it tags the release and triggers `release.yml`,
 which publishes `band-sdk` to PyPI and dual-publishes the sandbox kit to
-Docker Hub and GHCR. See [`docs/ci-cd-workflows.md`](docs/ci-cd-workflows.md)
-for the server-side rules those workflows depend on.
+Docker Hub and GHCR. The workflow definitions live in
+[`release.yml`](.github/workflows/release.yml) and
+[`band-publish.yml`](.github/workflows/band-publish.yml). Release rulesets and
+environment policies are configured in GitHub; check their current state before
+changing release workflows.
 
 ### Hotfixes
 

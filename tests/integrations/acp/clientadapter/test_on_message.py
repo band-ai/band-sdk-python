@@ -10,18 +10,22 @@ from acp.exceptions import RequestError
 from acp.helpers import update_agent_message_text
 from acp.schema import (
     NewSessionResponse,
+    PromptResponse,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
 )
 
+from band.converters.acp_client import ACP_CLIENT_RESUME_RECORD
 from band.core.protocols import FAILURE_CODE_TIMEOUT, GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.integrations.acp.client_adapter import (
+    SYSTEM_CONTEXT_HEADER,
     ACPClientAdapter,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
-from band.testing import FakeAgentTools, events_of_type, reported_failures
+from band.testing import FakeAgentTools, reported_failures
 from tests.integrations.acp.acp_toolkit.harness import (
+    END_TURN,
     FakeSpawn,
     released,
     room_holder,
@@ -169,10 +173,9 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        # Should have sent task event
-        task_events = events_of_type(tools, "task")
-        assert len(task_events) == 1
-        assert task_events[0]["metadata"]["acp_client_session_id"] == "acp-session-123"
+        assert ACP_CLIENT_RESUME_RECORD.candidates(tools.events_sent) == {
+            "room-123": "acp-session-123"
+        }
 
     @pytest.mark.asyncio
     async def test_on_message_bootstrap_rehydrates(
@@ -198,6 +201,9 @@ class TestACPClientAdapterOnMessage:
 
         assert adapter_with_mocks._rooms["room-123"].session.session_id == "session-abc"
         mock_spawn.conn.load_session.assert_awaited_once()
+        assert ACP_CLIENT_RESUME_RECORD.candidates(tools.events_sent) == {
+            "room-123": "session-abc"
+        }
 
     @pytest.mark.asyncio
     async def test_on_message_creates_new_session_when_persisted_session_cannot_load(
@@ -210,13 +216,14 @@ class TestACPClientAdapterOnMessage:
         advertise_session_load(mock_spawn)
         mock_spawn.conn.load_session = AsyncMock(return_value=None)
 
-        async def prompt_new_session(**kwargs):
+        async def prompt_new_session(**kwargs) -> PromptResponse:
             session_id = kwargs["session_id"]
             # Stream the reply through the live sink the adapter registers for the
             # turn (as a real agent would), not a direct buffer poke.
             await room_runtime(adapter_with_mocks)._client.session_update(
                 session_id, update_agent_message_text("Recovered reply")
             )
+            return END_TURN
 
         mock_spawn.conn.prompt = AsyncMock(side_effect=prompt_new_session)
         tools = FakeAgentTools()
@@ -239,7 +246,7 @@ class TestACPClientAdapterOnMessage:
         mock_spawn.conn.load_session.assert_awaited_once()
         prompt_calls = mock_spawn.conn.prompt.call_args_list
         assert [call.kwargs["session_id"] for call in prompt_calls] == ["fresh-session"]
-        assert "[System Context]" in prompt_calls[0].kwargs["prompt"][0].text
+        assert SYSTEM_CONTEXT_HEADER in prompt_calls[0].kwargs["prompt"][0].text
         assert tools.messages_sent == []
 
     @pytest.mark.asyncio

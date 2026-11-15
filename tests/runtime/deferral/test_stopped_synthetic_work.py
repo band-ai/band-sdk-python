@@ -1,3 +1,5 @@
+"""A stop during synthetic execution keeps the work for PLAY."""
+
 from __future__ import annotations
 
 import asyncio

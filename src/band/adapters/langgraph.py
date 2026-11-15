@@ -6,10 +6,11 @@ import inspect
 import json
 import logging
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from band_sdk_core import AgentFailure
+from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.pregel import Pregel
 from pydantic import PositiveInt
@@ -18,8 +19,7 @@ from typing_extensions import Unpack
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
-from band.core.turn import Turn
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import (
     Capability,
     Emit,
@@ -27,13 +27,20 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    ids_of,
 )
 from band.integrations.langgraph import langchain_tools
-from band.runtime.prompts import render_system_prompt
+from band.integrations.langgraph.activity import LangChainToolEvent, observe_tool_event
+from band.runtime.custom_tools import declared_effect, get_custom_tool_name
+from band.runtime.formatters import format_current_inputs
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
+from band.runtime.toolactivity import end_activity
 from band.runtime.tools import (
     BandTool,
+    TurnEffect,
     image_block_placeholder,
     redact_tool_call_args,
+    turn_effect,
 )
 
 if TYPE_CHECKING:
@@ -94,7 +101,7 @@ class LangGraphAdapterConfig(BaseAdapterConfig):
     inject_system_prompt: bool | None = None
 
 
-class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
+class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
     """
     LangGraph adapter using SimpleAdapter pattern.
 
@@ -200,11 +207,20 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 checkpointer = InMemorySaver()
 
             def factory(turn_tools: list[Any]) -> Pregel:
+                effects = {tool.name: turn_effect(tool.name) for tool in turn_tools}
+                for tool in self.additional_tools:
+                    if isinstance(tool, tuple):
+                        effects[get_custom_tool_name(tool[0])] = (
+                            declared_effect(tool[1]) or TurnEffect.OBSERVE
+                        )
+                    else:
+                        # Native declarations are outside the portable-tool contract.
+                        effects[tool.name] = TurnEffect.OBSERVE
                 return create_agent(
                     model=llm,
                     tools=turn_tools,
                     checkpointer=checkpointer,
-                    middleware=[DeclineMiddleware()],
+                    middleware=[DeclineMiddleware(effects)],
                 )
 
             graph_factory = factory
@@ -236,15 +252,15 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         """A static ``graph=`` never receives Band tools, so it cannot reply."""
         return self.graph_factory is not None
 
-    def _additional_tools_for_turn(self, turn: Turn) -> list[Any]:
+    def _additional_tools_for_room(self, tools: AgentToolsProtocol) -> list[Any]:
         """The caller's extra tools as LangChain tools for one room turn.
 
         Portable ``CustomToolDef`` tuples are converted here, per turn, so each
-        call records its effect on that room's turn; ready-made LangChain tools
-        pass through untouched.
+        call records its effect and shows its activity on that room's turn;
+        ready-made LangChain tools pass through untouched.
         """
         return [
-            langchain_tools.custom_tool_def_to_langchain(tool, turn=turn)
+            langchain_tools.custom_tool_def_to_langchain(tool, tools=tools)
             if isinstance(tool, tuple)
             else tool
             for tool in self.additional_tools
@@ -304,9 +320,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         return False
 
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: LangChainMessages,  # Fully typed!
         participants_msg: str | None,
@@ -315,8 +331,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Handle message with LangGraph."""
-        logger.info("[HANDLE] Message %s in room %s", msg.id, room_id)
+        """Run the graph once over one or more original messages."""
+        message_ids = ids_of(messages)
+        logger.info("[HANDLE] Messages %s in room %s", message_ids, room_id)
 
         # Usage is reported per model call on the stream; a turn may make several
         # (a tool loop), so sum across every on_chat_model_end into one TurnUsage,
@@ -325,11 +342,12 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # when usage emission is off.
         track_usage = Emit.USAGE in self.features.emit
         turn_usage = TurnUsage()
+        operations: dict[str, object] = {}
         try:
             lc_tools = langchain_tools.agent_tools_to_langchain(
                 tools,
                 features=self.features,
-            ) + self._additional_tools_for_turn(tools.turn)
+            ) + self._additional_tools_for_room(tools)
 
             # Build or get graph
             if self.graph_factory:
@@ -346,8 +364,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             if checkpointer is not None:
                 self._room_checkpointers[room_id] = checkpointer
 
-            # Build messages
-            messages: list[Any] = []
+            # Build the graph's input messages
+            graph_messages: list[Any] = []
 
             # Session bootstrap: prepend the rendered system prompt and hydrate
             # platform history exactly once per room. After that, the LangGraph
@@ -361,9 +379,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 )
                 if not checkpointer_already_has_messages:
                     if self._inject_system_prompt and self._system_prompt:
-                        messages.append(("system", self._system_prompt))
+                        graph_messages.append(("system", self._system_prompt))
                     if history:
-                        messages.extend(
+                        graph_messages.extend(
                             history
                         )  # Already converted by history_converter
                 should_mark_bootstrapped = True
@@ -373,14 +391,16 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             # message at the start; additional system messages scattered through
             # the conversation cause errors and kill provider cache savings.
             if participants_msg:
-                messages.append(("user", f"[System]: {participants_msg}"))
+                graph_messages.append(
+                    ("user", f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
+                )
 
             if contacts_msg:
-                messages.append(("user", f"[System]: {contacts_msg}"))
+                graph_messages.append(("user", f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}"))
 
-            messages.append(("user", msg.format_for_llm()))
+            graph_messages.append(("user", format_current_inputs(messages)))
 
-            graph_input = {"messages": messages}
+            graph_input = {"messages": graph_messages}
 
             async for event in graph.astream_events(
                 graph_input,
@@ -392,6 +412,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 },
                 version="v2",
             ):
+                if isinstance(event, dict):
+                    await observe_tool_event(event, tools, operations)
                 await self._handle_stream_event(event, room_id, tools)
                 if track_usage:
                     turn_usage = turn_usage + self._usage_from_stream_event(event)
@@ -406,10 +428,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                         oldest_room_id,
                     )
 
-            logger.info("[DONE] Message %s processed successfully", msg.id)
+            logger.info("[DONE] Messages %s processed successfully", message_ids)
 
         except Exception:
-            logger.exception("Error processing message %s", msg.id)
+            logger.exception("Error processing messages %s", message_ids)
             # Keep the user-facing payload generic; the full traceback is in
             # the agent log via logger.exception above. Tool/error internals
             # can include DB strings, paths, and tokens that should not
@@ -420,6 +442,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             )
             raise
         finally:
+            for token in operations.values():
+                await end_activity(tools, token)
             # No-op unless Emit.USAGE is on; best-effort, never raises.
             await self.emit_usage(tools, turn_usage)
 
@@ -436,7 +460,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         event_type = event.get("event")
 
-        if event_type == "on_tool_start":
+        if event_type == LangChainToolEvent.START:
             if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
@@ -458,13 +482,21 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning("Failed to send tool_call event: %s", e)
 
-        elif event_type in {"on_tool_end", "on_tool_error"}:
+        elif event_type in {LangChainToolEvent.END, LangChainToolEvent.ERROR}:
             if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
-            is_error = event_type == "on_tool_error" or bool(data.get("error"))
+            output = data.get("output")
+            is_error = (
+                event_type == LangChainToolEvent.ERROR
+                or bool(data.get("error"))
+                or (
+                    isinstance(output, ToolMessage)
+                    and langchain_tools.failed_result(output)
+                )
+            )
             payload = {
                 ToolEventKey.NAME: tool_name,
                 ToolEventKey.OUTPUT: _redacted_tool_end_output(tool_name, data),

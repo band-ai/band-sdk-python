@@ -2,7 +2,8 @@
 
 The matrix builders run every coding agent headless (auto-accept, or Codex's
 ``approvalPolicy="never"``) and their ``prompt``/``features``/``tools`` contract can't
-express a manual approval mode, so the approval smoke builds each adapter here instead.
+express an approval mode, so the approval smokes build each adapter here instead, in
+the mode ``AgentSetup.approval`` names.
 Every room-visible line -- the request a token is read from, the reply, the notice that
 proves the reply was recognized -- comes from the adapter's own template or command
 enum, so a reworded prompt fails the smoke instead of silently drifting from it.
@@ -14,7 +15,6 @@ import asyncio
 import codecs
 import re
 import string
-import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -64,6 +64,8 @@ from band.adapters.opencode.approvals.wording import (
     APPROVAL_HANDLED_TEMPLATE,
     APPROVAL_NO_LONGER_PENDING_TEMPLATE,
     APPROVAL_TIMED_OUT_TEMPLATE,
+    QUESTION_ANSWERED_TEMPLATE,
+    QUESTION_REJECTED_TEMPLATE,
     format_question_prompt,
 )
 from band.adapters.opencode.approvals.wording import (
@@ -71,7 +73,7 @@ from band.adapters.opencode.approvals.wording import (
 )
 from band.client.streaming import MessageCreatedPayload
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import ApprovalMode, Capability, MessageType
+from band.core.types import AdapterFeatures, ApprovalMode, Capability, MessageType
 from band.integrations.acp.cursor import (
     DECISION_NOT_PENDING_TEMPLATE,
     DECISION_RESOLVED_TEMPLATE,
@@ -83,6 +85,7 @@ from band.integrations.acp.cursor import (
 )
 from band.integrations.codex.types import CodexApprovalMethod
 from band.runtime.formatters import strip_leading_mentions
+from band.testing.features import feature_kwargs
 from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import Adapter
@@ -190,6 +193,15 @@ def question_request() -> str:
     )
 
 
+def question_decline_request(*, done: str) -> str:
+    """Ask the agent to put a question to the room, then continue after a decline."""
+    return (
+        "Use your question tool to ask me one short clarifying question. "
+        "If I decline it, do not ask again; finish with a short room reply that "
+        f"contains exactly `{done}`."
+    )
+
+
 def template_pattern(template: str, *, token: str = "token") -> re.Pattern[str]:
     """A regex matching what ``template`` renders, capturing each field by name.
 
@@ -263,14 +275,24 @@ class Notice:
         shown.assert_contains_any([self.text])
 
 
+MANUAL_APPROVAL: ApprovalMode = "manual"
+
+
 @dataclass(frozen=True)
 class AgentSetup:
-    """How a manual-approval agent is rooted and who may decide its asks."""
+    """How a dialect agent is rooted, which features it runs, and how its asks
+    are decided."""
 
     workdir: Path
     wait_timeout_s: float
     # Sender ids allowed to decide; None admits anyone.
     approvers: frozenset[str] | None = None
+    # None keeps the adapter's own feature defaults.
+    features: AdapterFeatures | None = None
+    approval: ApprovalMode = MANUAL_APPROVAL
+    # A disposable directory the caller owns, for a backend's own config; Cursor
+    # saves "allow always" grants there, which would otherwise outlive the cell.
+    native_home: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -283,10 +305,11 @@ class SessionApproval:
 
 @dataclass(frozen=True)
 class QuestionRelay:
-    """How the agent puts a question to the room, and confirms the answer."""
+    """How the agent puts a question to the room, and confirms the answer or decline."""
 
     request: re.Pattern[str]
     answered: Callable[[re.Match[str]], Notice]
+    rejected: Callable[[re.Match[str]], Notice]
 
     def find(self, messages: list[MessageCreatedPayload]) -> re.Match[str] | None:
         matches = (self.request.search(m.content or "") for m in messages)
@@ -368,11 +391,12 @@ def _claude_sdk(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[
             custom_section=SHELL_PROMPT,
             cwd=setup.workdir,
             approvals=ClaudeApprovalOptions(
-                mode="manual",
+                mode=setup.approval,
                 wait_timeout_s=setup.wait_timeout_s,
                 authorized_senders=setup.approvers,
             ),
-        )
+        ),
+        **feature_kwargs(setup.features),
     )
 
 
@@ -421,12 +445,17 @@ def _codex(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[Any]:
     )
     config = codex_config_kwargs(settings, prompt=prompt) | {
         "workspace_for_room": lambda _room_id: str(setup.workdir),
-        "approval_mode": "manual",
+        "approval_mode": setup.approval,
         "approval_policy": "untrusted",
         "sandbox": CodexSandboxMode.READ_ONLY,
+        # Codex does not escalate an approved write that a Windows sandbox
+        # denies, so the gated command runs only without a backend there.
+        "windows_sandbox": None,
         "approval_wait_timeout_s": setup.wait_timeout_s,
     }
-    return CodexAdapter(config=CodexAdapterConfig(**config))
+    return CodexAdapter(
+        config=CodexAdapterConfig(**config), **feature_kwargs(setup.features)
+    )
 
 
 def _codex_reply(outcome: Outcome, request: re.Match[str]) -> str:
@@ -451,7 +480,6 @@ def cursor_test_adapter(
     settings: BaselineSettings,
     setup: AgentSetup,
     *,
-    approval_mode: ApprovalMode = "manual",
     workspace_for_room: WorkspaceResolver | None = None,
     custom_section: str = SHELL_PROMPT,
     capabilities: set[Capability] | None = None,
@@ -461,25 +489,34 @@ def cursor_test_adapter(
         CursorACPAdapterConfig,
     )
 
+    if setup.native_home is None:
+        raise ValueError("Cursor needs a disposable native_home for its config")
     config_kwargs: dict[str, Any] = {
         **cursor_config_kwargs(settings, prompt=custom_section),
-        "approval_mode": approval_mode,
+        "approval_mode": setup.approval,
         "plan_mode": "auto_accept",
         "decision_timeout_s": setup.wait_timeout_s,
         "decision_authorized_senders": setup.approvers,
-        # Cursor saves an "allow always" grant to its config dir, which would
-        # let later cells run that command unasked.
-        "env": {
-            "CURSOR_CONFIG_DIR": tempfile.mkdtemp(prefix="band-e2e-cursor-config-")
-        },
+        "env": {"CURSOR_CONFIG_DIR": str(setup.native_home)},
     }
     return CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
         # Not ``cwd``: that roots a per-room child dir, while the cells read
         # their effects straight from ``setup.workdir``.
         workspace_for_room=workspace_for_room or (lambda _room_id: str(setup.workdir)),
-        capabilities=capabilities,
+        **_cursor_features(setup, capabilities),
     )
+
+
+def _cursor_features(
+    setup: AgentSetup, capabilities: set[Capability] | None
+) -> dict[str, Any]:
+    """Return the setup's feature kwargs with only ``capabilities`` overridden,
+    so a workflow keeps its emit default."""
+    features = feature_kwargs(setup.features)
+    if capabilities is not None:
+        features["capabilities"] = capabilities
+    return features
 
 
 def _allow_option(options: str, *, lasting: bool) -> str:
@@ -518,11 +555,12 @@ def _opencode(settings: BaselineSettings, setup: AgentSetup) -> SimpleAdapter[An
             model_id=settings.backends.opencode_model_id,
             custom_section=SHELL_PROMPT,
             directory=str(setup.workdir),
-            approval_mode="manual",
+            approval_mode=setup.approval,
             approval_wait_timeout_s=setup.wait_timeout_s,
             question_mode="manual",
             question_wait_timeout_s=setup.wait_timeout_s,
-        )
+        ),
+        **feature_kwargs(setup.features),
     )
 
 
@@ -578,7 +616,10 @@ OPENCODE_QUESTION = QuestionRelay(
         format_question_prompt([], "{request_id}").splitlines()[0], token="request_id"
     ),
     answered=lambda request: Notice(
-        f"OpenCode question `{request['token']}` answered."
+        QUESTION_ANSWERED_TEMPLATE.format(request_id=request["token"])
+    ),
+    rejected=lambda request: Notice(
+        QUESTION_REJECTED_TEMPLATE.format(request_id=request["token"])
     ),
 )
 

@@ -9,17 +9,22 @@ from typing import Any
 
 import band.adapters.opencode
 from band.core.simple_adapter import SimpleAdapter
+from band.core.types import AdapterFeatures, ApprovalMode
+from band.platform.link import BandLink
+from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.agents import Adapter
 from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.approvalroom import ApprovalRoom
 from tests.e2e.baseline.smoke.samples.approvals import (
     DIALECTS,
+    MANUAL_APPROVAL,
     AgentSetup,
     Outcome,
 )
 from tests.e2e.baseline.timeouts import SlowTurnBudget, slow_turn_budget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.invocations import InvocationObserver
 from tests.e2e.baseline.toolkit.logs import sdk_logs_at
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
@@ -27,26 +32,13 @@ from tests.e2e.baseline.toolkit.provisioning import (
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
-
-def readback_commands(target: Path) -> frozenset[str]:
-    """The one optional read-only follow-up seen from coding agents after a write."""
-    return frozenset(
-        {
-            f"cat {target.name}",
-            f'cat "{target.name}"',
-            f'Get-Content "{target.name}"',
-            f'Get-Content -LiteralPath "{target}"',
-        }
-    )
-
-
 TURN_BUDGET_S = BaselineSettings().e2e_timeout
 
 BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=2)
 
 THREE_BARRIERS = slow_turn_budget(TURN_BUDGET_S, barriers=3)
 
-QUEUED_WORK_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=5)
+QUEUED_WORK_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=6)
 
 EXPIRING_WAIT_S = 10.0
 
@@ -71,11 +63,19 @@ async def approval_room(
     wait_timeout_s: float = PATIENT_WAIT_S,
     approvers: frozenset[str] | None = None,
     build: Callable[[BaselineSettings, AgentSetup], SimpleAdapter[Any]] | None = None,
+    session_config: SessionConfig | None = None,
+    observer: InvocationObserver | None = None,
+    link_factory: Callable[..., BandLink] = BandLink,
+    features: AdapterFeatures | None = None,
+    approval: ApprovalMode = MANUAL_APPROVAL,
 ) -> AsyncIterator[tuple[ApprovalRoom, Path]]:
-    """Run the cell's agent in a fresh room and workdir: in manual approval mode,
-    or as ``build`` makes it."""
+    """Run the cell's agent in a fresh room and workdir: in ``approval`` mode
+    with ``features``, or as ``build`` makes it, under ``session_config`` over a
+    ``link_factory`` link, with its turns watched by ``observer``."""
     dialect = DIALECTS[Adapter(cell.adapter_id)]
-    for dep in dialect.extra_deps:
+    # They make the backend raise an ask, which only a manual room decides.
+    asking_deps = dialect.extra_deps if approval == MANUAL_APPROVAL else ()
+    for dep in asking_deps:
         require_dep(dep, cell.settings)
     # OpenCode's turn-phase records are content-free INFO lines; a failing
     # cell's captured log then shows where its turn stopped. Scoped to that
@@ -85,13 +85,26 @@ async def approval_room(
         tempfile.TemporaryDirectory(
             prefix="band-e2e-approval-", dir=dialect.workdir_root(cell.settings)
         ) as workdir,
+        tempfile.TemporaryDirectory(prefix="band-e2e-native-home-") as native_home,
     ):
         # Resolved: a symlinked temp root (macOS /var) reads as an outside dir.
         root = Path(workdir).resolve()
-        setup = AgentSetup(root, wait_timeout_s, approvers)
+        setup = AgentSetup(
+            root,
+            wait_timeout_s,
+            approvers,
+            features=features,
+            approval=approval,
+            native_home=Path(native_home),
+        )
         adapter = (build or dialect.build)(cell.settings, setup)
         async with running_provisioned_agent(
-            adapter, cell.resources, label=f"approval-{label}"
+            adapter,
+            cell.resources,
+            label=f"approval-{label}",
+            session_config=session_config,
+            observer=observer,
+            link_factory=link_factory,
         ) as agent:
             room_id = await cell.resources.provision_room(
                 title=f"e2e-approval-{cell.adapter_id}-{label}",

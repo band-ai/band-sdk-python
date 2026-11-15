@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import json
-import logging
-from collections.abc import Callable, Mapping
-from typing import Any
-
-from websockets.asyncio.client import connect
+from collections.abc import Callable
+from typing import Any, TypeGuard
 
 CONNECTION_CONFLICT_CODE = "connection_conflict"
 
@@ -42,7 +39,7 @@ class WebSocketUpgradeError(Exception):
         status_code = getattr(response, "status_code", None)
         if status_code is None:
             status_code = getattr(exc, "status_code", None)
-        if not isinstance(status_code, int) or status_code not in {400, 409, 429, 503}:
+        if not _is_int(status_code):
             return None
 
         headers = getattr(response, "headers", None) or getattr(exc, "headers", None)
@@ -56,7 +53,7 @@ class WebSocketUpgradeError(Exception):
         message = error.get("message")
         request_id = error.get("request_id")
         retry_after = _parse_retry_after(error.get("retry_after"))
-        if status_code == 429 and retry_after is None and headers is not None:
+        if retry_after is None and headers is not None:
             retry_after = _parse_retry_after(_get_header(headers, "Retry-After"))
 
         return cls(
@@ -66,27 +63,6 @@ class WebSocketUpgradeError(Exception):
             request_id=redact(request_id) if isinstance(request_id, str) else None,
             retry_after=retry_after,
         )
-
-
-async def probe_upgrade_error(
-    websocket_url: str,
-    headers: Mapping[str, str],
-    *,
-    logger: logging.Logger,
-    redact: Callable[[str], str],
-) -> WebSocketUpgradeError | None:
-    """Recover a platform upgrade error hidden by the Phoenix client
-    supervisor's generic PHXConnectionError, via a fresh live-socket
-    handshake (blocks for up to open_timeout=5s) -- the supervisor's own
-    exception carries no HTTP status of its own to classify. ``headers`` must
-    authenticate the probe exactly as the attempt it re-runs."""
-    try:
-        async with connect(
-            websocket_url, additional_headers=headers, open_timeout=5, logger=logger
-        ):
-            return None
-    except Exception as probe_exc:  # noqa: BLE001 -- normalizes an arbitrary transport/parse failure into a typed client error
-        return WebSocketUpgradeError.from_exception(probe_exc, redact=redact)
 
 
 def _decode_upgrade_error_body(body: Any) -> dict[str, Any]:
@@ -101,14 +77,20 @@ def _decode_upgrade_error_body(body: Any) -> dict[str, Any]:
     return decoded if isinstance(decoded, dict) else {}
 
 
+def _is_int(value: object) -> TypeGuard[int]:
+    """Return whether ``value`` is an int other than a ``bool``."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _parse_retry_after(value: Any) -> int | None:
-    if isinstance(value, int):
-        return value
+    """Read a whole-second retry hint; anything else, negatives included, is no hint."""
     if isinstance(value, str):
         try:
-            return int(value)
+            value = int(value)
         except ValueError:
             return None
+    if _is_int(value) and value >= 0:
+        return value
     return None
 
 

@@ -14,10 +14,10 @@ from tests.runtime.activity.kit import ActivityPeer, activity_context
 from tests.runtime.helpers import (
     IDLE,
     KEEP_ALIVE,
-    STOP_ECHO,
     ActivityReport,
     running_execution,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestActivityCleanup:
@@ -43,7 +43,7 @@ class TestActivityCleanup:
         async with activity_context(peer, handler, observer, enabled=False) as ctx:
             async with asyncio.TaskGroup() as tasks:
                 turn = tasks.create_task(
-                    ctx._process_event(make_message_event(msg_id="trigger"))
+                    attempt_delivery(ctx, make_message_event(msg_id="trigger"))
                 )
                 await started.wait()
                 peer.stopped = True
@@ -55,12 +55,14 @@ class TestActivityCleanup:
                 await cleaned_up.wait()
 
             assert cleaned_up.is_set()
-            observer.assert_awaited_once()
+            observer.assert_not_awaited()
             assert peer.requested("processed") == []
             assert peer.requested("failed") == []
 
     @pytest.mark.looptime
-    async def test_activity_refusal_preserves_native_stop_cleanup(self) -> None:
+    async def test_activity_refusal_preserves_native_stop_cleanup(
+        self,
+    ) -> None:
         peer = ActivityPeer()
         started = asyncio.Event()
         reports_at_cleanup: list[ActivityReport] = []
@@ -79,7 +81,7 @@ class TestActivityCleanup:
         async with activity_context(peer, handler, observer) as ctx:
             async with asyncio.TaskGroup() as tasks:
                 turn = tasks.create_task(
-                    ctx._process_event(make_message_event(msg_id="trigger"))
+                    attempt_delivery(ctx, make_message_event(msg_id="trigger"))
                 )
                 await started.wait()
                 peer.stopped = True
@@ -89,9 +91,9 @@ class TestActivityCleanup:
                 release.set()
                 await turn
 
-            # The final idle report follows the cleanup it reports on.
-            assert reports_at_cleanup == [KEEP_ALIVE, STOP_ECHO]
-            assert peer.activity_reports == [*reports_at_cleanup, IDLE]
+            # Revocation clears reporting while native cleanup remains owned.
+            assert reports_at_cleanup == [KEEP_ALIVE, IDLE]
+            assert peer.activity_reports == [KEEP_ALIVE, IDLE]
             observer.assert_not_awaited()
             assert peer.marked("processing") == ["trigger"]
             assert peer.requested("processed") == []
@@ -119,7 +121,7 @@ class TestActivityCleanup:
 
         async with activity_context(peer, handler, AsyncMock(), enabled=False) as ctx:
             turn = asyncio.create_task(
-                ctx._process_event(make_message_event(msg_id="trigger"))
+                attempt_delivery(ctx, make_message_event(msg_id="trigger"))
             )
             await cleaning.wait()
             release.set()

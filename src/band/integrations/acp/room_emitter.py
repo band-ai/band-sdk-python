@@ -3,23 +3,34 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Self
+
+from band_sdk_core import AgentFailure
 
 from band.core.content import has_visible_content
 from band.core.protocols import AgentToolsProtocol, send_event_safe
-from band.core.types import Emit, MessageType
+from band.core.types import Emit, MessageType, PermissionEventKey
 from band.integrations.acp.types import (
+    ACP_FAILURE_PROVIDER,
+    REFUSAL_FAILURE_CODE,
+    REFUSAL_FAILURE_MESSAGE,
+    ACPToolActivity,
     ACPToolCall,
     ACPToolResult,
     ChunkType,
     CollectedChunk,
     ToolStatus,
 )
+from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME, retain_request_permission
+from band.runtime.toolactivity import (
+    end_activity,
+    rename_native_tool_activity,
+    start_native_tool_activity,
+)
 from band.runtime.tools import TurnEffect, turn_effect
 
 logger = logging.getLogger(__name__)
-
-ACP_SESSION_CLOSED_EVENT = "ACP client session"
 
 
 class RoomTurnEmitter:
@@ -40,25 +51,24 @@ class RoomTurnEmitter:
     in the room.
 
     On clean close, held text is optional thought telemetry unless a tool
-    replied or declined. The resume-state task follows; runtime judging may
-    subsequently report a missing reply.
+    replied or declined. A prompt the agent refused instead fails the turn
+    with that text, unless the turn already replied or declined; runtime
+    judging may subsequently report a missing reply. The session's resume
+    record is state, not narration, so the adapter posts it after the close,
+    outside this emitter.
 
     Which narration kinds reach the room is controlled by the emit set passed
-    at construction (``None``: all kinds — the historical default). The closing
-    bookkeeping ``task`` event is state, not narration, and is posted regardless
-    of the emit set: ``ACPClientHistoryConverter`` reads its metadata to rebuild
-    the room→session map, so gating it would silently disable ``session/load``
-    resume after a restart.
+    at construction (``None``: all kinds — the historical default). The tool
+    calls the agent runs show as the turn's activity whatever that set is.
     """
 
     def __init__(
         self,
         tools: AgentToolsProtocol,
         *,
-        session_id: str,
-        room_id: str,
         emit: frozenset[Emit] | None = None,
         records_tool_effects: bool = False,
+        activity_name: Callable[[ACPToolActivity], str | None] | None = None,
     ) -> None:
         """``records_tool_effects``: the turn's tools run out of process, so
         each completed call's effect is recorded on the turn from the stream.
@@ -68,8 +78,8 @@ class RoomTurnEmitter:
         the work streamed during it, which may belong to another turn.
         """
         self._tools = tools
-        self._session_id = session_id
-        self._room_id = room_id
+        self._activity_name = activity_name
+        self._local_calls: set[str] = set()
         self._records_tool_effects = records_tool_effects
         # ``None``: post every kind (the historical behavior). Adapters pass
         # their resolved ``features.emit`` so a caller's ``emit=`` narrowing
@@ -77,6 +87,11 @@ class RoomTurnEmitter:
         self._emit = frozenset(emit) if emit is not None else frozenset(Emit)
         self._pending_text: list[str] = []
         self._staged_effects: list[TurnEffect] = []
+        self._refused = False
+
+    def refused(self) -> None:
+        """Record that the agent refused the prompt, for the close to report."""
+        self._refused = True
 
     async def emit(self, chunk: CollectedChunk) -> None:
         self._stage_tool_outcome(chunk)
@@ -114,6 +129,32 @@ class RoomTurnEmitter:
                     chunk.chunk_type,
                 )
 
+    def _native_name(self, call: ACPToolActivity) -> str | None:
+        if call.tool_call_id in self._local_calls:
+            return None
+        name = (
+            self._activity_name(call)
+            if self._activity_name
+            else UNKNOWN_ACTIVITY_TOOL_NAME
+        )
+        if name is None:
+            self._local_calls.add(call.tool_call_id)
+        return name
+
+    async def tool_started(self, call: ACPToolActivity) -> None:
+        if (name := self._native_name(call)) is not None:
+            await start_native_tool_activity(self._tools, call.tool_call_id, name)
+
+    async def tool_updated(self, call: ACPToolActivity) -> None:
+        name = self._native_name(call)
+        if name is None:
+            await end_activity(self._tools, call.tool_call_id)
+        else:
+            await rename_native_tool_activity(self._tools, call.tool_call_id, name)
+
+    async def tool_ended(self, tool_call_id: str) -> None:
+        await end_activity(self._tools, tool_call_id)
+
     def _stage_tool_outcome(self, chunk: CollectedChunk) -> None:
         """Stage successful external effects until the prompt closes cleanly."""
         if not self._records_tool_effects:
@@ -128,6 +169,9 @@ class RoomTurnEmitter:
         if isinstance(chunk.tool, (ACPToolCall, ACPToolResult)):
             return chunk.tool.room_event().model_dump_json()
         raise RuntimeError("ACP tool chunk is missing normalized tool activity")
+
+    def retain_manual_request(self) -> None:
+        retain_request_permission(self._tools)
 
     async def open_permission(
         self,
@@ -148,11 +192,11 @@ class RoomTurnEmitter:
         if Emit.TOOL_CALLS not in self._emit:
             return
         metadata: dict[str, object] = {
-            "permission_request": True,
-            "tool_name": call.name,
-            "tool_call_id": call.tool_call_id,
+            PermissionEventKey.REQUEST: True,
+            PermissionEventKey.TOOL_NAME: call.name,
+            PermissionEventKey.TOOL_CALL_ID: call.tool_call_id,
             "acp_session_id": session_id,
-            "auto_allowed": False,
+            PermissionEventKey.AUTO_ALLOWED: False,
         }
         await self._tools.send_event(
             content=call.room_event().model_dump_json(),
@@ -167,21 +211,23 @@ class RoomTurnEmitter:
         await self._tools.send_event(
             content=result.room_event().model_dump_json(),
             message_type="tool_result",
-            metadata={**metadata, "permission_outcome": outcome},
+            metadata={**metadata, PermissionEventKey.OUTCOME: outcome},
         )
 
     async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        # A failed turn is handled by on_message (error event + respawn); post
-        # neither the held text nor the bookkeeping event.
+        # A failed turn is handled by on_message (error event + respawn); the
+        # held text is not posted.
         if exc_type is not None:
             return False
         for effect in self._staged_effects:
             self._tools.turn.record(effect)
         text = "\n\n".join(self._pending_text)
-        if (
+        if self._refused:
+            await self._report_refusal(text)
+        elif (
             not self._tools.turn.replied
             and Emit.THOUGHTS in self._emit
             and has_visible_content(text)
@@ -192,17 +238,19 @@ class RoomTurnEmitter:
                 message_type=MessageType.THOUGHT,
                 log_label="ACP closing thought",
             )
-        # Posted regardless of the emit set: this is resume state read back by
-        # ACPClientHistoryConverter, not narration (only PLAN chunks follow
-        # Emit.TASK_EVENTS).
-        await send_event_safe(
-            self._tools,
-            content=ACP_SESSION_CLOSED_EVENT,
-            message_type="task",
-            metadata={
-                "acp_client_session_id": self._session_id,
-                "acp_client_room_id": self._room_id,
-            },
-            log_label=ACP_SESSION_CLOSED_EVENT,
-        )
         return False
+
+    async def _report_refusal(self, text: str) -> None:
+        """Fail a refused turn with the agent's text unless it is complete.
+
+        A turn that already replied or declined is complete.
+        """
+        if self._tools.turn.replied:
+            return
+        await self._tools.send_failure(
+            AgentFailure(
+                ACP_FAILURE_PROVIDER,
+                text if has_visible_content(text) else REFUSAL_FAILURE_MESSAGE,
+                REFUSAL_FAILURE_CODE,
+            )
+        )

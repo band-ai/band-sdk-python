@@ -19,6 +19,7 @@ from band.integrations.opencode.types import (
     OpencodeSessionState,
 )
 from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.approvals.kit import (
     DECLINED,
@@ -105,7 +106,7 @@ class TestExpiry:
             ),
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await deliver_message(
@@ -149,7 +150,7 @@ class TestExpiry:
         stays parked, a redelivery of that id is refused, and abandoning the turn
         doesn't cancel the reply; it lands exactly once, with its notice."""
         client = BlockingReplyClient(case.operation)
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         room = make_room_approvals(
             client,
             tools=tools,
@@ -194,7 +195,9 @@ class TestExpiry:
             ApprovalPorts(
                 room_id="room-1",
                 client=lambda: client["current"],
-                tools=lambda: cast(AgentToolsProtocol, FakeAgentTools()),
+                tools=lambda: cast(
+                    AgentToolsProtocol, FakeAgentTools(participants=ROOM_MEMBERS)
+                ),
                 turn_mentions=list,
                 release_turn_wait=lambda: None,
                 fail_turn=lambda _message: None,

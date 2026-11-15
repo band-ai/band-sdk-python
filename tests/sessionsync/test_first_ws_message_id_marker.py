@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 
 from band.runtime.execution import ExecutionContext
-from tests.conftest import make_message_event
+from tests.conftest import (
+    make_message_event,
+)
 
 
 class TestFirstWsMessageIdMarker:
@@ -25,12 +27,13 @@ class TestFirstWsMessageIdMarker:
     @pytest.mark.asyncio
     async def test_first_event_sets_marker(self, ctx):
         """First enqueued message event should set _first_ws_msg_id."""
-        assert ctx._first_ws_msg_id is None
+        assert ctx.scheduler.first_ws_id is None
 
         event = make_message_event(msg_id="msg-001")
         await ctx.on_event(event)
 
-        assert ctx._first_ws_msg_id == "msg-001"
+        ctx.scheduler.absorb()
+        assert ctx.scheduler.first_ws_id == "msg-001"
 
     @pytest.mark.asyncio
     async def test_subsequent_event_does_not_change_marker(self, ctx):
@@ -44,7 +47,8 @@ class TestFirstWsMessageIdMarker:
         await ctx.on_event(event3)
 
         # Should still be first message
-        assert ctx._first_ws_msg_id == "msg-001"
+        ctx.scheduler.absorb()
+        assert ctx.scheduler.first_ws_id == "msg-001"
 
     @pytest.mark.asyncio
     async def test_marker_preserved_after_queue_empty(self, ctx):
@@ -53,8 +57,9 @@ class TestFirstWsMessageIdMarker:
         await ctx.on_event(event)
 
         # Drain the queue
-        ctx.queue.get_nowait()
+        ctx.scheduler.receive(ctx.queue.get_nowait())
         assert ctx.queue.empty()
 
         # Marker should still be set
-        assert ctx._first_ws_msg_id == "msg-001"
+        ctx.scheduler.absorb()
+        assert ctx.scheduler.first_ws_id == "msg-001"

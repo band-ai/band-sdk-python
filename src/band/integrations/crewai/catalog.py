@@ -20,6 +20,7 @@ from pydantic import BaseModel, field_validator
 from band.core.protocols import AgentToolsProtocol
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.integrations.crewai.reporting import CrewAIToolReporter
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
     BandTool,
     file_content_placeholder,
@@ -31,6 +32,10 @@ from band.runtime.tools import (
 )
 
 # --- Rendering a tool result as the text CrewAI hands the model ---
+
+ENVELOPE_STATUS_KEY = "status"
+ENVELOPE_SUCCESS = "success"
+ENVELOPE_ERROR = "error"
 
 
 def serialize_success_result(result: Any) -> str:
@@ -45,11 +50,13 @@ def serialize_success_result(result: Any) -> str:
     if isinstance(result, dict):
         payload = dict(result)
         result_status = payload.pop("status", None)
-        response: dict[str, Any] = {"status": "success", **payload}
+        response: dict[str, Any] = {ENVELOPE_STATUS_KEY: ENVELOPE_SUCCESS, **payload}
         if result_status is not None:
             response["result_status"] = result_status
         return json.dumps(response, default=str)
-    return json.dumps({"status": "success", "result": result}, default=str)
+    return json.dumps(
+        {ENVELOPE_STATUS_KEY: ENVELOPE_SUCCESS, "result": result}, default=str
+    )
 
 
 def as_json(result: Any) -> str:
@@ -75,7 +82,7 @@ def text_or_success(result: Any) -> str:
 
 def succeeded(message: str, **fields: Any) -> dict[str, Any]:
     """The success envelope for a tool whose result is the fact that it ran."""
-    return {"status": "success", "message": message, **fields}
+    return {ENVELOPE_STATUS_KEY: ENVELOPE_SUCCESS, "message": message, **fields}
 
 
 # --- Tool declaration ---
@@ -288,9 +295,10 @@ async def _send_event(call: Invocation, **kwargs: Any) -> Any:
     # bypassing args_schema, and _execute_tool turns the ValueError into the
     # error result the caller expects.
     args = validate_tool_arguments(BandTool.SEND_EVENT, SEND_EVENT_ARGS_SCHEMA, kwargs)
-    await call.tools.send_event(
-        args["content"], args["message_type"], metadata=args.get("metadata")
-    )
+    async with tool_activity(call.tools, BandTool.SEND_EVENT):
+        await call.tools.send_event(
+            args["content"], args["message_type"], metadata=args.get("metadata")
+        )
     return succeeded("Event sent")
 
 
@@ -315,7 +323,11 @@ async def _remove_participant(call: Invocation, *, identifier: str = "") -> Any:
 async def _get_participants(call: Invocation) -> Any:
     participants = await call.tools.get_participants()
     serialized, count = _plain_participants(participants)
-    return {"status": "success", "participants": serialized, "count": count}
+    return {
+        ENVELOPE_STATUS_KEY: ENVELOPE_SUCCESS,
+        "participants": serialized,
+        "count": count,
+    }
 
 
 def _plain_participants(participants: Any) -> tuple[Any, int]:

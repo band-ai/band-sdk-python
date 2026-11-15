@@ -14,6 +14,7 @@ from acp.schema import (
     LoadSessionResponse,
     NewSessionResponse,
     SetSessionConfigOptionResponse,
+    StopReason,
 )
 
 from band.integrations.acp.collecting import ACPCollectingClient
@@ -22,7 +23,7 @@ from band.integrations.acp.session_config import (
     SessionConfigOption,
     session_config_options,
 )
-from band.integrations.acp.stream import ChunkSink
+from band.integrations.acp.stream import TurnSink
 from band.integrations.acp.transport import ACPConnectionProtocol
 from band.integrations.acp.types import CollectedChunk
 from band.integrations.mcp.backends import BandMCPTransport
@@ -202,13 +203,27 @@ class ACPSessionOperations(ABC):
         *,
         session_id: str,
         prompt_text: str,
-        on_chunk: ChunkSink | None = None,
+        sink: TurnSink | None = None,
     ) -> list[CollectedChunk]:
+        """Run one prompt to its end and return the chunks it collected."""
+        await self.prompt_turn(
+            session_id=session_id, prompt_text=prompt_text, sink=sink
+        )
+        return self.get_collected_chunks(session_id)
+
+    async def prompt_turn(
+        self,
+        *,
+        session_id: str,
+        prompt_text: str,
+        sink: TurnSink | None = None,
+    ) -> StopReason:
+        """Run one prompt to its end and return why the agent stopped."""
         conn = await self.ensure_connection()
-        if on_chunk is not None and self._client is not None:
-            self._client.set_sink(session_id, on_chunk)
+        if sink is not None and self._client is not None:
+            self._client.set_sink(session_id, sink)
         try:
-            await self._request(
+            response = await self._request(
                 conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
             )
             if self._client is not None:
@@ -216,7 +231,7 @@ class ACPSessionOperations(ABC):
         finally:
             if self._client is not None:
                 self._client.set_sink(session_id, None)
-        return self.get_collected_chunks(session_id)
+        return response.stop_reason
 
     async def cancel_turn(self, session_id: str) -> None:
         """Tell the agent to stop a room's in-flight prompt."""

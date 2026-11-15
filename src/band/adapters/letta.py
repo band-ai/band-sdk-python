@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ClassVar
@@ -14,9 +15,11 @@ from pydantic_core import to_jsonable_python
 from typing_extensions import Unpack
 
 from band.converters.letta import LettaHistoryConverter, LettaSessionState
+from band.core.content import has_visible_content
 from band.core.delivery import (
     DeliveryFailedError,
-    relay_reply,
+    automatic_mentions,
+    finish_automatic_reply,
     reraise_delivery_cause,
 )
 from band.core.protocols import (
@@ -25,7 +28,8 @@ from band.core.protocols import (
     AgentToolsProtocol,
     TurnResultAlreadyReported,
 )
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
+from band.core.timestamps import assume_utc
 from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
     AdapterFeatures,
@@ -35,6 +39,8 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    distinct_sender_ids,
+    ids_of,
 )
 from band.integrations.letta.config import (
     LettaAdapterConfig,
@@ -45,11 +51,13 @@ from band.integrations.letta.config import (
 from band.integrations.letta.mcp import LettaMCPBridge, bounded_teardown
 from band.integrations.letta.orgscope import resolve_org_scoped_headers
 from band.integrations.letta.prompts import render_tool_enforcement
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
+from band.runtime.toolactivity import end_activity, start_memory_activity
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
-    iter_tool_definitions,
     redact_tool_call_args,
+    selected_tool_definitions,
     turn_effect,
 )
 
@@ -96,7 +104,7 @@ class RoomContext:
     stale_tools: bool = False
 
 
-class LettaAdapter(SimpleAdapter[LettaSessionState]):
+class LettaAdapter(BatchInputAdapter[LettaSessionState]):
     """
     Letta adapter using the Letta Python SDK (letta-client).
 
@@ -194,15 +202,13 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     def _build_mcp_bridge(self) -> LettaMCPBridge:
         return LettaMCPBridge(
             self.config.mcp,
-            tool_definitions=iter_tool_definitions(
-                capabilities=self.features.capabilities,
-            ),
+            tool_definitions=selected_tool_definitions(self.features),
             get_tools=self._get_room_tools,
             teardown_timeout_s=self.config.teardown_timeout_s,
         )
 
     def apply_effective_features(self, features: AdapterFeatures) -> None:
-        """Rebuild the unstarted MCP bridge with negotiated capabilities."""
+        """Rebuild the unstarted MCP bridge with negotiated features."""
         super().apply_effective_features(features)
         self._mcp = self._build_mcp_bridge()
 
@@ -295,9 +301,9 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     def backend_turns(self) -> BackendTurns[LettaRun]:
         return self._backend_turns
 
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: LettaSessionState,
         participants_msg: str | None,
@@ -306,9 +312,12 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Handle incoming message via Letta API with MCP tools."""
+        """Handle one turn over its original messages via Letta API with MCP tools."""
         if not self._client:
-            logger.error("Letta client not initialized, dropping message %s", msg.id)
+            logger.error(
+                "Letta client not initialized, dropping messages %s",
+                ids_of(messages),
+            )
             message = "Letta adapter not initialized"
             await tools.send_failure(AgentFailure(_PROVIDER, message))
             raise RuntimeError(message)
@@ -332,8 +341,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             )
             raise
 
-        await self._handle_message(
-            msg=msg,
+        await self._handle_turn(
+            messages=messages,
             tools=tools,
             history=history,
             participants_msg=participants_msg,
@@ -342,9 +351,9 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             room_id=room_id,
         )
 
-    async def _handle_message(
+    async def _handle_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: LettaSessionState,
         participants_msg: str | None,
@@ -361,14 +370,14 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             raise RuntimeError(message)
 
         content = self._compose_turn_content(
-            msg,
+            messages,
             room_ctx,
             participants_msg,
             contacts_msg,
             is_session_bootstrap=is_session_bootstrap,
             room_id=room_id,
         )
-        await self._run_turn(msg, tools, room_ctx, content, room_id)
+        await self._run_turn(messages, tools, room_ctx, content, room_id)
 
     async def _room_context(
         self,
@@ -388,7 +397,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
     def _compose_turn_content(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         room_ctx: RoomContext,
         participants_msg: str | None,
         contacts_msg: str | None,
@@ -402,7 +411,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         inline as ``[System]:`` lines: the one-shot cold-boot history seed, a
         rejoin note after absence, the shared-mode room-id hint (a shared
         instruction block cannot carry a per-room id), participants/contacts
-        updates, then the triggering message itself.
+        updates, then the turn's current inputs.
         """
         parts: list[str] = []
 
@@ -433,12 +442,12 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         if contacts_msg:
             parts.append(f"[System]: {contacts_msg}")
 
-        parts.append(msg.format_for_llm())
+        parts.append(format_current_inputs(messages))
         return "\n\n".join(parts)
 
     async def _run_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         room_ctx: RoomContext,
         content: str,
@@ -455,7 +464,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 tools=tools,
                 room_ctx=room_ctx,
                 room_id=room_id,
-                reply_to_sender_id=msg.sender_id,
+                reply_to_sender_ids=distinct_sender_ids(messages),
             )
         except DeliveryFailedError as e:
             reraise_delivery_cause(e)
@@ -480,7 +489,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         tools: AgentToolsProtocol,
         room_ctx: RoomContext,
         room_id: str,
-        reply_to_sender_id: str = "",
+        reply_to_sender_ids: Sequence[str] = (),
     ) -> list[str]:
         """Send message to Letta and observe tool execution events.
 
@@ -510,7 +519,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     room_ctx.tools = tools
                     try:
                         response_messages, turn_usage = await asyncio.wait_for(
-                            self._call_provider(run, messages),
+                            self._call_provider(run, messages, tools),
                             timeout=self.config.turn_timeout_s,
                         )
                     except TimeoutError:
@@ -545,7 +554,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 response_messages,
                 tools,
                 room_id,
-                reply_to_sender_id,
+                reply_to_sender_ids,
             )
         finally:
             # No-op unless Emit.USAGE is on; best-effort, never raises.
@@ -556,22 +565,61 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         return room_ctx.conversation_id if self.config.mode == "shared" else None
 
     async def _call_provider(
-        self, run: LettaRun, messages: list[dict[str, str]]
+        self, run: LettaRun, messages: list[dict[str, str]], tools: AgentToolsProtocol
     ) -> tuple[list[Any], TurnUsage]:
-        """Round-trip to the Letta API -- no response processing or delivery."""
-        if run.conversation_id:
-            conversation_stream = await run.client.conversations.messages.create(
-                conversation_id=run.conversation_id,
-                messages=messages,
-            )
-            response_messages = [resp_msg async for resp_msg in conversation_stream]
-            return response_messages, TurnUsage()
+        """Consume live provider phases; buffer durable output outside its timeout."""
+        stream = await self._open_stream(run, messages)
+        response_messages: list[Any] = []
+        usage = TurnUsage()
+        compaction: tuple[object, object, object] | None = None
+        try:
+            async for message in stream:
+                identity = (
+                    getattr(message, "run_id", None),
+                    getattr(message, "step_id", None),
+                )
+                match getattr(message, "message_type", None):
+                    case "error_message":
+                        raise RuntimeError("Letta stream reported a provider failure")
+                    case "event_message" if (
+                        getattr(message, "event_type", None) == "compaction"
+                    ):
+                        if getattr(message, "is_err", False):
+                            raise RuntimeError("Letta compaction failed")
+                        if compaction is None:
+                            token = object()
+                            compaction = (*identity, token)
+                            await start_memory_activity(tools, token)
+                    case "summary_message":
+                        if compaction is not None and compaction[:2] == identity:
+                            await end_activity(tools, compaction[2])
+                            compaction = None
+                    case "usage_statistics":
+                        if not run.conversation_id:
+                            usage = self._usage_from_statistics(message)
+                    case _:
+                        response_messages.append(message)
+            return response_messages, usage
+        finally:
+            try:
+                await stream.close()
+            finally:
+                if compaction is not None:
+                    await end_activity(tools, compaction[2])
 
-        response = await run.client.agents.messages.create(
-            agent_id=run.agent_id,
-            messages=messages,
-        )
-        return list(response.messages), self._usage_from_response(response)
+    @staticmethod
+    async def _open_stream(run: LettaRun, messages: list[dict[str, str]]) -> Any:
+        options = {
+            "messages": messages,
+            "streaming": True,
+            "stream_tokens": False,
+            "include_compaction_messages": True,
+        }
+        if run.conversation_id:
+            return await run.client.conversations.messages.create(
+                conversation_id=run.conversation_id, **options
+            )
+        return await run.client.agents.messages.create(agent_id=run.agent_id, **options)
 
     @staticmethod
     async def _cancel_runs(run: LettaRun) -> None:
@@ -586,7 +634,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         response_messages: list[Any],
         tools: AgentToolsProtocol,
         room_id: str,
-        reply_to_sender_id: str,
+        reply_to_sender_ids: Sequence[str],
     ) -> list[str]:
         """Observe Letta response messages: report tool events, auto-relay text.
 
@@ -594,11 +642,14 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         """
         final_text_parts: list[str] = []
         calls_awaiting_return: dict[str, Any] = {}
+        stop_reason: str | None = None
         for resp_msg in response_messages:
             match getattr(resp_msg, "message_type", None):
                 case "assistant_message":
                     if text := (getattr(resp_msg, "content", "") or ""):
                         final_text_parts.append(text)
+                case "stop_reason":
+                    stop_reason = resp_msg.stop_reason
                 case "tool_call_message":
                     # MCP tool calls executed server-side — observe only.
                     # tool_call alone holds only the first parallel call.
@@ -634,7 +685,14 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 room_id,
             )
         elif not final_text_parts:
-            logger.debug("Room %s: Letta turn complete, no output", room_id)
+            # The stop reason tells an empty model answer apart from a
+            # provider-side stop when the turn is then judged missing a reply.
+            logger.log(
+                logging.DEBUG if tools.turn.complete else logging.WARNING,
+                "Room %s: Letta turn produced no reply or text (stop_reason=%s)",
+                room_id,
+                stop_reason,
+            )
         elif not self.config.auto_relay:
             logger.error(
                 "Room %s: Agent did not call %s and auto-relay is disabled; "
@@ -643,14 +701,20 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 self._mcp.send_message_tool,
             )
         else:
-            final_text = "\n\n".join(final_text_parts)
-            mentions = [reply_to_sender_id] if reply_to_sender_id else None
             logger.warning(
                 "Room %s: Agent did not call %s — auto-relaying assistant text",
                 room_id,
                 self._mcp.send_message_tool,
             )
-            await relay_reply(tools, final_text, mentions=mentions)
+
+        reply = "\n\n".join(final_text_parts) if self.config.auto_relay else None
+        if not tools.turn.replied and (
+            has_visible_content(reply or "") or not tools.turn.complete
+        ):
+            mentions = await automatic_mentions(tools, reply_to_sender_ids)
+            if self._get_room_tools(room_id) is not tools:
+                raise asyncio.CancelledError
+            await finish_automatic_reply(tools, reply, mentions)
 
         return final_text_parts
 
@@ -912,6 +976,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         # Letta's Docker server requires an embedding model on agent create.
         if self.config.embedding:
             create_kwargs["embedding"] = self.config.embedding
+        if self.config.model_settings:
+            create_kwargs["model_settings"] = self.config.model_settings
 
         agent = await self._client.agents.create(**create_kwargs)
         agent_id = agent.id
@@ -1213,15 +1279,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _usage_from_response(response: Any) -> TurnUsage:
-        """Map a Letta ``LettaResponse.usage`` (a ``Usage``) onto TurnUsage.
-
-        Field names verified against letta-client: ``prompt_tokens`` /
-        ``completion_tokens`` / ``cached_input_tokens`` / ``cache_write_tokens``.
-        A missing ``usage`` yields empty usage.
-        """
+    def _usage_from_statistics(statistics: Any) -> TurnUsage:
+        """Map terminal stream usage statistics onto TurnUsage."""
         return TurnUsage.from_object(
-            getattr(response, "usage", None),
+            statistics,
             input="prompt_tokens",
             output="completion_tokens",
             cache_read="cached_input_tokens",
@@ -1231,11 +1292,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     @staticmethod
     def _format_time_ago(dt: datetime) -> str:
         """Format a datetime as a human-readable time-ago string."""
-        now = datetime.now(UTC)
-        # Ensure dt is timezone-aware for comparison
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        delta = now - dt
+        delta = datetime.now(UTC) - assume_utc(dt)
         total_seconds = int(delta.total_seconds())
         if total_seconds < 60:
             return f"{total_seconds}s"

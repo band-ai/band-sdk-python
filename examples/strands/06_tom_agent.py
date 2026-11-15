@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[strands]>=5.0.1"]
+# dependencies = ["band-sdk[strands]>=6.0.1"]
 # ///
 """
 Tom the cat agent - tries to catch Jerry!

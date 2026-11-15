@@ -16,12 +16,14 @@ class Adapter(StrEnum):
     single-sourced while their construction and execution paths remain separate.
     """
 
+    ANTIGRAVITY_ACP = "antigravity_acp"
     ANTHROPIC = "anthropic"
     CLAUDE_SDK = "claude_sdk"
     COPILOT_SDK = "copilot_sdk"
     COPILOT_ACP = "copilot_acp"
     CURSOR_ACP = "cursor_acp"
     OMP_ACP = "omp_acp"
+    OMP = "omp"
     LANGGRAPH = "langgraph"
     PYDANTIC_AI = "pydantic_ai"
     GEMINI = "gemini"

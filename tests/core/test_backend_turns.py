@@ -126,13 +126,16 @@ class TestBackendTurns:
         self, turns: BackendTurns[str], cancel: RecordingCancel
     ) -> None:
         cancel.hold()
-        async with turns.running(ROOM, HANDLE):
-            turns.cancel(ROOM)
-            await cancel.entered.wait()
-            assert cancel.sent == [HANDLE]
-            assert cancel.finished == []
-        cancel.release.set()
-        await turns.drain()
+        try:
+            async with turns.running(ROOM, HANDLE):
+                turns.cancel(ROOM)
+                await cancel.entered.wait()
+                turns.cancel(ROOM)
+                assert cancel.sent == [HANDLE]
+                assert cancel.finished == []
+        finally:
+            cancel.release.set()
+            await turns.drain()
 
         assert cancel.finished == [HANDLE]
 

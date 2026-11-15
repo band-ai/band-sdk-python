@@ -76,9 +76,3 @@ def parse_question_answers(content: str, question_count: int) -> list[list[str]]
     if len(lines) < question_count:
         return None
     return [[line] for line in lines[:question_count]]
-
-
-def is_question_rejection(command: str) -> bool:
-    """Whether a room reply rejects a question rather than answering it."""
-    parsed = parse_permission_reply(command)
-    return parsed is not None and parsed.rejects

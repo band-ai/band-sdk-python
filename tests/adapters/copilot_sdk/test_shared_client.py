@@ -10,6 +10,7 @@ from band.testing.platform import platform_connection_stub
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
+    is_fresh_session_id,
     make_started_adapter,
     requires_copilot_sdk,
     run_message,
@@ -45,7 +46,13 @@ class TestSharedClient:
             jerry, ToolSchemaFakeTools(), room_id="room-1", content="for Jerry"
         )
 
-        assert [s.session_id for s in shared.sessions] == ["tom-room-1", "jerry-room-1"]
+        tom_session, jerry_session = shared.sessions
+        assert is_fresh_session_id(
+            tom_session.session_id, prefix="tom-", room_id="room-1"
+        )
+        assert is_fresh_session_id(
+            jerry_session.session_id, prefix="jerry-", room_id="room-1"
+        )
         assert "for Jerry" not in shared.sessions[0].prompts[0]
         assert "for Tom" not in shared.sessions[1].prompts[0]
 
@@ -68,8 +75,13 @@ class TestSharedClient:
         await run_message(tom, ToolSchemaFakeTools(), room_id="room-1")
         await run_message(jerry, ToolSchemaFakeTools(), room_id="room-1")
 
-        ids = [session.session_id for session in shared.sessions]
-        assert ids == ["band-agent-tom-id-room-1", "band-agent-jerry-id-room-1"]
+        tom_session, jerry_session = shared.sessions
+        assert is_fresh_session_id(
+            tom_session.session_id, prefix="band-agent-tom-id-", room_id="room-1"
+        )
+        assert is_fresh_session_id(
+            jerry_session.session_id, prefix="band-agent-jerry-id-", room_id="room-1"
+        )
 
     @pytest.mark.asyncio
     async def test_borrowed_client_never_stopped(self):

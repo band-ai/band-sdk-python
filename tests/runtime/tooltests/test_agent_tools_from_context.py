@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from band.runtime.tools import (
-    AgentTools,
-)
+from band.runtime.tools import AgentTools
 
 
 class TestAgentToolsFromContext:
     """Test AgentTools.from_context() factory method."""
 
-    def test_from_context_creates_tools(self, mock_rest_client, participants):
+    def test_from_context_creates_tools(
+        self, mock_rest_client: MagicMock, participants: list[dict[str, str]]
+    ) -> None:
         """from_context() should create AgentTools from ExecutionContext."""
         # Mock ExecutionContext
         mock_ctx = MagicMock()

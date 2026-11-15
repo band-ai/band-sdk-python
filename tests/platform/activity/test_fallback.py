@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+from unittest.mock import Mock
+
+import httpx
+import pytest
+from band_rest import AgentActivityDetail
+
+from band.platform.activity import ActivitySupport
+from band.platform.link import BandLink
+from tests.activitysupport import BOOLEAN_BODY, DETAIL_BODY
+from tests.platform.activity.kit import ActivityPeer
+
+
+@pytest.mark.usefixtures("learned")
+class TestActivityFallback:
+    @pytest.mark.parametrize(
+        "body", [b'{"errors":{"activity":["unknown"]}}', b"not json", b""]
+    )
+    async def test_422_retries_without_detail_and_latches_across_links(
+        self,
+        link: BandLink,
+        second_link: BandLink,
+        activity_peer: ActivityPeer,
+        detail: AgentActivityDetail,
+        body: bytes,
+    ) -> None:
+        activity_peer.responses.append(httpx.Response(422, content=body))
+        assert await link.report_activity("first", True, activity=detail)
+        assert await second_link.report_activity("second", True, activity=detail)
+        assert activity_peer.reports == [
+            DETAIL_BODY,
+            BOOLEAN_BODY,
+            BOOLEAN_BODY,
+        ]
+
+    @pytest.mark.parametrize(
+        ("working", "with_detail"),
+        [(True, False), (False, True)],
+        ids=["no-detail", "idle"],
+    )
+    async def test_422_without_detail_neither_retries_nor_latches(
+        self,
+        link: BandLink,
+        activity_peer: ActivityPeer,
+        learned: ActivitySupport,
+        detail: AgentActivityDetail,
+        working: bool,
+        with_detail: bool,
+    ) -> None:
+        activity_peer.responses.append(httpx.Response(422))
+        activity = detail if with_detail else None
+        assert not await link.report_activity("room", working, activity=activity)
+        assert len(activity_peer.reports) == 1
+        assert learned.supported
+
+    @pytest.mark.parametrize("status", [400, 403, 500])
+    async def test_other_errors_do_not_retry_or_disable(
+        self,
+        link: BandLink,
+        activity_peer: ActivityPeer,
+        detail: AgentActivityDetail,
+        status: int,
+    ) -> None:
+        activity_peer.responses.append(
+            httpx.Response(status, json={"error": "failure"})
+        )
+        assert not await link.report_activity("room", True, activity=detail)
+        assert await link.report_activity("room", True, activity=detail)
+        assert activity_peer.reports == [DETAIL_BODY] * 2
+
+    async def test_fallback_echoed_false_keeps_stop_notification(
+        self, link: BandLink, activity_peer: ActivityPeer, detail: AgentActivityDetail
+    ) -> None:
+        activity_peer.responses.extend(
+            [
+                httpx.Response(422),
+                httpx.Response(200, json={"data": {"working": False}}),
+            ]
+        )
+        stopped = Mock()
+        assert await link.report_activity(
+            "room", True, activity=detail, on_stopped=stopped
+        )
+        stopped.assert_called_once_with()
+        assert activity_peer.reports[-1] == BOOLEAN_BODY

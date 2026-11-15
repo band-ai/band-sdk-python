@@ -25,17 +25,29 @@ from band.adapters.parlant.messages import (
     live_preamble_tasks,
     post_user_message,
     process_session_tag,
+    processing_task,
 )
 from band.adapters.parlant.responses import relay_agent_response
 from band.adapters.parlant.rooms import RoomSessions
 from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn_lifecycle import BackendTurns
-from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
+from band.core.types import (
+    Capability,
+    Emit,
+    FeatureKwargs,
+    PlatformMessage,
+    distinct_sender_ids,
+    ids_of,
+)
 from band.integrations.parlant.customschema import check_parlant_custom_tools
-from band.integrations.parlant.sessiontools import bound_session_tools
+from band.integrations.parlant.sessiontools import (
+    EngineOrigin,
+    bound_session_tools,
+    capture_engine_origin,
+)
 from band.integrations.parlant.tools import create_parlant_tools
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 
@@ -68,9 +80,10 @@ class ParlantSessionTurn:
 
     background_tasks: BackgroundTaskService
     session_id: SessionId
+    origin: EngineOrigin
 
 
-class ParlantAdapter(SimpleAdapter[ParlantMessages]):
+class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
     """
     Parlant adapter using the official Parlant SDK directly.
 
@@ -187,6 +200,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         self._rooms: RoomSessions | None = None
         self._background_tasks: BackgroundTaskService | None = None
         self._started = False
+        self._engine_hooks: Any | None = None
         self._backend_turns = BackendTurns[ParlantSessionTurn](
             self._cancel_processing, provider=PROVIDER
         )
@@ -280,6 +294,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         self._rooms = RoomSessions(
             server=self.server, app=app, agent_id=self.parlant_agent.id
         )
+        from parlant.core.engines.alpha.hooks import EngineHooks  # noqa: PLC0415 -- optional provider dependency
+
+        self._engine_hooks = self.server.container[EngineHooks]
+        self._engine_hooks.on_acknowledging.append(capture_engine_origin)
         self._started = True
         logger.info(
             "Parlant SDK adapter started for agent: %s (parlant_agent_id=%s)",
@@ -337,9 +355,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     def backend_turns(self) -> BackendTurns[ParlantSessionTurn]:
         return self._backend_turns
 
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: ParlantMessages,
         participants_msg: str | None,
@@ -348,17 +366,23 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Post the turn into the room's Parlant session and relay the response."""
-        logger.debug("Handling message %s in room %s", msg.id, room_id)
+        """Post the turn's inputs into the room's Parlant session as one
+        customer message and relay the response to their senders."""
+        message_ids = ids_of(messages)
+        await self.backend_turns.settled(room_id)
+        logger.debug("Handling messages %s in room %s", message_ids, room_id)
         rooms = self._rooms
         if rooms is None:
             await self._fail_uninitialized(tools)
 
-        sender_name = msg.sender_name or msg.sender_id or FALLBACK_SENDER_NAME
+        # The room's customer is named once, after whoever wrote first; every
+        # input's own sender is in the message itself.
+        first = messages[0]
+        customer_name = first.sender_name or first.sender_id or FALLBACK_SENDER_NAME
         session_id = await self._session_for(
-            rooms, room_id=room_id, sender_name=sender_name, tools=tools
+            rooms, room_id=room_id, customer_name=customer_name, tools=tools
         )
-        with bound_session_tools(session_id=str(session_id), tools=tools):
+        with bound_session_tools(session_id=str(session_id), tools=tools) as origin:
             agent_name = self._prompt_name()
             addressed_history = name_this_agent_in_history(
                 history,
@@ -377,7 +401,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     "Room %s: Injected %s messages from history", room_id, injected
                 )
             user_message = compose_user_message(
-                msg=msg,
+                messages=messages,
                 participants_msg=participants_msg,
                 contacts_msg=contacts_msg,
                 agent_id=tools.agent_id,
@@ -397,7 +421,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     room_id=room_id,
                     user_message=user_message,
                     tools=tools,
-                    sender_name=sender_name,
+                    audience=distinct_sender_ids(messages),
+                    origin=origin,
                 )
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
@@ -408,7 +433,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 )
                 raise
 
-        logger.debug("Message %s processed successfully", msg.id)
+        logger.debug("Messages %s processed successfully", message_ids)
 
     async def _fail_uninitialized(self, tools: AgentToolsProtocol) -> NoReturn:
         logger.error(NOT_INITIALIZED_ERROR)
@@ -420,11 +445,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         rooms: RoomSessions,
         *,
         room_id: str,
-        sender_name: str,
+        customer_name: str,
         tools: AgentToolsProtocol,
     ) -> SessionId:
         try:
-            return await rooms.session_for(room_id, customer_name=sender_name)
+            return await rooms.session_for(room_id, customer_name=customer_name)
         except Exception as e:
             logger.error("Failed to get/create session for room %s: %s", room_id, e)
             await tools.send_failure(
@@ -440,7 +465,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         room_id: str,
         user_message: str,
         tools: AgentToolsProtocol,
-        sender_name: str,
+        audience: Sequence[str],
+        origin: EngineOrigin,
     ) -> None:
         """Post *user_message* as the customer, then relay the engine's reply.
 
@@ -450,24 +476,36 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         handle = (
             None
             if self._background_tasks is None
-            else ParlantSessionTurn(self._background_tasks, session_id)
+            else ParlantSessionTurn(self._background_tasks, session_id, origin)
         )
         async with self.backend_turns.running(room_id, handle):
-            offset = await post_user_message(
-                app=app, session_id=session_id, message=user_message
-            )
-            gave_up = await relay_agent_response(
-                app=app,
-                session_id=session_id,
-                room_id=room_id,
-                min_offset=offset,
-                tools=tools,
-                sender_name=sender_name,
-                timeout=self.config.response_timeout,
-                poll=self.config.response_poll,
-            )
-            if gave_up:
+            try:
+                offset = await post_user_message(
+                    app=app, session_id=session_id, message=user_message
+                )
+                gave_up = await relay_agent_response(
+                    app=app,
+                    session_id=session_id,
+                    room_id=room_id,
+                    min_offset=offset,
+                    tools=tools,
+                    audience=audience,
+                    timeout=self.config.response_timeout,
+                    poll=self.config.response_poll,
+                )
+                if gave_up:
+                    await self.backend_turns.stop(room_id)
+                elif handle is not None:
+                    parent = origin.task or processing_task(
+                        handle.background_tasks, session_id
+                    )
+                    if parent is not None:
+                        await await_stopped_task(parent)
+                    await origin.drain()
+            except BaseException:
+                origin.revoke()
                 await self.backend_turns.stop(room_id)
+                raise
 
     @staticmethod
     async def _cancel_processing(turn: ParlantSessionTurn) -> None:
@@ -477,8 +515,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         and the parent does not cancel the preamble task it already created.
         Waiting for the parent first is what makes that child visible.
         """
+        turn.origin.revoke()
         tag = process_session_tag(turn.session_id)
-        parent = turn.background_tasks._tasks.get(tag)
+        parent = turn.origin.task or processing_task(
+            turn.background_tasks, turn.session_id
+        )
         await turn.background_tasks.cancel(tag=tag, reason=STOP_REASON)
         if parent is not None:
             await await_stopped_task(parent)
@@ -487,6 +528,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             child.cancel()
         for child in children:
             await await_stopped_task(child)
+        await turn.origin.drain()
 
     async def on_cleanup(self, room_id: str) -> None:
         """Forget the room's Parlant session when the agent leaves it."""
@@ -498,6 +540,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     async def cleanup_all(self) -> None:
         """Release all sessions and the owned Parlant server (call on stop)."""
         await self.backend_turns.drain()
+        if self._engine_hooks is not None:
+            self._engine_hooks.on_acknowledging.remove(capture_engine_origin)
+            self._engine_hooks = None
         self._rooms = None
         self._background_tasks = None
         await self._lifecycle.release()

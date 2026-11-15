@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -29,6 +29,7 @@ from band.integrations.opencode import (
     OpencodeQuestion,
 )
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.helpers import (
     AskFactory,
     FakeOpencodeClient,
@@ -42,8 +43,12 @@ def asks_with(
     questions: tuple[str, ...] = (),
     known_permissions: frozenset[str] = frozenset(),
     known_questions: frozenset[str] = frozenset(),
+    in_flight: tuple[str, ...] = (),
 ) -> PendingAsks:
-    """Asks holding the named open requests, plus ids that were asked and resolved."""
+    """Asks holding the named open requests, plus ids that were asked and resolved.
+
+    ``in_flight`` names held asks whose reply is already being sent.
+    """
     asks = PendingAsks(set(known_permissions), set(known_questions))
     for request_id in permissions:
         pending = PendingPermission(request_id, "bash", ["ls"])
@@ -55,6 +60,12 @@ def asks_with(
         )
         asks.questions.register_keyed(pending_question, key=request_id)
         asks.known_question_ids.add(request_id)
+    for request_id in in_flight:
+        registry = (
+            asks.permissions if request_id in asks.permissions else asks.questions
+        )
+        claimed = registry.try_claim(request_id)
+        assert claimed is not None
     return asks
 
 
@@ -92,8 +103,8 @@ class BlockingReplyClient(FakeOpencodeClient):
     before it reaches OpenCode -- so a test can interleave room traffic or
     teardown with it. Later requests pass straight through."""
 
-    def __init__(self, *operations: ReplyOperation) -> None:
-        super().__init__()
+    def __init__(self, *operations: ReplyOperation, **scripted: Any) -> None:
+        super().__init__(**scripted)
         self._gates = {operation: ReplyGate() for operation in operations}
 
     @asynccontextmanager
@@ -157,14 +168,14 @@ def make_room_approvals(
     abort_session: Callable[[], Awaitable[None]] = ignore_abort,
     config: OpencodeAdapterConfig | None = None,
 ) -> RoomApprovals:
-    tools = tools if tools is not None else FakeAgentTools()
+    tools = tools if tools is not None else FakeAgentTools(participants=ROOM_MEMBERS)
     return RoomApprovals(
         config or OpencodeAdapterConfig(),
         ApprovalPorts(
             room_id="room-1",
             client=lambda: cast(OpencodeClientProtocol, client),
             tools=lambda: cast(AgentToolsProtocol, tools),
-            turn_mentions=list,
+            turn_mentions=lambda: [{"id": ALICE_PARTICIPANT["id"]}],
             release_turn_wait=release_turn_wait,
             fail_turn=fail_turn,
             abort_session=abort_session,
@@ -180,12 +191,26 @@ DECLINED = {
 }
 
 
+#: Raises one ask on a room's approvals.
+RaiseAsk = Callable[[RoomApprovals, AskFactory], Awaitable[None]]
+
+ASK_ID = "ask-1"
+
+
+def raise_permission(room: RoomApprovals, asks: AskFactory) -> Awaitable[None]:
+    return room.on_permission_asked(asks.permission(ASK_ID))
+
+
+def raise_question(room: RoomApprovals, asks: AskFactory) -> Awaitable[None]:
+    return room.on_question_asked(asks.question(ASK_ID))
+
+
 @dataclass(frozen=True)
 class ExpiryCase:
     """How one kind of ask is raised, and what its expiry sends OpenCode."""
 
     operation: ReplyOperation
-    raise_ask: Callable[[RoomApprovals, AskFactory], Awaitable[None]]
+    raise_ask: RaiseAsk
     sent: Callable[[FakeOpencodeClient], list[str]]
     expired_reply: str
 
@@ -193,14 +218,14 @@ class ExpiryCase:
 EXPIRY_CASES = {
     "permission": ExpiryCase(
         operation="permission",
-        raise_ask=lambda room, asks: room.on_permission_asked(asks.permission("ask-1")),
+        raise_ask=raise_permission,
         sent=lambda client: [r["reply"] for r in client.permission_replies],
         expired_reply="reject",
     ),
     "question": ExpiryCase(
         operation="reject",
-        raise_ask=lambda room, asks: room.on_question_asked(asks.question("ask-1")),
+        raise_ask=raise_question,
         sent=declined_questions,
-        expired_reply="ask-1",
+        expired_reply=ASK_ID,
     ),
 }

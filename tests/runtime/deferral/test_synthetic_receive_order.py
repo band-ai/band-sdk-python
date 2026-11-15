@@ -1,3 +1,5 @@
+"""Synthetic work survives a stop and a rejection, in receive order."""
+
 from __future__ import annotations
 
 from band.platform.link import BandLink
@@ -31,14 +33,14 @@ class TestSyntheticReceiveOrder:
             )
             ctx.stop_room()
             for message_id in ["local-B", "local-D"]:
-                ctx._enqueue_synthetic(synthetic_message(message_id))
+                await ctx.on_event(synthetic_message(message_id))
             assert adapter.completed == []
             peer.stopped = False
             await ctx.resume_room()
-            await ctx._reconcile()
+            await ctx.scheduler.run_pass(recovery=True)
             assert adapter.completed == []
             adapter.reject = False
-            await ctx._reconcile()
+            await ctx.scheduler.run_pass(recovery=True)
             assert adapter.completed == ["local-B", "local-D"]
             assert peer.requested_marks == []
             await ctx.stop()

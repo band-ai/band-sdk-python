@@ -90,7 +90,7 @@ class TestTurnOutcome:
             TurnVerdict.Complete, messages=[ANSWER], failures=[]
         )
 
-    @pytest.mark.parametrize("framework_id", ["acp", "cursor_acp", "codex"])
+    @pytest.mark.parametrize("framework_id", ["acp", "cursor_acp", "codex", "omp"])
     async def test_native_text_cannot_complete_a_tool_authoritative_turn(
         self,
         framework_id: str,
@@ -102,19 +102,23 @@ class TestTurnOutcome:
             TurnVerdict.MissingReply, [], [MISSING_REPLY_FAILURE]
         )
 
-    @pytest.mark.parametrize("framework_id", ["acp", "cursor_acp", "codex"])
-    @pytest.mark.parametrize("script_name", sorted(COMPLETING_SCRIPTS))
+    @pytest.mark.parametrize("framework_id", ["acp", "cursor_acp", "codex", "omp"])
+    @pytest.mark.parametrize(
+        ("script", "expected_messages"),
+        [
+            pytest.param(COMPLETING_SCRIPTS["decline"], [], id="decline"),
+            pytest.param(COMPLETING_SCRIPTS["reply"], [ANSWER], id="reply"),
+            pytest.param(COMPLETING_SCRIPTS["act"], [], id="act"),
+        ],
+    )
     async def test_native_text_preserves_successful_tool_outcomes(
-        self, framework_id: str, script_name: str
+        self, framework_id: str, script: TurnScript, expected_messages: list[str]
     ) -> None:
-        script = COMPLETING_SCRIPTS[script_name]
         result = await run_turn(
             TURN_OUTCOME_PROBES[framework_id],
             TurnScript(script.tool_calls, final_text=ANSWER),
         )
-        assert result == TurnResult(
-            TurnVerdict.Complete, [ANSWER] if script_name == "reply" else [], []
-        )
+        assert result == TurnResult(TurnVerdict.Complete, expected_messages, [])
 
     def test_only_the_declared_adapters_go_unjudged(self) -> None:
         unjudged = {

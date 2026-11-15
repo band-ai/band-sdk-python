@@ -13,12 +13,13 @@ from tests.e2e.baseline.requires import Dep, require_dep
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.capture import reply_capture as _reply_capture
+from tests.e2e.baseline.toolkit.invocations import InvocationObserver
 from tests.e2e.baseline.toolkit.judge import Verdict
 from tests.e2e.baseline.toolkit.judge import judge as _judge
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
 
-__all__ = ["judge", "reply_capture"]
+__all__ = ["invocation_observer", "judge", "reply_capture"]
 
 
 @pytest.fixture
@@ -65,3 +66,14 @@ def reply_capture(
         settings=baseline_settings,
         deadline_s=baseline_settings.e2e_timeout,
     )
+
+
+@pytest.fixture
+def invocation_observer(baseline_settings: BaselineSettings) -> InvocationObserver:
+    """Counts the watched agent's turns and holds chosen ones open.
+
+    Pass it to ``cell.running(observer=...)``; the cell watches the adapter it
+    builds and frees any parked turn before stopping the agent. Its hold deadline
+    comes from E2E_TIMEOUT, like the capture's waits.
+    """
+    return InvocationObserver(deadline_s=baseline_settings.e2e_timeout)

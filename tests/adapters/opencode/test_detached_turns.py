@@ -13,6 +13,7 @@ from band.core.exceptions import InputNotAccepted
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import BandTool
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_event
 from tests.adapters.opencode.helpers import (
     BandMCPCalls,
@@ -63,7 +64,7 @@ class TestDetachedTurns:
                 ]
             )
         )
-        busy_tools = FakeAgentTools()
+        busy_tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await park_turn(adapter, tools)
         turn = await room_turn(adapter)
@@ -98,7 +99,9 @@ class TestDetachedTurns:
         adapter = make_adapter(client)
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await deliver_event(adapter, agent_input("ask me which word", tools))
-        incoming = agent_input("new ordinary work", FakeAgentTools())
+        incoming = agent_input(
+            "new ordinary work", FakeAgentTools(participants=ROOM_MEMBERS)
+        )
 
         with pytest.raises(InputNotAccepted):
             await adapter.on_message(
@@ -139,7 +142,9 @@ class TestDetachedTurns:
         await deliver_event(adapter, agent_input("ask me which word", tools))
         turn = await room_turn(adapter)
 
-        await deliver_event(adapter, agent_input("reject", FakeAgentTools()))
+        await deliver_event(
+            adapter, agent_input("reject", FakeAgentTools(participants=ROOM_MEMBERS))
+        )
         await turn_finished(turn)
         await adapter.on_cleanup("room-1")
 

@@ -5,7 +5,9 @@ from agno.run.agent import RunOutput
 from band.adapters.agno import (
     AgnoAdapter,
 )
-from tests.adapters.agno.adapter.kit import _msg
+from tests.adapters.agno.adapter.kit import (
+    _msg,
+)
 
 
 class TestOnStarted:

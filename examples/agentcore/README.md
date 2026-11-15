@@ -163,12 +163,10 @@ export AWS_DEFAULT_REGION=us-east-1
 ## Step 6 — Run the bridge
 
 ```bash
-# Install bridge deps
+# Start the bridge (loads repo-root .env.test automatically)
+uv run --isolated examples/oneshot/run-bridge.py
+# or run the module directly from the project environment:
 uv sync --extra bridge_agentcore
-
-# Start the bridge (loads .env automatically)
-uv run python examples/agentcore/run_agentcore.py
-# or run the module directly:
 PYTHONPATH=band-bridge uv run python -m bridge_core
 ```
 
@@ -217,9 +215,9 @@ room id so each room gets its own AgentCore microVM.
 | `README.md` | This file — operator-focused deploy guide. |
 | `ARCHITECTURE.md` | Conceptual overview — bridge vs container, lifecycle, constraints. |
 | `BUILDING.md` | Guide for writing your own AgentCore agent. |
-| `agentcore_llm_server.py` | The container (FastAPI + SDK). Runs once per ARN. |
+| `../oneshot/server.py` | The container (FastAPI + SDK). Runs once per ARN. |
 | `Dockerfile` | Container image build. |
-| `run_agentcore.py` | Local bridge launcher (loads `.env.test`). |
+| `../oneshot/run-bridge.py` | Local bridge launcher (loads `.env.test`). |
 | `verify_deployment.py` | Post-deployment smoke check: run once after deploying to confirm the live system orchestrates (drives a live platform; not run in CI). See below. |
 | `agents/*.txt` | Per-agent system prompts; paste into `SYSTEM_PROMPT`. |
 | `agent_config.yaml.example` | Bridge config template — copy to `agent_config.yaml` (gitignored) and fill in values that flow into the JSON env var. |

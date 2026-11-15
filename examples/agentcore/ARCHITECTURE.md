@@ -54,7 +54,7 @@ Two cooperating pieces:
 - That's it. **No mention parsing, no message construction, no lifecycle
   marking.** The bridge is a dumb pipe.
 
-### Container (`examples/agentcore/agentcore_llm_server.py`)
+### Container (`examples/oneshot/server.py`)
 - A thin FastAPI app implementing the AgentCore Runtime contract:
   - `GET /ping` — health probe.
   - `POST /invocations` — one event in, one response out.

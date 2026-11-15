@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "band-sdk"
-version = "6.0.1"
+version = "9.2.1"
 description = "A Python SDK for Band API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,9 +23,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "band-client-rest==0.0.46",
-    "band-sdk-core==2.8.0",
-    "phoenix-channels-python-client>=0.4.1,<0.5",
+    "band-client-rest==0.0.57",
+    "band-sdk-core==7.0.0",
+    "phoenix-channels-python-client>=0.5.2,<0.6",
     "python-dotenv>=1.2.2",
     "pydantic>=2.0",
     "pydantic-settings>=2.0.0",
@@ -66,7 +66,7 @@ letta = [
     # Floor is `conversations.cancel` (shared-mode STOP), first shipped in
     # 1.7.1; the `conversations` resource itself arrived in 1.6.5 -- checked
     # against the PyPI wheels 2026-10-19.
-    "letta-client>=1.7.1",
+    "letta-client>=1.12.1",
     # Floor pinned to crewai's own transitive pin (mcp~=1.28.1) -- see `desktop` above.
     "mcp>=1.28.1,<2",
 ]
@@ -75,7 +75,7 @@ pydantic-ai = [
     "openai>=3.26.0,<4",
 ]
 anthropic = [
-    "anthropic>=0.75.0,<2",
+    "anthropic>=0.75.0,<3",
 ]
 langgraph = [
     "langchain>=1.0.0",
@@ -97,13 +97,14 @@ copilot_sdk = [
 ]
 parlant = [
     # Floor at 3.3.2: older versions stall the in-process server's post-preamble
-    # message generation (event-loop starvation).
-    "parlant>=3.3.2",
+    # message generation (event-loop starvation). Below 4: parlant 4.0 removed the
+    # engine hooks and entity-context modules the adapter imports.
+    "parlant>=3.3.2,<4",
     "openai>=2.0.0",
     "werkzeug>=3.1.6",
 ]
 crewai = [
-    "crewai==1.15.27",
+    "crewai==1.15.36",
     "openai>=2.0.0,<3",  # CrewAI requires the legacy OpenAI client
     "nest-asyncio>=1.6.0",  # Required for sync-to-async bridging in CrewAI tools
     "pillow>=12.1.1",
@@ -139,6 +140,9 @@ acp = [
     "starlette>=0.40.0",
     "uvicorn>=0.29",
 ]
+omp = [
+    "psutil>=6",
+]
 slack = [
     "slack-sdk>=3.27.0",     # AsyncWebClient, signature verifier, Socket Mode
     "starlette>=0.40.0",     # HTTP server framework
@@ -160,13 +164,13 @@ bridge_agentcore = [
 ]
 agentcore_runtime = [
     # Deps for the container hosted by Bedrock AgentCore Runtime
-    # (examples/agentcore/agentcore_llm_server.py). Combine with the
+    # (examples/oneshot/server.py). Combine with the
     # adapter extra of your choice (e.g. anthropic).
     "fastapi>=0.110",
     "uvicorn>=0.29",
 ]
 google_adk = [
-    "google-adk>=1.10.0,<2",
+    "google-adk>=1.10.0,<3",
     "google-genai>=1.75.0",
     "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
 ]
@@ -201,11 +205,13 @@ dev = [
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
     "pytest-randomly==5.0.0",
+    "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
     "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
+    "psutil>=6",  # Native OMP process-tree cleanup tests
     "packaging>=23.0",  # PEP 440 pre-release detection for the CI coverage-gate version guard
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",  # Already in main deps, for mocking
@@ -213,7 +219,7 @@ dev = [
     # Include pydantic-ai for testing
     "pydantic-ai-slim[anthropic,openai]>=2.55.0",
     # Include anthropic for testing
-    "anthropic>=0.75.0,<2",
+    "anthropic>=0.75.0,<3",
     # Include claude_sdk for testing
     "claude-agent-sdk>=0.2.159",
     # Include copilot_sdk for testing
@@ -244,13 +250,13 @@ dev = [
     # Include Gemini SDK for testing
     "google-genai>=1.75.0",
     # Include google-adk for testing
-    "google-adk>=1.10.0,<2",
+    "google-adk>=1.10.0,<3",
     # Google ADK currently requires this pre-release transitively.
     "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
     # Include Agno for testing
     "agno>=2.6.0",
     # Include letta-client for testing
-    "letta-client>=1.7.1",
+    "letta-client>=1.12.1",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
     "python-dotenv>=1.2.2",
@@ -283,6 +289,7 @@ dev-crewai = [
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
     "pytest-randomly==5.0.0",
+    "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
     "pytest-cov>=4.0.0",
@@ -292,13 +299,13 @@ dev-crewai = [
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
-    "crewai==1.15.27",
+    "crewai==1.15.36",
     "openai>=2.0.0,<3",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
     # Anthropic client: the baseline E2E conftest imports it at module load and
     # the LLM judge needs it. A thin client (pydantic <3), so no crewai conflict.
-    "anthropic>=0.75.0,<2",
+    "anthropic>=0.75.0,<3",
     # A2A e2e smokes import band.integrations.a2a at module load, no crewai conflict
     "a2a-sdk>=1.1.2,<2",
     # Pretty E2E test output
@@ -318,6 +325,7 @@ dev-parlant = [
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
     "pytest-randomly==5.0.0",
+    "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
     "pytest-cov>=4.0.0",
@@ -326,13 +334,13 @@ dev-parlant = [
     "pytest-timeout>=2.4.0",
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",
-    # Parlant and its deps (see the parlant extra for why >=3.3.2)
-    "parlant>=3.3.2",
+    # Parlant and its deps (see the parlant extra for the version range)
+    "parlant>=3.3.2,<4",
     "openai>=3.26.0,<4",
     "werkzeug>=3.1.6",
     # Anthropic client: the baseline E2E conftest imports it at module load and
     # the LLM judge needs it. A thin client (pydantic <3), so no parlant conflict.
-    "anthropic>=0.75.0,<2",
+    "anthropic>=0.75.0,<3",
     # A2A e2e smokes import band.integrations.a2a at module load, no parlant conflict
     "a2a-sdk>=1.1.2,<2",
     # Pretty E2E test output
@@ -351,6 +359,7 @@ dev-strands-nooa = [
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
     "pytest-randomly==5.0.0",
+    "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
     "pytest-cov>=4.0.0",
@@ -364,7 +373,7 @@ dev-strands-nooa = [
     "nooa>=0.0.10,<0.1; python_version >= '3.12' and python_version < '3.14' and sys_platform != 'win32'",
     "openai>=2.0.0,<3",
     # Shared clients for baseline collection and the judge.
-    "anthropic>=0.75.0,<2",
+    "anthropic>=0.75.0,<3",
     "a2a-sdk>=1.1.2,<2",
     "langchain>=1.0.0",
     "langchain-core>=1.2.11",
@@ -405,7 +414,8 @@ include-package-data = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
-addopts = "-v"
+# Fail fast on an unregistered marker or an unknown ini key.
+addopts = "-v --strict-markers --strict-config"
 # Global safety net: catch runaway unit tests. Integration and E2E tests
 # override to 120s via pytest_collection_modifyitems in their conftest.
 timeout = 30
@@ -425,6 +435,11 @@ markers = [
     "docker_build: builds/runs a real Docker image via subprocess (requires a local Docker daemon; skipped unless DOCKER_TESTS_ENABLED=true, including in CI, which has Docker but shouldn't pay this cost by default)",
     "sandbox: drives a Docker Sandbox via the sbx CLI (needs sbx + a nested-virtualization-capable host + live Band; skipped unless SANDBOX_TESTS_ENABLED=true — CI has neither the CLI nor nested virt)",
     "vscode_chat: drives a real signed-in VS Code window via the code chat CLI (GUI + interactive Copilot sign-in; skipped unless VSCODE_CHAT_TESTS_ENABLED=true — can never run in CI)",
+    "requires_deps(deps): declare a baseline test's optional dependencies; the E2E + Band-key gate is always applied. See tests/e2e/baseline/requires.py",
+    "with_adapters(request): set by @with_adapters to declare the adapters a test runs; resolved by the agent/agents fixtures. See tests/e2e/baseline/agents.py",
+    "per_adapter(build): set by @per_adapter to steer per-cell construction (prompt/features/tools/peer); resolved by the cell/agent/peer fixtures",
+    "assigned_lane(lane): set by @lane(Lane.X) to assign a cross-lane test to one explicit CI lane, overriding derived home-lane scheduling. See tests/e2e/baseline/lane_selection.py",
+    "flaky(reruns, rerun_except): pytest-rerunfailures' marker, built only by tests/e2e/baseline/flaky.py; registered here because the scorecard manifest collects without that plugin",
     "env_gated_skip: tags a skipif whose condition is a deployment flag permanently off in some environment, so tests/e2e/baseline/scorecard.py reports its skip as N/A rather than missing coverage",
 ]
 
@@ -554,10 +569,8 @@ extend-select = ["PLC0415"]
 ignore = ["TRY004"]
 
 [tool.ruff.lint.per-file-ignores]
-# examples/ uses a deliberate NN_topic.py numbering convention for tutorial
-# ordering, referenced by exact filename throughout README.md and
-# docs/adapters/*.md. No rename can satisfy both that convention and N999
-# (a leading digit is never a legal Python identifier).
+# examples/ uses numbered filenames for tutorial ordering. These are user-facing
+# script names, not importable Python modules, so N999 is expected here.
 "examples/**" = ["N999"]
 
 [tool.pyrefly]
@@ -586,9 +599,15 @@ ignore-missing-imports = [
     "nooa.*",
     "nest_asyncio",
 ]
+search-path = ["src"]
 # Disable the default **/.[!/.]*/** exclude so pyrefly works inside
 # .claude/worktrees/ (git worktree paths contain a hidden directory).
 disable-project-excludes-heuristics = true
+
+[tool.pyrefly.errors]
+untyped-function-decorator = "error"
+untyped-class-decorator = "error"
+unknown-attribute-type = "error"
 
 [tool.commitizen]
 name = "cz_conventional_commits"

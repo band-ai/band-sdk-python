@@ -1,5 +1,68 @@
 # Changelog
 
+## [9.2.1](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.15...band-mcp-v9.2.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* prepare shared SDK and MCP releases together ([#1063](https://github.com/band-ai/band-sdk-python/issues/1063)) ([09fba14](https://github.com/band-ai/band-sdk-python/commit/09fba1474f491e4c0b9a08c9fd65b84bc1721ff7))
+
+## [2.2.15](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.14...band-mcp-v2.2.15) (2026-11-10)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 9.0.2 ([#1032](https://github.com/band-ai/band-sdk-python/issues/1032)) ([932c30c](https://github.com/band-ai/band-sdk-python/commit/932c30c291639d7b25b0b844601a39b5a3977d39))
+
+## [2.2.14](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.13...band-mcp-v2.2.14) (2026-11-09)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 9.0.1 ([#1027](https://github.com/band-ai/band-sdk-python/issues/1027)) ([ce6335d](https://github.com/band-ai/band-sdk-python/commit/ce6335d210903d68df6b6e763b185b56da4e73f5))
+
+## [2.2.13](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.12...band-mcp-v2.2.13) (2026-11-09)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 9.0.0 ([#1023](https://github.com/band-ai/band-sdk-python/issues/1023)) ([a84513d](https://github.com/band-ai/band-sdk-python/commit/a84513da72768f831f8c72e6b55c296364b62ce6))
+
+## [2.2.12](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.11...band-mcp-v2.2.12) (2026-11-09)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 8.1.0 ([#979](https://github.com/band-ai/band-sdk-python/issues/979)) ([042869f](https://github.com/band-ai/band-sdk-python/commit/042869fbf95cd368f4aba44a0ab3d955e9161851))
+
+## [2.2.11](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.10...band-mcp-v2.2.11) (2026-11-01)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 8.0.0 ([#977](https://github.com/band-ai/band-sdk-python/issues/977)) ([12b0b3d](https://github.com/band-ai/band-sdk-python/commit/12b0b3d56c417bcfd72ff9ed359b8bd0b2ad9269))
+
+## [2.2.10](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.9...band-mcp-v2.2.10) (2026-10-31)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 7.1.0 ([#972](https://github.com/band-ai/band-sdk-python/issues/972)) ([94ce47d](https://github.com/band-ai/band-sdk-python/commit/94ce47d6c8e6e700425217bced3543c4228b2e7c))
+
+## [2.2.9](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.8...band-mcp-v2.2.9) (2026-10-29)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 7.0.0 ([#965](https://github.com/band-ai/band-sdk-python/issues/965)) ([b290a94](https://github.com/band-ai/band-sdk-python/commit/b290a94adaf056f8441abf57e153069b5bf6bc9c))
+
+## [2.2.8](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.7...band-mcp-v2.2.8) (2026-10-28)
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 6.0.1 ([#875](https://github.com/band-ai/band-sdk-python/issues/875)) ([83e2542](https://github.com/band-ai/band-sdk-python/commit/83e2542f88cc71757a806c4e0c2075f70c5b4d30))
+
 ## [2.2.7](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.6...band-mcp-v2.2.7) (2026-10-20)
 
 

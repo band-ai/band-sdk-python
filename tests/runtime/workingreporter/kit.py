@@ -26,3 +26,56 @@ class Recorder:
         if self.fail:
             raise RuntimeError("report failed")
         return True
+
+
+class DetailRecorder:
+    """Report callback recording the detail a report would carry when it starts.
+
+    ``hold()`` parks the next report after recording it, until ``release()``.
+    """
+
+    def __init__(self) -> None:
+        self.detail = "reasoning"
+        self.reports: list[str | None] = []
+        self.entered = asyncio.Event()
+        self._gate: asyncio.Event | None = None
+        self._changed = asyncio.Condition()
+
+    def hold(self) -> None:
+        self._gate = asyncio.Event()
+
+    def release(self) -> None:
+        if self._gate is not None:
+            self._gate.set()
+
+    async def __call__(self, working: bool) -> bool:
+        async with self._changed:
+            self.reports.append(self.detail if working else None)
+            self._changed.notify_all()
+        gate = self._gate
+        if gate is not None:
+            self.entered.set()
+            await gate.wait()
+            self._gate = None
+        return True
+
+    async def reports_reach(self, count: int) -> list[str | None]:
+        async with self._changed:
+            await self._changed.wait_for(lambda: len(self.reports) >= count)
+        return self.reports
+
+
+class Projection:
+    """An execution owner's projection with an observable dispatch boundary."""
+
+    def __init__(self) -> None:
+        self.value: bool | None = True
+        self.sampled = asyncio.Event()
+
+    def __call__(self) -> bool | None:
+        self.sampled.set()
+        return self.value
+
+    def change(self, value: bool | None) -> None:
+        self.value = value
+        self.sampled.clear()

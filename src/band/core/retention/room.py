@@ -14,6 +14,7 @@ from band.core.retention.cleanup import (
     await_owned,
     cleanup_deadline,
     finish_by,
+    rejoin_owned,
     report_owned,
     reporting,
     spawn_owned,
@@ -84,7 +85,8 @@ class RetainedRoom:
         self._generation = 0
         self._leases = 0
         self._owned: set[asyncio.Task[Any]] = set()
-        # Owned tasks that requested this room's cleanup and unwind themselves.
+        self._waiting: dict[asyncio.Task[Any], asyncio.Task[Any]] = {}
+        # Cleanup requesters and their active dependents unwind themselves.
         self._unwinding: set[asyncio.Task[Any]] = set()
         self._holders: Counter[asyncio.Task[Any] | None] = Counter()
         self._activity = ProviderActivity.UNKNOWN
@@ -105,6 +107,8 @@ class RetainedRoom:
         self._drained.set()
         self._transition: asyncio.Task[None] | None = None
         self._disposal: asyncio.Task[None] | None = None
+        self._cancelled_acquisition: asyncio.Task[None] | None = None
+        self._release_callbacks: set[Callable[[], None]] = set()
 
     @property
     def snapshot(self) -> RetentionSnapshot:
@@ -208,9 +212,30 @@ class RetainedRoom:
         enrolled.set_result(None)
         return task
 
+    async def wait_owned(self, task: asyncio.Task[Any]) -> None:
+        """Wait for accepted work to settle without consuming its outcome.
+
+        Cancellation leaves the target running. Active accepted dependents
+        share a cleanup requester's exemption until their own operation ends.
+        Read ``task.result()`` explicitly when the outcome is needed.
+        """
+        current = asyncio.current_task()
+        if current is task:
+            raise ValueError("Owned work cannot wait for itself")
+        if task.done():
+            return
+        if current is None or not self.enrolls(current) or not self.enrolls(task):
+            raise ValueError("Pending waits require work accepted by this room")
+        self._waiting[current] = task
+        try:
+            await asyncio.wait({task})
+        finally:
+            self._waiting.pop(current, None)
+
     def _disown(self, task: asyncio.Task[Any]) -> None:
         self._owned.discard(task)
         self._unwinding.discard(task)
+        self._waiting.pop(task, None)
         self._schedule()
 
     def recover(self, *, generation: int, reason: str) -> bool:
@@ -232,6 +257,27 @@ class RetainedRoom:
         self._schedule()
         self._start_requested_recovery()
         return True
+
+    def add_release_callback(
+        self, callback: Callable[[], None], *, generation: int
+    ) -> None:
+        """Observe confirmed physical release without extending a caller's wait."""
+        if generation > self._generation:
+            raise ValueError("Cannot observe a future residency")
+        if self._released(generation):
+            asyncio.get_running_loop().call_soon(callback)
+        else:
+            self._release_callbacks.add(callback)
+
+    def remove_release_callback(self, callback: Callable[[], None]) -> None:
+        """Detach an observation; already queued callbacks must fence their owner."""
+        self._release_callbacks.discard(callback)
+
+    def _released(self, generation: int) -> bool:
+        return generation < self._generation or self._state in (
+            Residency.SUSPENDED,
+            Residency.CLOSED,
+        )
 
     async def wait_released(self, *, generation: int) -> None:
         """Join a requested residency retirement without acquiring a successor.
@@ -260,10 +306,7 @@ class RetainedRoom:
 
     async def _wait_released(self, generation: int) -> None:
         for _ in range(MAX_SETTLE_STEPS):
-            if generation < self._generation or self._state in (
-                Residency.SUSPENDED,
-                Residency.CLOSED,
-            ):
+            if self._released(generation):
                 return
             if self.closing:
                 if (disposal := self._begin_disposal()) is not None:
@@ -408,6 +451,12 @@ class RetainedRoom:
                 self.room_id,
                 self._generation,
             )
+            self._cancel_acquisition(transition)
+
+    def _cancel_acquisition(self, transition: asyncio.Task[None]) -> None:
+        """Deliver cancellation once, including across abandoned-start settlement."""
+        if transition is not self._cancelled_acquisition:
+            self._cancelled_acquisition = transition
             transition.cancel(f"Room {self.room_id} acquisition was abandoned")
 
     def _request(self, cause: ReleaseCause) -> None:
@@ -420,6 +469,7 @@ class RetainedRoom:
 
     def _start_acquire(self) -> asyncio.Task[None]:
         self._generation += 1
+        self._cancelled_acquisition = None
         self._state = Residency.ACQUIRING
         self._activity = ProviderActivity.UNKNOWN
         self._reason = UNKNOWN_ACTIVITY_REASON
@@ -575,6 +625,10 @@ class RetainedRoom:
                 return False
 
     def _notify(self) -> None:
+        if self._released(self._generation):
+            callbacks, self._release_callbacks = self._release_callbacks, set()
+            for callback in callbacks:
+                asyncio.get_running_loop().call_soon(callback)
         settleable = not self._leases or self.closing
         _hold(self._settleable, settleable)
         _hold(self._drained, not self._accepted)
@@ -591,11 +645,34 @@ class RetainedRoom:
         """Exempt enrolled work requesting cleanup from cancellation; it is
         told cleanup is pending and still joined once it unwinds."""
         current = asyncio.current_task()
-        if not self.enrolls(current):
+        if current is None or not self.enrolls(current):
             return False
-        if current is not None and current in self._owned:
-            self._unwinding.add(current)
+        pending = {current}
+        visited = set()
+        while pending:
+            requester = pending.pop()
+            if requester in visited:
+                continue
+            visited.add(requester)
+            if requester in self._owned:
+                self._unwinding.add(requester)
+            pending.update(
+                waiter
+                for waiter, target in self._waiting.items()
+                if target is requester and self.enrolls(waiter)
+            )
         return True
+
+    def begin_settlement(self, task: asyncio.Task[Any]) -> None:
+        """Join an enrolled operation without cancelling its outcome handling."""
+        if task not in self._owned:
+            raise ValueError("Settlement requires an enrolled operation")
+        self._unwinding.add(task)
+
+    def request_disposal(self) -> asyncio.Task[None] | None:
+        """Close admission and return the owned attempt without awaiting it."""
+        self._spare_requester()
+        return self._begin_disposal()
 
     async def dispose(self) -> None:
         """Close admission now; settle accepted work before physical disposal.
@@ -605,8 +682,8 @@ class RetainedRoom:
         await its own disposal: it is told cleanup is pending, is not
         cancelled by it, and is joined once it unwinds.
         """
-        requested_from_inside = self._spare_requester()
-        disposal = self._begin_disposal()
+        requested_from_inside = self.enrolls(asyncio.current_task())
+        disposal = self.request_disposal()
         if disposal is None:
             return
         if requested_from_inside:
@@ -621,14 +698,17 @@ class RetainedRoom:
         self._schedule()
         if self._state == Residency.CLOSED:
             return None
-        if self._disposal is None or self._disposal.done():
-            self._disposal = self._spawn(self._run_dispose())
+        self._disposal = rejoin_owned(
+            self._disposal,
+            self._run_dispose,
+            label=f"Room {self.room_id} disposal",
+        )
         return self._disposal
 
     async def _run_dispose(self) -> None:
         await self._settle_accepted()
-        if self._transition is not None:
-            await asyncio.wait({self._transition})
+        if (transition := self._in_flight()) is not None:
+            await asyncio.wait({transition})
         if self._state != Residency.SUSPENDED:
             # Awaited directly so cancelling disposal also cancels its release.
             release = self._start_release(ReleaseCause.FINAL, automatic=False)
@@ -657,7 +737,7 @@ class RetainedRoom:
             for task in self._uncancelled_work():
                 task.cancel()
             if self._state == Residency.ACQUIRING and self._transition is not None:
-                self._transition.cancel()
+                self._cancel_acquisition(self._transition)
         await self._drained.wait()
 
     def _uncancelled_work(self) -> set[asyncio.Task[Any]]:

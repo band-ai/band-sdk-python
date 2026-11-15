@@ -24,6 +24,7 @@ from band.integrations.desktop_app.room import (
     RoomTranscript,
 )
 from band.integrations.desktop_app.tools import AttentionMode, RoomTool
+from band.runtime.tools.inputs.chat import MENTION_GUIDANCE
 
 # What the host is told the server is for, at connect time. This is the only
 # text a model sees before it has called anything, so it has to carry the
@@ -167,15 +168,8 @@ def room_briefing(transcript: RoomTranscript) -> str:
     handles = [f"@{item.bare_handle}" for item in transcript.peers if item.bare_handle]
     lines += [
         "",
-        "Mentions — pass these exact handles in the `mentions` argument of the "
-        "Band send-message tool: " + (", ".join(handles) or "none available") + ".",
-        (
-            "Never type a mention marker into the message content yourself. The "
-            "`@[[…]]` form you may see in stored history is Band's internal "
-            "rendering, not input syntax: writing it produces literal text in the "
-            "room. Address people through `mentions` and write content in plain "
-            "prose."
-        ),
+        "Mention handles: " + (", ".join(handles) or "none available") + ".",
+        MENTION_GUIDANCE,
         "",
         *CONTRACTS[transcript.attention].briefing,
         (

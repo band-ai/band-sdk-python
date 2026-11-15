@@ -1,4 +1,4 @@
-"""Codex adapter: a lost Codex process fails its turn once and the room recovers onto the same thread."""
+"""Codex adapter: a lost Codex process fails its turn once and the room recovers onto its seeded thread."""
 
 from __future__ import annotations
 
@@ -64,22 +64,25 @@ class TestProcessLossRecovery:
     async def test_a_lost_process_is_retired_and_its_thread_restored_exactly(
         self,
     ) -> None:
-        """Recovery closes a lost process but keeps the room's thread, usage
-        and settings: the next turn resumes exactly that thread on a new
+        """Recovery closes a lost process but keeps the room's seeded thread,
+        usage and settings: the next turn resumes exactly that thread on a new
         process, sending only overrides resume supports, and never starts a
         fresh one in its place."""
         client = FakeCodexClient(
             events=[
+                tool_call_request(1, BandTool.NO_REPLY),
+                turn_completed("turn-1"),
                 event_notification(
                     "thread/tokenUsage/updated", {"usage": {"totalTokens": 150}}
                 ),
                 PROCESS_EXITED,
-                tool_call_request(1, BandTool.NO_REPLY),
-                turn_completed("turn-2"),
+                tool_call_request(2, BandTool.NO_REPLY),
+                turn_completed("turn-3"),
             ]
         )
         room = CodexRoom(make_codex_adapter(client), client)
         await room.adapter.on_started("Codex Agent", "A coding agent")
+        await room.send("seed")
         with pytest.raises(TurnResultAlreadyReported):
             await room.send("work")
 
@@ -111,7 +114,8 @@ class TestProcessLossRecovery:
         await adapter.on_started("Codex Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
             await send_bootstrap(
-                adapter, history=CodexSessionState(thread_id="thr-history")
+                adapter,
+                history=CodexSessionState(room_to_thread={ROOM_ID: "thr-history"}),
             )
 
         await send_bootstrap(adapter)

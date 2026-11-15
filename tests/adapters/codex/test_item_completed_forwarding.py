@@ -8,13 +8,14 @@ import pytest
 
 from band.adapters.codex import CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
-from band.core.types import Emit
+from band.core.types import Emit, MessageType
 from band.integrations.codex.types import CodexItemType
 from band.testing import events_of_type
 from tests.adapters.codex.kit import (
     ROOM_ID,
     ToolSchemaFakeTools,
     agent_input,
+    resume_records,
     run_codex_turn,
     send_bootstrap,
 )
@@ -405,8 +406,13 @@ class TestItemCompletedForwarding:
             events=events, config=CodexAdapterConfig(), emit=Emit.TOOL_CALLS
         )
 
-        reported = [event["message_type"] for event in turn.tools.events_sent]
-        assert reported == ["tool_call", "tool_result"]
+        *forwarded, record = turn.tools.events_sent
+        assert [event["message_type"] for event in forwarded] == [
+            MessageType.TOOL_CALL,
+            MessageType.TOOL_RESULT,
+        ]
+        # The completed turn then records its thread.
+        assert resume_records(turn.tools) == [record]
 
     @pytest.mark.asyncio
     async def test_item_completed_reasoning_emits_thought(self) -> None:

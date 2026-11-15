@@ -384,12 +384,17 @@ class TestNativeTurnOwnership:
         self, restore: dict[str, Any], error: type[Exception], refusal: str
     ) -> None:
         client = FakeCodexClient(
-            events=[PROCESS_EXITED],
+            events=[
+                tool_call_request(1, BandTool.NO_REPLY),
+                turn_completed("turn-1"),
+                PROCESS_EXITED,
+            ],
             started_settings={"modelProvider": "openai"},
             **restore,
         )
         adapter = make_codex_adapter(client)
         await adapter.on_started("Codex Agent", "A coding agent")
+        await send_bootstrap(adapter)
         with pytest.raises(TurnResultAlreadyReported):
             await send_bootstrap(adapter)
         tools = ToolSchemaFakeTools()

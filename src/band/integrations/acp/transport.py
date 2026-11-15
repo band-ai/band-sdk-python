@@ -13,11 +13,14 @@ from acp.interfaces import Client
 from acp.schema import (
     LoadSessionResponse,
     NewSessionResponse,
+    PromptResponse,
     SetSessionConfigOptionResponse,
 )
 
 logger = logging.getLogger(__name__)
 ACP_STDIO_LIMIT_BYTES = 16 * 1024 * 1024
+# asyncio's subprocess default when the builtin transport override is disabled.
+ACP_DEFAULT_STDIO_LIMIT_BYTES = 64 * 1024
 
 
 def tcp_spawn_process(
@@ -76,7 +79,9 @@ class ACPConnectionProtocol(Protocol):
         mcp_servers: list[object],
     ) -> LoadSessionResponse | None: ...
 
-    async def prompt(self, *, session_id: str, prompt: list[object]) -> object: ...
+    async def prompt(
+        self, *, session_id: str, prompt: list[object]
+    ) -> PromptResponse: ...
 
     async def set_config_option(
         self,

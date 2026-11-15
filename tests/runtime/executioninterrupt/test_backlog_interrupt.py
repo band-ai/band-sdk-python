@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-from band.runtime.execution import ExecutionContext, ResyncOutcome, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
+from band.runtime.scheduler import ResyncOutcome
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import BlockingHandler
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestBacklogInterrupt:
@@ -20,7 +23,7 @@ class TestBacklogInterrupt:
         handler = BlockingHandler()
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         msg = backlog_message("bk1")
-        proc = asyncio.create_task(ctx._process_backlog_message(msg))
+        proc = asyncio.create_task(attempt_delivery(ctx, msg))
         await handler.started.wait()
 
         ctx.interrupt()
@@ -33,7 +36,7 @@ class TestBacklogInterrupt:
     async def test_stop_during_backlog_leaves_actionable(self, mock_link):
         handler = BlockingHandler()
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
-        proc = asyncio.create_task(ctx._process_backlog_message(backlog_message("bk2")))
+        proc = asyncio.create_task(attempt_delivery(ctx, backlog_message("bk2")))
         await handler.started.wait()
 
         ctx.interrupt(kind="stop")
@@ -82,7 +85,7 @@ class TestBacklogInterrupt:
             config=SessionConfig(max_message_retries=10),
         )
 
-        resync_task = asyncio.create_task(ctx._resync_pending_messages())
+        resync_task = asyncio.create_task(ctx.scheduler.run_pass(recovery=True))
         await handler.started.wait()
 
         ctx.stop_room()

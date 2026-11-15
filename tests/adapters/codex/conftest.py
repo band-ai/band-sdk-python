@@ -4,17 +4,27 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
+import httpx
 import looptime
 import pytest
 import pytest_asyncio
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.client.rest import AsyncRestClient
 from band.core.retention import RoomRetentionConfig
+from band.core.types import FeatureKwargs
+from band.platform.link import BandLink
+from band.runtime.execution import ExecutionContext
+from band.runtime.sessionconfig import SessionConfig
 from tests.adapters.codex.kit import (  # noqa: F401
+    ALICE,
     HELD_ROOM,
     NEW_ROOM,
+    PATIENT_APPROVAL_S,
     TRANSITION_TIMEOUT_S,
     CleaningTurn,
     CleaningTurnClient,
@@ -25,15 +35,43 @@ from tests.adapters.codex.kit import (  # noqa: F401
     HeldTurnClient,
     TwoRooms,
     codex_room,
+    parked_on_approval,
     patch_codex_clients_by_room,
     send_bootstrap,
 )
+from tests.adapters.codex.scheduledroom import ScheduledCodexRoom
+from tests.adapters.codex.seedtransport import SeedTransport
 from tests.adapters.codexturns import (
     FakeCodexClient,
     make_codex_adapter,
     patch_codex_client,
     turn_completed,
 )
+from tests.adapters.lifecycle.runtime import ReplyingPlatform
+from tests.runtime.helpers import (
+    AGENT_ID,
+    no_periodic_wake_config,
+    rest_client_over,
+    run_through,
+)
+from tests.runtime.runtimecontrol.kit import never_executes
+
+
+@pytest.fixture
+def system_context() -> Callable[[str], ExecutionContext]:
+    """Build room contexts whose system deltas use real preprocessing and commitment."""
+
+    def create(room_id: str) -> ExecutionContext:
+        context = ExecutionContext(
+            room_id,
+            MagicMock(),
+            never_executes,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        context.set_participants([ALICE])
+        return context
+
+    return create
 
 
 @pytest_asyncio.fixture(loop_scope="function")
@@ -113,14 +151,18 @@ async def two_rooms() -> AsyncIterator[TwoRooms]:
 
 @pytest_asyncio.fixture(loop_scope="function")
 async def started_codex() -> AsyncIterator[Callable[..., Awaitable[CodexAdapter]]]:
-    """Start Codex adapters configured by ``config`` whose processes are the
-    fake app-servers ``clients`` in start order; each is shut down at the end."""
+    """Start Codex adapters configured by ``config`` and ``features`` whose
+    processes are the fake app-servers ``clients`` in start order; each is shut
+    down at the end."""
     adapters: list[CodexAdapter] = []
 
     async def start(
-        client: FakeCodexClient, *replacements: FakeCodexClient, **config: Any
+        client: FakeCodexClient,
+        *replacements: FakeCodexClient,
+        features: FeatureKwargs | None = None,
+        **config: Any,
     ) -> CodexAdapter:
-        adapter = CodexAdapter(CodexAdapterConfig(**config))
+        adapter = CodexAdapter(CodexAdapterConfig(**config), **(features or {}))
         patch_codex_client(adapter, client, *replacements)
         await adapter.on_started("Codex Agent", "A coding agent")
         adapters.append(adapter)
@@ -129,3 +171,62 @@ async def started_codex() -> AsyncIterator[Callable[..., Awaitable[CodexAdapter]
     yield start
     for adapter in adapters:
         await adapter.cleanup_all()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def seed_transport(tmp_path: Path) -> AsyncIterator[SeedTransport]:
+    """Own the native processes and real REST client at external transport seams."""
+    peer = SeedTransport(tmp_path)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(peer.answer)) as http:
+        peer.rest = AsyncRestClient(
+            api_key="test", base_url="https://example.test", httpx_client=http
+        )
+        try:
+            yield peer
+        finally:
+            for adapter in peer.adapters:
+                await adapter.cleanup_all()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def codex_scheduled() -> AsyncIterator[
+    Callable[[FakeCodexClient], Awaitable[ScheduledCodexRoom]]
+]:
+    """Open manual-approval Codex rooms on the real scheduler, which no periodic
+    resync wakes; each is stopped and cleaned up at the end."""
+    adapters: list[CodexAdapter] = []
+    contexts: list[ExecutionContext] = []
+    platform = ReplyingPlatform()
+    async with rest_client_over(platform.answer) as rest:
+
+        async def open_room(client: FakeCodexClient) -> ScheduledCodexRoom:
+            adapter = make_codex_adapter(
+                client,
+                config=CodexAdapterConfig(
+                    approval_mode="manual", approval_wait_timeout_s=PATIENT_APPROVAL_S
+                ),
+            )
+            adapters.append(adapter)
+            await adapter.on_started("Agent", "A coding agent")
+            link = BandLink(agent_id=AGENT_ID, api_key="test-key")
+            link.rest = rest
+            ctx = run_through(adapter, link, config=no_periodic_wake_config())
+            contexts.append(ctx)
+            await ctx.start()
+            return ScheduledCodexRoom(platform, adapter, client, ctx)
+
+        try:
+            yield open_room
+        finally:
+            for ctx in contexts:
+                await ctx.stop()
+            for adapter in adapters:
+                await adapter.cleanup_all()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def scheduled_room(
+    codex_scheduled: Callable[[FakeCodexClient], Awaitable[ScheduledCodexRoom]],
+) -> ScheduledCodexRoom:
+    """A scheduled room whose first turn asks the room to approve one command."""
+    return await codex_scheduled(FakeCodexClient(events=list(parked_on_approval())))

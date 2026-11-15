@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Mapping
 from typing import cast
 
@@ -13,6 +14,17 @@ from band.integrations.codex.winspawn import Job, JobNotDrained
 class StdinPeer:
     def __init__(self) -> None:
         self.closed = False
+        self.written = bytearray()
+        self.drain_started = asyncio.Event()
+        self.drain_allowed = asyncio.Event()
+        self.drain_allowed.set()
+
+    def write(self, data: bytes) -> None:
+        self.written.extend(data)
+
+    async def drain(self) -> None:
+        self.drain_started.set()
+        await self.drain_allowed.wait()
 
     def is_closing(self) -> bool:
         return self.closed
@@ -65,7 +77,7 @@ class WindowsLifecycle:
     def __init__(self) -> None:
         self.helper = HelperPeer()
         self.job = JobPeer(self.helper)
-        self.client = CodexStdioClient(command=["unused"])
+        self.client = CodexStdioClient(command=[sys.executable])
         self.creation_started = asyncio.Event()
         self.creation_allowed = asyncio.Event()
         self.creation_allowed.set()

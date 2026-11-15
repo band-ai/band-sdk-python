@@ -7,6 +7,7 @@ import pytest
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
+    is_fresh_session_id,
     make_started_adapter,
     requires_copilot_sdk,
     run_message,
@@ -27,8 +28,12 @@ class TestPerRoomIsolation:
 
         assert len(client.sessions) == 2
         session_a, session_b = client.sessions
-        assert session_a.session_id == "band-copilot-agent-room-a"
-        assert session_b.session_id == "band-copilot-agent-room-b"
+        assert is_fresh_session_id(
+            session_a.session_id, prefix="band-copilot-agent-", room_id="room-a"
+        )
+        assert is_fresh_session_id(
+            session_b.session_id, prefix="band-copilot-agent-", room_id="room-b"
+        )
         # No prompt leakage across rooms.
         assert "for B" not in session_a.prompts[0]
         assert "for A" not in session_b.prompts[0]

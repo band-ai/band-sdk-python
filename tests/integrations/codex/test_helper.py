@@ -53,5 +53,5 @@ class TestHelperJobLifetime:
             ),
         )
 
-        assert winspawn._start_and_wait("job", 4, ("command",)) == int(resume_fails)
+        assert winspawn._start_and_wait("job", 4, ("command",), {}) == int(resume_fails)
         assert released.count(job) == 1

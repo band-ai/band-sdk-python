@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[pydantic-ai]>=6.0.0"]
+# dependencies = ["band-sdk[pydantic-ai]>=6.0.1"]
 # ///
 """Two draft tools share a temporary workspace deleted when the host stops.
 

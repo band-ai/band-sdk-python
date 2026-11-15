@@ -17,6 +17,15 @@ from __future__ import annotations
 
 import os
 
+from tests.xdistworker import (
+    configure_hypothesis_worker_database,
+    configure_parlant_worker_home,
+    restore_parlant_worker_home,
+)
+
+if os.environ.get("E2E_TESTS_ENABLED", "").lower() != "true":
+    configure_parlant_worker_home()
+
 # Must be set before crewai is first imported: its event bus installs a
 # global OpenTelemetry provider and a live exporter thread at import time.
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
@@ -33,6 +42,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
+from band_rest.core import http_client
+from band_sdk_core import DeadReason
 from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -49,8 +60,14 @@ from band.client.streaming import (
     RoomAddedPayload,
     RoomDeletedPayload,
     RoomRemovedPayload,
+    WebSocketDisconnectReason,
 )
-from band.client.streaming.client import RECONNECT_POLICY
+from band.client.streaming.disconnect import TerminalReason
+from band.client.streaming.session_decider import (
+    RAPID_DISCONNECT_MESSAGE,
+    closed_message,
+)
+from band.core.settlement import SettlementResult
 from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -70,7 +87,7 @@ from tests.paths import ENV_TEST_FILE
 
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
-pytest_plugins = ["pytester"]
+pytest_plugins = ["pytester", "tests.testdurations"]
 
 # Env-var prefixes that adapter config classes (CodexAdapterConfig,
 # LettaAdapterConfig, OpencodeAdapterConfig) self-source from.
@@ -79,6 +96,9 @@ _ADAPTER_CONFIG_ENV_PREFIXES = ("CODEX_", "LETTA_", "OPENCODE_")
 
 def pytest_configure(config: pytest.Config) -> None:
     """Block ``.env.test``'s adapter-config keys before collection can leak them.
+
+    Also point Hypothesis at a per-worker example database so xdist workers
+    do not share ``.hypothesis/examples``.
 
     ``tests/e2e/baseline/settings.py`` calls ``load_dotenv(ENV_TEST_FILE,
     override=False)`` at import time; several subdirectory ``conftest.py``
@@ -99,11 +119,17 @@ def pytest_configure(config: pytest.Config) -> None:
     Skipped entirely when ``E2E_TESTS_ENABLED`` is set: a live E2E run wants
     ``.env.test``'s real values (e.g. ``CODEX_CWD``), not neutralized ones.
     """
+    configure_hypothesis_worker_database()
     if os.environ.get("E2E_TESTS_ENABLED", "").lower() == "true":
         return
     for key in dotenv_values(ENV_TEST_FILE):
         if key.startswith(_ADAPTER_CONFIG_ENV_PREFIXES) and key not in os.environ:
             os.environ[key] = ""
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Restore the caller's Parlant setting after all local servers stop."""
+    restore_parlant_worker_home()
 
 
 class CollectionGateSettings(BaseSettings):
@@ -176,6 +202,19 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                 item.add_marker(skip)
 
 
+@pytest.fixture
+def periodic_wake_after_the_full_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin a room's jittered first periodic resync to the interval's end.
+
+    A wake at a random point lands inside a test's quiet window, and a jitter that
+    is not a whole number of microseconds leaves looptime's integer clock just
+    short of that timer, so a virtual jump past it never fires.
+    """
+    monkeypatch.setattr(
+        "band.runtime.resync.first_wake_offset", lambda interval: interval
+    )
+
+
 @pytest.fixture(autouse=True)
 def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     """Give every unit test its own single-instance lock dir.
@@ -212,6 +251,16 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     # the lock fd (and its process-registry entry) for the whole session.
     for guard in created:
         guard.release()
+
+
+@pytest.fixture(autouse=True)
+def instant_retries(request, monkeypatch):
+    """Keep the generated client's retry count but not its multi-second backoff.
+
+    Live tests (e2e/integration) keep the real backoff against a real platform.
+    """
+    if not {"e2e", "integration"} & set(request.node.path.parts):
+        monkeypatch.setattr(http_client, "_retry_timeout", lambda **_: 0.0)
 
 
 @pytest.fixture(autouse=True)
@@ -366,18 +415,31 @@ TERMINAL_SUPERSEDE: dict[str, Any] = {
     "correlation_id": "evict-1",
 }
 
+# The same push, were the platform to let the evicted session retry.
+RETRYABLE_SUPERSEDE: dict[str, Any] = {
+    **TERMINAL_SUPERSEDE,
+    "retryable": True,
+    "retry_after": 20,
+}
 
-@pytest.fixture(scope="class")
-def millisecond_reconnects() -> Iterator[None]:
-    """The transport's reconnect backoff shrunk to milliseconds, so a test that
-    reconnects spends its time on the scenario, not on the transport's timers.
-    Class-scoped because Hypothesis rejects function-scoped fixtures."""
-    fast = RECONNECT_POLICY.model_copy(
-        update={"base_delay_s": 0.001, "rapid_disconnect_uptime_s": 0.0}
-    )
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr("band.client.streaming.client.RECONNECT_POLICY", fast)
-        yield
+# The reason a session ended by ``TERMINAL_SUPERSEDE`` records.
+SUPERSEDED = WebSocketDisconnectReason(
+    **TERMINAL_SUPERSEDE, dead_reason=DeadReason.Classified
+)
+
+# The reasons the session records when it ends a live socket on its own.
+CLOSED_1008 = WebSocketDisconnectReason(
+    reason=TerminalReason.SOCKET_CLOSED,
+    message=closed_message(1008),
+    retryable=False,
+    dead_reason=DeadReason.Classified,
+)
+KEPT_DROPPING = WebSocketDisconnectReason(
+    reason=TerminalReason.RAPID_DISCONNECT,
+    message=RAPID_DISCONNECT_MESSAGE,
+    retryable=False,
+    dead_reason=DeadReason.RapidDisconnect,
+)
 
 
 def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:
@@ -405,6 +467,30 @@ def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:
 # =============================================================================
 
 
+def mirror_settlement_results(link: MagicMock) -> MagicMock:
+    """Give a mock link the detailed status writes the runtime reads.
+
+    Every processing claim is accepted. Runtime tests script
+    ``mark_processed``/``mark_failed``; the detailed terminal results are
+    ACCEPTED exactly when the boolean mock is truthy. Wire-level classification
+    is covered through the real client in ``tests/platform/settlement``.
+    """
+
+    def settled(accepted: object) -> SettlementResult:
+        return SettlementResult.ACCEPTED if accepted else SettlementResult.UNCONFIRMED
+
+    async def processed(*args: Any, **kwargs: Any) -> SettlementResult:
+        return settled(await link.mark_processed(*args, **kwargs))
+
+    async def failed(*args: Any, **kwargs: Any) -> SettlementResult:
+        return settled(await link.mark_failed(*args, **kwargs))
+
+    link.mark_processing_result = AsyncMock(return_value=SettlementResult.ACCEPTED)
+    link.mark_processed_result = AsyncMock(side_effect=processed)
+    link.mark_failed_result = AsyncMock(side_effect=failed)
+    return link
+
+
 def make_message_event(
     room_id: str = "room-123",
     msg_id: str = "msg-123",
@@ -421,6 +507,7 @@ def make_message_event(
         sender_id=sender_id,
         sender_type=sender_type,
         chat_room_id=room_id,
+        thread_id=kwargs.get("thread_id"),
         inserted_at=kwargs.get("inserted_at", "2024-01-01T00:00:00Z"),
         updated_at=kwargs.get("updated_at", "2024-01-01T00:00:00Z"),
         metadata=kwargs.get("metadata", MessageMetadata(mentions=[])),

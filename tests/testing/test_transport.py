@@ -10,13 +10,13 @@ import pytest
 from band.platform.link import BandLink
 from band.testing import fake_phoenix_server, force_transport_disconnect
 from tests.conftest import spy_on_reconciliation_drain
+from tests.sessionpolicies import millisecond_backoff
 
 
 def make_link() -> BandLink:
     return BandLink(agent_id="agent-123", api_key="test-key")
 
 
-@pytest.mark.usefixtures("millisecond_reconnects")
 class TestForceTransportDisconnect:
     async def test_the_aborted_link_reconnects(self) -> None:
         """An abort carries no close handshake -- what a real network drop
@@ -27,6 +27,7 @@ class TestForceTransportDisconnect:
                 api_key="test-key",
                 ws_url=server.url,
                 rest_url="https://test.invalid",
+                session_policy=millisecond_backoff(),
             )
             await link.connect()
             reconnected = spy_on_reconciliation_drain(link)

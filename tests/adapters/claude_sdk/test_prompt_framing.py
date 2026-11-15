@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from band.runtime.prompts import system_updates
 from tests.adapters.claude_sdk.helpers import OpenRoom
+from tests.framework_conformance.batchprobes import current_records
 
 JOINED = "Alice joined the room"
 CONTACTED = "Carol is now a contact"
@@ -25,4 +26,4 @@ class TestPromptFraming:
 
         participants, contacts, message = room.claude.prompts[-1].split("\n\n")
         assert [participants, contacts] == system_updates(JOINED, CONTACTED)
-        assert message.endswith("hello")
+        assert [record["content"] for record in current_records(message)] == ["hello"]

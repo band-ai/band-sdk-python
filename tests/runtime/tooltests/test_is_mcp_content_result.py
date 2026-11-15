@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from band.runtime.tools import (
-    is_mcp_content_result,
-)
+from band.runtime.tools import is_mcp_content_result
 
 
 class TestIsMcpContentResult:

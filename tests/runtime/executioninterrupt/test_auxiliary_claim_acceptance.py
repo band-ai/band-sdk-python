@@ -17,6 +17,7 @@ from tests.runtime.helpers import (
     LifecyclePlatform,
     rest_client_over,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestAuxiliaryClaimAcceptance:
@@ -41,7 +42,7 @@ class TestAuxiliaryClaimAcceptance:
                 results.append(await ctx.claim_message("aux"))
 
             ctx = auxiliary_context(rest, handler)
-            await ctx._process_event(make_message_event(msg_id="trigger"))
+            await attempt_delivery(ctx, make_message_event(msg_id="trigger"))
             assert results == [accepted]
             assert peer.marked("processed") == ["trigger"]
             assert peer.requested("failed") == []
@@ -64,7 +65,7 @@ class TestAuxiliaryClaimAcceptance:
                     await ctx.claim_message("aux")
                 assert peer.requested_marks == []
             else:
-                await ctx._process_event(make_message_event(msg_id="trigger"))
+                await attempt_delivery(ctx, make_message_event(msg_id="trigger"))
                 assert peer.requested_marks == [
                     ("trigger", "processing"),
                     ("trigger", "processed"),

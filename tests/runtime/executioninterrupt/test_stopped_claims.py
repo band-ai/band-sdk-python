@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.core.exceptions import RoomExecutionStoppedError
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import ExecutionContext, TurnOutcome
-from tests.conftest import BlockingHandler, make_message_event
-from tests.runtime.executioninterrupt.kit import (
-    backlog_message,
-)
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
+from tests.conftest import BlockingHandler
+from tests.runtime.executioninterrupt.kit import auxiliary_context, backlog_message
+from tests.runtime.helpers import LifecyclePlatform, rest_client_over
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestStoppedClaims:
@@ -21,33 +21,34 @@ class TestStoppedClaims:
 
     @pytest.mark.parametrize("path", ["live", "backlog"])
     async def test_stopped_claim_defers_without_invoking_or_poisoning_retry(
-        self, mock_link, path: str
+        self, path: str
     ) -> None:
+        peer = LifecyclePlatform(stopped=True)
+        peer.add_message("refused")
         handler = BlockingHandler(block=False)
-        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
-        mock_link.mark_processing.side_effect = RoomExecutionStoppedError(ctx.room_id)
-        if path == "live":
-            assert (
-                await ctx._process_event(make_message_event(msg_id="refused"))
-                is TurnOutcome.RETRY_LATER
-            )
-        else:
-            assert (
-                await ctx._process_backlog_message(backlog_message("refused"))
-                is TurnOutcome.RETRY_LATER
-            )
-        assert handler.invoked == []
-        mock_link.mark_processed.assert_not_awaited()
-        mock_link.mark_failed.assert_not_awaited()
-        mock_link.mark_processing.side_effect = None
-        assert (
-            await ctx._process_backlog_message(backlog_message("refused"))
-            is TurnOutcome.ADVANCED
+        original = (
+            peer.event("refused") if path == "live" else backlog_message("refused")
         )
+        async with rest_client_over(peer.answer) as rest:
+            ctx = auxiliary_context(rest, handler)
+            assert await attempt_delivery(ctx, original) is TurnOutcome.RETRY_LATER
+            while_stopped = (list(handler.invoked), list(peer.accepted_marks))
+            peer.stopped = False
+            # The single retry allowed is still unspent.
+            assert (
+                await attempt_delivery(ctx, backlog_message("refused"))
+                is TurnOutcome.ADVANCED
+            )
+
+        assert while_stopped == ([], [])
         assert handler.completed == ["refused"]
+        assert peer.accepted_marks == [
+            ("refused", "processing"),
+            ("refused", "processed"),
+        ]
 
     async def test_pending_stop_cleanup_defers_claims_with_bounded_wait(
-        self, mock_link, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         release, entered = asyncio.Event(), asyncio.Event()
 
@@ -55,20 +56,25 @@ class TestStoppedClaims:
             entered.set()
             await release.wait()
 
-        ctx = ExecutionContext(
-            "room-123", mock_link, AsyncMock(), on_platform_stop=observer
-        )
-        await ctx._begin_scope()
-        ctx.observe_platform_stop(ctx.current_scope)
-        await entered.wait()
-        monkeypatch.setattr("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
-        assert (
-            await ctx._process_event(make_message_event(msg_id="later"))
-            is TurnOutcome.RETRY_LATER
-        )
-        mock_link.mark_processing.assert_not_awaited()
-        release.set()
-        assert (
-            await ctx._process_event(make_message_event(msg_id="later"))
-            is TurnOutcome.ADVANCED
-        )
+        peer = LifecyclePlatform()
+        peer.add_message("later")
+        async with rest_client_over(peer.answer) as rest:
+            ctx = auxiliary_context(rest, AsyncMock(), observer=observer)
+            await ctx.begin_delivery()
+            ctx.observe_platform_stop(ctx.current_scope)
+            await entered.wait()
+            monkeypatch.setattr(
+                "band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01
+            )
+            assert (
+                await attempt_delivery(ctx, peer.event("later"))
+                is TurnOutcome.RETRY_LATER
+            )
+            during_cleanup = list(peer.requested_marks)
+            release.set()
+            assert (
+                await attempt_delivery(ctx, peer.event("later")) is TurnOutcome.ADVANCED
+            )
+
+        assert during_cleanup == []
+        assert peer.requested_marks == [("later", "processing"), ("later", "processed")]

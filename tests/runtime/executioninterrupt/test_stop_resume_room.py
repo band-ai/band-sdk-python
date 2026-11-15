@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-from band.runtime.execution import ExecutionContext, ResyncOutcome, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
+from band.runtime.scheduler import ResyncOutcome
 from tests.conftest import BlockingHandler, make_message_event
-from tests.runtime.executioninterrupt.kit import (
-    backlog_message,
-)
+from tests.runtime.executioninterrupt.kit import auxiliary_context, backlog_message
+from tests.runtime.helpers import LifecyclePlatform, rest_client_over
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestStopRoomResumeRoom:
@@ -17,7 +19,9 @@ class TestStopRoomResumeRoom:
         """stop_room aborts the in-flight cycle and sets the local _stopped flag."""
         handler = BlockingHandler()
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
-        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="x")))
+        proc = asyncio.create_task(
+            attempt_delivery(ctx, make_message_event(msg_id="x"))
+        )
         await handler.started.wait()
 
         ctx.stop_room()
@@ -27,19 +31,21 @@ class TestStopRoomResumeRoom:
         assert result is TurnOutcome.PAUSED
         mock_link.mark_processed.assert_not_awaited()
 
-    async def test_stopped_room_skips_new_message(self, mock_link):
+    async def test_stopped_room_skips_new_message(self):
         """A WS trigger arriving while stopped is left actionable (never claimed
         or marked), not processed."""
+        peer = LifecyclePlatform()
+        peer.add_message("while-stopped")
         handler = BlockingHandler(block=False)
-        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
-        ctx._stopped = True
-
-        result = await ctx._process_event(make_message_event(msg_id="while-stopped"))
+        async with rest_client_over(peer.answer) as rest:
+            ctx = auxiliary_context(rest, handler)
+            ctx.stop_room()
+            result = await attempt_delivery(ctx, peer.event("while-stopped"))
 
         assert result is TurnOutcome.PAUSED
-        assert handler.invoked == []  # adapter never invoked
-        mock_link.mark_processing.assert_not_awaited()
-        mock_link.mark_processed.assert_not_awaited()
+        assert handler.invoked == []
+        assert peer.requested_marks == []
+        assert [message["id"] for message in peer.messages] == ["while-stopped"]
 
     async def test_resume_room_clears_flag_and_requests_resync(self, mock_link):
         """play clears _stopped and enqueues a resync sentinel (the /next
@@ -62,9 +68,9 @@ class TestStopRoomResumeRoom:
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         ctx._stopped = True
 
-        ok = await ctx._synchronize_with_next()
+        ok = await ctx.scheduler.run_pass(recovery=True)
 
-        assert ok is True
+        assert ok is ResyncOutcome.STOPPED
         assert handler.invoked == []  # adapter not invoked while stopped
         mock_link.get_stale_processing_messages.assert_not_awaited()
 
@@ -84,7 +90,7 @@ class TestStopRoomResumeRoom:
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         # Simulate: was stopped, now resuming.
         ctx._stopped = False
-        ok = await ctx._resync_pending_messages()
+        ok = await ctx.scheduler.run_pass(recovery=True)
 
         assert ok is ResyncOutcome.WORK
         assert handler.completed == ["replayed-1"]
@@ -101,7 +107,9 @@ class TestStopRoomResumeRoom:
         # generous override, so a poisoned attempt count would trip this.
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
-        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="p1")))
+        proc = asyncio.create_task(
+            attempt_delivery(ctx, make_message_event(msg_id="p1"))
+        )
         await handler.started.wait()
         ctx.stop_room()
         assert await proc is TurnOutcome.PAUSED
@@ -110,7 +118,8 @@ class TestStopRoomResumeRoom:
         # Resume, then the platform replays the still-"processing" message via
         # /next — same message id, now delivered through the backlog path.
         handler.started.clear()
-        result = await ctx._process_backlog_message(backlog_message("p1"))
+        await ctx.resume_room()
+        result = await attempt_delivery(ctx, backlog_message("p1"))
 
         assert result is TurnOutcome.ADVANCED
         assert handler.completed == ["p1"]  # handler actually ran this time

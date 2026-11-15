@@ -2,7 +2,7 @@
 
 ``CopilotSDKAdapter(..., ask_user="room")`` bridges the model's built-in
 ``ask_user`` tool to the Band room itself: the question is posted as a
-room message (mentioning whoever triggered the turn) and the tool call
+room message (mentioning the turn's senders) and the tool call
 resolves immediately with :data:`QUESTION_DELIVERED_ANSWER`, so the turn
 ends and the user's reply arrives as the *next* message on the same
 persisted Copilot session.
@@ -11,7 +11,7 @@ That turn-split is forced by how the two runtimes work, not a styling
 choice:
 
 - **Band** processes each room's messages strictly one at a time
-  (``ExecutionContext._process_loop``). A handler that blocked the turn
+  (``Scheduler.run``). A handler that blocked the turn
   waiting for the user's reply could never receive it — the reply sits
   in the room queue until the turn it is supposed to unblock finishes.
 - **Copilot** services ``ask_user`` as a ``userInput.request`` JSON-RPC
@@ -56,6 +56,11 @@ ROOM_INACTIVE_ANSWER = (
     "delivered. Proceed without the user's input.)"
 )
 
+NO_RECIPIENTS_ANSWER = (
+    "(Your question was not delivered because none of this turn's senders "
+    "remain in the chat room. No answer or approval was received. End this turn.)"
+)
+
 DELIVERY_FAILED_ANSWER = (
     "(The question could not be delivered to the chat room: {error}. "
     "Proceed without the user's input, or try again later.)"
@@ -97,6 +102,11 @@ def delivery_failed_answer(error: BaseException) -> UserInputResponse:
 def room_inactive_answer() -> UserInputResponse:
     """The answer for a dispatch whose room/turn is already gone."""
     return freeform_answer(ROOM_INACTIVE_ANSWER)
+
+
+def no_recipients_answer() -> UserInputResponse:
+    """Describe a question skipped because its originating audience left."""
+    return freeform_answer(NO_RECIPIENTS_ANSWER)
 
 
 def render_room_question(request: Mapping[str, Any]) -> str:

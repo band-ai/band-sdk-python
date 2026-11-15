@@ -11,6 +11,7 @@ from band.runtime.execution import ExecutionContext
 from tests.conftest import make_message_event
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import ROOM_ID, LifecyclePlatform, synthetic_message
+from tests.runtime.scheduler.driver import attempt_delivery
 from tests.runtime.turnadmission.kit import (
     APPROVAL,
     TurnRecorder,
@@ -38,7 +39,7 @@ class TestGraceControls:
     ) -> None:
         platform.add_message("B")
         turn = asyncio.create_task(
-            ctx._process_event(make_message_event(room_id=ROOM_ID, msg_id="B"))
+            attempt_delivery(ctx, make_message_event(room_id=ROOM_ID, msg_id="B"))
         )
         await asyncio.sleep(WITHIN_GRACE)
         ctx.stop_room()
@@ -49,7 +50,7 @@ class TestGraceControls:
         assert platform.requested("processing") == []
 
         await ctx.resume_room()
-        await ctx._reconcile()
+        await ctx.scheduler.run_pass(recovery=True)
         assert adapter.completed == ["B"]
 
     async def test_stop_during_turn_grace_keeps_synthetic_message_queued(
@@ -82,8 +83,8 @@ class TestGraceControls:
     ) -> None:
         platform.add_message("B")
         platform.add_message("C", content=APPROVAL)
-        ctx._deferred_message_id = "B"
-        scan = asyncio.create_task(ctx._scan_controls())
+        ctx.scheduler.defer("B")
+        scan = asyncio.create_task(ctx.scheduler.run_pass())
         # A STOP before the page returns ends the scan on its revision check.
         await wait_for_condition(lambda: platform.actionable_cursors != [])
         await asyncio.sleep(WITHIN_GRACE)

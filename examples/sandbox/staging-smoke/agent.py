@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]>=6.0.1"]
 #
 # [tool.uv]
 # override-dependencies = ["websockets>=16"]

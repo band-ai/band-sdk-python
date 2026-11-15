@@ -43,8 +43,9 @@ written.
 - A behaviour is only covered for one adapter and should run across frameworks.
 
 Do **not** use this for unit/adapter/converter tests (those live in `tests/adapters/`,
-`tests/converters/`, `tests/framework_conformance/` and don't touch the platform), or for
-a one-line tweak to an existing E2E test — just make it.
+`tests/converters/`, `tests/framework_conformance/` and don't touch the platform; write
+them with [test conventions](../band-python-test-conventions/SKILL.md)), or for a
+one-line tweak to an existing E2E test — just make it.
 
 ## Phase 1 — Collect context
 
@@ -79,9 +80,13 @@ reuse, target location, precedents, and any coverage overlap).
 ## Phase 2 — Plan the test
 
 Apply [test conventions](../band-python-test-conventions/SKILL.md)
-"Coverage and realistic flows" when mapping existing coverage and selecting
-the scenario. Show which meaningful gap this test closes and which complete
-interaction it proves.
+"Coverage is branches, not lines" when mapping existing coverage and selecting
+the scenario. Show which complementary-branch gap this test closes and which
+complete interaction it proves.
+
+Apply "Test helpers and peers" to toolkit changes. Reuse resource fixtures;
+keep scenario actions and assertions visible in tests. Reject helper frameworks
+that simulate the behavior the E2E test claims to exercise.
 
 Write a concrete plan (not code yet). It must answer:
 

@@ -17,12 +17,12 @@ from dataclasses import dataclass
 
 from tests.toolkit.timeouts import TIMEOUT_BACKSTOP_MARGIN_S
 
-# The longest a Band adapter lets a single live turn run before aborting it itself:
-# the largest ``turn_timeout_s`` among the matrix adapters (opencode and letta both
-# use 300s; codex 180s, copilot_sdk 120s). Below it a barrier declares a turn that
-# is still healthy "stuck" -- the loaded backend lanes funnel concurrent turns
-# through one shared serve against a throttled free model, and those turns are slow,
-# not dead. At it the adapter has already given up, so no reply can still be coming.
+# The turn budget most slow-backend adapters give a single live turn before aborting
+# it themselves: opencode, letta, omp and the ACP client default all use 300s (codex
+# 180s, copilot_sdk 120s; cursor_acp alone allows 900s). Below it a barrier declares
+# a turn that is still healthy "stuck" -- concurrent turns queue on one shared
+# backend serve, so they are slow, not dead. At it those adapters have already given
+# up, so no reply can still be coming.
 SLOW_TURN_DEADLINE_S = 300.0
 
 

@@ -12,9 +12,11 @@ import asyncio
 import inspect
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
+from functools import partial
 from time import monotonic
+from types import MappingProxyType
 from typing import Any, ClassVar, get_origin, get_type_hints
 
 from band_sdk_core import AgentFailure
@@ -30,8 +32,19 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.capabilities import Hooks, ProcessHistory
-from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
-from pydantic_ai.exceptions import SkipModelRequest
+from pydantic_ai.capabilities.abstract import (
+    AgentNode,
+    NodeResult,
+    ValidatedToolArgs,
+    WrapToolExecuteHandler,
+)
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    SkipModelRequest,
+    ToolFailed,
+)
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -40,6 +53,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
     ThinkingPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -48,6 +62,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
 )
 from pydantic_ai.result import FinalResult
+from pydantic_ai.tools import ToolDefinition
 from pydantic_graph import End
 from typing_extensions import Unpack
 
@@ -60,7 +75,8 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
+from band.core.turn import RoundOutcome
 from band.core.types import (
     Capability,
     Emit,
@@ -68,19 +84,28 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    ids_of,
 )
 from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
 from band.runtime.custom_tools import (
     CustomToolDef,
+    declared_effect,
     declared_effects,
     get_custom_tool_name,
-    invoke_validated_custom_tool,
+    run_validated_custom_tool,
 )
-from band.runtime.prompts import render_system_prompt
+from band.runtime.formatters import format_current_inputs
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
+from band.runtime.toolactivity import (
+    WRAPPED_TOOL_ACTIVITY,
+    native_tool_activity,
+    tool_activity,
+)
 from band.runtime.tools import (
-    BandTool,
+    TurnEffect,
     image_block_placeholder,
     redact_tool_call_args,
+    turn_effect,
 )
 from band.runtime.tools.schema import is_failed_tool_output
 
@@ -148,19 +173,25 @@ def _model_request_error(
     raise error
 
 
-def _explicit_decline_is_terminal(request: ModelRequest) -> bool:
+def _tool_return_succeeded(part: ToolReturnPart) -> bool:
+    return part.outcome == "success" and not is_failed_tool_output(part.content)
+
+
+def _explicit_decline_is_terminal(
+    request: ModelRequest, effects: Mapping[str, TurnEffect]
+) -> bool:
     """A current-run decline ends the loop when every tool result in its batch succeeded."""
-    declined = False
+    outcome = RoundOutcome()
     for part in request.parts:
         if isinstance(part, RetryPromptPart):
             return False
         if not isinstance(part, ToolReturnPart):
             continue
-        if part.outcome != "success" or is_failed_tool_output(part.content):
-            return False
-        if part.tool_name == BandTool.NO_REPLY:
-            declined = True
-    return declined
+        outcome.record(
+            effects.get(part.tool_name, turn_effect(part.tool_name)),
+            _tool_return_succeeded(part),
+        )
+    return outcome.should_stop(complete=True)
 
 
 async def _finish_explicit_decline_after_tools(
@@ -168,6 +199,7 @@ async def _finish_explicit_decline_after_tools(
     *,
     node: AgentNode[Any],
     result: NodeResult[Any],
+    effects: Mapping[str, TurnEffect],
 ) -> NodeResult[Any]:
     """End the run after a terminal decline without scheduling another model step.
 
@@ -177,7 +209,7 @@ async def _finish_explicit_decline_after_tools(
     step entirely.
     """
     if isinstance(result, ModelRequestNode) and _explicit_decline_is_terminal(
-        result.request
+        result.request, effects
     ):
         ctx.messages.append(result.request)
         return End(FinalResult(None))
@@ -185,7 +217,10 @@ async def _finish_explicit_decline_after_tools(
 
 
 def _finish_explicit_decline(
-    ctx: RunContext[AgentToolsProtocol], request_context: ModelRequestContext
+    ctx: RunContext[AgentToolsProtocol],
+    request_context: ModelRequestContext,
+    *,
+    effects: Mapping[str, TurnEffect],
 ) -> ModelRequestContext:
     """Finish after a successful current-run decline whose tool batch succeeded."""
     if not request_context.messages:
@@ -194,7 +229,7 @@ def _finish_explicit_decline(
     if (
         isinstance(request, ModelRequest)
         and request.run_id == ctx.run_id
-        and _explicit_decline_is_terminal(request)
+        and _explicit_decline_is_terminal(request, effects)
     ):
         raise SkipModelRequest(ModelResponse(parts=[]))
     return request_context
@@ -277,20 +312,48 @@ def _drop_blank_text(
     return response
 
 
+async def report_tool_execution(
+    ctx: RunContext[AgentToolsProtocol],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+    handler: WrapToolExecuteHandler,
+) -> Any:
+    """Validation and deferral precede this actual execution boundary."""
+    activity = (
+        tool_activity(ctx.deps, call.tool_name)
+        if (tool_def.metadata or {}).get(WRAPPED_TOOL_ACTIVITY)
+        else native_tool_activity(ctx.deps, call.tool_name)
+    )
+    async with activity:
+        return await handler(args)
+
+
+# Tool-control exceptions pydantic-ai handles itself, which a portable handler
+# written for pydantic-ai may raise.
+PYDANTIC_AI_TOOL_SIGNALS = (ModelRetry, ToolFailed, CallDeferred, ApprovalRequired)
+
+
 def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     """Adapt a portable ``CustomToolDef`` to a native pydantic-ai tool callable.
 
     The wrapper takes ``RunContext`` (whose deps are the room's tools), then
     ``args: InputModel``, which pydantic-ai flattens into the tool's arguments
-    and validates. ``invoke_validated_custom_tool`` runs the handler exactly as
-    every other adapter does and records its declared effect on the room's turn.
+    and validates. ``run_validated_custom_tool`` runs the handler exactly as
+    every other adapter does, records its declared effect on the room's turn,
+    shows it as the turn's activity while it runs, and returns a failure as the
+    tool's result, which the model reads, instead of failing the run.
     The validated instance is passed through as is, since a dump/re-validate
     round-trip would break aliased fields.
     """
     input_model, _ = tool_def
 
     async def native(ctx: RunContext[AgentToolsProtocol], args: Any) -> Any:
-        return await invoke_validated_custom_tool(tool_def, args, turn=ctx.deps.turn)
+        outcome = await run_validated_custom_tool(
+            tool_def, args, tools=ctx.deps, native_signals=PYDANTIC_AI_TOOL_SIGNALS
+        )
+        return outcome.value
 
     native.__name__ = get_custom_tool_name(input_model)
     native.__doc__ = input_model.__doc__ or native.__name__
@@ -325,6 +388,22 @@ def _takes_run_context(fn: Callable[..., Any]) -> bool:
     return annotation is RunContext or get_origin(annotation) is RunContext
 
 
+def _registered_tool_effects(
+    tools: Sequence[CustomToolDef | Callable[..., Any]],
+) -> Mapping[str, TurnEffect]:
+    """Capture declarations before portable wrappers take over effect recording."""
+    effects: dict[str, TurnEffect] = {}
+    for tool in tools:
+        if isinstance(tool, tuple):
+            input_model, handler = tool
+            name = get_custom_tool_name(input_model)
+        else:
+            handler = tool
+            name = handler.__name__
+        effects[name] = declared_effect(handler) or TurnEffect.OBSERVE
+    return MappingProxyType(effects)
+
+
 class PydanticAIAdapterConfig(BaseAdapterConfig):
     """Settings for a Pydantic AI agent.
 
@@ -343,7 +422,7 @@ class PydanticAIAdapterConfig(BaseAdapterConfig):
     custom_section: str | None = None
 
 
-class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
+class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
     """
     Pydantic AI adapter using SimpleAdapter pattern.
 
@@ -426,10 +505,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             for tool in (additional_tools or [])
         ]
         # Effects the native callables declared; a converted CustomToolDef
-        # declares none, since invoke_validated_custom_tool records its effect.
+        # declares none, since run_validated_custom_tool records its effect.
         self._custom_effects = declared_effects(
             (fn.__name__, fn) for fn in self._custom_tools
         )
+        self._stopping_effects = _registered_tool_effects(additional_tools or [])
 
     # --- Adapted from BandPydanticAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -484,8 +564,14 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             retries={"tools": 3, "output": 0},
             capabilities=[
                 Hooks(
-                    before_model_request=_finish_explicit_decline,
-                    after_node_run=_finish_explicit_decline_after_tools,
+                    tool_execute=report_tool_execution,
+                    before_model_request=partial(
+                        _finish_explicit_decline, effects=self._stopping_effects
+                    ),
+                    after_node_run=partial(
+                        _finish_explicit_decline_after_tools,
+                        effects=self._stopping_effects,
+                    ),
                 ),
                 # Strip content:null responses on every request, including mid-run
                 # ones the storage filter can't reach (see the function docstring).
@@ -518,10 +604,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         return agent
 
-    # --- Adapted from BandPydanticAgent._handle_message ---
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: PydanticAIMessages,  # Already converted by SimpleAdapter
         participants_msg: str | None,
@@ -530,7 +615,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Handle incoming platform message."""
+        """Run one agent turn over one or more original messages."""
         if self._agent is None:
             # Safety: create agent if not yet created (should be done in on_started)
             self._agent = self._create_agent()
@@ -555,7 +640,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         if participants_msg:
             self._message_history[room_id].append(
                 ModelRequest(
-                    parts=[UserPromptPart(content=f"[System]: {participants_msg}")]
+                    parts=[
+                        UserPromptPart(
+                            content=f"{SYSTEM_UPDATE_PREFIX}{participants_msg}"
+                        )
+                    ]
                 )
             )
             logger.debug("Room %s: Injected participant update into history", room_id)
@@ -564,13 +653,14 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         if contacts_msg:
             self._message_history[room_id].append(
                 ModelRequest(
-                    parts=[UserPromptPart(content=f"[System]: {contacts_msg}")]
+                    parts=[
+                        UserPromptPart(content=f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
+                    ]
                 )
             )
             logger.debug("Room %s: Injected contacts broadcast into history", room_id)
 
-        # Build user message with sender prefix
-        user_message = msg.format_for_llm()
+        user_message = format_current_inputs(messages)
 
         logger.debug(
             "Room %s: Running Pydantic AI agent (history: %s msgs)",
@@ -609,7 +699,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # failed run captured.
         capture_cm = capture_run_messages()
         captured = capture_cm.__enter__()
-        trace_token = _native_turn.set((room_id, msg.id, monotonic()))
+        message_ids = ", ".join(ids_of(messages))
+        trace_token = _native_turn.set((room_id, message_ids, monotonic()))
         event_count = 0
         try:
             _log_native_progress("run_started")
@@ -652,20 +743,14 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     elif isinstance(event, FunctionToolResultEvent):
                         tool_succeeded = isinstance(
                             event.part, ToolReturnPart
-                        ) and not is_failed_tool_output(event.part.content)
+                        ) and _tool_return_succeeded(event.part)
                         _log_native_progress(
                             "tool_succeeded" if tool_succeeded else "tool_failed",
                             events=event_count,
                             tool=event.part.tool_name,
                         )
                         tool_result_count += 1
-                        if isinstance(event.part, RetryPromptPart) or (
-                            isinstance(event.part, ToolReturnPart)
-                            and (
-                                event.part.outcome != "success"
-                                or is_failed_tool_output(event.part.content)
-                            )
-                        ):
+                        if not tool_succeeded:
                             failed_tool_result_count += 1
                         # Native custom tools run outside execute_custom_tool, so
                         # their declared effect is recorded here.
@@ -698,6 +783,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                             ToolEventKey.NAME: event.part.tool_name,
                                             ToolEventKey.OUTPUT: str(output),
                                             ToolEventKey.TOOL_CALL_ID: event.tool_call_id,
+                                            ToolEventKey.IS_ERROR: not tool_succeeded,
                                         }
                                     ),
                                     message_type="tool_result",
@@ -784,11 +870,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             _native_turn.reset(trace_token)
             if native_output_type is not None and not tools.turn.complete:
                 logger.warning(
-                    "Room %s message %s: native run ended without a turn outcome "
+                    "Room %s messages %s: native run ended without a turn outcome "
                     "(output_type=%s, output_chars=%s, tool_calls=%s, "
                     "tool_results=%s, failed_tool_results=%s)",
                     room_id,
-                    msg.id,
+                    message_ids,
                     native_output_type,
                     native_output_chars,
                     tool_call_count,

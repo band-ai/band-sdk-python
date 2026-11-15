@@ -25,6 +25,7 @@ from pydantic_core import SchemaValidator, core_schema
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import AdapterFeatures, MessageType
+from band.runtime.toolactivity import WRAPPED_TOOL_ACTIVITY, tool_activity
 from band.runtime.tools import (
     BandTool,
     ToolDefinition,
@@ -37,6 +38,7 @@ from band.runtime.tools import (
     turn_effect,
     validate_tool_arguments,
 )
+from band.runtime.tools.schema import tool_execution_failure
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,7 @@ def _build_tool(definition: ToolDefinition) -> Tool[AgentToolsProtocol]:
     # schema validation. Replace it with an object-shape validator so malformed
     # non-object payloads become ordinary validation retries.
     tool.function_schema.validator = _OBJECT_SCHEMA_VALIDATOR
+    tool.metadata = {WRAPPED_TOOL_ACTIVITY: True}
     return tool
 
 
@@ -202,7 +205,8 @@ def _dispatcher(
         # something to hand the model as a tool error it could act on.
         method = _resolve_method(ctx.deps, definition)
         try:
-            result = await method(**kwargs)
+            async with tool_activity(ctx.deps, definition.name):
+                result = await method(**kwargs)
         except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             return await _dispatch_failed(ctx, definition, error, notify_room=True)
         try:
@@ -240,7 +244,7 @@ async def _dispatch_failed(
         exc_info=error,
     )
     if notify_room or not turn_effect(definition.name).did_work:
-        message = f"Error executing {definition.name}: {error}"
+        message = tool_execution_failure(definition.name, error)
     else:
         # The method completed, so the model must not read it as a failure and
         # redo it (re-posting a message) just because the result could not be

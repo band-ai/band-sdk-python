@@ -22,11 +22,15 @@ from band.adapters.codex import (
     PendingApproval,
 )
 from band.client.streaming import ControlMode
+from band.converters.codex import CODEX_RESUME_RECORD
+from band.converters.helpers import HISTORY_REPLAY_HEADING
 from band.core.exceptions import InputNotAccepted
+from band.core.protocols import AgentToolsProtocol
 from band.core.retention import Residency, RetainedRoom
 from band.core.types import (
     AgentInput,
     HistoryProvider,
+    MessageType,
     PlatformMessage,
 )
 from band.integrations.codex import (
@@ -37,6 +41,7 @@ from band.integrations.codex import (
 from band.integrations.codex.types import (
     CodexApprovalMethod,
     CodexItemType,
+    CodexMetadataKey,
     CodexRequestMethod,
     CodexSessionState,
 )
@@ -59,12 +64,23 @@ from tests.adapters.waiting import until
 from tests.paths import host_absolute_path
 
 ROOM_ID = "room-1"
+
+#: The ``started_codex`` fixture: start an adapter on scripted processes.
+StartCodex = Callable[..., Awaitable[CodexAdapter]]
 # An approval wait no test outlasts: the room's human decides first.
 PATIENT_APPROVAL_S = 3600
 # Bounds a step that would otherwise hang the test if the adapter regressed.
 HANG_GUARD_S = 5
 # A process close bound a held close overruns.
 CLOSE_BOUND_S = 0.5
+ALICE = {
+    "id": "user-1",
+    "name": "Alice",
+    "handle": "alice",
+    "type": "User",
+    "role": "member",
+    "status": "active",
+}
 
 
 def make_platform_message(
@@ -85,7 +101,7 @@ def make_platform_message(
 
 def agent_input(
     content: str,
-    tools: FakeAgentTools,
+    tools: AgentToolsProtocol,
     *,
     raw_history: list[dict[str, Any]] | None = None,
     room_id: str = ROOM_ID,
@@ -102,7 +118,59 @@ def agent_input(
     )
 
 
+def stored(msg: PlatformMessage) -> dict[str, Any]:
+    """``msg`` as the platform's room context returns it."""
+    return {
+        "id": msg.id,
+        "content": msg.content,
+        "sender_id": msg.sender_id,
+        "sender_type": msg.sender_type,
+        "sender_name": msg.sender_name,
+        "message_type": msg.message_type,
+        "inserted_at": msg.created_at.isoformat(),
+    }
+
+
+#: A room's stored history before a test's first turn, and its replay line.
+TRANSCRIPT = [stored(make_platform_message(content="earlier context"))]
+REPLAYED = "[Alice]: earlier context"
+
+
+def replayed_history(turn: dict[str, Any]) -> list[str]:
+    """The texts of a ``turn/start`` input that replay the room's history."""
+    return [
+        item["text"]
+        for item in turn["input"]
+        if item["text"].startswith(HISTORY_REPLAY_HEADING)
+    ]
+
+
+def resume_records(tools: FakeAgentTools) -> list[dict[str, Any]]:
+    """The Codex resume records ``tools`` posted, oldest first."""
+    return [
+        event
+        for event in tools.events_sent
+        if event["content"] == CODEX_RESUME_RECORD.label
+    ]
+
+
+def recorded_thread(thread_id: str, room_id: str = ROOM_ID) -> dict[str, Any]:
+    """The history entry of a room's Codex resume record."""
+    return {
+        "message_type": MessageType.TASK,
+        "content": CODEX_RESUME_RECORD.label,
+        "metadata": {
+            CodexMetadataKey.ROOM: room_id,
+            CodexMetadataKey.THREAD: thread_id,
+        },
+    }
+
+
 class ToolSchemaFakeTools(FakeAgentTools):
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("participants", [ALICE])
+        super().__init__(**kwargs)
+
     def get_openai_tool_schemas(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
             {
@@ -404,12 +472,12 @@ ACCEPTED = {"decision": "accept"}
 REFUSED_AUTONOMOUS_TURN = (False, DECLINED)
 
 
-def answered_turn() -> list[RpcEvent]:
+def answered_turn(turn_id: str = "turn-1") -> list[RpcEvent]:
     """A turn explicitly completed through a Band decline tool."""
     return [
         tool_call_request(1, BandTool.NO_REPLY),
         final_text("Done."),
-        turn_completed(),
+        turn_completed(turn_id),
     ]
 
 
@@ -428,7 +496,8 @@ class CodexApprovalRoom:
 
     def __init__(self, adapter: CodexAdapter) -> None:
         self.adapter = adapter
-        self.tools = FakeAgentTools()
+        self.tools = FakeAgentTools(participants=[ALICE])
+        self.adapter._room_client(ROOM_ID)
         self.asks: list[asyncio.Task[ApprovalDecision]] = []
 
     @property
@@ -445,12 +514,13 @@ class CodexApprovalRoom:
     def ask(
         self, approval_id: str, *, request_id: int
     ) -> asyncio.Task[ApprovalDecision]:
+        self.adapter._room_client(ROOM_ID)
         params = {"approvalId": approval_id, "command": "npm test"}
         self.asks.append(
             ask := asyncio.create_task(
-                self.adapter._resolve_manual_approval(
+                self._ask(
                     tools=self.tools,
-                    msg=make_platform_message(room_id=ROOM_ID),
+                    audience=[{"id": "user-1", "name": "Alice"}],
                     room_id=ROOM_ID,
                     event=event_request(
                         request_id, CodexApprovalMethod.COMMAND_EXECUTION, params
@@ -461,6 +531,10 @@ class CodexApprovalRoom:
             )
         )
         return ask
+
+    async def _ask(self, **kwargs: Any) -> ApprovalDecision:
+        async with self.adapter._resolve_manual_approval(**kwargs) as decision:
+            return decision
 
     @asynccontextmanager
     async def prompted(self, *, count: int = 1) -> AsyncIterator[None]:

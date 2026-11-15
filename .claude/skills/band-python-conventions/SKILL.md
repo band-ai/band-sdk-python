@@ -1,6 +1,6 @@
 ---
 name: band-python-conventions
-description: Band Python SDK conventions for Python source, comments, docstrings, and error handling. Read before editing Python in this repository.
+description: Band Python SDK conventions for Python source, comments, docstrings, and error handling. Read before editing Python in this repository. Test files also follow band-python-test-conventions; this skill still owns SSoT, intent-named helpers, and public test seams.
 paths:
   - "**/*.py"
 ---
@@ -29,6 +29,12 @@ paths:
   import those entry points back.
   Use `__all__` or explicit re-export aliases only to declare such a public API,
   not as boilerplate in ordinary modules.
+- Keep code out of `__init__.py`. It holds only the package docstring and, at
+  an intentional public entry point, that entry point's re-exports, `__all__`,
+  and the lazy `__getattr__` that defers an optional extra's imports. Every
+  other class, function, constant or piece of logic lives in a named module
+  the package imports from. Test packages follow the stricter rule in
+  `band-python-test-conventions`.
 - No underscores in file names or class names: modules get a clean single word
   (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
   PascalCase with no leading underscore. Exception: patterns a tool requires,
@@ -44,7 +50,12 @@ paths:
 - Use `%s` placeholders in log messages for lazy evaluation
 - Use Pydantic v2 for data models; use `model_dump()` not `dict()`
 - Target Python 3.11+; use `list[str]` not `List[str]`, `str | None` not `Optional[str]`
-- Use async/await everywhere in async codebases; use `AsyncMock` for testing async methods
+- Use async/await everywhere in async codebases. `AsyncMock` is a test double
+  at an external boundary, not a stand-in for the unit whose interaction a
+  test claims to prove. Public constructor seams (a `create_process` factory,
+  an instance timeout of `0` meaning "check now") beat `unittest.mock.patch`
+  of private names or stdlib spawn. Tests follow
+  `band-python-test-conventions`.
 - Catch `pydantic.ValidationError` separately from generic `Exception`
 - Use `raise ValueError(...)` for missing required config, not `logger.error()` + `sys.exit()`
 - Never put issue-tracker references in code — no Linear issue IDs (e.g. `INT-123`), Linear URLs, or ticket numbers in comments, docstrings, or strings. Explain the *why* in plain terms instead. (Branch names, commit messages, and PR descriptions may reference issues.)
@@ -62,10 +73,12 @@ paths:
 - Prefer a single source of truth for a value or closed vocabulary consumed in more
   than one place: give it one definition — a constant, a `StrEnum`, or a small helper
   — that every site references, rather than re-typing the same magic literal in a
-  producer and the consumer that reads it (a typo then fails silently). Keep genuinely
-  distinct vocabularies separate, though — don't merge two sets that only happen to
-  share some values today (e.g. the ACP `ChunkType` a chunk carries vs. the platform
-  `message_type` an event is posted under).
+  producer and the consumer that reads it (a typo then fails silently). This includes
+  tests: a wire status, prompt text, or error message typed in a peer and again in an
+  assertion is two copies. Keep genuinely distinct vocabularies separate, though —
+  don't merge two sets that only happen to share some values today (e.g. the ACP
+  `ChunkType` a chunk carries vs. the platform `message_type` an event is posted
+  under).
 - Before writing new logic, search the codebase for an existing helper that does
   or almost does it; extending it beats a parallel implementation.
 - Use idiomatic constructs (`match`, decorators, context managers, recursion)

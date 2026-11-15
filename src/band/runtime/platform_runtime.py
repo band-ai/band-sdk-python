@@ -19,7 +19,7 @@ from band.runtime.agentconfig import AgentConfig
 from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.contact_handler import ContactEventHandler
 from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
-from band.runtime.execution import ExecutionContext
+from band.runtime.execution import BatchExecutionHandler, ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.single_instance import SingleInstanceGuard
@@ -55,6 +55,8 @@ class PlatformRuntime:
         contact_config: ContactEventConfig | None = None,
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
+        *,
+        link_factory: Callable[..., BandLink] | None = None,
     ):
         self._agent_id = agent_id
         self._api_key = api_key
@@ -66,6 +68,7 @@ class PlatformRuntime:
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
 
+        self._link_factory = link_factory
         self._link: BandLink | None = None
         # Held from creation until its stop() completes, so a restart can never
         # replace a runtime whose rooms may still be serving or cleaning up.
@@ -88,6 +91,10 @@ class PlatformRuntime:
     @property
     def agent_id(self) -> str:
         return self._agent_id
+
+    @property
+    def session_config(self) -> SessionConfig:
+        return self._session_config
 
     @property
     def connection(self) -> PlatformConnection:
@@ -162,7 +169,8 @@ class PlatformRuntime:
         if self._link:
             return self._link
 
-        self._link = BandLink(
+        factory = self._link_factory or BandLink
+        self._link = factory(
             agent_id=self._agent_id,
             api_key=self._api_key,
             ws_url=self._ws_url,
@@ -181,6 +189,9 @@ class PlatformRuntime:
         on_control: Callable[[str, ControlMode], Awaitable[None]] | None = None,
         on_message_control: Callable[[ExecutionContext, PlatformEvent], Awaitable[bool]]
         | None = None,
+        on_execute_batch: BatchExecutionHandler | None = None,
+        is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
+        | None = None,
     ) -> None:
         """
         Start platform runtime (begin processing messages).
@@ -193,6 +204,10 @@ class PlatformRuntime:
             on_cleanup: Callback for session cleanup
             on_control: Callback for an interrupt/stop control signal, for
                 adapter work that outlives the message cycle it started in
+            on_execute_batch: Callback for a turn over several originals;
+                required when ``SessionConfig.consume_all_queued`` is set
+            is_message_control: Read-only recognition of a delivery the adapter
+                would handle as a control
 
         Raises:
             AgentAlreadyRunningError: When a duplicate start is refused, by the
@@ -222,6 +237,8 @@ class PlatformRuntime:
                 on_session_cleanup=on_cleanup or self._noop_cleanup,
                 on_control=on_control,
                 on_message_control=on_message_control,
+                on_execute_batch=on_execute_batch,
+                is_message_control=is_message_control,
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
             )

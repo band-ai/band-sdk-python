@@ -6,8 +6,14 @@ import pytest
 
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
-from tests.conftest import make_message_event, make_participant_added_event
-from tests.sessionsync.kit import make_message
+from tests.conftest import (
+    make_message_event,
+    make_participant_added_event,
+)
+from tests.runtime.scheduler.driver import attempt_delivery
+from tests.sessionsync.kit import (
+    make_message,
+)
 
 
 class TestSynchronizeWithNext:
@@ -32,7 +38,7 @@ class TestSynchronizeWithNext:
         """Sync should complete when /next returns None (no backlog)."""
         mock_link.get_next_message.return_value = None
 
-        await ctx._synchronize_with_next()
+        await ctx.scheduler.run_pass(recovery=True)
 
         mock_link.get_next_message.assert_called_once()
 
@@ -44,7 +50,7 @@ class TestSynchronizeWithNext:
         # Return backlog message, then None
         mock_link.get_next_message.side_effect = [backlog_msg, None]
 
-        await ctx._synchronize_with_next()
+        await ctx.scheduler.run_pass(recovery=True)
 
         # Handler should be called for backlog message
         assert ctx._handler_mock.call_count == 1
@@ -61,15 +67,16 @@ class TestSynchronizeWithNext:
         # Enqueue sync message via WebSocket
         sync_event = make_message_event(msg_id="sync-001")
         await ctx.on_event(sync_event)
-        assert ctx._first_ws_msg_id == "sync-001"
+        ctx.scheduler.absorb()
+        assert ctx.scheduler.first_ws_id == "sync-001"
 
         # /next returns backlog first, then sync message
         mock_link.get_next_message.side_effect = [backlog_msg, sync_msg]
 
-        await ctx._synchronize_with_next()
+        await ctx.scheduler.run_pass(recovery=True)
 
         # Marker should be cleared
-        assert ctx._first_ws_msg_id is None
+        assert ctx.scheduler.first_ws_id is None
         # Queue should be empty (duplicate removed)
         assert ctx.queue.empty()
         # Dedupe cache keeps processed IDs to avoid immediate WS reprocessing
@@ -92,13 +99,12 @@ class TestSynchronizeWithNext:
         await ctx.on_event(participant_event)
         await ctx.on_event(make_message_event(msg_id="sync-001"))
 
-        await ctx._synchronize_with_next()
+        await ctx.scheduler.run_pass(recovery=True)
 
         # Process remaining WS events (participant only after dedupe drain)
         while not ctx.queue.empty():
-            await ctx._process_event(ctx.queue.get_nowait())
+            await attempt_delivery(ctx, ctx.queue.get_nowait())
 
-        mock_link.mark_processing.assert_called_once_with("room-123", "sync-001")
         mock_link.mark_processed.assert_called_once_with("room-123", "sync-001")
         mock_link.mark_failed.assert_not_called()
 
@@ -117,7 +123,7 @@ class TestSynchronizeWithNext:
 
         mock_link.get_next_message.return_value = failed_msg
 
-        await ctx._synchronize_with_next()
+        await ctx.scheduler.run_pass(recovery=True)
 
         # Handler should NOT be called
         ctx._handler_mock.assert_not_called()

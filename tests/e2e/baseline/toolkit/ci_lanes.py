@@ -6,8 +6,8 @@ plain ``dev`` job doesn't stand up). Each adapter belongs to a *lane* -- a CI jo
 -- derived from its ``requires`` (via ``adapter_lane`` in ``adapters``), never a
 hand-maintained list, so a newly-registered adapter lands in its lane for free and
 ``assert_every_adapter_has_a_ci_home`` fails loudly if it lands nowhere. A lane
-installs one ``uv`` extra (``lane_extra``); the ``backends`` lane stands up
-codex/opencode together.
+installs one ``uv`` extra (``lane_extra``); the ``backends`` lane stands up the
+coding-agent CLIs together, and ``opencode`` gets its own short lane.
 
 The ``workflow_*`` / ``assert_workflow_*`` helpers tie the ``.github/workflows/
 e2e.yml`` lane gates and dispatch dropdown back to this registry-derived partition,

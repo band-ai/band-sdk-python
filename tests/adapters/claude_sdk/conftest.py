@@ -36,6 +36,7 @@ async def claude_room(
         config: ClaudeSDKAdapterConfig | None = None,
         *,
         room_id: str = "room-1",
+        participants: list[dict[str, Any]] | None = None,
         **adapter_kwargs: Any,
     ) -> ClaudeRoom:
         adapter = ClaudeSDKAdapter(config, **adapter_kwargs)
@@ -47,7 +48,7 @@ async def claude_room(
             else nullcontext()
         )
         adapters.append((adapter, cleanup_clock))
-        return ClaudeRoom(adapter, claude, room_id)
+        return ClaudeRoom(adapter, claude, room_id, participants=participants)
 
     yield open_room
     # Uvicorn's pending timers must finish on the clock that scheduled them.

@@ -12,7 +12,6 @@ import json
 
 import pytest
 
-from band.converters.acp_client import ACPClientHistoryConverter
 from band.core.types import Emit
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import (
@@ -39,7 +38,7 @@ TOOL_NAME = "band_send_event"
 
 
 def make_emitter(tools: FakeAgentTools) -> RoomTurnEmitter:
-    return RoomTurnEmitter(tools, session_id="s1", room_id="room-1")
+    return RoomTurnEmitter(tools)
 
 
 class TestRoomTurnEmitter:
@@ -102,7 +101,7 @@ class TestRoomTurnEmitterBlankChunks:
     @pytest.mark.asyncio
     async def test_a_blank_thought_chunk_does_not_raise(self, mock_rest_client) -> None:
         tools = AgentTools("room-1", mock_rest_client)
-        emitter = RoomTurnEmitter(tools, session_id="s1", room_id="room-1")
+        emitter = RoomTurnEmitter(tools)
 
         await emitter.emit(
             CollectedChunk(chunk_type=ChunkType.THOUGHT, content="   ", tool=None)
@@ -115,7 +114,7 @@ class TestRoomTurnEmitterBlankChunks:
         self, mock_rest_client
     ) -> None:
         tools = AgentTools("room-1", mock_rest_client)
-        emitter = RoomTurnEmitter(tools, session_id="s1", room_id="room-1")
+        emitter = RoomTurnEmitter(tools)
 
         await emitter.emit(
             CollectedChunk(chunk_type=ChunkType.THOUGHT, content="   ", tool=None)
@@ -135,8 +134,7 @@ class TestRoomTurnEmitterEmitGating:
     The adapter hands the emitter the caller's resolved ``features.emit``;
     ``None`` here is the historical all-kinds default. Chunk *recording* is
     unconditional, so the tool-first delivery decision and the text relay
-    behave identically whether narration is on or off. The closing session
-    bookkeeping event is resume state, not narration, so it is never gated.
+    behave identically whether narration is on or off.
     """
 
     def _chunks(self) -> list[CollectedChunk]:
@@ -155,12 +153,7 @@ class TestRoomTurnEmitterEmitGating:
     async def run_turn(
         self, tools: FakeAgentTools, emit: frozenset[Emit] | None
     ) -> None:
-        emitter = RoomTurnEmitter(
-            tools,
-            session_id="s1",
-            room_id="room-1",
-            emit=emit,
-        )
+        emitter = RoomTurnEmitter(tools, emit=emit)
         async with emitter:
             for chunk in self._chunks():
                 await emitter.emit(chunk)
@@ -171,21 +164,9 @@ class TestRoomTurnEmitterEmitGating:
 
         await self.run_turn(tools, None)
 
-        # thought, tool_call, tool_result, the plan, then the closing
-        # session bookkeeping event last.
+        # thought, tool_call, tool_result, the plan, then the closing thought.
         kinds = [event["message_type"] for event in tools.events_sent]
-        assert kinds == [
-            "thought",
-            "tool_call",
-            "tool_result",
-            "task",
-            "thought",
-            "task",
-        ]
-        assert tools.events_sent[-1]["metadata"] == {
-            "acp_client_session_id": "s1",
-            "acp_client_room_id": "room-1",
-        }
+        assert kinds == ["thought", "tool_call", "tool_result", "task", "thought"]
         assert tools.messages_sent == []
         assert not tools.turn.complete
 
@@ -195,10 +176,7 @@ class TestRoomTurnEmitterEmitGating:
 
         await self.run_turn(tools, frozenset())
 
-        # Only the ungated session bookkeeping event remains.
-        assert [event["content"] for event in tools.events_sent] == [
-            "ACP client session"
-        ]
+        assert tools.events_sent == []
         assert tools.messages_sent == []
         assert not tools.turn.complete
 
@@ -209,28 +187,9 @@ class TestRoomTurnEmitterEmitGating:
         await self.run_turn(tools, frozenset({Emit.TOOL_CALLS}))
 
         kinds = [event["message_type"] for event in tools.events_sent]
-        assert kinds == ["tool_call", "tool_result", "task"]
-        assert tools.events_sent[-1]["content"] == "ACP client session"
+        assert kinds == ["tool_call", "tool_result"]
         assert tools.messages_sent == []
         assert not tools.turn.complete
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "emit",
-        [None, frozenset(), frozenset({Emit.TOOL_CALLS})],
-        ids=["default", "silenced", "tool-calls-only"],
-    )
-    async def test_every_emit_set_keeps_session_resume(
-        self, emit: frozenset[Emit] | None
-    ) -> None:
-        """The posted events must round-trip through the history converter to
-        the room→session map, or a restart skips native ``session/load``."""
-        tools = FakeAgentTools()
-
-        await self.run_turn(tools, emit)
-
-        state = ACPClientHistoryConverter().convert(tools.events_sent)
-        assert state.room_to_session == {"room-1": "s1"}
 
     @pytest.mark.asyncio
     async def test_silenced_turn_still_suppresses_duplicated_text(self) -> None:
@@ -244,13 +203,7 @@ class TestRoomTurnEmitterEmitGating:
         )
         result = ACPToolResult(call=call, output="sent", status=ToolStatus.COMPLETED)
         tools = FakeAgentTools()
-        emitter = RoomTurnEmitter(
-            tools,
-            session_id="s1",
-            room_id="room-1",
-            emit=frozenset(),
-            records_tool_effects=True,
-        )
+        emitter = RoomTurnEmitter(tools, emit=frozenset(), records_tool_effects=True)
 
         async with emitter:
             await emitter.emit(CollectedChunk(chunk_type=ChunkType.TEXT, content="hi"))
@@ -268,9 +221,7 @@ class TestRoomTurnEmitterEmitGating:
                 )
             )
 
-        assert [event["content"] for event in tools.events_sent] == [
-            "ACP client session"
-        ]
+        assert tools.events_sent == []
         assert tools.messages_sent == []
 
     @pytest.mark.asyncio
@@ -280,8 +231,6 @@ class TestRoomTurnEmitterEmitGating:
         quiet = FakeAgentTools()
         await RoomTurnEmitter(
             quiet,
-            session_id="s1",
-            room_id="room-1",
             emit=frozenset(),
         ).open_permission(call=call, session_id="s1", outcome="denied")
         assert quiet.events_sent == []
@@ -289,8 +238,6 @@ class TestRoomTurnEmitterEmitGating:
         loud = FakeAgentTools()
         await RoomTurnEmitter(
             loud,
-            session_id="s1",
-            room_id="room-1",
             emit=frozenset({Emit.TOOL_CALLS}),
         ).open_permission(call=call, session_id="s1", outcome="denied")
         assert [event["message_type"] for event in loud.events_sent] == [
@@ -330,11 +277,7 @@ async def closing_messages(
 ) -> list[str]:
     """Run one turn of ``chunks`` and return the messages it posted."""
     emitter = RoomTurnEmitter(
-        tools,
-        session_id="s1",
-        room_id="room-1",
-        emit=emit,
-        records_tool_effects=records_tool_effects,
+        tools, emit=emit, records_tool_effects=records_tool_effects
     )
     async with emitter:
         for chunk in chunks:
@@ -457,12 +400,7 @@ class TestRoomTurnEmitterClosingThought:
         """A rejected prompt (e.g. busy) owns no work: a reply streamed during
         it belongs to another turn and must not suppress the retry's answer."""
         tools = FakeAgentTools()
-        emitter = RoomTurnEmitter(
-            tools,
-            session_id="s1",
-            room_id="room-1",
-            records_tool_effects=True,
-        )
+        emitter = RoomTurnEmitter(tools, records_tool_effects=True)
 
         with pytest.raises(RuntimeError):
             async with emitter:
@@ -503,8 +441,6 @@ class TestRoomTurnEmitterAssistantTextAsThought:
             "(Waiting on the review.\n\nNothing to change.)"
         ]
         assert not tools.turn.complete
-        # Resume state is persisted independently of the verdict.
-        assert tools.events_sent[-1]["content"] == "ACP client session"
 
     @pytest.mark.asyncio
     async def test_thoughts_outside_the_emit_set_leave_the_room_silent(self) -> None:
@@ -513,7 +449,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
         await closing_messages(tools, text("Nothing to change."), emit=frozenset())
 
         assert tools.messages_sent == []
-        assert [e["content"] for e in tools.events_sent] == ["ACP client session"]
+        assert tools.events_sent == []
         assert not tools.turn.complete
 
     @pytest.mark.asyncio
@@ -538,7 +474,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
         )
 
         assert [m["content"] for m in tools.messages_sent] == ["Posted by the tool."]
-        assert [e["message_type"] for e in tools.events_sent] == ["task"]
+        assert tools.events_sent == []
 
     @pytest.mark.asyncio
     async def test_a_failed_in_process_reply_still_owes_the_reply(self) -> None:
@@ -591,11 +527,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
         """A custom tool declared ``REPLY`` can be refused upstream (its
         arguments failed the MCP schema) before its handler runs."""
         tools = FakeAgentTools()
-        emitter = RoomTurnEmitter(
-            tools,
-            session_id="s1",
-            room_id="room-1",
-        )
+        emitter = RoomTurnEmitter(tools)
         async with emitter:
             await emitter.emit(tool_result_chunk("post_answer", ToolStatus.FAILED))
             await emitter.emit(text("I posted the answer."))
@@ -621,12 +553,7 @@ class TestRoomTurnEmitterAssistantTextAsThought:
     @pytest.mark.asyncio
     async def test_a_denied_reply_permission_still_owes_the_reply(self) -> None:
         tools = FakeAgentTools()
-        emitter = RoomTurnEmitter(
-            tools,
-            session_id="s1",
-            room_id="room-1",
-            emit=frozenset(),
-        )
+        emitter = RoomTurnEmitter(tools, emit=frozenset())
         async with emitter:
             await emitter.open_permission(
                 call=ACPToolCall(

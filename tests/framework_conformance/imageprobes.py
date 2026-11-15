@@ -24,13 +24,15 @@ import base64
 import importlib.util
 from collections.abc import Awaitable, Callable, Iterable
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.core.protocols import AgentToolsProtocol
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.mcp import BandMCPTransport
+from band.integrations.ompwire import OmpHostToolCall
 from band.runtime.tools import TOOL_DEFINITIONS, TOOL_MODELS, BandTool, ToolCallOutcome
 
 try:
@@ -110,11 +112,18 @@ class ReadRoomFileTools:
         del tool_name, arguments
         return _IMAGE_RESULT
 
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        assert tool_name == BandTool.READ_ROOM_FILE
+        assert arguments == {"file_id": "file-1"}
+        return ToolCallOutcome(value=_IMAGE_RESULT, ok=True)
+
 
 async def _probe_claude_sdk() -> bool:
     """claude_sdk's tools are its room-bound Band MCP backend, dialed over HTTP."""
     from tests.mcpclient import (  # noqa: PLC0415 -- imports mcp, a claude_sdk extra absent from the standard dev-crewai/dev-parlant lane venvs
-        mcp_session,
+        backend_session,
         started_backend,
     )
 
@@ -124,7 +133,7 @@ async def _probe_claude_sdk() -> bool:
             tool_definitions=[TOOL_DEFINITIONS[BandTool.READ_ROOM_FILE]],
             get_tools={"room-1": ReadRoomFileTools()}.get,
         ) as backend,
-        mcp_session(backend.endpoint(BandMCPTransport.HTTP, "room-1")) as session,
+        backend_session(backend, BandMCPTransport.HTTP, "room-1") as session,
     ):
         result = await session.call_tool(BandTool.READ_ROOM_FILE, {"file_id": "file-1"})
 
@@ -214,14 +223,16 @@ async def _probe_gemini() -> bool:
 
     adapter = GeminiAdapter()
     tools = MagicMock()
-    tools.execute_tool_call = AsyncMock(return_value=_IMAGE_RESULT)
+    tools.execute_tool_call_structured = AsyncMock(
+        return_value=ToolCallOutcome(value=_IMAGE_RESULT, ok=True)
+    )
     function_calls = [
         types.FunctionCall(
             name=BandTool.READ_ROOM_FILE, args={"file_id": "file-1"}, id="c1"
         )
     ]
 
-    parts = await adapter._process_function_calls(function_calls, tools)
+    parts, _declined = await adapter._process_function_calls(function_calls, tools)
 
     function_response = parts[0].function_response
     if function_response is None or not function_response.parts:
@@ -369,6 +380,30 @@ async def _probe_codex() -> bool:
     return content_items == [{"type": "inputImage", "imageUrl": data_uri}]
 
 
+async def _probe_omp() -> bool:
+    from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra is absent from other adapter lanes
+        OmpAdapter,
+    )
+
+    adapter = OmpAdapter(capabilities={Capability.FILES})
+    result = await adapter._execute_tool(
+        OmpHostToolCall(
+            id="image-request",
+            toolCallId="image-call",
+            toolName=BandTool.READ_ROOM_FILE,
+            arguments={"file_id": "file-1"},
+        ),
+        cast(AgentToolsProtocol, ReadRoomFileTools()),
+    )
+    return not result.is_error and any(
+        block.type == "image"
+        and block.data is not None
+        and block.mimeType is not None
+        and _is_expected_image(block.data, block.mimeType)
+        for block in result.content
+    )
+
+
 async def _probe_pydantic_ai() -> bool:
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- pydantic_ai extra, absent from the standard dev-crewai/dev-parlant lane venvs
         PydanticAIAdapter,
@@ -424,6 +459,7 @@ IMAGE_PASSTHROUGH_PROBES: dict[str, Callable[[], Awaitable[bool]]] = {
     "nooa": _probe_nooa,
     "copilot_sdk": _probe_copilot_sdk,
     "codex": _probe_codex,
+    "omp": _probe_omp,
     "pydantic_ai": _probe_pydantic_ai,
     "crewai": _probe_crewai,
     # crewai_flow shares integrations/crewai/tools.py with crewai -- same probe.

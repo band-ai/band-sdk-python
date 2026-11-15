@@ -14,11 +14,18 @@ from typing import TYPE_CHECKING, Protocol
 from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import ControlMode
-from band.platform.event import PlatformEvent
+from band.core.exceptions import BandConfigError
+from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.control import ControlDeduplicator, apply_control, control_targets
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import Execution, ExecutionContext, ExecutionHandler
+from band.runtime.execution import (
+    BatchExecutionHandler,
+    Execution,
+    ExecutionContext,
+    ExecutionHandler,
+    require_batch_execution_handler,
+)
 from band.runtime.presence import RoomPresence
 from band.runtime.rooms import RoomExecutions, request_resync
 from band.runtime.sessionconfig import SessionConfig
@@ -103,6 +110,9 @@ class AgentRuntime:
         | None = None,
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
+        on_execute_batch: BatchExecutionHandler | None = None,
+        is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
+        | None = None,
     ):
         """
         Initialize AgentRuntime.
@@ -121,15 +131,30 @@ class AgentRuntime:
                 adapter work that keeps running after those return early
             on_participant_added: Optional callback for participant_added events
             on_participant_removed: Optional callback for participant_removed events
+            on_execute_batch: Optional callback running one turn over several
+                originals
+            is_message_control: Optional read-only recognition of a delivery
+                the adapter would handle as a control
+
+        Raises:
+            BandConfigError: ``consume_all_queued`` with a custom execution
+                factory or without an ``on_execute_batch`` callback.
         """
         self.link = link
         self.agent_id = agent_id
         self._on_execute = on_execute
         self._execution_factory = execution_factory
         self._session_config = session_config or SessionConfig()
+        if self._session_config.consume_all_queued and execution_factory is not None:
+            raise BandConfigError(
+                "consume_all_queued cannot be used with a custom execution_factory"
+            )
+        require_batch_execution_handler(self._session_config, on_execute_batch)
+        self._on_execute_batch = on_execute_batch
         self._on_session_cleanup = on_session_cleanup
         self._on_control = on_control
         self._on_message_control = on_message_control
+        self._is_message_control = is_message_control
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
 
@@ -355,6 +380,8 @@ class AgentRuntime:
             link=self.link,
             on_execute=self._on_execute,
             on_message_control=self._on_message_control,
+            is_message_control=self._is_message_control,
+            on_execute_batch=self._on_execute_batch,
             config=self._session_config,
             agent_id=self.agent_id,
             on_participant_added=self._on_participant_added,
@@ -365,8 +392,9 @@ class AgentRuntime:
         )
 
     async def _on_platform_stop(self, ctx: ExecutionContext, scope: TurnScope) -> None:
-        if ctx.owns_stop_observation(scope) and self._on_control is not None:
-            await self._on_control(ctx.room_id, ControlMode.STOP)
+        if ctx.owns_stop_observation(scope):
+            for owner in tuple(scope.workers):
+                await owner.drain()
 
     async def _release_room(self, room_id: str) -> None:
         """Room-scoped cleanup once its execution has stopped."""

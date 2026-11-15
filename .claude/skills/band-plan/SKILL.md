@@ -87,9 +87,10 @@ Never assume, always verify — the one rule everything else follows from.
    - Third-party libraries and APIs: current primary docs plus the source of
      the pinned version. A capability that only exists in a newer release, or
      only sounds plausible from its name, is not verified.
-4. Read `AGENTS.md`, the linked `docs/*.md` for the area the ticket touches,
-   and the guideline skills it lists. They are the project's single sources
-   of truth: don't re-derive or contradict them.
+4. Read `AGENTS.md`, the relevant implementation and behavior tests, and the
+   guideline skills it lists. Use source and behavior tests to establish the
+   SDK's current behavior; follow `AGENTS.md` and skills for project rules, and
+   primary specifications for external contracts.
 
 If all of this lives in one place, do it inline. Once it spans more than one
 independent area (a sibling repo, a library, a separate doc area), give each
@@ -104,6 +105,12 @@ area a worker where available, and also do Phase 2's survey for its area.
 2. Find the single source of truth for every value, policy, or constant the
    plan touches. The plan extends it, never adds a parallel one. This is a
    synthesis across all areas, so do it here, not in a worker.
+3. Apply `AGENTS.md` "Engineering Standard" ownership assessment before
+   choosing the design. Record affected consumers, relevant sibling sources,
+   and the placement rationale in the plan; for clearly local changes, record
+   why sibling comparison is unnecessary. Reuse Phase 1 research where available.
+   Include evidence-backed sibling followups and relevant counterpart skill
+   updates as proposals under the existing scope gate.
 
 ## Phase 3 — Find the root cause and the right level
 
@@ -186,6 +193,8 @@ else's review.
      confirm or finds contradicted;
    - challenge the root cause and level: is this the real cause, or would
      someone looking at the whole system call it a patch?
+   - verify the ownership assessment: does the chosen layer follow from the
+     inspected consumers and sibling sources, or a justified local scope?
    - run a pre-mortem: it's three months later and this change was reverted —
      give the three most plausible reasons;
    - flag only gaps that affect correctness, the root cause, compatibility, or
@@ -237,13 +246,22 @@ else's review.
    the root cause, the level, or the best outside option and gets a fresh
    independent review, while a wording fix needs neither. Present the same
    summary, opened with what changed since the last round.
-5. Move to Phase 8 only on an explicit signal ("looks good", "finalize this",
+5. Move to Phase 7a only on an explicit signal ("looks good", "finalize this",
    "attach it", "lock it in"), never on a quiet pause.
+
+## Phase 7a — Validate the agreed design
+
+After the user's finalization signal, run [scenario-validation.md](scenario-validation.md)
+against the agreed version before publication, including for light plans.
+Repair deficiencies and repeat the affected scenarios as that guide requires.
+If a repair needs a material decision, return to Phase 7 for discussion and
+renewed finalization. Continue to Phase 8 only when this gate passes.
 
 ## Phase 8 — Publish the finalized plan
 
 1. Re-read the plan file as a whole: the agreed version, not an earlier round;
    internally consistent; citing a source only where a decision rests on it.
+   Confirm Phase 7a covers this version; changed design invalidates affected results.
    Strip every trace of narration or history (see "The plan is NOT a history
    book" above). Any open question or TBD left means it isn't final — go back
    to Phase 7.
@@ -252,13 +270,15 @@ else's review.
    separate agent can run verbatim to implement the plan exactly as agreed.
    It carries the ticket identifier and title, the root cause and level (so
    the implementer doesn't fall back to a symptom patch), the non-goals, the
-   chosen library and pinned version if any, the scenarios, the files and
+   chosen library and pinned version if any, the validated scenarios and remaining
+   checks/limitations from Design validation, the files and
    tests to touch, and this repo's non-negotiables (root cause not a patch,
    DRY, no magic values, the test plan as written). It ends with the
    Definition of done, and requires the implementer to show each check's
-   output as evidence rather than claim success. When Approach marks a
-   capability unconfirmed, the prompt's first step is installing that
-   version and exercising the confirming call.
+   output as evidence rather than claim success. When Design validation retains
+   a non-blocking unconfirmed capability, the prompt's first step is installing
+   that version and exercising the confirming call. Correctness-critical
+   capabilities must be confirmed before publication.
 3. File any followup ticket the user chose in Phase 7, and link it from the
    plan's non-goals.
 4. Attach the plan file to the ticket and update the ticket, following

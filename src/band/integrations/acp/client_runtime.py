@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import AbstractAsyncContextManager, contextmanager, suppress
 from typing import Any, cast
 
 from acp import spawn_agent_process
+from acp.interfaces import Client
 from acp.schema import (
     ClientCapabilities,
 )
@@ -38,13 +40,15 @@ from band.integrations.acp.stderr import (
     STDERR_TAIL_LINES,
     ACPStderrDrain,
 )
-from band.integrations.acp.stream import ChunkSink
+from band.integrations.acp.stream import TurnSink
 from band.integrations.acp.transport import (
+    ACP_DEFAULT_STDIO_LIMIT_BYTES,
     ACP_STDIO_LIMIT_BYTES,
     ACPConnectionProtocol,
     ACPSpawnContextProtocol,
     tcp_spawn_process,
 )
+from band.integrations.acp.windows import WindowsACPProcess
 from band.integrations.mcp.backends import BandMCPTransport
 
 __all__ = [
@@ -57,11 +61,11 @@ __all__ = [
     "ACPConnectionProtocol",
     "ACPRuntime",
     "ACPSpawnContextProtocol",
-    "ChunkSink",
     "ElicitationHandler",
     "ElicitationNarrator",
     "PermissionHandler",
     "PermissionNarrator",
+    "TurnSink",
     "allow_permission",
     "cancel_permission",
     "elicitation_requested_schema",
@@ -110,10 +114,13 @@ class ACPRuntime(ACPSessionOperations):
         self._ctx: (
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         ) = None
+        self._agent_mcp_http = False
+        self._agent_mcp_sse = False
         self._transport: object = None
         self._exit_attempted = False
         self._closure: asyncio.Task[None] | None = None
         self._stderr = ACPStderrDrain(logger)
+        self._windows: WindowsACPProcess | None = None
 
     async def start(self) -> None:
         """Spawn the ACP agent subprocess and initialize its connection."""
@@ -143,7 +150,23 @@ class ACPRuntime(ACPSessionOperations):
     def _spawn_context(
         self,
     ) -> AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]]:
-        self._client = self._client_factory()  # type: ignore[abstract]  # ACP client protocol defines optional hooks as abstract
+        self._client = self._client_factory()
+        if sys.platform == "win32" and self._spawn_process is spawn_agent_process:
+            self._windows = WindowsACPProcess()
+            return self._windows.connect(
+                cast(Client, self._client),
+                self._command,
+                env=self._env,
+                cwd=self._cwd,
+                limit=(
+                    ACP_STDIO_LIMIT_BYTES
+                    if self._pass_builtin_transport_options
+                    else ACP_DEFAULT_STDIO_LIMIT_BYTES
+                ),
+                use_unstable_protocol=(
+                    self._pass_builtin_transport_options and self._use_unstable_protocol
+                ),
+            )
         spawn_kwargs: dict[str, Any] = {}
         if self._pass_builtin_transport_options:
             spawn_kwargs["transport_kwargs"] = {"limit": ACP_STDIO_LIMIT_BYTES}
@@ -152,7 +175,8 @@ class ACPRuntime(ACPSessionOperations):
         return cast(
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]],
             self._spawn_process(
-                self._client,
+                # ACP marks callbacks required in its Protocol; the router checks them dynamically.
+                cast(Client, self._client),
                 # TCP transports carry no command; stdio carries executable and args.
                 *self._command,
                 env=self._env,
@@ -166,7 +190,16 @@ class ACPRuntime(ACPSessionOperations):
         if self._client_capabilities is not None:
             init_kwargs["client_capabilities"] = self._client_capabilities
         init_response = await cast(Any, conn).initialize(**init_kwargs)
+        agent_info = getattr(init_response, "agent_info", None)
+        if agent_info is not None:
+            logger.info(
+                "ACP agent reports name=%s version=%s",
+                agent_info.name,
+                agent_info.version,
+            )
         self._agent_mcp_transport = self._select_mcp_transport(init_response)
+        self._agent_mcp_http = self._advertised_mcp(init_response, "http")
+        self._agent_mcp_sse = self._advertised_mcp(init_response, "sse")
         self._agent_supports_session_load = self._select_session_load(init_response)
         self._agent_supports_session_close = self._select_session_close(init_response)
         if self._auth_method:
@@ -174,7 +207,7 @@ class ACPRuntime(ACPSessionOperations):
             logger.info("Authenticated with method: %s", self._auth_method)
 
     async def ensure_connection(self) -> ACPConnectionProtocol:
-        if self._conn is None:
+        if self._conn is None or self._closure is not None:
             raise RuntimeError("ACP client connection is not open")
         return self._conn
 
@@ -219,6 +252,15 @@ class ACPRuntime(ACPSessionOperations):
         at once for a process that already exited, while a descendant that
         inherited stdout can still hold it.
         """
+        if self._windows is not None:
+            try:
+                await self._windows.close()
+            finally:
+                # A failed/cancelled enter can still have created the helper.
+                if self._transport is None and self._windows.process is not None:
+                    self._transport = self._windows.process
+                    self._stderr.start(self._windows.process)
+                    self._stderr.expect_exit()
         process = self._transport
         with _warning_while_held(process):
             if not self._exit_attempted and self._ctx is not None:
@@ -231,10 +273,15 @@ class ACPRuntime(ACPSessionOperations):
                         "ACP agent subprocess %s failed to exit", _pid(process)
                     )
                     raise
-            elif isinstance(process, asyncio.subprocess.Process):
+            # Even a context that returned successfully can leave a child
+            # running; its process handle, not that return, confirms exit.
+            if isinstance(process, asyncio.subprocess.Process):
+                # A refused context exit may have left ACP reading stdout.
+                close = getattr(self._conn, "close", None)
+                if close is not None:
+                    with suppress(ConnectionError):
+                        await close()
                 await _kill(process)
-            if isinstance(process, asyncio.subprocess.Process) and process.stdout:
-                await _read_to_eof(process.stdout)
 
     def _forget_connection(self) -> None:
         self._ctx = None
@@ -243,8 +290,11 @@ class ACPRuntime(ACPSessionOperations):
         self._transport = None
         self._exit_attempted = False
         self._closure = None
+        self._windows = None
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
+        self._agent_mcp_http = False
+        self._agent_mcp_sse = False
 
     async def _close_failed_start(self) -> None:
         """Close what a failed start opened; a failed close keeps it for
@@ -271,6 +321,22 @@ class ACPRuntime(ACPSessionOperations):
 
         return BandMCPTransport.HTTP
 
+    @property
+    def agent_mcp_http(self) -> bool:
+        """The connected agent explicitly advertised HTTP MCP servers."""
+        return self._agent_mcp_http
+
+    @property
+    def agent_mcp_sse(self) -> bool:
+        """The connected agent explicitly advertised SSE MCP servers."""
+        return self._agent_mcp_sse
+
+    @staticmethod
+    def _advertised_mcp(init_response: object, transport: str) -> bool:
+        capabilities = getattr(init_response, "agent_capabilities", None)
+        mcp_capabilities = getattr(capabilities, "mcp_capabilities", None)
+        return getattr(mcp_capabilities, transport, None) is True
+
     @staticmethod
     def _select_session_load(init_response: object) -> bool:
         capabilities = getattr(init_response, "agent_capabilities", None)
@@ -296,6 +362,9 @@ async def _kill(process: asyncio.subprocess.Process) -> None:
         )
         with suppress(ProcessLookupError):
             process.kill()
+    # A paused pipe can prevent an already-registered wait from completing.
+    if process.stdout is not None:
+        await _read_to_eof(process.stdout)
     await process.wait()
 
 

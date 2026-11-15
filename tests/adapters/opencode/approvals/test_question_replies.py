@@ -8,6 +8,7 @@ from band.integrations.opencode.types import (
     OpencodeSessionState,
 )
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.approvals.kit import (
     make_room_approvals,
@@ -52,7 +53,7 @@ class TestQuestionReplies:
         asks: AskFactory,
     ) -> None:
         client = FakeOpencodeClient()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
         await approvals.on_question_asked(asks.question("q-1"))
 
@@ -67,7 +68,7 @@ class TestQuestionReplies:
         """A malformed question is answered with an empty decline, which hands the
         turn back to the model instead of blocking it."""
         client = FakeOpencodeClient()
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
 
         await approvals.on_question_asked(asks.question("q-empty", questions=[]))
@@ -126,7 +127,7 @@ class TestQuestionReplies:
             adapter,
             make_platform_message(content="Ship the adapter"),
             tools_protocol(tools),
-            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+            OpencodeSessionState(),
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,

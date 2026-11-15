@@ -6,6 +6,7 @@ of WebSocket connection or subscription state.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -14,9 +15,14 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any, TypeVar
 
+from band_rest.agent_api_activity.types.report_agent_chat_activity_response import (
+    ReportAgentChatActivityResponse,
+)
 from band_rest.core.api_error import ApiError
 from band_rest.core.http_response import AsyncHttpResponse
 from band_rest.core.request_options import RequestOptions
+from band_rest.types.agent_activity_detail import AgentActivityDetail
+from band_rest.types.agent_activity_response import AgentActivityResponse
 from band_rest.types.chat_message import ChatMessage
 from band_rest.types.error import Error as PlatformError
 from band_rest.types.validation_error import ValidationError as ErrorEnvelope
@@ -32,6 +38,7 @@ from band.client.streaming.client import DeliveryStatus
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.settlement import SettlementResult
 from band.core.types import metadata_to_dict
+from band.platform.activity import activity_support
 from band.runtime.messages import PlatformMessage
 
 logger = logging.getLogger(__name__)
@@ -46,6 +53,7 @@ SchemaT = TypeVar("SchemaT", bound=BaseModel)
 VALIDATION_ERROR_CODE = "validation_error"
 PROCESSING_ATTEMPT_POINTER = "/processing_attempt"
 NOT_FOUND_ERROR_CODE = "not_found"
+ACTIONABLE_PAGE_SIZE = 100
 
 
 def _accepted_response(
@@ -93,7 +101,7 @@ def _names_missing_resource(body: object) -> bool:
 
 
 def _failure_result(error: Exception) -> SettlementResult:
-    """Classify a failed terminal write from the public status and error body.
+    """Classify a failed status write from the public status and error body.
 
     ``ParsingError`` (a body that misses the generated schema) is
     UNCONFIRMED: the envelope checks below would reject that body too.
@@ -107,6 +115,46 @@ def _failure_result(error: Exception) -> SettlementResult:
             return SettlementResult.REJECTED
         case _:
             return SettlementResult.UNCONFIRMED
+
+
+async def _post_activity(
+    rest: AsyncRestClient,
+    room_id: str,
+    working: bool,
+    activity: AgentActivityDetail | None,
+    timeout_seconds: int,
+) -> AgentActivityResponse:
+    detail = activity if activity_support.supported else None
+    try:
+        response = await _send_activity(rest, room_id, working, detail, timeout_seconds)
+    except ApiError as error:
+        if detail is None or error.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+            raise
+        activity_support.disable(room_id=room_id)
+        response = await _send_activity(rest, room_id, working, None, timeout_seconds)
+    activity_support.observe(response.headers)
+    return response.data.data
+
+
+async def _send_activity(
+    rest: AsyncRestClient,
+    room_id: str,
+    working: bool,
+    activity: AgentActivityDetail | None,
+    timeout_seconds: int,
+) -> AsyncHttpResponse[ReportAgentChatActivityResponse]:
+    kwargs: dict[str, Any] = {}
+    if activity is not None:
+        kwargs["activity"] = activity
+    return await rest.agent_api_activity.with_raw_response.report_agent_chat_activity(
+        chat_id=room_id,
+        working=working,
+        request_options={
+            **NO_RETRY_REQUEST_OPTIONS,
+            "timeout_in_seconds": timeout_seconds,
+        },
+        **kwargs,
+    )
 
 
 def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
@@ -123,7 +171,6 @@ def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
     )
 
 
-ACTIONABLE_PAGE_SIZE = 100
 WriteKey = tuple[str, DeliveryStatus]
 FailureCause = tuple[type[Exception], int | None]
 # Diagnostic suppression stays bounded; evicted intents warn again on retry.
@@ -156,27 +203,32 @@ class MessageLifecycle:
     async def mark_processing(
         self, rest: AsyncRestClient, room_id: str, message_id: str
     ) -> bool:
-        """
-        Mark message as being processed on the server.
+        """Mark message as being processed on the server."""
+        result = await self.mark_processing_result(rest, room_id, message_id)
+        return result is SettlementResult.ACCEPTED
+
+    async def mark_processing_result(
+        self, rest: AsyncRestClient, room_id: str, message_id: str
+    ) -> SettlementResult:
+        """Open a processing attempt and report what the platform answered.
 
         This does NOT remove it from /next: the actionable set excludes only
         'processed', so a crashed or stopped attempt stays replayable. Only
         mark_processed clears the message from /next.
         """
         logger.debug("Marking message %s as processing", message_id)
-        try:
-            response = await rest.agent_api_messages.with_raw_response.mark_agent_message_processing(
-                chat_id=room_id,
-                id=message_id,
-                request_options=DEFAULT_REQUEST_OPTIONS,
-            )
-            _accepted_response(response, stopped_room_id=room_id)
-        except RoomExecutionStoppedError:
-            raise
-        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
-            logger.warning("Failed to mark message %s as processing: %s", message_id, e)
-            return False
-        return True
+        return await self._settle(
+            lambda: (
+                rest.agent_api_messages.with_raw_response.mark_agent_message_processing(
+                    chat_id=room_id,
+                    id=message_id,
+                    request_options=DEFAULT_REQUEST_OPTIONS,
+                )
+            ),
+            room_id=room_id,
+            message_id=message_id,
+            action=DeliveryStatus.PROCESSING,
+        )
 
     async def mark_processed(
         self, rest: AsyncRestClient, room_id: str, message_id: str
@@ -306,11 +358,12 @@ class MessageLifecycle:
         room_id: str,
         working: bool,
         *,
+        activity: AgentActivityDetail | None = None,
         timeout_seconds: int = 2,
         on_stopped: Callable[[], None] | None = None,
     ) -> bool:
         """
-        Report the agent's boolean working state for a room's execution.
+        Report the agent's working state and activity for a room's execution.
 
         ``working=True`` while a reasoning cycle is active (refreshed on a
         keep-alive cadence), ``False`` once it ends. Request failures are
@@ -318,26 +371,25 @@ class MessageLifecycle:
         the backstop and activity reporting must never break message
         processing.
 
-        ``timeout_seconds`` bounds each POST so a slow/half-open endpoint
-        can't stall the keep-alive or wedge teardown. Retries are off: a
-        dropped keep-alive gets re-sent next cadence tick, and a dropped
-        ``false`` is cleared by the platform TTL either way — retrying would
-        only add latency.
+        Detail is attached once a response reported a supporting agent API
+        version. One deadline bounds the POST and its sole compatibility retry:
+        a rejected detail permanently downgrades the process to boolean
+        reports; other failures wait for the next keep-alive or platform TTL.
 
         A successful ``working=True`` report echoed as ``False`` identifies a
         stopped execution. Notify ``on_stopped`` separately from the request's
         success boolean; transport failures never imply STOP.
         """
         try:
-            response = await rest.agent_api_activity.report_agent_chat_activity(
-                chat_id=room_id,
-                working=working,
-                request_options={
-                    **NO_RETRY_REQUEST_OPTIONS,
-                    "timeout_in_seconds": timeout_seconds,
-                },
-            )
-            stopped = working and response.data.working is False
+            async with asyncio.timeout(timeout_seconds):
+                response = await _post_activity(
+                    rest,
+                    room_id,
+                    working,
+                    activity if working else None,
+                    timeout_seconds,
+                )
+            stopped = working and response.working is False
         except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             if not self._activity_report_failing:
                 self._activity_report_failing = True

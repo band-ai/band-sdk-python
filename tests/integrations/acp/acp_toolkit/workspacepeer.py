@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import sys
 from enum import StrEnum
 from pathlib import Path
@@ -40,6 +41,9 @@ from tests.adapters.roompeer import (
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, allow_or_reject
 
 CURSOR_WORKFLOW_PREFIX = "CURSOR_WORKFLOW="
+CURSOR_WORKFLOW_PATTERN = re.compile(
+    rf"{re.escape(CURSOR_WORKFLOW_PREFIX)}([a-zA-Z0-9-]+)"
+)
 CURSOR_QUESTION_ID = "proceed"
 CURSOR_ALLOW_OPTION = "allow-workspace-write"
 CURSOR_JOURNAL = "cursor-journal.jsonl"
@@ -121,9 +125,8 @@ class WorkspacePeer(FakeACPAgent):
             sys.stdout.write("[]\n")
             sys.stdout.flush()
             await asyncio.Future[None]()
-        if CURSOR_WORKFLOW_PREFIX in content:
-            marker = content.split(CURSOR_WORKFLOW_PREFIX, 1)[1]
-            await self.cursor_workflow(session_id, marker)
+        if workflow := CURSOR_WORKFLOW_PATTERN.search(content):
+            await self.cursor_workflow(session_id, workflow.group(1))
             return
         request = file_request(content)
         result = perform(request["tool_name"], request["input"])

@@ -10,6 +10,7 @@ import pytest
 from band.adapters.letta import LettaAdapter, RoomContext
 from band.converters.letta import LettaSessionState
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.lettakit import (
     make_assistant_message,
     make_letta_response,
@@ -38,7 +39,7 @@ class TestRejoinContext:
             make_assistant_message("I'm back!")
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         msg = make_platform_message()
         history = LettaSessionState()
 

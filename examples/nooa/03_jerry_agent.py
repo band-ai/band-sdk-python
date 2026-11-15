@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12,<3.14"
-# dependencies = ["band-sdk[nooa]>=5.1.0"]
+# dependencies = ["band-sdk[nooa]>=6.0.1"]
 # ///
 """
 Jerry the mouse agent - outsmarts Tom!

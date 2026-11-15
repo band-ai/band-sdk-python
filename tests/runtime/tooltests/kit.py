@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,11 +10,7 @@ from band_rest import (
     GetAgentChatContextResponseMetadata,
 )
 
-from band.client.rest import (
-    Attachment,
-    ChatMessageRequest,
-    NotFoundError,
-)
+from band.client.rest import Attachment, ChatMessageRequest, NotFoundError
 
 
 def _attachment(
@@ -23,6 +20,7 @@ def _attachment(
     content_type: str = "text/plain",
     size: int = 20,
     expires_at: datetime | None = None,
+    available: bool = True,
 ) -> Attachment:
     return Attachment(
         id=file_id,
@@ -32,6 +30,7 @@ def _attachment(
         sha256="a" * 64,
         has_thumb=False,
         expires_at=expires_at,
+        available=available,
     )
 
 
@@ -72,14 +71,14 @@ def _mock_attachment_page(mock_rest_client: MagicMock, attachment: Attachment) -
     )
 
 
-async def _fake_download(body: bytes):
+async def _fake_download(body: bytes) -> AsyncIterator[bytes]:
     """A ``download_agent_chat_file`` double: an async generator, not a
     coroutine -- assigning an ``AsyncMock`` here would make the *call* itself
     awaitable, which nothing in the real client does."""
     yield body
 
 
-async def _fake_download_not_found():
+async def _fake_download_not_found() -> AsyncIterator[bytes]:
     """Same shape as ``_fake_download``, but raises before ever yielding."""
     if False:
         yield b""

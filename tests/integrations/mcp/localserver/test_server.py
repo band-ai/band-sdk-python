@@ -1,0 +1,395 @@
+"""A local MCP server binds, serves its tools over each transport, and stops
+cleanly."""
+
+from __future__ import annotations
+
+import asyncio
+import socket
+from contextlib import suppress
+
+import pytest
+from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
+
+import band.integrations.mcp.local_server as local_server_mod
+from band.integrations.mcp import BandMCPTransport
+from band.integrations.mcp.engine import (
+    EngineSpec,
+)
+from band.integrations.mcp.local_server import (
+    LOCAL_MCP_HOST,
+    SERVER_STOP_TIMEOUT_S,
+    LocalMCPServer,
+)
+from tests.integrations.mcp.localserver.kit import (
+    AUTH_TOKEN,
+    assert_fully_stopped,
+    call_echo,
+    echo_tool_registration,
+    session_lists_only_echo,
+)
+from tests.lifecycle import elapsed, held_open, running
+from tests.mcpclient import mcp_session
+from tests.ports import HeldAdjacentPorts, HeldPort
+
+
+class TestLocalMcpServer:
+    def test_accepts_explicit_non_loopback_bind_host(self) -> None:
+        """An explicit non-loopback bind is a supported opt-in (containerized
+        MCP clients reach back over the docker bridge); construction must not
+        reject it."""
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-local-mcp",
+            tool_registrations=[],
+            host="0.0.0.0",
+        )
+        assert server._host == "0.0.0.0"
+
+    @pytest.mark.asyncio
+    async def test_serves_sse_tools_on_localhost(self) -> None:
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-local-mcp",
+            tool_registrations=[echo_tool_registration()],
+            port_min=0,
+            port_max=0,
+        )
+
+        async with running(server):
+            assert server.url.startswith(f"http://{LOCAL_MCP_HOST}:")
+
+            async with mcp_session(
+                server.url, BandMCPTransport.SSE, headers=server.auth_headers
+            ) as session:
+                await session_lists_only_echo(session)
+                await call_echo(session, "hello")
+
+    @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
+    @pytest.mark.asyncio
+    async def test_stop_returns_promptly_with_a_still_open_sse_connection(
+        self,
+    ) -> None:
+        """Regression: an MCP client (e.g. OpenCode) holds its `/sse` GET
+        open for the life of its session and may never close it -- stop()
+        must force it closed rather than hang on uvicorn's unbounded default
+        graceful-shutdown wait.
+
+        Measures wall-clock time around a bare ``server.stop()`` (wrapping
+        it in ``asyncio.wait_for`` would cancel it externally and mask a
+        real hang). ``pytest.mark.timeout`` above is the backstop, matching
+        how this hang is actually caught (pytest-timeout, not an asyncio
+        timeout).
+        """
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-local-mcp-stop",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
+        )
+        async with running(server):
+
+            async def connect(ready: asyncio.Event) -> None:
+                with suppress(Exception):
+                    async with mcp_session(
+                        server.url, BandMCPTransport.SSE, headers=server.auth_headers
+                    ):
+                        ready.set()
+                        await asyncio.sleep(60)  # never closes on its own
+
+            async with held_open(connect):
+                stop_elapsed = await elapsed(server.stop())
+
+            assert stop_elapsed < SERVER_STOP_TIMEOUT_S + 5.0, (
+                f"stop() took {stop_elapsed:.1f}s -- graceful shutdown is not "
+                "bounded by SERVER_STOP_TIMEOUT_S"
+            )
+
+    # 30s default barely fits on GitHub Actions Python 3.12 runners — the
+    # streamable-HTTP loopback initialization spends most of that on uvicorn
+    # startup. Bump to 90s to absorb runner I/O variance (test passes in ~1s
+    # locally; this only widens the safety margin on CI).
+    @pytest.mark.timeout(90)
+    @pytest.mark.asyncio
+    async def test_serves_streamable_http_tools_on_localhost(self) -> None:
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-local-mcp-http",
+            tool_registrations=[echo_tool_registration()],
+            port_min=0,
+            port_max=0,
+        )
+
+        async with running(server):
+            assert server.http_url.startswith(f"http://{LOCAL_MCP_HOST}:")
+
+            async with mcp_session(
+                server.http_url, headers=server.auth_headers
+            ) as session:
+                await session_lists_only_echo(session)
+                await call_echo(session, "hello")
+
+    @pytest.mark.asyncio
+    async def test_stop_cleans_up_state_even_if_serve_task_crashed(self) -> None:
+        """Regression: stop() used to skip socket close and state reset when
+        the serve task crashed with anything but CancelledError -- the bare
+        ``await self._serve_task`` re-raised past the cleanup code below it,
+        leaking the socket and leaving stale state for the next start()."""
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-crash",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
+        )
+        reserved_socket, port = server._reserve_socket()
+        server._socket = reserved_socket
+        server._port = port
+
+        async def _raise() -> None:
+            raise RuntimeError("simulated serve-task crash")
+
+        server._serve_task = asyncio.create_task(_raise())
+
+        await server.stop()  # must not raise, and must still clean up
+
+        assert_fully_stopped(server)
+
+    @pytest.mark.asyncio
+    async def test_is_running_reflects_a_crashed_serve_task(self) -> None:
+        """A caller holding a reference to this server (host/port, session
+        config) needs a way to notice its serve task died on its own --
+        ``is_running`` is that check, independent of ``stop()`` ever running."""
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-is-running",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
+        )
+        reserved_socket, port = server._reserve_socket()
+        server._socket = reserved_socket
+        server._port = port
+
+        async def _raise() -> None:
+            raise RuntimeError("simulated serve-task crash")
+
+        server._serve_task = asyncio.create_task(_raise())
+        assert server.is_running  # task created, hasn't run yet
+
+        with suppress(RuntimeError):
+            await server._serve_task
+        assert server.is_running is False
+
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_start_forwards_real_host_to_build_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: build_engine must be told the real bind host, or
+        FastMCP wrongly assumes loopback and locks DNS-rebinding protection
+        to 127.0.0.1/localhost only -- even for a non-loopback Docker-
+        callback bind (see LocalMCPServer's class docstring)."""
+
+        seen_hosts: list[str] = []
+        real_build_engine = local_server_mod.build_engine
+
+        def spy_build_engine(
+            spec: EngineSpec,
+            *,
+            host: str = "127.0.0.1",
+            transport_security: TransportSecuritySettings | None = None,
+            sse_path: str = "/sse",
+            message_path: str = "/messages/",
+            streamable_http_path: str = "/mcp",
+        ) -> FastMCP:
+            seen_hosts.append(host)
+            return real_build_engine(
+                spec,
+                host=host,
+                transport_security=transport_security,
+                sse_path=sse_path,
+                message_path=message_path,
+                streamable_http_path=streamable_http_path,
+            )
+
+        monkeypatch.setattr(local_server_mod, "build_engine", spy_build_engine)
+
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-host-forwarding",
+            tool_registrations=[],
+            host="0.0.0.0",
+            port_min=0,
+            port_max=0,
+        )
+        async with running(server):
+            pass
+
+        assert seen_hosts == ["0.0.0.0"]
+
+    @pytest.mark.asyncio
+    async def test_start_closes_socket_when_engine_construction_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: a failure between socket reservation and the uvicorn
+        serve task starting (e.g. build_engine raising) must still close the
+        reserved socket, not leak a bound-and-listening fd."""
+
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-engine-failure",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
+        )
+        real_reserve_socket = server._reserve_socket
+        reserved: list[socket.socket] = []
+
+        def capturing_reserve_socket() -> tuple[socket.socket, int]:
+            sock, port = real_reserve_socket()
+            reserved.append(sock)
+            return sock, port
+
+        server._reserve_socket = capturing_reserve_socket  # type: ignore[method-assign]
+
+        def failing_build_engine(*args: object, **kwargs: object) -> FastMCP:
+            raise RuntimeError("simulated engine construction failure")
+
+        monkeypatch.setattr(local_server_mod, "build_engine", failing_build_engine)
+
+        with pytest.raises(RuntimeError, match="simulated engine construction failure"):
+            await server.start()
+
+        assert len(reserved) == 1
+        assert reserved[0].fileno() == -1  # closed, not leaked
+        assert server._socket is None
+
+    @pytest.mark.asyncio
+    async def test_concurrent_start_calls_are_serialized(self) -> None:
+        """start()/start() must not race: the second call, once it acquires
+        the lifecycle lock, sees the first's already-running server and
+        no-ops rather than binding a second socket."""
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-concurrent-start",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
+        )
+        real_reserve_socket = server._reserve_socket
+        reserve_calls = []
+
+        def counting_reserve_socket() -> tuple[socket.socket, int]:
+            result = real_reserve_socket()
+            reserve_calls.append(result)
+            return result
+
+        server._reserve_socket = counting_reserve_socket  # type: ignore[method-assign]
+
+        try:
+            await asyncio.gather(server.start(), server.start())
+            assert server.port is not None
+            # A broken lock letting both calls bind would call this twice.
+            assert len(reserve_calls) == 1
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_start_stop_start_cycle_rebuilds_engine(self) -> None:
+        """Session managers are single-use (mcp.server.streamable_http_manager);
+        a second start() must construct a fresh engine, not reuse a stale one."""
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-start-stop-start",
+            tool_registrations=[echo_tool_registration()],
+            port_min=0,
+            port_max=0,
+        )
+
+        await server.start()
+        await server.stop()
+        async with (
+            running(server),
+            mcp_session(server.http_url, headers=server.auth_headers) as session,
+        ):
+            await call_echo(session, "hi")
+
+    @pytest.mark.asyncio
+    async def test_a_server_skips_the_port_it_avoids(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Clients holding a dead server's URL can only tell its replacement
+        apart by port. The scan starts on the avoided port, so only skipping
+        it gives the other one."""
+        monkeypatch.setattr(local_server_mod.random, "randrange", lambda _span: 0)
+        with HeldAdjacentPorts(LOCAL_MCP_HOST) as held:
+            port = held.port
+            server = LocalMCPServer(
+                auth_token=AUTH_TOKEN,
+                name="test-avoid-port",
+                tool_registrations=[],
+                port_min=port,
+                port_max=port + 1,
+                avoid_port=port,
+            )
+            held.release()
+            async with running(server):
+                assert server.port == port + 1
+
+    @pytest.mark.asyncio
+    async def test_an_avoided_port_is_taken_when_it_is_the_only_one(self) -> None:
+        with HeldPort(LOCAL_MCP_HOST) as held:
+            port = held.port
+            server = LocalMCPServer(
+                auth_token=AUTH_TOKEN,
+                name="test-avoid-only-port",
+                tool_registrations=[],
+                port_min=port,
+                port_max=port,
+                avoid_port=port,
+            )
+            held.release()
+            async with running(server):
+                assert server.port == port
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_server_keeps_its_urls(self) -> None:
+        """Whoever still holds a dead server's URL compares it with the live
+        one; reading it must not fail once the server is stopped."""
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-stopped-urls",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
+        )
+        async with running(server):
+            url = server.http_url
+
+        assert server.http_url == url
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_start_leaves_nothing_running(self) -> None:
+        """Whoever cancelled the start never got the server back to stop it."""
+        server = LocalMCPServer(
+            auth_token=AUTH_TOKEN,
+            name="test-cancelled-start",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
+        )
+        starting = asyncio.create_task(server.start())
+        async with asyncio.timeout(1):
+            while server._serve_task is None:
+                await asyncio.sleep(0)
+
+        starting.cancel()
+        with suppress(asyncio.CancelledError):
+            await starting
+
+        assert server.is_running is False
+        with pytest.raises(OSError):
+            await asyncio.open_connection(LOCAL_MCP_HOST, server.port)

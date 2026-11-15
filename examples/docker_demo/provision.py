@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk>=4.0.0"]
+# dependencies = ["band-sdk>=6.0.1"]
 # ///
 """Provision (and tear down) the three demo agents on the Band platform.
 

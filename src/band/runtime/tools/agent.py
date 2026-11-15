@@ -14,6 +14,7 @@ import logging
 import re
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
+from copy import copy
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
@@ -35,7 +36,11 @@ from band.client.rest import (
 )
 from band.config.settings import RuntimeSettings
 from band.core.content import has_visible_content
-from band.core.exceptions import BandToolError, RoomExecutionStoppedError
+from band.core.exceptions import (
+    BandToolError,
+    RoomExecutionStoppedError,
+    TerminalProviderFailure,
+)
 from band.core.memory_types import (
     MemoryListScope,
     MemoryStoreScope,
@@ -52,16 +57,23 @@ from band.core.task_types import (
     task_ref,
     validate_include,
 )
+from band.core.timestamps import assume_utc
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.turn import Turn
 from band.core.turn_lifecycle import TurnTask
 from band.core.types import Capability, MessageType
 from band.core.validation import at_least_one_of
 from band.platform.posting import post_event, post_message
+from band.runtime.activity import ActivityObserver
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
-from band.runtime.participants import log_roster_call, participant_snapshot
+from band.runtime.participants import (
+    log_roster_call,
+    participant_snapshot,
+    validate_participants_snapshot,
+)
+from band.runtime.toolactivity import reports_tool_activity, tool_activity
 from band.runtime.tools.registry import (
     TOOL_DEFINITIONS,
     TOOL_MODELS,
@@ -71,6 +83,7 @@ from band.runtime.tools.registry import (
 from band.runtime.tools.schema import (
     ToolCallOutcome,
     serialize_tool_result,
+    tool_execution_failure,
     validate_tool_arguments,
 )
 from band.runtime.turn import records_turn_effects
@@ -285,6 +298,7 @@ class AttachmentCache(Protocol):
 
 
 @records_turn_effects
+@reports_tool_activity
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -344,6 +358,8 @@ class AgentTools(AgentToolsProtocol):
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
         self._scope: TurnScope | None = None
+        self._resource: TurnTask | None = None
+        self._activity_observer: ActivityObserver | None = None
         self.turn = Turn()
 
     @property
@@ -384,6 +400,7 @@ class AgentTools(AgentToolsProtocol):
         )
         tools._ctx = ctx
         tools._scope = ctx.current_scope if bind_scope else None
+        tools._activity_observer = ctx.activity_observer(tools._scope)
         tools.turn = Turn(posts_missing_reply=ctx.config.report_turn_failures_to_room)
         return tools
 
@@ -394,6 +411,14 @@ class AgentTools(AgentToolsProtocol):
             else:
                 self._ctx.register_turn_task(self._scope, owner)
 
+    def _for_resource(self, owner: TurnTask) -> AgentTools:
+        """An immutable origin view whose effects also require this resource."""
+        view = copy(self)
+        view._resource = owner
+        if self._ctx is not None:
+            view._activity_observer = self._ctx.activity_observer(self._scope, owner)
+        return view
+
     def _abort_stopped_post(self, error: RoomExecutionStoppedError) -> None:
         if self._ctx is not None and self._scope is not None:
             self._ctx.observe_platform_stop(self._scope, cooperative=True)
@@ -401,7 +426,9 @@ class AgentTools(AgentToolsProtocol):
         raise error
 
     def _check_post_scope(self) -> None:
-        if self._scope is not None and self._scope.aborted:
+        if (self._scope is not None and not self._scope.authoritative) or (
+            self._resource is not None and not self._resource.authoritative
+        ):
             raise asyncio.CancelledError
 
     # --- Tool methods ---
@@ -551,6 +578,15 @@ class AgentTools(AgentToolsProtocol):
         except block, where raising would replace the provider failure the
         room is being told about with an unrelated reporting failure.
         """
+        if (
+            self._resource is None
+            and self._scope is not None
+            and not self._scope.authoritative
+            and self._scope.provider_failed
+        ):
+            if self.turn.detached and self._ctx is not None:
+                return await self._ctx.report_provider_failure(failure, turn=self.turn)
+            raise TerminalProviderFailure(failure)
         content, metadata = to_failure_event(failure)
         try:
             response = await self.send_event(content, MessageType.ERROR, metadata)
@@ -813,15 +849,12 @@ class AgentTools(AgentToolsProtocol):
             list[dict] by execute_tool_call() at the adapter boundary.
         """
         logger.debug("Getting participants for room %s", self.room_id)
-        response = await self.rest.agent_api_participants.list_agent_chat_participants(
-            chat_id=self.room_id,
-            request_options=DEFAULT_REQUEST_OPTIONS,
-        )
+        participants = await self._request_participants()
 
         # Treat ``data is None`` as a transient/unexpected response and preserve
         # the existing cache — every room the agent is in should at minimum
         # contain the agent itself, so ``None`` is not a legitimate "empty room".
-        if response.data is None:
+        if participants is None:
             logger.warning(
                 "list_agent_chat_participants returned None for room %s; "
                 "preserving cached participants",
@@ -833,7 +866,7 @@ class AgentTools(AgentToolsProtocol):
         # the LLM just discovered in this turn, even if they joined after
         # AgentTools was constructed. Without this, the LLM can call
         # get_participants, see a new participant, then fail to @mention them.
-        refreshed = [participant_snapshot(p.model_dump()) for p in response.data]
+        refreshed = [participant_snapshot(p.model_dump()) for p in participants]
 
         # Sync back to ExecutionContext so the refresh survives turn
         # boundaries. Without this, a new AgentTools built via from_context()
@@ -849,7 +882,21 @@ class AgentTools(AgentToolsProtocol):
             )
 
         self._participants = refreshed
+        return participants
+
+    async def _request_participants(self) -> list[ChatParticipant] | None:
+        response = await self.rest.agent_api_participants.list_agent_chat_participants(
+            chat_id=self.room_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
         return response.data
+
+    async def get_participants_snapshot(self) -> list[ChatParticipant]:
+        """Read authoritative membership without updating tools or context caches."""
+        self._check_post_scope()
+        participants = await self._request_participants()
+        self._check_post_scope()
+        return validate_participants_snapshot(participants)
 
     # --- Contact management tools ---
 
@@ -1251,7 +1298,7 @@ class AgentTools(AgentToolsProtocol):
             yield response
             cursor = response.metadata.next_cursor
             more_pages = bool(response.metadata.has_more and cursor)
-            if more_pages:
+            if more_pages and cursor is not None:
                 if cursor in seen_cursors:
                     logger.warning(
                         "Stopped searching room history: server repeated cursor %r",
@@ -1321,15 +1368,12 @@ class AgentTools(AgentToolsProtocol):
 
     @staticmethod
     def _attachment_expired(attachment: Attachment) -> bool:
-        """True once ``expires_at`` has passed. A naive value (no offset --
-        the Fern model doesn't enforce one) is treated as UTC, the platform's
-        only timezone, rather than raising on a naive/aware comparison."""
+        """True once ``expires_at`` has passed. The Fern model doesn't enforce an
+        offset, so a naive value reads as UTC rather than failing the comparison."""
         expires_at = attachment.expires_at
         if expires_at is None:
             return False
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=UTC)
-        return expires_at <= datetime.now(UTC)
+        return assume_utc(expires_at) <= datetime.now(UTC)
 
     async def _find_attachment(self, file_id: str) -> Attachment:
         """Locate an attachment by id -- see ``_attachment_cache`` for the
@@ -2039,11 +2083,12 @@ class AgentTools(AgentToolsProtocol):
 
         try:
             method = getattr(self, definition.method_name)
-            result = await method(**arguments)
+            async with tool_activity(self, tool_name):
+                result = await method(**arguments)
             return ToolCallOutcome(value=serialize_tool_result(result), ok=True)
         except (BandToolError, RoomExecutionStoppedError):
             # Stopped execution must escape ordinary tool-error conversion.
             raise
         except Exception as e:  # noqa: BLE001 -- BandToolError already re-raised above; this converts any other exception into a structured ToolCallOutcome(ok=False)
-            msg = f"Error executing {tool_name}: {e}"
+            msg = tool_execution_failure(tool_name, e)
             return ToolCallOutcome(value=msg, ok=False, error_message=msg)

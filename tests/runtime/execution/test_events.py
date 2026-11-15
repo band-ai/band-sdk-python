@@ -66,12 +66,12 @@ class TestExecutionContextEvents:
         """A deadline that fires as an event arrives must not end the room."""
         ctx = ExecutionContext("room-123", mock_link, mock_handler)
         await ctx.start()
-        await wait_for_condition(lambda: ctx._queue_wait is not None)
+        await wait_for_condition(lambda: ctx.scheduler.queue_wait is not None)
 
         task = ctx._process_loop_task
         assert task is not None
-        assert ctx._queue_wait is not None
-        ctx._queue_wait.reschedule(asyncio.get_running_loop().time())
+        assert ctx.scheduler.queue_wait is not None
+        ctx.scheduler.queue_wait.reschedule(asyncio.get_running_loop().time())
         await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-1"))
 
         await wait_for_condition(lambda: mock_handler.call_count >= 1)
@@ -83,7 +83,7 @@ class TestExecutionContextEvents:
         """A cancel from outside the deadline must finish the room task."""
         ctx = ExecutionContext("room-123", mock_link, mock_handler)
         await ctx.start()
-        await wait_for_condition(lambda: ctx._queue_wait is not None)
+        await wait_for_condition(lambda: ctx.scheduler.queue_wait is not None)
 
         task = ctx._process_loop_task
         assert task is not None

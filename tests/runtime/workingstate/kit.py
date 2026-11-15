@@ -5,17 +5,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 from band.runtime.messages import PlatformMessage
 from band.runtime.sessionconfig import SessionConfig
+from tests.conftest import mirror_settlement_results
+
+_FAST = SessionConfig(working_keep_alive_seconds=4.0)
 
 
-def _working_values(link) -> list[bool]:
+def _working_values(link: MagicMock) -> list[bool]:
     """Sequence of `working` booleans passed to link.report_activity."""
     return [
         c.args[1] if len(c.args) > 1 else c.kwargs["working"]
         for c in link.report_activity.call_args_list
     ]
-
-
-_FAST = SessionConfig(working_keep_alive_seconds=4.0)
 
 
 def _backlog_message(
@@ -34,7 +34,7 @@ def _backlog_message(
     )
 
 
-def _independent_link():
+def _independent_link() -> MagicMock:
     link = MagicMock()
     link.agent_id = "agent-123"
     link.rest = MagicMock()
@@ -45,8 +45,7 @@ def _independent_link():
     link.rest.agent_api_context.get_agent_chat_context = AsyncMock(
         return_value=MagicMock(data=[])
     )
-    link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
     link.report_activity = AsyncMock(return_value=True)
-    return link
+    return mirror_settlement_results(link)

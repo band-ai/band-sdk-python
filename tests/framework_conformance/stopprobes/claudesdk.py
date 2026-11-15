@@ -87,6 +87,8 @@ async def stop_running_turn(room: ClaudeRoom, mode: ControlMode) -> None:
 async def end_running_turn(mode: ControlMode) -> list[str]:
     async with claude_room() as room:
         await stop_running_turn(room, mode)
+        await room.adapter.on_cleanup(room.room_id)
+        assert room.adapter.backend_turns.blocker(room.room_id) is None
         return closes(room.claude)
 
 

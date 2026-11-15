@@ -1,0 +1,1 @@
+"""Google ADK adapter behavior."""

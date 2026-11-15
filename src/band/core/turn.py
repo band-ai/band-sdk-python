@@ -9,6 +9,8 @@ in core so every SDK judges a turn the same way.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import band_sdk_core
@@ -21,6 +23,26 @@ if TYPE_CHECKING:
     from band.runtime.tools.types import TurnEffect
 
 logger = logging.getLogger(__name__)
+
+
+class RoundOutcome:
+    """Normalize SDK tool effects for Core's complete-round stop rule."""
+
+    def __init__(self) -> None:
+        self._outcome = band_sdk_core.RoundOutcome()
+
+    def record(self, effect: TurnEffect, succeeded: bool) -> None:
+        self._outcome.record(_core_effect(effect), succeeded)
+
+    def should_stop(self, *, complete: bool) -> bool:
+        return self._outcome.should_stop(complete)
+
+
+def _core_effect(effect: TurnEffect) -> band_sdk_core.TurnEffect:
+    value = band_sdk_core.TurnEffect.from_wire_name(effect)
+    if value is None:
+        raise ValueError(f"band-sdk-core has no turn effect {effect!r}")
+    return value
 
 
 class Turn:
@@ -40,10 +62,7 @@ class Turn:
         self._detached = False
 
     def record(self, effect: TurnEffect) -> None:
-        core_effect = band_sdk_core.TurnEffect.from_wire_name(effect)
-        if core_effect is None:
-            raise ValueError(f"band-sdk-core has no turn effect {effect!r}")
-        self._ledger.record(core_effect)
+        self._ledger.record(_core_effect(effect))
 
     def settle(self) -> None:
         """The adapter ended this turn itself (a control reply, a busy notice)."""
@@ -102,3 +121,12 @@ async def judge_detached_turn(tools: AgentToolsProtocol, *, room_id: str) -> Non
     """
     if tools.turn.judged and tools.turn.detached:
         await report_unsettled_turn(tools, room_id=room_id)
+
+
+@asynccontextmanager
+async def detached_turn(
+    tools: AgentToolsProtocol, *, room_id: str
+) -> AsyncIterator[None]:
+    """Judge successful detached work before its caller releases reporting authority."""
+    yield
+    await judge_detached_turn(tools, room_id=room_id)

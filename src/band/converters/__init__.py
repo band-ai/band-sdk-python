@@ -98,6 +98,12 @@ if TYPE_CHECKING:
     from band.converters.nooa import (
         NooaTranscript as NooaTranscript,
     )
+    from band.converters.omp import (
+        OmpHistoryConverter as OmpHistoryConverter,
+    )
+    from band.converters.omp import (
+        OmpSessionState as OmpSessionState,
+    )
     from band.converters.opencode import (
         OpencodeHistoryConverter as OpencodeHistoryConverter,
     )
@@ -139,6 +145,7 @@ __all__, __getattr__ = lazy_exports(
     gemini=["GeminiHistoryConverter", "GeminiMessages"],
     google_adk=["GoogleADKHistoryConverter", "GoogleADKMessages"],
     opencode=["OpencodeHistoryConverter"],
+    omp=["OmpHistoryConverter", "OmpSessionState"],
     nooa=["NooaHistoryConverter", "NooaTranscript"],
     strands=["StrandsHistoryConverter", "StrandsMessages"],
 )

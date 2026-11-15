@@ -1,16 +1,39 @@
-# Strands Agents Examples for Band
+# Strands Agents on Band
 
-Examples for running [AWS Strands Agents](https://strandsagents.com) on the Band
-platform through `StrandsAdapter`.
+`StrandsAdapter` runs an [AWS Strands Agents](https://strandsagents.com) agent as a participant in
+Band chat rooms, alongside humans and other agents. You bring the model, tools, and prompt; the SDK
+owns the WebSocket subscription, wakes the agent when it is @mentioned, loads that room's history
+at session start by default, and offers Band's chat tools — send a message, look up peers, manage
+participants — to the model next to your own.
+
+```bash
+pip install "band-sdk[strands]"   # or: uv add "band-sdk[strands]"
+```
+
+```python notest
+from band import Agent
+from band.adapters import StrandsAdapter, StrandsAdapterConfig
+from strands.models.openai_responses import OpenAIResponsesModel
+
+adapter = StrandsAdapter(
+    StrandsAdapterConfig(custom_section="You are a helpful assistant."),
+    llm=OpenAIResponsesModel(model_id="gpt-6-luna"),
+)
+async with Agent.from_config("strands_agent", adapter=adapter) as agent:
+    await agent.run_forever()  # inside async def main(); see 01_basic_agent.py
+```
 
 ## Prerequisites
 
-1. **Dependencies** — `uv sync --extra strands` (or `pip install band-sdk[strands]`)
-2. **Band platform** — a registered agent plus `BAND_WS_URL` / `BAND_REST_URL`
+1. **Dependencies** — `uv sync --extra strands` (or `pip install "band-sdk[strands]"`)
+2. **A Band agent** — sign in to [Band](https://app.band.ai), create a remote agent, and copy its
+   UUID and API key. `BAND_REST_URL` / `BAND_WS_URL` default to Band Cloud; set them only for a
+   self-hosted deployment
 3. **Model credentials** — for these examples `OPENAI_API_KEY`, except
    `05_bedrock_model.py`, which needs AWS credentials with Bedrock access
-4. **`agent_config.yaml`** — copy `agent_config.yaml.example` from the repo root and
-   fill in `strands_agent` (and `tom_agent` / `jerry_agent` for the character pair)
+4. **`agent_config.yaml`** — copy `agent_config.yaml.example` from the repo root and fill
+   `strands_agent` with the UUID and key from step 2 (and `tom_agent` / `jerry_agent` for the
+   character pair)
 
 ## Picking a model
 
@@ -45,7 +68,7 @@ Providers beyond `openai` need their own Strands extra (e.g.
 | `01_basic_agent.py` | Minimal agent: a model plus `custom_section` |
 | `02_custom_tools.py` | Portable `(InputModel, handler)` tools, memory + contact tools, execution/usage events |
 | `03_custom_instructions.py` | `system_prompt` full override and the messaging contract it must carry |
-| `04_native_tools.py` | Strands' own `@tool` functions, and `band_terminal` for a tool that ends the turn |
+| `04_native_tools.py` | Strands' own `@tool` functions, and `band_terminal` for a tool that counts as work |
 | `05_bedrock_model.py` | Amazon Bedrock, via the bare model id and via `BedrockModel` |
 | `06_tom_agent.py` / `07_jerry_agent.py` | Two Strands peers talking to each other in one room |
 
@@ -69,7 +92,15 @@ StrandsAdapter(
 The adapter registers the Band platform tools itself; a custom tool may not reuse
 one of their names. Band owns per-room history: the transcript is converted into
 Strands `Message` dicts, seeded into a fresh `Agent` per turn, and read back after
-it, so a restart rehydrates from the room.
+it. With context hydration enabled, a restart reloads that history from the room.
+
+Custom tools can declare `TurnEffect.DECLINE` with `declares_turn_effect` on
+both portable handlers and native Strands tools. A successful decline stops the
+current model loop after every concurrent sibling finishes and its result enters
+history, including failed siblings. A failed decline remains an error and allows
+the model to recover. `ACT`, `REPLY`, and legacy `band_terminal=True` count toward
+the turn outcome but allow further model steps. Each new room turn gets fresh
+stopping state; this does not cancel caller orchestration or other rooms.
 
 ## Running
 

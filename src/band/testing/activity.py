@@ -1,0 +1,98 @@
+"""Record what a turn's activity observer is told, without reporting it."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Hashable, Iterator
+from contextlib import contextmanager
+from typing import Any, Protocol, TypeVar
+
+from band_rest.types.agent_activity_detail import AgentActivityDetail
+
+from band.runtime.activity import ActivityObserver, TurnActivity
+
+
+class ObservableTools(Protocol):
+    _activity_observer: ActivityObserver | None
+
+
+_Tools = TypeVar("_Tools", bound=ObservableTools)
+
+SHOWN_REASONING: dict[str, Any] = {"kind": "reasoning"}
+SHOWN_MEMORY: dict[str, Any] = {"kind": "memory"}
+
+
+def shown_tool(name: str) -> dict[str, Any]:
+    """A recorded ``tool_call`` observation for ``name``."""
+    return {"kind": "tool_call", "name": name}
+
+
+class ActivityRecorder:
+    """An ``ActivityObserver`` that keeps, in order, each progress change a
+    turn's starts and ends make visible, as the platform would receive it."""
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+        self.activity = TurnActivity()
+        self._ends: asyncio.Queue[Hashable] = asyncio.Queue()
+        self._changed = asyncio.Event()
+
+    def observing(self, tools: _Tools) -> _Tools:
+        """Bind this recorder as the turn observer of ``tools``."""
+        tools._activity_observer = self
+        return tools
+
+    async def start(self, key: Hashable, activity: AgentActivityDetail) -> None:
+        before = self.activity.progress
+        self.activity.start(key, activity)
+        self._record_progress(before)
+
+    async def next_end(self) -> Hashable:
+        """Wait for an actual terminal observation, including a displaced token."""
+        return await self._ends.get()
+
+    async def wait_for_detail(self, detail: AgentActivityDetail) -> None:
+        """Wait for the observed display without polling or elapsed-time assumptions."""
+        while True:
+            self._changed.clear()
+            if self.activity.detail == detail:
+                return
+            await self._changed.wait()
+
+    async def rename(self, key: Hashable, activity: AgentActivityDetail) -> None:
+        before = self.activity.progress
+        self.activity.rename(key, activity)
+        self._record_progress(before)
+
+    async def end(self, key: Hashable) -> None:
+        before = self.activity.progress
+        self.activity.end(key)
+        self._record_progress(before)
+        self._ends.put_nowait(key)
+
+    def _record_progress(self, before: AgentActivityDetail) -> None:
+        self._changed.set()
+        if self.activity.progress != before:
+            self.events.append(self.activity.progress.model_dump(exclude_none=True))
+
+    @contextmanager
+    def permission_wait(self) -> Iterator[None]:
+        owner = self.activity.acquire_permission()
+        try:
+            self._record_wait()
+            yield
+        finally:
+            self.activity.release_permission(owner)
+            self._record_wait()
+
+    def _record_wait(self) -> None:
+        self._changed.set()
+        self.events.append({"waiting": self.waiting})
+
+    @property
+    def waiting(self) -> bool:
+        """Whether any permission operation is still waiting."""
+        return self.activity.waiting
+
+    def assert_completed_tool(self, name: str) -> None:
+        assert self.events == [shown_tool(name), SHOWN_REASONING]

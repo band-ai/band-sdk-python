@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[anthropic]>=4.0.0",
+#   "band-sdk[anthropic]==6.0.1",
 #   "fastapi>=0.110",
 #   "uvicorn>=0.29",
 #   "pydantic>=2",
@@ -9,12 +9,12 @@
 # ///
 """AgentCore container variant with a custom tool wired in.
 
-Same shape as ``agentcore_llm_server.py`` (see that file for the full
+Same shape as ``../oneshot/server.py`` (see that file for the full
 lifecycle/transport walkthrough). The only difference is ``_build_adapter``
 passing ``additional_tools`` — see BUILDING.md's "Adding custom tools"
 section.
 
-Environment variables: same as ``agentcore_llm_server.py``.
+Environment variables: same as ``../oneshot/server.py``.
 
 Run locally::
 
@@ -36,12 +36,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LogSettings
 from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
+from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.core.types import Emit
 from band.platform.link import BandLink
 from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
 
 LogSettings().for_application().configure()
 logger = logging.getLogger(__name__)
+HEALTHY = "Healthy"
+INVALID_JSON = "invalid JSON body"
+INVOCATION_FAILED = "invocation failed"
 
 
 class Settings(BaseSettings):
@@ -54,7 +58,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
     band_rest_url: str = "https://app.band.ai"
-    anthropic_model: str = "claude-sonnet-5-5"
+    anthropic_model: str = ANTHROPIC_MODEL
     system_prompt: str = ""
     emit_execution: bool = True
     port: int = 8080
@@ -101,16 +105,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         adapter=_build_adapter(settings),
         agent_id=settings.band_agent_id,
     )
-    await invoker.startup()
-    logger.info(
-        "Container ready: agent_id=%s name=%s",
-        settings.band_agent_id,
-        invoker.agent_name,
-    )
-
-    app.state.invoker = invoker
-
     try:
+        await invoker.startup()
+        logger.info(
+            "Container ready: agent_id=%s name=%s",
+            settings.band_agent_id,
+            invoker.agent_name,
+        )
+        app.state.invoker = invoker
         yield
     finally:
         await invoker.shutdown()
@@ -121,20 +123,23 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/ping")
 async def ping() -> dict[str, str]:
-    return {"status": "Healthy"}
+    return {"status": HEALTHY}
 
 
 @app.post("/invocations")
 async def invocations(request: Request) -> dict[str, Any]:
     invoker: OneShotInvoker = app.state.invoker
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=INVALID_JSON) from e
     try:
         return await invoker.handle_event(body)
     except OneShotEnvelopeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
-        logger.exception("invocation failed")
-        raise HTTPException(status_code=500, detail="invocation failed")
+        logger.exception(INVOCATION_FAILED)
+        raise HTTPException(status_code=500, detail=INVOCATION_FAILED)
 
 
 def main() -> None:

@@ -34,6 +34,7 @@ from band.core.types import (
 )
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
+from band.runtime.tools.schema import tool_execution_failure
 from band.testing import (
     MISSING_REPLY_FAILURE,
     ErrorTurn,
@@ -46,9 +47,9 @@ from tests.adapters.strands.kit import (
     ROOM,
     SEND_TURN,
     _run_message,
-    _run_turn,
     _tool_results,
     failure_diagnostics,
+    run_judged_turn,
 )
 from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
 
@@ -73,7 +74,7 @@ class TestTurnProductivity:
         )
 
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
 
         (diagnostic,) = failure_diagnostics(caplog)
         assert diagnostic["final_text"].strip() == final_text
@@ -112,7 +113,7 @@ class TestTurnProductivity:
         )
 
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
 
         (diagnostic,) = failure_diagnostics(caplog)
         (call,) = diagnostic["tool_calls"]
@@ -134,7 +135,7 @@ class TestTurnProductivity:
     ) -> None:
         adapter = await scripted(SEND_TURN)
         with caplog.at_level(logging.WARNING):
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
         assert failure_diagnostics(caplog) == []
 
     @pytest.mark.asyncio
@@ -192,7 +193,7 @@ class TestTurnProductivity:
         )
 
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
 
         (diagnostic,) = failure_diagnostics(caplog)
         (call,) = diagnostic["tool_calls"]
@@ -214,10 +215,10 @@ class TestTurnProductivity:
             ToolTurn("band_lookup_peers"),
             TextTurn("checked"),
         )
-        await _run_turn(adapter, tools)
+        await run_judged_turn(adapter, tools)
 
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_turn(adapter, FakeAgentTools(room_id=ROOM))
+            await run_judged_turn(adapter, FakeAgentTools(room_id=ROOM))
 
         (diagnostic,) = failure_diagnostics(caplog)
         (call,) = diagnostic["tool_calls"]
@@ -239,7 +240,7 @@ class TestTurnProductivity:
             emit=set(),
         )
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
         (diagnostic,) = failure_diagnostics(caplog)
         first, second = diagnostic["tool_calls"]
         assert first["args"] == {"limit": 1}
@@ -261,7 +262,7 @@ class TestTurnProductivity:
             emit=set(),
         )
         with pytest.raises(EventLoopException, match="provider down"):
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
         (diagnostic,) = failure_diagnostics(caplog)
         (call,) = diagnostic["tool_calls"]
         assert call["name"] == "band_list_tasks"
@@ -281,7 +282,7 @@ class TestTurnProductivity:
         adapter = await scripted(SEND_TURN)
 
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
 
         assert tools.messages_sent == []
         assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
@@ -326,7 +327,7 @@ class TestTurnProductivity:
         adapter = await scripted(ToolTurn("band_lookup_peers", {}))
 
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
 
         assert _tool_results(adapter)  # the lookup did run and succeed
         assert tools.messages_sent == []
@@ -347,7 +348,7 @@ class TestTurnProductivity:
             ToolTurn("native_finish", {"note": "go"}), additional_tools=[native_finish]
         )
 
-        await _run_turn(adapter, tools)
+        await run_judged_turn(adapter, tools)
 
         assert failure_reports(tools) == []
 
@@ -374,7 +375,7 @@ class TestTurnProductivity:
         )
 
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
 
         assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
 
@@ -394,7 +395,7 @@ class TestTurnProductivity:
             additional_tools=[native_peek],
         )
 
-        await _run_turn(adapter, tools)
+        await run_judged_turn(adapter, tools)
 
         tools.assert_message_sent(content="hi", count=1)
         assert tools.turn.complete
@@ -412,7 +413,7 @@ class TestTurnProductivity:
         )
 
         with pytest.raises(TurnResultAlreadyReported):
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
 
         assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
 
@@ -437,8 +438,10 @@ class TestTurnProductivity:
 
             note: str
 
+        failure = RuntimeError("no network")
+
         async def boom(args: BoomInput) -> str:
-            raise RuntimeError("no network")
+            raise failure
 
         adapter = await scripted(
             ToolTurn("boom", {"note": "go"}), additional_tools=[(BoomInput, boom)]
@@ -446,7 +449,7 @@ class TestTurnProductivity:
 
         await _run_message(adapter, tools)
 
-        assert _tool_results(adapter) == ["Error executing tool 'boom': no network"]
+        assert _tool_results(adapter) == [tool_execution_failure("boom", failure)]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)

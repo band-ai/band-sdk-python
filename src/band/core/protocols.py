@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Literal,
+    Protocol,
+    TypeVar,
+    runtime_checkable,
+)
 
 from band_sdk_core import AgentFailure
 
@@ -31,7 +40,7 @@ if TYPE_CHECKING:
         TaskListState,
     )
     from band.core.turn import Turn
-    from band.core.types import AgentInput, Capability
+    from band.core.types import AgentInput, Capability, PlatformMessage
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
     from band.runtime.tools import (
@@ -230,6 +239,15 @@ class AgentToolsProtocol(Protocol):
 
     async def get_participants(self) -> list[ChatParticipant]:
         """Get participants in the current room."""
+        ...
+
+    async def get_participants_snapshot(self) -> list[ChatParticipant]:
+        """Read fresh membership without changing any participant cache.
+
+        Raise for failed, missing, empty, malformed or duplicate-ID rosters.
+        Custom tools and delegating wrappers must implement this contract;
+        this method is not an LLM tool.
+        """
         ...
 
     async def lookup_peers(
@@ -530,3 +548,57 @@ class Preprocessor(Protocol):
             AgentInput if event should be processed, None to skip
         """
         ...
+
+
+@runtime_checkable
+class BatchFrameworkAdapter(FrameworkAdapter, Protocol):
+    """A framework adapter that can run one turn over several original messages.
+
+    ``supports_batch_input`` is the explicit declaration: a legacy adapter
+    without it is never handed a batch, and enabling batching with one is a
+    configuration error rather than a silent fallback.
+    """
+
+    supports_batch_input: ClassVar[bool]
+
+    async def on_messages(self, inp: AgentInput) -> None:
+        """Process the turn's ``inp.messages``, oldest first, as one turn."""
+        ...
+
+
+@runtime_checkable
+class MessageProjector(Protocol):
+    """The read-only message projection shared by recognition and preprocessing."""
+
+    def message(
+        self, ctx: ExecutionContext, event: PlatformEvent, agent_id: str
+    ) -> PlatformMessage | None:
+        """Project an original without I/O, context consumption or delivery writes."""
+        ...
+
+
+@runtime_checkable
+class BatchPreprocessor(Preprocessor, MessageProjector, Protocol):
+    """Build one input using the same ``message`` projection as control recognition."""
+
+    async def process_batch(
+        self,
+        ctx: ExecutionContext,
+        events: Sequence[PlatformEvent],
+        agent_id: str,
+    ) -> AgentInput | None:
+        """Build one input over ``events``' messages, sharing one context and tools."""
+        ...
+
+
+@runtime_checkable
+class ControlRecognizer(Protocol):
+    """Read-only recognition of a message the adapter would handle as a control.
+
+    Recognition may read existing pending-request state (a free-text answer to
+    a pending question is a control) but never creates state, claims a request,
+    posts, consumes context or writes delivery status; the adapter's control
+    handler remains the authority for authorization and consumption.
+    """
+
+    def is_control_message(self, msg: PlatformMessage) -> bool: ...

@@ -10,7 +10,10 @@ from tests.integrations.acp.acp_toolkit import (
     acp_adapter,
     fake_agent_config,
 )
-from tests.integrations.acp.clientbehavior.kit import band_mcp_url, rehydration_history
+from tests.integrations.acp.clientbehavior.kit import (
+    band_mcp_url,
+    rehydration_history,
+)
 from tests.mcpbackends import backends_created_by
 from tests.mcpclient import (
     crash_backend,
@@ -83,7 +86,9 @@ class TestSessionLifetime:
         assert urlsplit(live_url).port != urlsplit(crashed_url).port
 
     @pytest.mark.asyncio
-    async def test_reloaded_session_gets_its_rooms_band_mcp_endpoint(self) -> None:
+    async def test_reloaded_session_gets_its_rooms_band_mcp_endpoint(
+        self,
+    ) -> None:
         agent = (
             FakeACPAgent(supports_session_load=True)
             .knows_session("persisted")

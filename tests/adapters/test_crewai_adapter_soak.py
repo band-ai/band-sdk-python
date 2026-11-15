@@ -71,7 +71,6 @@ def _make_msg(idx: int, room_id: str) -> PlatformMessage:
     )
 
 
-@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_soak_100_turns_3_rooms(crewai_mocks):
     """Drive 100 on_message calls across 3 rooms; assert no leaks."""

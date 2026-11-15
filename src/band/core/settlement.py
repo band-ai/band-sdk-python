@@ -1,4 +1,4 @@
-"""Result vocabulary for terminal message writes."""
+"""Result vocabulary for message delivery-status writes."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ from enum import StrEnum
 
 
 class SettlementResult(StrEnum):
-    """What a terminal (processed/failed) write established about the platform."""
+    """What a delivery-status write established about the platform."""
 
     ACCEPTED = "accepted"
-    """The platform confirmed the write; the message is settled."""
+    """The platform confirmed the write."""
 
     UNCONFIRMED = "unconfirmed"
     """The outcome is unknown (transport failure, unexpected status or body); the

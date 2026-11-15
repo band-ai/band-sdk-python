@@ -13,6 +13,7 @@ from band.adapters.claude_sdk import (
 )
 from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
+from band.runtime.decisions import APPROVAL_NOT_PENDING_TEMPLATE
 from band.testing import MISSING_REPLY_FAILURE, failure_reports
 from tests.adapters.claude_sdk.helpers import (
     WRITE_NOTE,
@@ -240,7 +241,7 @@ class TestManualApproval:
         self, claude_room: OpenRoom, decision: str, bash_output: str
     ) -> None:
         """A reply landing while the timeout notice is still being sent is told
-        the token is gone, not "resolved"."""
+        the token is no longer pending, not "resolved"."""
         room = await claude_room(
             with_approvals(wait_timeout_s=60, timeout_decision=decision)
         )
@@ -254,7 +255,7 @@ class TestManualApproval:
 
         assert room.chat == [
             prompt("a-1", "Bash: `ls`"),
-            "Unknown approval token `a-1`. Available: none.",
+            APPROVAL_NOT_PENDING_TEMPLATE.format(token="a-1"),
             APPROVAL_TIMED_OUT_TEMPLATE.format(token="a-1", decision=decision),
             "Done waiting.",
         ]

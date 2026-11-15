@@ -237,8 +237,8 @@ In `$WORKSPACE/pyproject.toml`, change only the SDK extra; retain the actual
 starter SDK floor and settings requirement:
 
 ```diff
--dependencies = ["band-sdk>=1.4.2", "pydantic-settings>=2.15.0"]
-+dependencies = ["band-sdk[anthropic]>=1.4.2", "pydantic-settings>=2.15.0"]
+-dependencies = ["band-sdk>=6.0.1", "pydantic-settings>=2.15.0"]
++dependencies = ["band-sdk[anthropic]>=6.0.1", "pydantic-settings>=2.15.0"]
 ```
 
 Replace `main.py` with the complete application below. `custom_section` retains

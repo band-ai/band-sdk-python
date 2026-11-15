@@ -55,6 +55,10 @@ class LettaMCPConfig(BaseAdapterConfig):
       agent's tools to the local network, so only opt in on an isolated host —
       it is needed when the Letta server runs in a container and reaches back
       via ``host.docker.internal``, which is what ``advertised_host`` names.
+      The registration stores the server's bearer token in its
+      ``custom_headers``, readable through the Letta API by anyone in the
+      same Letta organization; the token is minted each time the adapter
+      starts and stops working when the process exits.
     - ``external``: register a separately-run Band MCP server (e.g. band-mcp)
       at ``server_url``.  Required for Letta Cloud, which cannot reach a
       laptop-local server.
@@ -132,6 +136,13 @@ class LettaAdapterConfig(EnvAdapterConfig):
             ``BandConfigError``: Cloud does not expose the admin API this needs.
         embedding: Embedding model passed on agent create. Letta's Docker
             server requires one; Cloud picks its own default when ``None``.
+        model_settings: Letta ``model_settings`` passed on agent create, e.g.
+            ``{"provider_type": "openai", "reasoning": {"reasoning_effort":
+            "low"}}``. Letta fills omitted fields with its own settings
+            defaults rather than the model's (for OpenAI: temperature 0.7,
+            parallel and strict tool calls), so state every value to keep.
+            ``None`` keeps Letta's per-model defaults, which run OpenAI
+            GPT-5.1+ models at reasoning effort ``"none"``.
         mcp: How the Letta server reaches the Band MCP tools.
         mcp_server_url: Deprecated; use ``mcp=LettaMCPConfig(...)``.
         mcp_server_name: Deprecated; use ``mcp=LettaMCPConfig(...)``.
@@ -175,6 +186,7 @@ class LettaAdapterConfig(EnvAdapterConfig):
     project: str | None = None
     org_scoped: bool | None = None
     embedding: str | None = None
+    model_settings: dict[str, Any] | None = None
     mcp: LettaMCPConfig = Field(default_factory=LettaMCPConfig)
     mcp_server_url: str | None = None
     mcp_server_name: str | None = None

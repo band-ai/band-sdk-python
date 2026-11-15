@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import ast
-import json
 import re
 import shlex
-import subprocess
-import sys
-import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -135,34 +131,26 @@ class CollectedNode:
     skipped: bool
 
 
-def collected_nodes(arguments: list[str]) -> tuple[CollectedNode, ...]:
+def collected_nodes(
+    pytester: pytest.Pytester, arguments: list[str]
+) -> tuple[CollectedNode, ...]:
     """Collect nodes and framework bindings after pytest applies the job selectors."""
-    with tempfile.TemporaryDirectory() as directory:
-        output = Path(directory) / "nodes.json"
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "tests.framework_conformance.venv_job_coverage",
-                str(output),
-                *arguments,
-            ],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.chdir(REPO_ROOT)
+        recorder = pytester.inline_run(*arguments, "--collect-only", "--no-cov")
+    assert recorder.ret == pytest.ExitCode.OK
+    session = cast(pytest.Session, recorder.getcall("pytest_collection_finish").session)
+    return tuple(
+        CollectedNode(
+            item.nodeid, frozenset(framework_bindings(item)), is_skipped(item)
         )
-        if result.returncode != 0:
-            raise AssertionError(result.stdout + result.stderr)
-        return tuple(
-            CollectedNode(row["nodeid"], frozenset(row["frameworks"]), row["skipped"])
-            for row in json.loads(output.read_text(encoding="utf-8"))
-        )
+        for item in session.items
+    )
 
 
-def selected_nodes(arguments: list[str]) -> set[str]:
+def selected_nodes(pytester: pytest.Pytester, arguments: list[str]) -> set[str]:
     """The exact node IDs surviving a job's pytest selectors."""
-    return {node.nodeid for node in collected_nodes(arguments)}
+    return {node.nodeid for node in collected_nodes(pytester, arguments)}
 
 
 def framework_bindings(item: pytest.Item) -> set[str]:
@@ -175,38 +163,44 @@ def framework_bindings(item: pytest.Item) -> set[str]:
     }
 
 
-def collection_row(item: pytest.Item) -> dict[str, object]:
-    skipped = item.get_closest_marker("skip") is not None or any(
+def is_skipped(item: pytest.Item) -> bool:
+    return item.get_closest_marker("skip") is not None or any(
         marker.args and marker.args[0] is True for marker in item.iter_markers("skipif")
     )
-    return {
-        "nodeid": item.nodeid,
-        "frameworks": sorted(framework_bindings(item)),
-        "skipped": skipped,
+
+
+# Flags that spawn workers or partition the suite. Coverage tests collect
+# nodeids serially; passing these through to pytester would start xdist.
+_WORKER_POOL_FLAGS = frozenset(
+    {
+        "-n",
+        "--numprocesses",
+        "--dist",
     }
+)
 
 
 def pytest_arguments(command: str) -> list[str]:
-    """Read selectors after the workflow's pytest executable."""
+    """Read selectors after the workflow's pytest executable.
+
+    Worker-pool flags stay in the YAML (CI actually parallelizes); they are
+    stripped here so coverage tests can collect the same nodeids serially.
+    """
     tokens = shlex.split(command)
-    return tokens[tokens.index("pytest") + 1 :]
+    return _without_worker_pool_flags(tokens[tokens.index("pytest") + 1 :])
 
 
-class NodeCollector:
-    def __init__(self, output: Path) -> None:
-        self.output = output
-
-    def pytest_collection_finish(self, session: pytest.Session) -> None:
-        self.output.write_text(
-            json.dumps([collection_row(item) for item in session.items]),
-            encoding="utf-8",
-        )
-
-
-if __name__ == "__main__":
-    raise SystemExit(
-        pytest.main(
-            [*sys.argv[2:], "--collect-only", "--no-cov"],
-            plugins=[NodeCollector(Path(sys.argv[1]))],
-        )
-    )
+def _without_worker_pool_flags(args: list[str]) -> list[str]:
+    stripped: list[str] = []
+    skip_value = False
+    for token in args:
+        if skip_value:
+            skip_value = False
+            continue
+        name, eq, _value = token.partition("=")
+        if name in _WORKER_POOL_FLAGS:
+            if not eq:
+                skip_value = True
+            continue
+        stripped.append(token)
+    return stripped

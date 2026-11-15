@@ -44,5 +44,8 @@ class TestCiTriggers:
             "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
         }
 
-    def test_core_coverage_stays_out_of_the_merge_queue(self) -> None:
-        assert "merge_group" not in workflow(COVERAGE_WORKFLOW)["on"]
+    def test_core_coverage_runs_only_weekly_or_on_manual_dispatch(self) -> None:
+        assert set(workflow(COVERAGE_WORKFLOW)["on"]) == {
+            "schedule",
+            "workflow_dispatch",
+        }

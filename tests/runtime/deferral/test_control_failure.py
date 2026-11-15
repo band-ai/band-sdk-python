@@ -1,3 +1,5 @@
+"""A control whose handler fails keeps the failed-delivery policy."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -19,8 +21,7 @@ from tests.runtime.helpers import (
 class TestControlFailure:
     @pytest.mark.parametrize("hosting", ["runtime", "oneshot"])
     async def test_real_control_failure_keeps_existing_failed_delivery_policy(
-        self,
-        hosting: str,
+        self, hosting: str
     ) -> None:
         peer = LifecyclePlatform()
         peer.add_message("B")
@@ -49,8 +50,8 @@ class TestControlFailure:
                         report_turn_failures_to_room=False,
                     ),
                 )
-                await ctx._reconcile()
-                await ctx._reconcile()
+                await ctx.scheduler.run_pass(recovery=True)
+                await ctx.scheduler.run_pass(recovery=True)
                 assert peer.marked("failed") == ["C"]
                 await ctx.stop()
             else:

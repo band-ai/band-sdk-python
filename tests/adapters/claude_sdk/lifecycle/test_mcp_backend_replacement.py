@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from band.adapters.claude_sdk import BAND_MCP_TOKEN_ENV
 from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManagerStoppedError,
 )
@@ -61,6 +62,9 @@ class TestMcpBackendReplacement:
         assert first_session.alive is False
         assert second_port != first_port
         assert room.claude.session_workspaces == [str(tmp_path / "original")] * 2
+        assert [
+            cli.options.env[BAND_MCP_TOKEN_ENV] for cli in room.claude.sessions
+        ] == [room.mcp_backend.auth_token] * 2
 
     async def test_a_message_after_shutdown_is_refused(
         self, claude_room: OpenRoom

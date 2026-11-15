@@ -30,7 +30,11 @@ Sections, in order, each short; "n/a" is fine where one doesn't apply:
    paid-LLM cost, concurrency and ordering, and Windows/Ubuntu behavior.
 8. **Test plan:** at least one test per scenario, at the lowest level that
    really exercises it.
-9. **Definition of done:** automated checks as exact commands (the targeted
+9. **Design validation:** the final scenario matrix from
+   [scenario-validation.md](scenario-validation.md): expected outcomes, sourced
+   design traces, verdicts and remaining implementation checks. Distinguish
+   walkthroughs from executed evidence and state non-blocking limitations.
+10. **Definition of done:** automated checks as exact commands (the targeted
    `uv run --all-packages pytest ...` and applicable checks from `AGENTS.md`'s
    Pre-Commit Checklist) and relevant manual checks (live E2E, editor flows),
    each with its expected result.
@@ -52,12 +56,22 @@ Test rules:
 - Test behavior that can actually break, not defaults or implementation
   trivia (see the `band-python-test-conventions` skill). A test that would
   still pass under a symptom-level patch doesn't cover the root cause.
+  Cover complementary branches of each owned decision, not line execution;
+  assert a named projection of the outcome, not internals or unclaimed
+  empties. Parametrize `(scenario, expected)` — do not `if` on scenario
+  inside the test.
 - When a material scenario needs end-to-end coverage to prove the behavior,
   reuse or extend the `tests/e2e/baseline` toolkit (see the
   `band-write-e2e-test` skill) instead of building new plumbing. Otherwise use
   the lowest boundary that preserves the behavior being tested.
-- A missing helper, fixture, or local peer is its own step, before the step
-  that uses it — never an empty mock in place of a real boundary.
+- A missing helper, fixture, constructor seam, or local peer is its own
+  step, before the step that uses it — never `unittest.mock.patch` of a
+  private name, stdlib spawn, or timeout constant, and never an empty mock
+  in place of a real boundary. Apply the test conventions' controlled-clock
+  boundary: plan gates and awaited completion for time-agnostic claims;
+  reserve clock advancement for deadline expiry. Use a public `0` ("check
+  now") only when supported, plus the complementary "finished before wait"
+  sequence; never sleep the grace period.
 
 Scope rules:
 

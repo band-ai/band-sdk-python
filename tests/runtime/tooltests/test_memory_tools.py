@@ -5,21 +5,17 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError
 
-from band.client.rest import (
-    DEFAULT_REQUEST_OPTIONS,
-    UnprocessableEntityError,
-)
+from band.client.rest import DEFAULT_REQUEST_OPTIONS, UnprocessableEntityError
 from band.core.exceptions import BandToolError
 from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
-from band.runtime.tools import (
-    AgentTools,
-    StoreMemoryInput,
-)
+from band.runtime.tools import AgentTools, StoreMemoryInput
 
 
 class TestMemoryTools:
     @pytest.mark.asyncio
-    async def test_list_memories_omits_none_filters(self, mock_rest_client) -> None:
+    async def test_list_memories_omits_none_filters(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         response = MagicMock()
         response.data = []
         mock_rest_client.agent_api_memories.list_agent_memories = AsyncMock(
@@ -35,7 +31,9 @@ class TestMemoryTools:
         )
 
     @pytest.mark.asyncio
-    async def test_store_memory_omits_none_fields(self, mock_rest_client) -> None:
+    async def test_store_memory_omits_none_fields(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         response = MagicMock()
         response.data = MagicMock()
         mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock(
@@ -62,7 +60,7 @@ class TestMemoryTools:
 
     @pytest.mark.asyncio
     async def test_store_memory_agent_scope_sent_without_subject_id(
-        self, mock_rest_client
+        self, mock_rest_client: MagicMock
     ) -> None:
         """Agent scope round-trips to the REST payload untouched and needs no
         subject_id -- the scope value real agents fall back to when their owner
@@ -92,7 +90,7 @@ class TestMemoryTools:
 
     @pytest.mark.asyncio
     async def test_list_memories_agent_scope_sent_untouched(
-        self, mock_rest_client
+        self, mock_rest_client: MagicMock
     ) -> None:
         """`scope="agent"` passes straight through to the list filter."""
         response = MagicMock()
@@ -112,7 +110,7 @@ class TestMemoryTools:
 
     @pytest.mark.asyncio
     async def test_store_memory_organization_scope_rejection_becomes_actionable(
-        self, mock_rest_client
+        self, mock_rest_client: MagicMock
     ) -> None:
         """The platform's 422 for an orgless agent's `scope="organization"`
         write must reach the caller as guidance to retry with `scope="agent"`,
@@ -141,7 +139,7 @@ class TestMemoryTools:
 
     @pytest.mark.asyncio
     async def test_store_memory_unrelated_422_is_not_mistaken_for_scope_rejection(
-        self, mock_rest_client
+        self, mock_rest_client: MagicMock
     ) -> None:
         """A 422 for any other reason must propagate as-is -- rewriting it to
         the scope-retry message would mislead the caller about the actual
@@ -165,7 +163,7 @@ class TestMemoryTools:
 
     @pytest.mark.asyncio
     async def test_list_memories_organization_scope_rejection_becomes_actionable(
-        self, mock_rest_client
+        self, mock_rest_client: MagicMock
     ) -> None:
         """The read-side twin of the store-side test above."""
         rejection_body = {"error": {"code": ORGANIZATION_SCOPE_REJECTED_CODE}}
@@ -179,7 +177,7 @@ class TestMemoryTools:
 
     @pytest.mark.asyncio
     async def test_store_memory_rejects_subject_scope_without_subject_id(
-        self, mock_rest_client
+        self, mock_rest_client: MagicMock
     ) -> None:
         """Reject subject-scoped writes before they reach the API."""
         mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock()
@@ -199,7 +197,7 @@ class TestMemoryTools:
 
     @pytest.mark.asyncio
     async def test_store_memory_rejects_type_for_wrong_system(
-        self, mock_rest_client
+        self, mock_rest_client: MagicMock
     ) -> None:
         """Reject a system/type mismatch before it reaches the API -- the raw
         tool method's ValueError comes straight from band_sdk_core, unlike
@@ -263,7 +261,7 @@ class TestMemoryTools:
     @pytest.mark.asyncio
     async def test_memory_mutation_calls_use_default_request_options(
         self,
-        mock_rest_client,
+        mock_rest_client: MagicMock,
         tool_method: str,
         rest_method: str,
     ) -> None:

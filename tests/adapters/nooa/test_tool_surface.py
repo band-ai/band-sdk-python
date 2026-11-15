@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from band.core.types import Capability
 from band.runtime.tools import BandTool
+from band.runtime.tools.inputs.chat import SendMessageInput
 from band.testing import FakeAgentTools
 from band.testing.nooa import custom_room_call, room_call, scripted_llm
 from tests.adapters.nooa.kit import (
@@ -41,7 +42,7 @@ class TestRoomToolSurface:
 
         assert "band_store_memory" in advertised_tools(llm)
 
-    async def test_the_model_reads_each_tools_argument_descriptions(
+    async def test_the_model_reads_the_canonical_mentions_description(
         self, tools: FakeAgentTools
     ) -> None:
         llm = scripted_llm(room_call("band_no_reply"))
@@ -49,7 +50,8 @@ class TestRoomToolSurface:
 
         await run_turn(adapter, tools)
 
-        assert "mentions: List of participants to mention." in prompt_text(llm)
+        description = SendMessageInput.model_fields["mentions"].description
+        assert f"mentions: {description}" in prompt_text(llm)
 
     async def test_a_factory_default_is_documented_without_calling_it(
         self, tools: FakeAgentTools

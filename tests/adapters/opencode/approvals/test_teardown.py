@@ -9,6 +9,7 @@ from band.integrations.opencode.types import (
     OpencodeSessionState,
 )
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.approvals.kit import (
     BlockingReplyClient,
@@ -66,7 +67,7 @@ class TestTeardown:
             config=OpencodeAdapterConfig(approval_mode="manual"),
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         task = asyncio.create_task(
@@ -113,7 +114,7 @@ class TestTeardown:
             config=OpencodeAdapterConfig(question_mode="manual"),
             client_factory=lambda _config: fake_client,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
         task = asyncio.create_task(

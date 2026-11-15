@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.approvals.kit import (
     BlockingReplyClient,
     make_room_approvals,
@@ -23,7 +24,7 @@ class TestInflightReplies:
         that ask is a no-op, a bare `reject` skips it and rejects the open
         question, and a new permission asked meanwhile is answerable after."""
         client = BlockingReplyClient("permission")
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
         await approvals.on_permission_asked(asks.permission("req-1"))
         await approvals.on_question_asked(asks.question("q-1"))
@@ -57,7 +58,7 @@ class TestInflightReplies:
         whose answer or rejection is already being sent -- and redeliveries or
         new questions arriving meanwhile don't disturb either side."""
         client = BlockingReplyClient("question", "reject")
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         approvals = make_room_approvals(client, tools=tools)
         for request_id in ("q-1", "q-2"):
             await approvals.on_question_asked(asks.question(request_id))

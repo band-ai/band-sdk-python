@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from band.adapters.copilot_sdk import (
@@ -18,6 +20,7 @@ from band.integrations.copilot_sdk import (
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
+    is_fresh_session_id,
     make_started_adapter,
     requires_copilot_sdk,
     run_message,
@@ -90,7 +93,12 @@ class TestSessionConfiguration:
         await run_message(adapter, tools)
 
         kwargs = client.sessions[0].kwargs
-        assert kwargs["on_user_input_request"] is ask_operator
+        handler = kwargs["on_user_input_request"]
+        assert not inspect.iscoroutinefunction(handler)
+        assert await handler({"question": "Pick"}, {"session_id": "room"}) == {
+            "answer": "beta",
+            "wasFreeform": False,
+        }
         # ask_user must be allowlisted alongside the bridged Band tools,
         # or the built-in tool stays filtered out and the handler is dead.
         assert "ask_user" in kwargs["available_tools"]
@@ -160,7 +168,7 @@ class TestSessionConfiguration:
         assert kwargs["model"] == "gpt-4o-mini"
 
     @pytest.mark.asyncio
-    async def test_deterministic_session_id_from_room(self):
+    async def test_session_id_carries_the_prefix_and_room(self):
         client = FakeCopilotClient()
         adapter = await make_started_adapter(
             client, CopilotSDKAdapterConfig(session_id_prefix="myagent-")
@@ -169,4 +177,6 @@ class TestSessionConfiguration:
 
         await run_message(adapter, tools, room_id="room-42")
 
-        assert client.sessions[0].session_id == "myagent-room-42"
+        assert is_fresh_session_id(
+            client.sessions[0].session_id, prefix="myagent-", room_id="room-42"
+        )

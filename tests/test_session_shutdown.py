@@ -38,7 +38,6 @@ class TestIsRunningProperty:
             return_value=MagicMock(data=[])
         )
         link.get_next_message = AsyncMock(return_value=None)
-        link.mark_processing = AsyncMock()
         link.mark_processed = AsyncMock()
         link.mark_failed = AsyncMock()
         return link
@@ -94,7 +93,6 @@ class TestInstantShutdown:
             return_value=MagicMock(data=[])
         )
         link.get_next_message = AsyncMock(return_value=None)
-        link.mark_processing = AsyncMock()
         link.mark_processed = AsyncMock()
         link.mark_failed = AsyncMock()
         return link
@@ -167,7 +165,6 @@ class TestCancellationDuringSync:
             await asyncio.sleep(10)  # Would take 10 seconds if not cancelled
 
         link.get_next_message = slow_get_next
-        link.mark_processing = AsyncMock()
         link.mark_processed = AsyncMock()
         link.mark_failed = AsyncMock()
         return link
@@ -219,7 +216,6 @@ class TestCancellationDuringProcessing:
             return_value=MagicMock(data=[])
         )
         link.get_next_message = AsyncMock(return_value=None)
-        link.mark_processing = AsyncMock()
         link.mark_processed = AsyncMock()
         link.mark_failed = AsyncMock()
         return link

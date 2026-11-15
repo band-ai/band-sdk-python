@@ -30,42 +30,45 @@ def fake_band_mcp_backends() -> Iterator[None]:
     yield
 
 
-async def test_a_crashed_server_is_re_registered_on_its_new_port(
-    make_adapter: Callable[..., OpencodeAdapter], tools: FakeAgentTools
-) -> None:
-    client = FakeOpencodeClient(
-        prompt_event_sequences=[
-            [event_session_idle("sess-1")],
-            [event_session_idle("sess-1")],
-        ]
-    )
-    adapter = make_adapter(client)
-    await adapter.on_started("OpenCode Agent", "A coding agent")
-
-    async def send(content: str, *, bootstrap: bool) -> None:
-        await deliver_message(
-            adapter,
-            make_platform_message(content=content),
-            tools_protocol(tools),
-            OpencodeSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=bootstrap,
-            room_id="room-1",
+class TestMcpBackendReplacement:
+    async def test_a_crashed_server_is_re_registered_on_its_new_port(
+        self, make_adapter: Callable[..., OpencodeAdapter], tools: FakeAgentTools
+    ) -> None:
+        client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_session_idle("sess-1")],
+                [event_session_idle("sess-1")],
+            ]
         )
-        room = await adapter._get_or_create_room_state("room-1")
-        await wait_for(lambda: room.turn is None or room.turn.turn_future.done())
+        adapter = make_adapter(client)
+        await adapter.on_started("OpenCode Agent", "A coding agent")
 
-    try:
-        await send("before the crash", bootstrap=True)
-        await crash_backend(adapter._mcp)
-        await send("after the crash", bootstrap=False)
+        async def send(content: str, *, bootstrap: bool) -> None:
+            await deliver_message(
+                adapter,
+                make_platform_message(content=content),
+                tools_protocol(tools),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=bootstrap,
+                room_id="room-1",
+            )
+            room = await adapter._get_or_create_room_state("room-1")
+            await wait_for(lambda: room.turn is None or room.turn.turn_future.done())
 
-        crashed, live = client.registered_mcp_servers
-        served = await served_tool_names(live["url"], BandMCPTransport.SSE)
-    finally:
-        await adapter.on_cleanup("room-1")
+        try:
+            await send("before the crash", bootstrap=True)
+            await crash_backend(adapter._mcp)
+            await send("after the crash", bootstrap=False)
 
-    assert live["name"] == crashed["name"]
-    assert urlsplit(live["url"]).port != urlsplit(crashed["url"]).port
-    assert BandTool.SEND_MESSAGE in served
+            crashed, live = client.registered_mcp_servers
+            served = await served_tool_names(
+                live["url"], BandMCPTransport.SSE, headers=live["headers"]
+            )
+        finally:
+            await adapter.on_cleanup("room-1")
+
+        assert live["name"] == crashed["name"]
+        assert urlsplit(live["url"]).port != urlsplit(crashed["url"]).port
+        assert BandTool.SEND_MESSAGE in served

@@ -33,6 +33,8 @@ from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.runtime import ReplyingPlatform
 from tests.runtime.helpers import AGENT_ID, rest_client_over
 
+RESOURCE_PATH = "/resource"
+
 
 class HostKind(StrEnum):
     AGENT = "agent"
@@ -148,7 +150,7 @@ async def resource_response(request: Request) -> JSONResponse:
 
 @asynccontextmanager
 async def resource_peer(
-    routes: Sequence[Route] = (Route("/resource", resource_response),),
+    routes: Sequence[Route] = (Route(RESOURCE_PATH, resource_response),),
 ) -> AsyncIterator[httpx.AsyncClient]:
     server = ManagedUvicornServer(
         Starlette(routes=list(routes)),

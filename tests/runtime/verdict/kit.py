@@ -1,3 +1,5 @@
+"""Scripted adapter actions and observable runtime verdict assertions."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -18,16 +20,18 @@ from band.core.types import (
     HistoryProvider,
     PlatformMessage,
 )
-from band.runtime.execution import ExecutionContext
+from band.runtime.delivery import DeliveryLifecycle
 from band.runtime.tools import BandTool
 from band.testing import MISSING_REPLY_FAILURE
 from tests.runtime.helpers import (
     runtime_failures,
 )
 
-execution_logger = ExecutionContext.__module__
+delivery_logger = DeliveryLifecycle.__module__
+
 
 USER = ["@user-1"]
+
 
 Step = Callable[[AgentToolsProtocol], Awaitable[Any]]
 
@@ -118,6 +122,7 @@ async def report_and_stop(tools: AgentToolsProtocol) -> None:
 
 
 GENERIC_FAILURE = (TURN_FAILURE_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+
 
 NATIVE_OUTCOMES = {
     "native-only": ([], False),

@@ -36,6 +36,9 @@ from acp.schema import (
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
+    StopReason,
+    ToolCallProgress,
+    ToolCallStart,
     ToolCallUpdate,
 )
 from mcp.types import Tool
@@ -48,10 +51,17 @@ from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
 )
-from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
+from band.integrations.acp.permissions import (
+    ALLOW_ALWAYS_KIND,
+    ALLOW_ONCE_KIND,
+    REJECT_ONCE_KIND,
+)
 from band.integrations.acp.session_config import SessionConfigOption, find_select
-from band.integrations.mcp import BandMCPTransport
-from tests.mcpclient import advertised_server, call_advertised_tool, mcp_session
+from tests.mcpclient import (
+    advertised_server,
+    advertised_session,
+    call_advertised_tool,
+)
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[
@@ -68,6 +78,12 @@ EFFORT_OPTION_ID = "reasoning_effort"
 
 # What ``fails_next_exit`` raises from the connection's shutdown.
 AGENT_EXIT_FAILURE = "agent exit failed"
+
+# The stop reason of a prompt the agent finished normally.
+END_TURN_STOP: StopReason = "end_turn"
+
+# The title Cursor opens an MCP call under before it names the call.
+CURSOR_MCP_PLACEHOLDER_TITLE = "MCP: tool"
 
 
 @dataclass
@@ -114,6 +130,7 @@ class FakeACPAgent:
         self._conns_by_session: dict[str, AgentSideConnection | None] = {}
         self._script: list[PromptHandler] = []
         self._custom: PromptHandler | None = None
+        self._stop_reason: StopReason = END_TURN_STOP
         self._config_options = list(config_options)
         self._config_option_handler: ConfigOptionHandler | None = None
         self._reply_gate: Gate | None = None
@@ -264,6 +281,11 @@ class FakeACPAgent:
         self._config_options = catalog()
         return self
 
+    def stops_with(self, stop_reason: StopReason) -> FakeACPAgent:
+        """End every prompt from now on with ``stop_reason``."""
+        self._stop_reason = stop_reason
+        return self
+
     def will_say(self, text: str) -> FakeACPAgent:
         self._script.append(lambda a, sid: a.say(sid, text))
         return self
@@ -300,14 +322,57 @@ class FakeACPAgent:
         raw_input: Any = None,
         result: Any = None,
         status: str = "completed",
+        start_status: str | None = None,
     ) -> FakeACPAgent:
         async def _action(a: FakeACPAgent, sid: str) -> None:
-            await a.emit(sid, start_tool_call(tool_call_id, title, raw_input=raw_input))
+            await a.emit(
+                sid,
+                start_tool_call(
+                    tool_call_id, title, raw_input=raw_input, status=start_status
+                ),
+            )
             if result is not None:
                 await a.emit(
                     sid,
                     update_tool_call(tool_call_id, raw_output=result, status=status),
                 )
+
+        self._script.append(_action)
+        return self
+
+    def will_call_tool_with_meta(
+        self,
+        tool_call_id: str,
+        title: str,
+        *,
+        raw_input: Any,
+        meta: dict[str, Any],
+        result: Any,
+    ) -> FakeACPAgent:
+        """Antigravity's tool call: a ``pending`` start and an ``in_progress``
+        update that both carry the title, ``rawInput`` and ``_meta``, then a
+        ``completed`` update carrying only the output."""
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            await a.emit(
+                sid,
+                start_tool_call(
+                    tool_call_id, title, status="pending", raw_input=raw_input
+                ).model_copy(update={"field_meta": meta}),
+            )
+            await a.emit(
+                sid,
+                update_tool_call(
+                    tool_call_id,
+                    title=title,
+                    status="in_progress",
+                    raw_input=raw_input,
+                ).model_copy(update={"field_meta": meta}),
+            )
+            await a.emit(
+                sid,
+                update_tool_call(tool_call_id, raw_output=result, status="completed"),
+            )
 
         self._script.append(_action)
         return self
@@ -321,28 +386,12 @@ class FakeACPAgent:
         arguments: Mapping[str, Any],
         result: Any,
     ) -> FakeACPAgent:
-        """Cursor's MCP call: a pending ``MCP: tool`` placeholder with no input,
-        then a statusless update carrying the real title and ``rawInput``."""
+        """Cursor's MCP call: ``cursor_mcp_placeholder`` then
+        ``cursor_mcp_naming``, then its progress and completion."""
 
         async def _action(a: FakeACPAgent, sid: str) -> None:
-            await a.emit(
-                sid,
-                start_tool_call(
-                    tool_call_id, "MCP: tool", status="pending", raw_input={}
-                ),
-            )
-            await a.emit(
-                sid,
-                update_tool_call(
-                    tool_call_id,
-                    title=f"{server}: {tool}",
-                    raw_input={
-                        "providerIdentifier": server,
-                        "toolName": tool,
-                        "args": dict(arguments),
-                    },
-                ),
-            )
+            await a.emit(sid, cursor_mcp_placeholder(tool_call_id))
+            await a.emit(sid, cursor_mcp_naming(tool_call_id, server, tool, arguments))
             await a.emit(sid, update_tool_call(tool_call_id, status="in_progress"))
             await a.emit(
                 sid,
@@ -477,8 +526,7 @@ class FakeACPAgent:
                     raw_input=arguments,
                 ),
             )
-            config = agent.mcp_server(sid, "band")
-            async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
+            async with advertised_session(agent.mcp_server(sid, "band")) as client:
                 result = await client.call_tool(tool_name, arguments)
             assert result.isError, "the MCP boundary must reject these arguments"
             await agent.emit(
@@ -659,8 +707,7 @@ class FakeACPAgent:
 
     async def list_mcp_tools(self, *, session_id: str, server: str) -> list[Tool]:
         """The tools a session's MCP server lists."""
-        config = self.mcp_server(session_id, server)
-        async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
+        async with advertised_session(self.mcp_server(session_id, server)) as client:
             return (await client.list_tools()).tools
 
     # -- acp.Agent protocol ------------------------------------------------------
@@ -814,14 +861,14 @@ class FakeACPAgent:
         else:
             for action in self._script:
                 await action(self, session_id)
-        return PromptResponse(stop_reason="end_turn")
+        return PromptResponse(stop_reason=self._stop_reason)
 
 
 def allow_or_reject(allow_option_id: str = "allow-1") -> list[PermissionOption]:
     """The usual permission menu: one-shot allow, one-shot reject."""
     return [
         PermissionOption(kind=ALLOW_ONCE_KIND, name="Allow", optionId=allow_option_id),
-        PermissionOption(kind="reject_once", name="Reject", optionId="reject-1"),
+        PermissionOption(kind=REJECT_ONCE_KIND, name="Reject", optionId="reject-1"),
     ]
 
 
@@ -859,3 +906,25 @@ def cursor_todos(
     ]
     session = {} if session_id is None else {"sessionId": session_id}
     return {**session, "todos": todos, **({"merge": True} if merge else {})}
+
+
+def cursor_mcp_placeholder(tool_call_id: str) -> ToolCallStart:
+    """How Cursor opens an MCP call: pending, unnamed, and without input."""
+    return start_tool_call(
+        tool_call_id, CURSOR_MCP_PLACEHOLDER_TITLE, status="pending", raw_input={}
+    )
+
+
+def cursor_mcp_naming(
+    tool_call_id: str, server: str, tool: str, arguments: Mapping[str, Any]
+) -> ToolCallProgress:
+    """The statusless update in which Cursor names an MCP call it opened."""
+    return update_tool_call(
+        tool_call_id,
+        title=f"{server}: {tool}",
+        raw_input={
+            "providerIdentifier": server,
+            "toolName": tool,
+            "args": dict(arguments),
+        },
+    )

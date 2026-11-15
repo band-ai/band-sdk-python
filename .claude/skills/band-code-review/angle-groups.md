@@ -18,6 +18,11 @@ and consequences differ.
 - Files that mix unrelated concerns (`band-python-conventions`).
 
 **B — Design & Reuse**
+- Challenge the goal and owning-layer assessment from
+  [pr-target-scope.md](pr-target-scope.md). Ground objections in the real
+  use case, existing owners and consumers, and concrete contract differences.
+  Distinguish a supported redesign concern from a preference or an unproven
+  reuse hypothesis; do not assume the ticket's proposed approach is correct.
 - Idiomatic constructs (`band-python-conventions`); weigh real tradeoffs
   (recursion on deep input is a regression).
 - Reuse of an existing helper over new logic (`band-python-conventions`). No
@@ -37,15 +42,39 @@ and consequences differ.
   contents, secrets).
 
 **D — Test Quality**
-Test code gets every angle above, more strictly, plus:
-- Apply `band-python-test-conventions` "Coverage and realistic flows" to the
-  changed behavior and relevant existing tests, even when no test file changed.
-  Map scenarios to meaningful assertions, identify gaps, and name the concrete
-  regression each proposed test would catch. Check complete complex flows at
-  a boundary that preserves their real interactions; passing tests or high
-  line coverage alone are not sufficient evidence.
-- A skipped, disabled, or silently-ignored failing test is always a blocking
-  issue (`band-python-test-conventions`).
+Test code belongs here alone. Read the whole `band-python-test-conventions`
+skill, not only "Coverage is branches, not lines". Apply A–C more strictly
+than on production code (SSoT, intent-named helpers, no mixed-concern files,
+no magic wire strings). Every unmet item of the skill's "Before finishing"
+checklist is an `issue:`, not a nit, including non-live isolation (order or
+shared-state dependence, live network, unawaited tasks) and `TestCase` or
+`self.assert*`. In particular:
+
+- Coverage of complementary branches, not line counts. Map each changed
+  `match`/`if`/timeout/OS decision to the test that proves each reachable
+  outcome. Proving fail-closed does not prove the success side; a
+  `skipif(os.name)` is a missing branch on the skipped OS. Name the
+  regression each proposed test would catch. Passing tests or high line
+  coverage alone are not evidence.
+- Assertions of plumbing or assumptions: occupancy arithmetic, private
+  fields, mock call counts, event-type tallies as a proxy, empty collections
+  the test does not own, or tautologies. The assertion must be a named
+  projection of the decision.
+- A test function that branches on scenario/kind (`if scenario != ...`) or
+  re-types a wire literal the peer or product already names. Parametrize
+  `(scenario, expected)` so each row *is* the claim.
+- The interaction under test is patched away (`unittest.mock.patch` of
+  private names, stdlib spawn, or timeout constants) instead of a public
+  seam or a real peer. `AsyncMock` of the unit under test is the same smell.
+- Wall-clock sleep or waiting out a grace period used as proof.
+  Apply the test conventions' controlled-clock boundary: require gates and
+  awaited completion for time-agnostic claims, and clock advancement only
+  for deadline expiry. `asyncio.timeout` is a hung-test guard only; a public
+  timeout of `0`, when supported, is "check now" and still needs the
+  complementary "finished before wait" sequence.
+- A skipped, disabled, or silently-ignored failing test.
+- A Hypothesis model or kit file that looks like a collected test (a `Test*`
+  class, or a missing role docstring, in a non-`test_*.py` module).
 
 **E — Edge-Case Flow Analysis**
 Owns failures that need a *sequence* of state transitions or interactions. A

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from agno.run.agent import RunOutput
 
-from band.runtime.formatters import format_history_for_llm
+from band.runtime.formatters import format_current_inputs, format_history_for_llm
 from tests.adapters.agno.helpers import make_agent_input, platform_msg, run_input
 
 
@@ -32,7 +32,7 @@ class TestUnansweredMessage:
         )
 
         msgs = run_input(agent)
-        formatted = current.format_for_llm()
+        formatted = format_current_inputs([current])
         assert sum(1 for m in msgs if m.content == formatted) == 1
         assert msgs[-1].content == formatted
 
@@ -61,7 +61,9 @@ class TestUnansweredMessage:
         )
 
         agent.arun.assert_awaited_once()
-        assert run_input(agent)[-1].content == sample_platform_message.format_for_llm()
+        assert run_input(agent)[-1].content == format_current_inputs(
+            [sample_platform_message]
+        )
 
     async def test_trailing_unanswered_user_turns_are_preserved(
         self, make_started_adapter, sample_platform_message, tools

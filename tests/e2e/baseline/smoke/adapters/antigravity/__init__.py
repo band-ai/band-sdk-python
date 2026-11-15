@@ -1,0 +1,1 @@
+"""Antigravity native lifecycle qualification."""

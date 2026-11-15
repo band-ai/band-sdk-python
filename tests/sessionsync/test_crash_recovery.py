@@ -5,8 +5,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.runtime.execution import ExecutionContext
+from band.runtime.scheduler import ResyncOutcome
 from band.runtime.sessionconfig import SessionConfig
-from tests.sessionsync.kit import make_message
+from tests.sessionsync.kit import (
+    make_message,
+)
 
 
 class TestCrashRecovery:
@@ -32,7 +35,7 @@ class TestCrashRecovery:
         stale_msg = make_message("stale-001")
         mock_link.get_next_message.side_effect = [stale_msg, None]
 
-        assert await ctx._synchronize_with_next()
+        assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.WORK
 
         # Handler should be called once for the stale message
         assert ctx._handler_mock.call_count == 1
@@ -47,7 +50,7 @@ class TestCrashRecovery:
         ]
         mock_link.get_next_message.side_effect = [*stale_msgs, None]
 
-        assert await ctx._synchronize_with_next()
+        assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.WORK
 
         assert ctx._handler_mock.call_count == 3
 
@@ -56,7 +59,7 @@ class TestCrashRecovery:
         """Should do nothing when no stale messages exist."""
         mock_link.get_next_message.return_value = None
 
-        assert await ctx._synchronize_with_next()
+        assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.EMPTY
 
         ctx._handler_mock.assert_not_called()
 
@@ -70,7 +73,7 @@ class TestCrashRecovery:
             make_message("unfinished")
         ]
 
-        await ctx._synchronize_with_next()
+        await ctx.scheduler.run_pass(recovery=True)
 
         ctx._handler_mock.assert_not_awaited()
         mock_link.get_stale_processing_messages.assert_not_awaited()

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, TypeAlias, cast
+from unittest.mock import ANY
 from uuid import uuid4
 
 import httpx
@@ -31,6 +32,7 @@ from band.integrations.opencode import (
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import TOOL_DEFINITIONS
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.mcpbackends import BackendStarts
 
@@ -59,7 +61,27 @@ def make_platform_message(
     )
 
 
-def event_message_updated(session_id: str, message_id: str) -> RawOpencodeEvent:
+#: Participants as (sender id, sender name), for turns with several senders.
+ALICE = ("user-1", "Alice")
+HELPER = ("agent-7", "Helper")
+CAROL = ("user-3", "Carol")
+
+
+def message_from(sender: tuple[str, str], content: str) -> PlatformMessage:
+    sender_id, sender_name = sender
+    return make_platform_message(
+        content=content, sender_id=sender_id, sender_name=sender_name
+    )
+
+
+def event_message_updated(
+    session_id: str,
+    message_id: str,
+    *,
+    parent_id: str | None = None,
+    summary: bool = False,
+    agent: str | None = None,
+) -> RawOpencodeEvent:
     return {
         "type": "message.updated",
         "properties": {
@@ -67,6 +89,9 @@ def event_message_updated(session_id: str, message_id: str) -> RawOpencodeEvent:
                 "id": message_id,
                 "sessionID": session_id,
                 "role": "assistant",
+                **({"parentID": parent_id} if parent_id is not None else {}),
+                **({"summary": True} if summary else {}),
+                **({"agent": agent} if agent is not None else {}),
             }
         },
     }
@@ -158,6 +183,7 @@ def event_tool_part(
     input_data: dict[str, Any],
     output: Any = None,
     error: str | None = None,
+    part_id: str | None = None,
 ) -> RawOpencodeEvent:
     state: dict[str, Any] = {"status": status, "input": input_data}
     if status == "running":
@@ -175,7 +201,7 @@ def event_tool_part(
         "type": "message.part.updated",
         "properties": {
             "part": {
-                "id": f"tool-{call_id}-{status}",
+                "id": part_id or f"tool-{call_id}-{status}",
                 "sessionID": session_id,
                 "messageID": message_id,
                 "type": "tool",
@@ -188,7 +214,11 @@ def event_tool_part(
 
 
 def event_permission(
-    session_id: str, request_id: str, *, permission: str = "bash"
+    session_id: str,
+    request_id: str,
+    *,
+    permission: str = "bash",
+    tool: dict[str, str] | None = None,
 ) -> RawOpencodeEvent:
     return {
         "type": "permission.asked",
@@ -197,12 +227,16 @@ def event_permission(
             "sessionID": session_id,
             "permission": permission,
             "patterns": ["rm -rf tmp"],
+            **({"tool": tool} if tool is not None else {}),
         },
     }
 
 
 def event_question(
-    session_id: str, request_id: str, *questions: str
+    session_id: str,
+    request_id: str,
+    *questions: str,
+    tool: dict[str, str] | None = None,
 ) -> RawOpencodeEvent:
     return {
         "type": "question.asked",
@@ -210,6 +244,7 @@ def event_question(
             "id": request_id,
             "sessionID": session_id,
             "questions": [{"question": question} for question in questions],
+            **({"tool": tool} if tool is not None else {}),
         },
     }
 
@@ -235,6 +270,11 @@ def event_session_error(session_id: str, message: str) -> RawOpencodeEvent:
             "error": {"name": "APIError", "data": {"message": message}},
         },
     }
+
+
+def notice_to(sender_id: str, content: str) -> dict[str, Any]:
+    """A room notice addressed to one sender, as ``FakeAgentTools`` records it."""
+    return {"id": ANY, "content": content, "mentions": [{"id": sender_id}]}
 
 
 def tools_protocol(tools: FakeAgentTools) -> AgentToolsProtocol:
@@ -277,6 +317,34 @@ class ObservedOpencodeAdapter(OpencodeAdapter):
         await super()._await_turn(turn)
 
 
+def batch_input(
+    messages: Sequence[PlatformMessage],
+    tools: FakeAgentTools,
+    *,
+    is_session_bootstrap: bool = False,
+) -> AgentInput:
+    """What the runtime hands the adapter for a turn over ``messages``."""
+    return AgentInput(
+        msg=messages[0],
+        messages=tuple(messages),
+        tools=tools_protocol(tools),
+        history=HistoryProvider(raw=[]),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=is_session_bootstrap,
+        room_id=messages[0].room_id,
+    )
+
+
+async def deliver_turn(adapter: OpencodeAdapter, inp: AgentInput) -> None:
+    """Dispatch as the runtime does: several originals through ``on_messages``,
+    one through the singleton path."""
+    if len(inp.messages) > 1:
+        await adapter.on_messages(inp)
+    else:
+        await deliver_event(adapter, inp)
+
+
 class RaisingSendTools(FakeAgentTools):
     """FakeAgentTools whose send_notice always fails, to exercise the
     best-effort ``_notify_room`` path: a room post that raises must be
@@ -293,7 +361,7 @@ class HeldReplyTools(FakeAgentTools):
     keeping the turn's watcher in the delivery tail after the model has finished."""
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(participants=ROOM_MEMBERS)
         self.reply_entered = asyncio.Event()
         self.release = asyncio.Event()
 
@@ -381,6 +449,7 @@ class FakeOpencodeClient:
         session_id: str,
         *,
         parts: list[dict[str, Any]],
+        message_id: str | None = None,
         system: str | None = None,
         model: dict[str, str] | None = None,
         agent: str | None = None,
@@ -390,6 +459,7 @@ class FakeOpencodeClient:
         self.prompt_calls.append(
             {
                 "session_id": session_id,
+                "message_id": message_id,
                 "parts": parts,
                 "system": system,
                 "model": model,
@@ -424,8 +494,12 @@ class FakeOpencodeClient:
     async def abort_session(self, session_id: str) -> None:
         self.aborted_sessions.append(session_id)
 
-    async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]:
-        self.registered_mcp_servers.append({"name": name, "url": url})
+    async def register_mcp_server(
+        self, *, name: str, url: str, headers: dict[str, str]
+    ) -> dict[str, Any]:
+        self.registered_mcp_servers.append(
+            {"name": name, "url": url, "headers": headers}
+        )
         status = (
             self._register_mcp_statuses.pop(0)
             if self._register_mcp_statuses
@@ -471,6 +545,50 @@ class AnyHTTPStatusError(httpx.HTTPStatusError):
         request = httpx.Request("GET", f"http://localhost/session/{session_id}")
         response = httpx.Response(status_code=status_code, request=request)
         super().__init__("status error", request=request, response=response)
+
+
+#: The status a scripted OpenCode server rejects a prompt with.
+PROMPT_REJECTED_STATUS = 500
+
+
+#: The first ask each scripted OpenCode turn raises in the control tests.
+PERMISSION_ASK = event_permission("sess-1", "req-1")
+QUESTION_ASK = event_question("sess-1", "q-1", "Which word?")
+TWO_QUESTIONS_ASK = event_question("sess-1", "q-1", "First?", "Second?")
+
+
+def client_asking(*asks: RawOpencodeEvent) -> FakeOpencodeClient:
+    """OpenCode runs the first turn by raising ``asks``."""
+    return FakeOpencodeClient(prompt_event_sequences=[list(asks)])
+
+
+def room_reply(content: str, sender_id: str = "user-2") -> PlatformMessage:
+    """A room message from someone other than the first turn's sender."""
+    return make_platform_message(content=content, sender_id=sender_id)
+
+
+async def handle_control(adapter: OpencodeAdapter, message: PlatformMessage) -> bool:
+    """Offer ``message`` to the adapter's control handler on its own delivery tools."""
+    return await adapter.try_handle_control(
+        message, tools_protocol(FakeAgentTools(participants=ROOM_MEMBERS))
+    )
+
+
+class HeldPermissionReplyClient(FakeOpencodeClient):
+    """Keeps the first permission reply in flight until a test releases it."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.reply_in_flight = asyncio.Event()
+        self.release_reply = asyncio.Event()
+
+    async def reply_permission(
+        self, permission_id: str, *, reply: ApprovalReply, message: str | None = None
+    ) -> None:
+        if not self.reply_in_flight.is_set():
+            self.reply_in_flight.set()
+            await self.release_reply.wait()
+        await super().reply_permission(permission_id, reply=reply, message=message)
 
 
 class BandMCPCalls:
@@ -540,7 +658,7 @@ async def deliver_followup(
         adapter,
         make_platform_message(content=content),
         tools_protocol(tools),
-        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        OpencodeSessionState(),
         participants_msg=None,
         contacts_msg=None,
         is_session_bootstrap=False,
@@ -549,6 +667,7 @@ async def deliver_followup(
 
 
 PERMISSION_ID = "req-1"
+APPROVAL_REPLY = f"approve {PERMISSION_ID}"
 FOLLOW_UP = "and then?"
 FIRST_ANSWER = "first answer"
 SECOND_ANSWER = "second answer"
@@ -576,18 +695,20 @@ async def park_turn(adapter: OpencodeAdapter, tools: FakeAgentTools) -> None:
 
 async def approve(adapter: OpencodeAdapter) -> FakeAgentTools:
     """A person approves the parked ask; returns the approval's own tools."""
-    approver_tools = FakeAgentTools()
-    control = agent_input(f"approve {PERMISSION_ID}", approver_tools)
+    approver_tools = FakeAgentTools(participants=ROOM_MEMBERS)
+    control = agent_input(APPROVAL_REPLY, approver_tools)
     assert await adapter.try_handle_control(control.msg, control.tools)
     return approver_tools
 
 
+#: The notice an ``event_permission`` ask for ``PERMISSION_ID`` posts.
+ASK_REQUESTED_NOTICE = APPROVAL_REQUESTED_TEMPLATE.format(
+    permission="bash", patterns="rm -rf tmp", request_id=PERMISSION_ID
+)
 #: The notices a ``parked_turn_client`` turn posts to the room by the time
 #: ``approve`` has handled its ask.
 APPROVED_ASK_NOTICES = [
-    APPROVAL_REQUESTED_TEMPLATE.format(
-        permission="bash", patterns="rm -rf tmp", request_id=PERMISSION_ID
-    ),
+    ASK_REQUESTED_NOTICE,
     APPROVAL_HANDLED_TEMPLATE.format(request_id=PERMISSION_ID, reply="once"),
 ]
 
@@ -651,4 +772,12 @@ def answered_questions(client: FakeOpencodeClient) -> list[tuple[str, list[list[
         (r["request_id"], r["answers"])
         for r in client.question_replies
         if not _is_decline(r)
+    ]
+
+
+def replies_sent(client: FakeOpencodeClient) -> list[tuple[str, Any]]:
+    """Every reply OpenCode received, declines included, as (request id,
+    permission reply or question answers)."""
+    return [(r["permission_id"], r["reply"]) for r in client.permission_replies] + [
+        (r["request_id"], r["answers"]) for r in client.question_replies
     ]

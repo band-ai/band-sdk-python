@@ -3,20 +3,31 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from band.integrations.acp.client_adapter import (
+from acp.helpers import start_tool_call
+from acp.schema import ToolCallStart
+
+from band.converters.acp_client import ACP_CLIENT_RESUME_RECORD
+from band.converters.helpers import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
 )
+from band.core.types import MessageType
+from band.integrations.acp.client_adapter import SYSTEM_CONTEXT_HEADER
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
 )
+from band.integrations.acp.types import ToolStatus
 from band.runtime.prompts import (
     SYSTEM_UPDATE_PREFIX,
 )
 from band.runtime.tools import BAND_MCP_SERVER_NAME
+from band.testing.activity import ActivityRecorder
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
+    TranscriptTools,
 )
+from tests.integrations.acp.acp_toolkit.agent import Gate
+from tests.roomhistory import DEFAULT_HISTORY_INSERTED_AT
 
 REPLAY_HEADER_LINE = HISTORY_REPLAY_HEADER.splitlines()[0]
 
@@ -85,9 +96,101 @@ def rehydration_history(
     )
 
 
+def room_text_message(
+    message_id: str, *, sender_id: str, sender_type: str, sender_name: str, content: str
+) -> dict[str, Any]:
+    """A text message as the platform returns it in the room's context."""
+    return {
+        "id": message_id,
+        "message_type": MessageType.TEXT,
+        "sender_id": sender_id,
+        "sender_type": sender_type,
+        "sender_name": sender_name,
+        "content": content,
+        "inserted_at": DEFAULT_HISTORY_INSERTED_AT,
+    }
+
+
+MARCO_SAYS = "My favorite color is blue."
+# How the transcript replay renders ``marco_message``.
+MARCO_REPLAY_LINE = f"[Marco]: {MARCO_SAYS}"
+
+
+def marco_message() -> dict[str, Any]:
+    """Marco's earlier room message, which a replay must carry."""
+    return room_text_message(
+        "m1",
+        sender_id="user-marco",
+        sender_type="User",
+        sender_name="Marco",
+        content=MARCO_SAYS,
+    )
+
+
+def seeded(prompt: str) -> bool:
+    """Whether ``prompt`` carries the Band context and Marco's transcript."""
+    return SYSTEM_CONTEXT_HEADER in prompt and MARCO_REPLAY_LINE in prompt
+
+
+def resume_records(tools: TranscriptTools) -> dict[str, str]:
+    """The room-to-session resume records ``tools`` posted."""
+    return ACP_CLIENT_RESUME_RECORD.candidates(tools.events_sent)
+
+
+def observed_tools(recorder: ActivityRecorder) -> TranscriptTools:
+    """A turn's tools whose activity ``recorder`` observes."""
+    return recorder.observing(TranscriptTools())
+
+
+# What an agent says when it refuses a prompt over its quota.
+QUOTA_TEXT = "You have exhausted your daily quota for this model."
+
+
 def codex_mcp_call(server: str, tool: str, **arguments: str) -> dict[str, Any]:
     """codex-acp's MCP tool call: a display title, the identity in ``rawInput``."""
     return {
         "title": f"mcp.{server}.{tool}",
         "raw_input": {"server": server, "tool": tool, "arguments": arguments},
     }
+
+
+def antigravity_mcp_call(server: str, tool: str, **arguments: str) -> dict[str, Any]:
+    """Antigravity's MCP tool call: a ``<server>_<tool>`` title, the identity in
+    ``_meta.mcp``, and ``rawInput`` holding the arguments both nested and flat."""
+    return {
+        "title": f"{server}_{tool}",
+        "raw_input": {"arguments": arguments, **arguments},
+        "meta": {"mcp": {"server": server, "tool": tool}},
+    }
+
+
+class HeldThoughts(TranscriptTools):
+    """Hold the first thought post until ``posting`` is released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.posting = Gate()
+
+    async def send_event(
+        self, content: str, message_type: str, metadata: dict[str, Any] | None = None
+    ) -> Any:
+        if message_type == MessageType.THOUGHT and not self.posting.received.is_set():
+            await self.posting.hold()
+        return await super().send_event(content, message_type, metadata)
+
+
+def band_activity_call(
+    call_id: str, tool: str, status: ToolStatus | None
+) -> ToolCallStart:
+    """Report structured Band identity independently of a private display title."""
+    return start_tool_call(
+        call_id,
+        "private invocation title",
+        status=status,
+        raw_input={"server": BAND_MCP_SERVER_NAME, "tool": tool, "arguments": {}},
+    )
+
+
+def band_activity_metadata(tool: str) -> dict[str, object]:
+    """The provider extension naming a registered Band tool without its arguments."""
+    return {"mcp": {"server": BAND_MCP_SERVER_NAME, "tool": tool}}

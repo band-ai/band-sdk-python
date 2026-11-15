@@ -9,8 +9,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from tests.conftest import BlockingHandler, make_message_event
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestInterruptInFlightCycle:
@@ -21,7 +23,7 @@ class TestInterruptInFlightCycle:
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
         event = make_message_event(msg_id="msg-1")
-        proc = asyncio.create_task(ctx._process_event(event))
+        proc = asyncio.create_task(attempt_delivery(ctx, event))
         await handler.started.wait()
 
         # Interrupt from the "receive task" side.
@@ -39,7 +41,7 @@ class TestInterruptInFlightCycle:
         # Loop still alive: a fresh message processes normally.
         handler2 = BlockingHandler(block=False)
         ctx._on_execute = handler2
-        result2 = await ctx._process_event(make_message_event(msg_id="msg-2"))
+        result2 = await attempt_delivery(ctx, make_message_event(msg_id="msg-2"))
         assert result2 is TurnOutcome.ADVANCED
         assert handler2.completed == ["msg-2"]
 
@@ -59,7 +61,9 @@ class TestInterruptInFlightCycle:
             tool_results.append(result)  # must never run
 
         ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
-        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="m")))
+        proc = asyncio.create_task(
+            attempt_delivery(ctx, make_message_event(msg_id="m"))
+        )
         await in_tool.wait()
 
         ctx.interrupt()
@@ -74,7 +78,7 @@ class TestInterruptInFlightCycle:
         assert ctx.interrupt() is False
 
         # Next cycle runs normally.
-        result = await ctx._process_event(make_message_event(msg_id="m1"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="m1"))
         assert result is TurnOutcome.ADVANCED
         mock_link.mark_processed.assert_awaited_once_with("room-123", "m1")
 
@@ -92,7 +96,7 @@ class TestInterruptInFlightCycle:
 
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         with caplog.at_level(logging.ERROR, logger="band.runtime.execution"):
-            turn = asyncio.create_task(ctx._process_event(make_message_event()))
+            turn = asyncio.create_task(attempt_delivery(ctx, make_message_event()))
             await started.wait()
             ctx.interrupt()
             assert await turn is TurnOutcome.ADVANCED
@@ -117,7 +121,7 @@ class TestInterruptInFlightCycle:
 
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         with caplog.at_level(logging.WARNING, logger="band.runtime.execution"):
-            turn = asyncio.create_task(ctx._process_event(make_message_event()))
+            turn = asyncio.create_task(attempt_delivery(ctx, make_message_event()))
             await started.wait()
             ctx.interrupt()
             assert await turn is TurnOutcome.ADVANCED

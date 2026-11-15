@@ -40,7 +40,12 @@ from urllib.parse import urlparse
 from band.integrations.acp.cursor import CURSOR_CLI_BINARY
 from band.integrations.omp import OMP_MIN_BUN
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.antigravity import (
+    antigravity_api_key,
+    antigravity_command,
+)
 from tests.e2e.baseline.toolkit.omp_credentials import (
+    native_omp_command,
     omp_command,
     omp_provider_api_key,
 )
@@ -81,6 +86,7 @@ class Lane(StrEnum):
     CORE = "core"
     CREWAI = "crewai"
     BACKENDS = "backends"
+    OPENCODE = "opencode"
     GOOGLE = "google"
     LETTA = "letta"
     NOOA = "nooa"
@@ -115,12 +121,14 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     Lane.CORE: Extra.DEV,
     Lane.CREWAI: Extra.DEV_CREWAI,
     Lane.BACKENDS: Extra.DEV,
+    # Its own lane for the ``opencode serve`` its job stands up, out of ``backends``.
+    Lane.OPENCODE: Extra.DEV,
     # The Google adapters (gemini/google_adk) share the ``dev`` extra but run in
     # their own lane so their free-tier rate-limit flakiness is isolated from the
     # rest of the provider-key adapters (and can be run/keyed separately).
     Lane.GOOGLE: Extra.DEV,
     # Letta runs the ``dev`` extra but stands up its own self-hosted server, so it
-    # gets its own lane (split out of ``backends``, which keeps codex + opencode).
+    # gets its own lane (split out of ``backends``).
     Lane.LETTA: Extra.DEV,
     # Parlant's own `griffe`/`griffelib` transitive deps collide with pydantic-ai's
     # (same import path, two distributions), so it needs its own extra entirely —
@@ -169,9 +177,11 @@ class Dep(Enum):
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
     STRANDS = "strands"
     NOOA = "nooa"  # the nooa package is importable (Python 3.12-3.13, not Windows)
+    ANTIGRAVITY = "antigravity"  # API key, acp extra, and native server command
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
     CURSOR_CLI = "cursor_cli"  # the `agent` CLI and noninteractive auth for Cursor ACP
     OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
+    OMP_NATIVE = "omp_native"  # the omp extra and native RPC backend
     SECOND_USER = "second_user"  # BAND_API_KEY_USER_2, a second human in the room
 
 
@@ -197,6 +207,15 @@ def _google_available(settings: BaselineSettings) -> bool:
         return True
     return creds.google_genai_use_vertexai == "true" and bool(
         creds.google_cloud_project
+    )
+
+
+def _antigravity_available(settings: BaselineSettings) -> bool:
+    """Require native API-key auth, the ACP extra, and the selected executable."""
+    return (
+        bool(antigravity_api_key(settings))
+        and importlib.util.find_spec("acp") is not None
+        and shutil.which(antigravity_command(settings)[0]) is not None
     )
 
 
@@ -240,8 +259,11 @@ def _bun_meets_min_version(min_version: str) -> bool:
 
 
 def _omp_cli_responds(settings: BaselineSettings) -> bool:
-    """The OMP command every baseline test launches answers ``--help``."""
-    command = omp_command(settings)
+    """The ACP-bridged OMP command every baseline test launches answers ``--help``."""
+    return _cli_responds(omp_command(settings))
+
+
+def _cli_responds(command: tuple[str, ...]) -> bool:
     if shutil.which(command[0]) is None:
         return False
     try:
@@ -261,6 +283,15 @@ def _omp_available(settings: BaselineSettings) -> bool:
     return (
         _bun_meets_min_version(OMP_MIN_BUN)
         and _omp_cli_responds(settings)
+        and bool(omp_provider_api_key(settings))
+    )
+
+
+def _native_omp_available(settings: BaselineSettings) -> bool:
+    return (
+        importlib.util.find_spec("psutil") is not None
+        and _bun_meets_min_version(OMP_MIN_BUN)
+        and _cli_responds(native_omp_command(settings))
         and bool(omp_provider_api_key(settings))
     )
 
@@ -369,11 +400,17 @@ _DEPS: dict[Dep, DepSpec] = {
         "(GOOGLE_GENAI_USE_VERTEXAI + GOOGLE_CLOUD_PROJECT) not set",
         lane=Lane.GOOGLE,
     ),
+    Dep.ANTIGRAVITY: DepSpec(
+        _antigravity_available,
+        "Antigravity requires GEMINI_API_KEY or GOOGLE_API_KEY, band-sdk[acp], "
+        "and the native server executable on PATH or in ANTIGRAVITY_COMMAND (JSON argv)",
+        lane=Lane.GOOGLE,
+    ),
     Dep.CODEX_CLI: DepSpec(
         _codex_cli_available, "Codex CLI not found on PATH", lane=Lane.BACKENDS
     ),
     # The Copilot CLI (unlike the self-downloading Copilot SDK) must be stood up on
-    # PATH, so its ACP backend rides the ``backends`` lane alongside codex/opencode.
+    # PATH, so its ACP backend rides the ``backends`` lane alongside codex.
     Dep.COPILOT_CLI: DepSpec(
         _copilot_cli_available, "Copilot CLI not found on PATH", lane=Lane.BACKENDS
     ),
@@ -387,6 +424,11 @@ _DEPS: dict[Dep, DepSpec] = {
         f"Bun >= {OMP_MIN_BUN}, working `omp`/`omp acp`, and a provider key for OMP_MODEL not set",
         lane=Lane.BACKENDS,
     ),
+    Dep.OMP_NATIVE: DepSpec(
+        _native_omp_available,
+        f"band-sdk[omp], Bun >= {OMP_MIN_BUN}, working `omp --mode rpc`, and a provider key for OMP_MODEL are required",
+        lane=Lane.BACKENDS,
+    ),
     Dep.CODEX_CWD: DepSpec(
         _codex_cwd_available,
         "CODEX_CWD must be an existing disposable dir outside the repo "
@@ -396,7 +438,7 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.OPENCODE_SERVER: DepSpec(
         lambda s: bool(s.backends.opencode_base_url),
         "OPENCODE_BASE_URL not set (a running OpenCode server is required)",
-        lane=Lane.BACKENDS,
+        lane=Lane.OPENCODE,
     ),
     # The serve -- not the adapter's approval_mode -- decides when a permission is
     # asked, so the manual-relay smoke needs a serve whose rules gate `bash` to
@@ -410,7 +452,7 @@ _DEPS: dict[Dep, DepSpec] = {
         "E2E_OPENCODE_BASH_ASKS=true must declare that OPENCODE_BASE_URL's serve "
         'gates `bash` to `ask` (permission rule {"bash": "ask"}, as '
         ".github/scripts/setup-opencode.sh configures)",
-        lane=Lane.BACKENDS,
+        lane=Lane.OPENCODE,
     ),
     Dep.LETTA: DepSpec(
         _letta_available,

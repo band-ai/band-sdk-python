@@ -66,7 +66,9 @@ from band.core.types import (
     ContactRequestStatus,
     MessageType,
 )
+from band.runtime.activity import ActivityObserver
 from band.runtime.context_serialization import context_item_to_dict
+from band.runtime.participants import validate_participants_snapshot
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
@@ -280,6 +282,11 @@ class FakeAgentTools:
         # room-delivery failure propagates without being reported as a
         # provider AgentFailure).
         self.send_message_error: Exception | None = None
+        # Set to simulate a room history fetch that cannot reach the platform.
+        self.fetch_room_context_error: Exception | None = None
+        # Clear to serve history pages whose metadata leaves total_pages
+        # unset, as the platform's optional field allows.
+        self.reports_context_page_count = True
         # Seeds are validated and canonicalized at seed time (not list time),
         # so every stored record carries the real serialized Fern model shape.
         self._participants: list[dict[str, Any]] = [
@@ -326,6 +333,7 @@ class FakeAgentTools:
         self._held_messages: list[HeldMessage] = []
         self._observers: list[tuple[Callable[[], bool], asyncio.Future[None]]] = []
         self.turn = Turn()
+        self._activity_observer: ActivityObserver | None = None
 
     @property
     def agent_id(self) -> str | None:
@@ -558,6 +566,10 @@ class FakeAgentTools:
     async def get_participants(self) -> list[ChatParticipant]:
         return [ChatParticipant.model_validate(p) for p in self._participants]
 
+    async def get_participants_snapshot(self) -> list[ChatParticipant]:
+        """Read the seeded roster without inventing sender membership."""
+        return validate_participants_snapshot(await self.get_participants())
+
     async def lookup_peers(
         self, page: int = 1, page_size: int = 50
     ) -> ListAgentPeersResponse:
@@ -600,6 +612,8 @@ class FakeAgentTools:
         self.context_calls.append(
             {"room_id": room_id, "page": page, "page_size": page_size}
         )
+        if self.fetch_room_context_error is not None:
+            raise self.fetch_room_context_error
         page_data = page_slice(self._room_context, page, page_size)
         total = len(self._room_context)
         return {
@@ -608,7 +622,9 @@ class FakeAgentTools:
                 "page": page,
                 "page_size": page_size,
                 "total_count": total,
-                "total_pages": total_pages(total, page_size),
+                "total_pages": total_pages(total, page_size)
+                if self.reports_context_page_count
+                else None,
             },
         }
 
@@ -929,6 +945,7 @@ class FakeAgentTools:
             bytes=len(body),
             sha256=hashlib.sha256(body).hexdigest(),
             has_thumb=False,
+            available=True,
         ).model_dump()
         message = self._record_message(caption, mentions)
         self.files.append(attachment)

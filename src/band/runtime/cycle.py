@@ -4,30 +4,71 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from enum import Enum
 
-from band.client.streaming import ControlMode
-from band.core.turn_lifecycle import TurnTask, terminal_deadline
+from band.client.streaming import ControlMode, DeliveryStatus
+from band.core.turn_lifecycle import TaskRole, TurnTask, terminal_deadline
+from band.platform.event import MessageEvent
+
+
+class AttemptPhase(Enum):
+    PREPARING = "preparing"
+    ADMITTED = "admitted"
+    ABANDONED = "abandoned"
+    SETTLED = "settled"
 
 
 @dataclass(eq=False)
 class TurnScope:
+    """One room-owned attempt: its originals share one handler and one outcome."""
+
     control_revision: int
+    # The ordered originals this attempt consumes; fixed before admission.
+    originals: tuple[MessageEvent, ...] = ()
+    # The terminal write every original owes, chosen once at the synchronous
+    # settlement point. ``None`` leaves the originals recoverable.
+    intent: DeliveryStatus | None = None
+    # False when a control probe declined the original, leaving it unconsumed.
+    consumed: bool = True
     # Revision at which a platform STOP was observed; a heartbeat begun after
     # PLAY can observe STOP in the original turn.
     stop_revision: int | None = None
     observer_task: asyncio.Task[None] | None = None
     handler: TurnTask | None = None
-    admitted: bool = False
+    phase: AttemptPhase = AttemptPhase.PREPARING
     # Only a message handler's turn shows the room's working state; housekeeping
     # and control-probe turns, and the workers they bind, never report.
     reports_activity: bool = False
-    settled: bool = False
     kind: ControlMode | None = None
     deadline: float | None = None
     cooperative: bool = False
     shutdown: bool = False
     terminated: asyncio.Event = field(default_factory=asyncio.Event)
     workers: set[TurnTask] = field(default_factory=set)
+    reporting_deadline: float | None = None
+
+    @property
+    def admitted(self) -> bool:
+        return self.phase in {AttemptPhase.ADMITTED, AttemptPhase.SETTLED}
+
+    @property
+    def settled(self) -> bool:
+        return self.phase in {AttemptPhase.ABANDONED, AttemptPhase.SETTLED}
+
+    def admit(self) -> None:
+        if self.phase is not AttemptPhase.PREPARING:
+            raise RuntimeError("only a preparing attempt can be admitted")
+        self.phase = AttemptPhase.ADMITTED
+
+    def settle(self, intent: DeliveryStatus | None = None) -> bool:
+        """Freeze the first disposition before cleanup or transport can suspend."""
+        if self.settled:
+            return False
+        if intent is not None and self.phase is not AttemptPhase.ADMITTED:
+            raise RuntimeError("an unadmitted attempt cannot consume its inputs")
+        self.intent = intent
+        self.phase = AttemptPhase.SETTLED if self.admitted else AttemptPhase.ABANDONED
+        return True
 
     @property
     def stop_observed(self) -> bool:
@@ -39,12 +80,36 @@ class TurnScope:
 
     @property
     def aborted(self) -> bool:
-        # Detached workers can be stopped after the room has moved to another scope.
         return self.terminating or any(
-            owner.deadline is not None for owner in self.workers
+            owner.role is TaskRole.SCOPE and owner.deadline is not None
+            for owner in self.workers
+        )
+
+    @property
+    def authoritative(self) -> bool:
+        return (
+            self.admitted
+            and not self.aborted
+            and (not self.settled or any(owner.authoritative for owner in self.workers))
+        )
+
+    @property
+    def provider_failed(self) -> bool:
+        return any(
+            owner.role is TaskRole.SCOPE and owner.failure is not None
+            for owner in self.workers
+        )
+
+    def reportable(self, now: float) -> bool:
+        return (
+            self.reports_activity
+            and self.authoritative
+            and (self.reporting_deadline is None or now < self.reporting_deadline)
         )
 
     def bind(self, owner: TurnTask) -> None:
+        if self.settled and not self.authoritative:
+            owner.terminate()
         self.workers.add(owner)
         if self.terminating:
             owner.terminate(deadline=self.deadline, cooperative=self.cooperative)

@@ -42,13 +42,14 @@ from pydantic.json_schema import SkipJsonSchema
 from band.core.exceptions import BandToolError, MessagePostError, MessagePostKind
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
-from band.core.turn import Turn
 from band.core.types import Capability, EventMessageType, MessageType
+from band.integrations.mcp.request import request_context
 from band.runtime.custom_tools import (
     CustomToolDef,
-    execute_custom_tool,
     get_custom_tool_name,
+    run_custom_tool,
 )
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     CHAT_ID_MAX_LENGTH,
@@ -219,7 +220,8 @@ async def dispatch_tool(
     """
     method = resolve_tool_method(tools, definition)
     try:
-        return await method(**arguments)
+        async with tool_activity(tools, definition.name):
+            return await method(**arguments)
     except (ValueError, BandToolError) as error:
         raise enrich_send_message_error(definition, tools, error) from error
 
@@ -488,10 +490,14 @@ def _make_dispatch_function(
 
     async def _dispatch(**kwargs: Any) -> str:
         try:
+            metadata: dict[str, Any] = {}
             if registration.room_from_connection:
                 ctx = kwargs.pop("ctx")
                 kwargs[CHAT_ID_FIELD_NAME] = _room_id_from_context(ctx)
-            return await registration.execute(kwargs)
+                if (meta := ctx.request_context.meta) is not None:
+                    metadata = meta.model_dump()
+            with request_context(metadata):
+                return await registration.execute(kwargs)
         except (ValueError, BandToolError):
             raise
         except Exception:
@@ -570,12 +576,13 @@ def build_tool_registration(
 RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
 
 
-def room_turn(get_tools: RoomToolResolver | None, chat_id: str | None) -> Turn | None:
-    """The turn of the room ``chat_id`` names, if the tool is room-bound."""
+def room_tools(
+    get_tools: RoomToolResolver | None, chat_id: str | None
+) -> AgentToolsProtocol | None:
+    """The tools of the room ``chat_id`` names, if the tool is room-bound."""
     if get_tools is None or chat_id is None:
         return None
-    tools = get_tools(chat_id)
-    return tools.turn if tools is not None else None
+    return get_tools(chat_id)
 
 
 def build_custom_tool_registration(
@@ -587,12 +594,13 @@ def build_custom_tool_registration(
     """Build a registration for a user-provided custom tool.
 
     Embedded-door only (divergence-matrix row 12: not exposed on the CLI).
-    Dispatches straight through ``execute_custom_tool`` -- there is no
+    Dispatches straight through ``run_custom_tool`` -- there is no
     ``AgentTools``/``HumanTools`` method behind a custom tool. With
-    ``get_tools`` the tool is room-bound and its declared effect is recorded
-    on that room's turn; the room comes from a ``chat_id`` argument, or with
-    ``room_from_connection`` from the endpoint path. Either way it is dropped
-    before the handler runs, since a custom tool never acts in a room.
+    ``get_tools`` the tool is room-bound: that room's turn records its declared
+    effect and shows it as running until it returns. The room comes from a
+    ``chat_id`` argument, or with ``room_from_connection`` from the endpoint
+    path. Either way the ``chat_id`` is dropped before the handler runs, since
+    a custom tool never acts in a room.
     """
     tool_def: CustomToolDef = (
         (spec.input_model, spec.handler) if isinstance(spec, CustomToolSpec) else spec
@@ -607,9 +615,14 @@ def build_custom_tool_registration(
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
         chat_id = kwargs.pop(CHAT_ID_FIELD_NAME, None)
-        turn = room_turn(get_tools, chat_id)
-        result = await execute_custom_tool(tool_def, kwargs, turn=turn)
-        return tool_result_text(result)
+        outcome = await run_custom_tool(
+            tool_def, kwargs, tools=room_tools(get_tools, chat_id)
+        )
+        if not outcome.ok:
+            raise BandToolError(
+                outcome.error_message or tool_result_text(outcome.value)
+            )
+        return tool_result_text(outcome.value)
 
     return MCPToolRegistration(
         name=tool_name,

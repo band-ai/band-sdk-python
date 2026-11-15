@@ -18,7 +18,9 @@ from band.testing import (
     ScriptedStrandsModel,
     ToolTurn,
 )
-from tests.adapters.strands.kit import _run_message
+from tests.adapters.strands.kit import (
+    _run_message,
+)
 
 
 class TestSendRoomFileArgsRedaction:

@@ -22,7 +22,12 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
     @asynccontextmanager
     async def fake_running_agent(
-        provisioned: ProvisionedAgent, adapter: Any, settings: Any
+        provisioned: ProvisionedAgent,
+        adapter: Any,
+        settings: Any,
+        session_config: Any = None,
+        *,
+        link_factory: Any = None,
     ) -> Any:
         yield provisioned
 

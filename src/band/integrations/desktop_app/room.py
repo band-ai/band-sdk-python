@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from band.core.timestamps import assume_utc
 from band.core.types import MessageType
 from band.integrations.desktop_app.event_relay import RelayStatus
 from band.integrations.desktop_app.tools import DEFAULT_ATTENTION, AttentionMode
@@ -33,7 +34,7 @@ def parse_timestamp(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return assume_utc(parsed)
 
 
 class RoomParticipantType(StrEnum):
@@ -130,9 +131,7 @@ class RoomMessage(BaseModel):
     @field_validator("inserted_at")
     @classmethod
     def _assume_utc(cls, value: datetime | None) -> datetime | None:
-        if value is None or value.tzinfo is not None:
-            return value
-        return value.replace(tzinfo=UTC)
+        return None if value is None else assume_utc(value)
 
     @property
     def at(self) -> datetime:

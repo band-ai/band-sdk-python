@@ -6,8 +6,8 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, TypedDict
 from unittest.mock import MagicMock
 
 import httpx
@@ -20,18 +20,19 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
 )
-from band.core.protocols import TURN_FAILURE_PROVIDER, FrameworkAdapter
+from band.core.protocols import TURN_FAILURE_PROVIDER, FrameworkAdapter, Preprocessor
 from band.core.types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
     SYNTHETIC_SENDER_TYPE,
     PlatformMessage,
 )
-from band.platform.event import MessageEvent
+from band.platform.event import MessageEvent, PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.identifiers import UUID_ID
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 @asynccontextmanager
@@ -72,6 +73,51 @@ async def memory_client() -> AsyncIterator[tuple[AsyncRestClient, list[httpx.Req
 
 AGENT_ID = "agent-123"
 ROOM_ID = "room-123"
+SENDER_ID = "user-1"
+EPOCH = datetime(2024, 1, 1, tzinfo=UTC)
+# A resync interval no test outlasts: only an explicit wake brings a pass.
+NO_PERIODIC_WAKE_S = 3600.0
+
+
+def no_periodic_wake_config() -> SessionConfig:
+    """A room no periodic resync wakes while a test runs, and that reports no activity."""
+    return SessionConfig(
+        enable_context_hydration=False,
+        enable_working_state=False,
+        idle_resync_seconds=NO_PERIODIC_WAKE_S,
+        idle_resync_max_seconds=NO_PERIODIC_WAKE_S,
+    )
+
+
+# The longest a test waits for something that must happen, and for a stop.
+WAIT_SECONDS = 5.0
+STOP_SECONDS = 2.0
+
+
+class AgentHooks(TypedDict):
+    """The callbacks an Agent hands its runtime for message delivery."""
+
+    on_execute: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]]
+    on_execute_batch: Callable[
+        [ExecutionContext, tuple[MessageEvent, ...]], Awaitable[None]
+    ]
+    on_message_control: Callable[[ExecutionContext, PlatformEvent], Awaitable[bool]]
+    is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
+
+
+def agent_hooks(
+    adapter: FrameworkAdapter, *, preprocessor: Preprocessor | None = None
+) -> AgentHooks:
+    """An unstarted Agent's delivery callbacks, for a room built directly."""
+    agent = Agent(
+        runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter, preprocessor=preprocessor
+    )
+    return AgentHooks(
+        on_execute=agent._on_execute,
+        on_execute_batch=agent._on_execute_batch,
+        on_message_control=agent._on_control,
+        is_message_control=agent._is_control,
+    )
 
 
 def run_through(
@@ -80,15 +126,12 @@ def run_through(
     *,
     config: SessionConfig | None = None,
 ) -> ExecutionContext:
-    agent = Agent(runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter)
-
     return ExecutionContext(
         ROOM_ID,
         link,
-        agent._on_execute,
         config=config or SessionConfig(enable_context_hydration=False),
         agent_id=AGENT_ID,
-        on_message_control=agent._on_control,
+        **agent_hooks(adapter),
     )
 
 
@@ -106,11 +149,12 @@ async def deliver(ctx: ExecutionContext, path: str) -> None:
     """Deliver one user message live over the socket, or from the backlog."""
     match path:
         case "live":
-            await ctx._process_event(
-                make_message_event(room_id=ROOM_ID, sender_id="user-1")
+            await attempt_delivery(
+                ctx, make_message_event(room_id=ROOM_ID, sender_id="user-1")
             )
         case "backlog":
-            await ctx._process_backlog_message(
+            await attempt_delivery(
+                ctx,
                 PlatformMessage(
                     id="msg-backlog",
                     room_id=ROOM_ID,
@@ -121,7 +165,7 @@ async def deliver(ctx: ExecutionContext, path: str) -> None:
                     message_type="text",
                     metadata={},
                     created_at=datetime.now(UTC),
-                )
+                ),
             )
 
 
@@ -183,26 +227,69 @@ class LifecyclePlatform:
         self.next_reads: list[float] = []
         self.actionable_cursors: list[str | None] = []
         self.activity_reports: list[ActivityReport] = []
+        self.stamps: dict[str, str] = {}
+        self.context_response: httpx.Response | None = None
+        self.context_reads = 0
 
-    def add_message(self, message_id: str, *, content: str = "hello") -> None:
-        self.messages.append(
-            {
-                "id": message_id,
-                "chat_room_id": ROOM_ID,
-                "content": content,
-                "sender_id": "user-1",
-                "sender_type": "User",
-                "sender_name": "User",
-                "message_type": "text",
-                "metadata": {},
-                "inserted_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z",
-            }
+    @property
+    def reports_without_refreshes(self) -> list[ActivityReport]:
+        """The room's working-state reports with each run of keep-alive
+        refreshes collapsed; a repeated idle still shows twice."""
+        reports = self.activity_reports
+        return [
+            report
+            for index, report in enumerate(reports)
+            if not (report == KEEP_ALIVE and index and reports[index - 1] == KEEP_ALIVE)
+        ]
+
+    def add_message(
+        self,
+        message_id: str,
+        *,
+        content: str = "hello",
+        listed: bool = True,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Store a message and return its row; an unlisted one is on the WebSocket only.
+
+        Each message is inserted one second after the previous one, as the
+        platform orders a room's messages.
+        """
+        stamp = (EPOCH + timedelta(seconds=len(self.stamps))).isoformat()
+        self.stamps[message_id] = stamp
+        row = {
+            "id": message_id,
+            "chat_room_id": ROOM_ID,
+            "content": content,
+            "sender_id": "user-1",
+            "sender_type": "User",
+            "sender_name": "User",
+            "message_type": "text",
+            "metadata": metadata or {},
+            "inserted_at": stamp,
+            "updated_at": stamp,
+        }
+        if listed:
+            self.messages.append(row)
+        return row
+
+    def event(self, message_id: str, *, content: str = "hello") -> MessageEvent:
+        """The WebSocket delivery of a stored message, stamped as the platform stored it."""
+        return make_message_event(
+            room_id=ROOM_ID,
+            msg_id=message_id,
+            content=content,
+            inserted_at=self.stamps[message_id],
         )
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         tail = path.rsplit("/", 1)[-1]
+        if tail == "context" and request.method == "GET":
+            self.context_reads += 1
+            return (
+                self.context_response if self.context_response is not None else page([])
+            )
         if tail == "activity":
             working = json.loads(request.content)["working"]
             recorded = working and not self.stopped

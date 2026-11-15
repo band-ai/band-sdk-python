@@ -84,7 +84,7 @@ class TestGracefulStopWithTimeout:
             config=SessionConfig(enable_context_hydration=False),
         )
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         # Enqueue a message
         event = make_message_event(room_id="room-123", msg_id="msg-001")
@@ -117,7 +117,7 @@ class TestGracefulStopWithTimeout:
             config=SessionConfig(enable_context_hydration=False),
         )
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         # Enqueue a message
         event = make_message_event(room_id="room-123", msg_id="msg-001")

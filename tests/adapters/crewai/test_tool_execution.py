@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from unittest.mock import AsyncMock
 
 import pytest
+
+from tests.crewaicontract import tool_result_data
 
 
 class TestToolExecution:
@@ -23,7 +24,7 @@ class TestToolExecution:
         # Call tool without setting context variable (simulates call outside message handling)
         result = send_message_tool._run(content="Hello!", mentions=[])
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "error"
         assert "No room context available" in result_data["message"]
 
@@ -101,7 +102,7 @@ class TestToolExecution:
         with room_context("room-123"):
             result = send_event._run(content="no type given")
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "error"
         assert "message_type" in result_data["message"]
         mock_tools.send_event.assert_not_called()
@@ -125,7 +126,7 @@ class TestToolExecution:
         with room_context("room-123"):
             result = get_participants_tool._run()
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         assert "participants" in result_data
         assert result_data["count"] == 1
@@ -149,7 +150,7 @@ class TestToolExecution:
         with room_context("room-123"):
             result = get_participants_tool._run()
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "error"
         assert "Connection failed" in result_data["message"]
 
@@ -185,6 +186,6 @@ class TestToolExecution:
         with room_context("room-123"):
             result = await asyncio.to_thread(lookup_peers_tool._run)
 
-        result_data = json.loads(result)
+        result_data = tool_result_data(result)
         assert result_data["status"] == "success"
         mock_tools.lookup_peers.assert_awaited_once_with(1, 50)

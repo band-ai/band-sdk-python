@@ -32,6 +32,7 @@ from band.core.types import (
     MessageType,
     is_usage_event,
 )
+from band.runtime.formatters import format_current_inputs
 from band.runtime.tools import BandTool
 from band.testing import (
     ErrorTurn,
@@ -49,8 +50,8 @@ from tests.adapters.strands.kit import (
     SEND_TURN,
     _make_msg,
     _run_message,
-    _run_turn,
     _tool_results,
+    run_judged_turn,
 )
 from tests.responsespeer import ResponsesPeer
 from tests.strandskit import outline
@@ -102,11 +103,13 @@ class TestTurnFailure:
         )
         await adapter.on_started("Bot", "A bot")
         first = FakeAgentTools(room_id=ROOM)
-        await _run_turn(adapter, first)
+        hello = _make_msg(ROOM)
+        await adapter.on_event(turn_input(first, msg=hello))
         second = FakeAgentTools(room_id=ROOM)
+        follow_up = _make_msg(ROOM, "Please reply now.")
         await adapter.on_event(
             replace(
-                turn_input(second, msg=_make_msg(ROOM, "Please reply now.")),
+                turn_input(second, msg=follow_up),
                 is_session_bootstrap=False,
                 participants_msg="Bob joined",
                 contacts_msg="New contact",
@@ -114,12 +117,12 @@ class TestTurnFailure:
         )
 
         assert outline(model.requests[1]["messages"]) == [
-            "user: text([Tester]: Hello)",
+            f"user: text({format_current_inputs([hello])})",
             "assistant: toolUse(call-band_no_reply)",
             (
                 "user: toolResult(call-band_no_reply, success) "
                 "text([System]: Bob joined\n\n[System]: New contact\n\n"
-                "[Tester]: Please reply now.)"
+                f"{format_current_inputs([follow_up])})"
             ),
         ]
         assert first.turn.complete and second.turn.complete
@@ -146,11 +149,12 @@ class TestTurnFailure:
         )
         await adapter.on_started("Bot", "A bot")
         first = FakeAgentTools(room_id=ROOM)
-        await _run_turn(adapter, first)
+        await run_judged_turn(adapter, first)
         second = FakeAgentTools(room_id=ROOM)
+        follow_up = _make_msg(ROOM, "Please reply now.")
         await adapter.on_event(
             replace(
-                turn_input(second, msg=_make_msg(ROOM, "Please reply now.")),
+                turn_input(second, msg=follow_up),
                 is_session_bootstrap=False,
             )
         )
@@ -164,7 +168,7 @@ class TestTurnFailure:
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_text", "text": "[Tester]: Please reply now."}
+                    {"type": "input_text", "text": format_current_inputs([follow_up])}
                 ],
             },
         ]
@@ -195,7 +199,7 @@ class TestTurnFailure:
         )
         await adapter.on_started("Bot", "A bot")
 
-        await _run_turn(adapter, tools)
+        await run_judged_turn(adapter, tools)
 
         assert len(peer.requests) == (2 if fails else 1)
         assert tools.turn.complete
@@ -232,9 +236,9 @@ class TestTurnFailure:
 
         if fails:
             with pytest.raises(EventLoopException, match="provider down"):
-                await _run_turn(adapter, tools)
+                await run_judged_turn(adapter, tools)
         else:
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
 
         tools.assert_message_sent(content="hi", count=1)
         (call,) = events_of_type(tools, MessageType.TOOL_CALL)

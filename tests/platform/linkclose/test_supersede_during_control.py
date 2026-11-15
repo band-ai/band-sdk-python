@@ -11,12 +11,11 @@ from websockets.frames import CloseCode
 from band.client.streaming.client import AgentControlPayload, ControlMode, WireEvent
 from band.platform.event import WebSocketDisconnectedEvent
 from band.testing import fake_phoenix_server
-from tests.conftest import TERMINAL_SUPERSEDE
+from tests.conftest import SUPERSEDED, TERMINAL_SUPERSEDE
 from tests.platform.linkclose.kit import (
     AGENT_ID,
     CONTROL_TOPIC,
     HANG_GUARD_S,
-    SUPERSEDED,
     connected,
     make_link,
     running,

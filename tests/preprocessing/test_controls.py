@@ -1,50 +1,82 @@
-from __future__ import annotations
+"""Configured policy governs controls without consuming pending context."""
 
-from unittest.mock import MagicMock
+from __future__ import annotations
 
 import pytest
 
-from band.agent import Agent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.preprocessing.kit import ControlPolicy
 from tests.runtime.deferral.kit import ApprovalAdapter
-from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
+from tests.runtime.helpers import (
+    AGENT_ID,
+    ROOM_ID,
+    LifecyclePlatform,
+    agent_hooks,
+    rest_client_over,
+)
+from tests.runtime.scheduler.driver import attempt_delivery
+
+# (hosting, content, rewritten, consumed) -> the ids the policy saw and the ids settled.
+POLICY_OUTCOMES = [
+    pytest.param("normal", "approve", None, False, ["C"], ["C"], id="normal-filtered"),
+    pytest.param(
+        "normal", "approve", "ordinary", False, ["C"], [], id="normal-transformed-away"
+    ),
+    pytest.param(
+        "normal",
+        "permit",
+        "approve",
+        True,
+        ["C"],
+        ["C"],
+        id="normal-transformed-control",
+    ),
+    pytest.param("pending", "approve", None, False, [], [], id="pending-filtered"),
+    pytest.param(
+        "pending", "approve", "ordinary", False, [], [], id="pending-transformed-away"
+    ),
+    pytest.param(
+        "pending",
+        "permit",
+        "approve",
+        True,
+        ["C"],
+        ["C"],
+        id="pending-transformed-control",
+    ),
+]
 
 
-class TestControls:
-    @pytest.mark.parametrize("hosting", ["normal", "pending"])
-    @pytest.mark.parametrize(
-        ("content", "rewritten", "consumed"),
-        [
-            ("approve", None, False),
-            ("approve", "ordinary", False),
-            ("permit", "approve", True),
-        ],
-        ids=["filtered", "transformed-away", "transformed-control"],
-    )
+@pytest.mark.parametrize(
+    ("hosting", "content", "rewritten", "consumed", "seen", "processed"),
+    POLICY_OUTCOMES,
+)
+class TestConfiguredControlPolicy:
     async def test_configured_policy_governs_control_delivery(
-        self, hosting: str, content: str, rewritten: str | None, consumed: bool
+        self,
+        hosting: str,
+        content: str,
+        rewritten: str | None,
+        consumed: bool,
+        seen: list[str],
+        processed: list[str],
     ) -> None:
         peer = LifecyclePlatform()
         peer.add_message("C", content=content)
         adapter = ApprovalAdapter()
         adapter.reject = True
         policy = ControlPolicy(rewritten)
-        agent = Agent(
-            runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter, preprocessor=policy
-        )
         async with rest_client_over(peer.answer) as rest:
             link = BandLink(agent_id=AGENT_ID, api_key="test-key")
             link.rest = rest
             ctx = ExecutionContext(
                 ROOM_ID,
                 link,
-                agent._on_execute,
                 agent_id=AGENT_ID,
-                on_message_control=agent._on_control,
+                **agent_hooks(adapter, preprocessor=policy),
                 config=SessionConfig(
                     enable_context_hydration=False, enable_working_state=False
                 ),
@@ -52,18 +84,17 @@ class TestControls:
             ctx.inject_system_message("Contact update still owed")
             event = make_message_event(room_id=ROOM_ID, msg_id="C", content=content)
             if hosting == "normal":
-                await ctx._process_event(event)
+                await attempt_delivery(ctx, event)
             else:
-                await ctx._try_control(event)
+                await attempt_delivery(ctx, event, priority=True)
             await ctx.stop()
 
-        assert policy.seen == ["C"]
+        assert policy.seen == seen
+        if hosting == "pending" and not consumed:
+            assert peer.requested("processing") == []
         assert adapter.controls == (["C"] if consumed else [])
         assert not ctx.is_llm_initialized
         assert ctx.participants_changed()
         assert ctx.peek_pending_system_messages() == ["Contact update still owed"]
-        expected_processed = (
-            ["C"] if consumed or (hosting == "normal" and rewritten is None) else []
-        )
-        assert peer.marked("processed") == expected_processed
+        assert peer.marked("processed") == processed
         assert peer.marked("failed") == []

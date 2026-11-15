@@ -5,16 +5,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.runtime.tools import (
-    AgentTools,
-)
+from band.runtime.tools import AgentTools
 
 
 class TestFetchRoomContext:
     """Paging the agent context endpoint."""
 
     @pytest.mark.asyncio
-    async def test_prefers_the_required_pagination_field(self, mock_rest_client):
+    async def test_prefers_the_required_pagination_field(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """`metadata` is required; `meta` is optional and often absent.
 
         Reading only `meta` collapses every room to one synthesized page, so a

@@ -116,6 +116,11 @@ async def test_recalls_within_session(
             "/context — a pass would not validate this rehydration",
         ),
         ExcludedAdapter(
+            Adapter.OMP,
+            "recovers context by resuming its own native RPC session, not via platform "
+            "/context — a pass would not validate this rehydration",
+        ),
+        ExcludedAdapter(
             Adapter.CREWAI_FLOW,
             "terminal echo flow with no memory — cannot recall across a rejoin",
         ),

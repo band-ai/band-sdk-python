@@ -17,8 +17,15 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
-from band.integrations.mcp.local_server import LOCAL_MCP_HOST, LOCAL_MCP_PORT_MIN
+from band.integrations.mcp.local_server import (
+    LOCAL_MCP_HOST,
+    LOCAL_MCP_PORT_MIN,
+    local_mcp_auth_headers,
+)
 from tests.mcpclient import endpoint_path
+
+# The token every fake backend requires; fakes are never dialed.
+FAKE_AUTH_TOKEN = "fake-band-mcp-token"
 
 
 @dataclass
@@ -49,6 +56,10 @@ class FakeBandMCPBackend:
         self.fail_stops = 0
         self._stop_started = stop_started
         self._stop_release = stop_release
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return local_mcp_auth_headers(FAKE_AUTH_TOKEN)
 
     def endpoint(self, transport: BandMCPTransport, room_id: str | None = None) -> str:
         path = endpoint_path(transport, room_id)
@@ -82,7 +93,11 @@ class BackendStarts:
         self.avoided: list[int | None] = []
 
     async def __call__(
-        self, settings: BandMCPBackendSettings, *, avoid_port: int | None = None
+        self,
+        settings: BandMCPBackendSettings,
+        *,
+        auth_token: str,
+        avoid_port: int | None = None,
     ) -> Any:
         self.requested.append(settings)
         self.avoided.append(avoid_port)

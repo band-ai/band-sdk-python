@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import weakref
+from collections.abc import Awaitable
 from enum import StrEnum
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
@@ -18,7 +19,14 @@ from band.core.exceptions import (
     InputNotAccepted,
 )
 from band.core.handoff import context_delivery
-from band.core.protocols import FrameworkAdapter, Preprocessor
+from band.core.protocols import (
+    BatchFrameworkAdapter,
+    BatchPreprocessor,
+    ControlRecognizer,
+    FrameworkAdapter,
+    MessageProjector,
+    Preprocessor,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.agentconfig import AgentConfig
@@ -36,7 +44,7 @@ from band.runtime.startup import (
 
 if TYPE_CHECKING:
     from band.core.types import AgentInput
-    from band.platform.event import PlatformEvent
+    from band.platform.event import MessageEvent, PlatformEvent
     from band.runtime.execution import ExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -80,9 +88,11 @@ class TimeoutNotSet:
     _instance: TimeoutNotSet | None = None
 
     def __new__(cls) -> Self:
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+        instance = cls._instance
+        if instance is None:
+            instance = super().__new__(cls)
+            cls._instance = instance
+        return cast(Self, instance)
 
     def __repr__(self) -> str:
         return "<TIMEOUT_NOT_SET>"
@@ -144,6 +154,24 @@ class Agent:
         # Tracks shutdown_timeout from run() for use in __aexit__
         # Uses sentinel to distinguish "not set" from "explicitly set to None"
         self._shutdown_timeout: _ShutdownTimeout = _TIMEOUT_NOT_SET
+
+    def _batch_hosts(self) -> tuple[BatchFrameworkAdapter, BatchPreprocessor]:
+        """Validate batching support and return the compatible hosts."""
+        adapter, preprocessor = self._adapter, self._preprocessor
+        if not (
+            isinstance(adapter, BatchFrameworkAdapter) and adapter.supports_batch_input
+        ):
+            raise BandConfigError(
+                f"{type(adapter).__name__} does not support batch input; "
+                "consume_all_queued needs an adapter declaring supports_batch_input"
+            )
+        if not isinstance(preprocessor, BatchPreprocessor):
+            raise BandConfigError(
+                f"{type(preprocessor).__name__} must implement process_batch and "
+                "a read-only message projection; consume_all_queued needs the same "
+                "projection for control recognition and input construction"
+            )
+        return adapter, preprocessor
 
     def _clear_pending_stop(self) -> None:
         self._stop_requested = False
@@ -312,6 +340,8 @@ class Agent:
             raise CleanupIncompleteError(
                 "Agent cleanup is incomplete; call stop() to retry it"
             )
+        if self._runtime.session_config.consume_all_queued:
+            self._batch_hosts()
 
         owns_resources = accept_adapter(self._adapter, self)
         if owns_resources:
@@ -348,6 +378,8 @@ class Agent:
                 self._cleanup_pending.add(CleanupPhase.RUNTIME)
                 await self._runtime.start(
                     on_execute=self._on_execute,
+                    on_execute_batch=self._on_execute_batch,
+                    is_message_control=self._is_control,
                     on_message_control=self._on_control,
                     on_cleanup=self._adapter.on_cleanup,
                     # A bare FrameworkAdapter predates on_interrupt and needn't
@@ -586,31 +618,68 @@ class Agent:
             agent_id=self._runtime.agent_id,
         )
 
-        if inp is None or await self._try_control(inp):
+        if inp is None or await self._try_control(ctx, inp):
             return
 
+        await self._commit_unless_refused(inp, self._adapter.on_event(inp))
+
+    async def _on_execute_batch(
+        self, ctx: ExecutionContext, events: tuple[MessageEvent, ...]
+    ) -> None:
+        """Run one turn over several originals through the batch entry points."""
+        adapter, preprocessor = self._batch_hosts()
+        inp = await preprocessor.process_batch(
+            ctx=ctx, events=events, agent_id=self._runtime.agent_id
+        )
+        if inp is None:
+            return
+
+        await self._commit_unless_refused(inp, adapter.on_messages(inp))
+
+    @staticmethod
+    async def _commit_unless_refused(inp: AgentInput, turn: Awaitable[None]) -> None:
+        """Await ``turn``, then commit the input's context unless it was refused."""
         with context_delivery() as delivery:
-            rejected = False
+            refused = False
             try:
-                await self._adapter.on_event(inp)
+                await turn
             except InputNotAccepted:
-                rejected = True
+                refused = True
                 raise
             finally:
                 if (
-                    not rejected
+                    not refused
                     and delivery.should_commit
                     and inp.commit_context is not None
                 ):
                     inp.commit_context()
+
+    def _is_control(self, ctx: ExecutionContext, event: MessageEvent) -> bool:
+        """Whether the adapter would handle the delivery as a control; writes nothing.
+
+        Input projection and control recognition are shared with ordered input
+        construction. Hosts without both contracts keep ordinary queue order.
+        """
+        adapter = self._adapter
+        preprocessor = self._preprocessor
+        if not isinstance(adapter, ControlRecognizer) or not isinstance(
+            preprocessor, MessageProjector
+        ):
+            return False
+        msg = preprocessor.message(ctx, event, self._runtime.agent_id)
+        return msg is not None and adapter.is_control_message(msg)
 
     async def _on_control(self, ctx: ExecutionContext, event: PlatformEvent) -> bool:
         """Handle controls with their delivery tools, preserving active ownership."""
         inp = await self._preprocessor.process(
             ctx=ctx, event=event, agent_id=self._runtime.agent_id
         )
-        return await self._try_control(inp) if inp is not None else False
+        return await self._try_control(ctx, inp) if inp is not None else False
 
-    async def _try_control(self, inp: AgentInput) -> bool:
+    async def _try_control(self, ctx: ExecutionContext, inp: AgentInput) -> bool:
         handler = getattr(self._adapter, "try_handle_control", None)
-        return await handler(inp.msg, inp.tools) if handler is not None else False
+        if handler is None:
+            return False
+        return await ctx.scheduler.offer_control(
+            inp.msg.id, lambda: handler(inp.msg, inp.tools)
+        )

@@ -2,40 +2,161 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import deque
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal
 
 import httpx
 
+from band.core.protocols import AgentToolsProtocol
 from band.core.turn_lifecycle import TurnTask, bind_turn_task
-from band.platform.event import PlatformEvent
+from band.platform.activity import API_VERSION_HEADER
+from band.platform.event import MessageEvent, PlatformEvent
+from band.runtime.activity import permission_wait
 from band.runtime.execution import ExecutionContext
+from band.runtime.sessionconfig import SessionConfig
+from band.runtime.toolactivity import (
+    end_activity,
+    start_memory_activity,
+    start_tool_activity,
+)
 from band.runtime.tools.agent import AgentTools
-from tests.runtime.helpers import ALICE, LifecyclePlatform, is_message_post, page
+from tests.activitysupport import SUPPORTED_VERSION
+from tests.runtime.helpers import PostingPlatform, is_message_post
+
+CONTROL_MESSAGE_ID = "approve"
+
+
+def direct_tools(tools: AgentToolsProtocol) -> AgentToolsProtocol:
+    return tools
+
+
+def recognizes_control(ctx: ExecutionContext, event: MessageEvent) -> bool:
+    return event.payload.id == CONTROL_MESSAGE_ID
+
+
+async def deliver_event(ctx: ExecutionContext, event: PlatformEvent) -> None:
+    """Run queued input through the consumer's production scheduling pass."""
+    await ctx.on_event(event)
+    await ctx.scheduler.run_pass()
 
 
 def message_content(request: httpx.Request) -> str:
     return json.loads(request.content)["message"]["content"]
 
 
-class ActivityPlatform(LifecyclePlatform):
-    """A running room whose participants are listed and whose messages land."""
+KEEP_ALIVE_SECONDS = SessionConfig().working_keep_alive_seconds
+
+
+async def past_a_keep_alive() -> None:
+    """Let a keep-alive fall due, so a wrongly woken reporter would have sent."""
+    await asyncio.sleep(2 * KEEP_ALIVE_SECONDS)
+
+
+async def report_every_kind(tools: object) -> None:
+    await start_tool_activity(tools, "bash", "Bash")
+    with permission_wait(tools):
+        await start_memory_activity(tools, "memory")
+        await end_activity(tools, "memory")
+    await end_activity(tools, "bash")
+
+
+# Posting, not lifecycle-only: OpenCode posts its resume record whatever the emit.
+class ActivityPlatform(PostingPlatform):
+    """Activity posts advertise a detail-supporting version; queued responses
+    answer them before the default echo."""
 
     def __init__(self) -> None:
         super().__init__()
         self.room_messages: list[str] = []
+        self.failures: list[dict[str, Any]] = []
+        self.activity_responses: deque[httpx.Response] = deque()
+        self.activity_bodies: list[dict[str, Any]] = []
+        self.hold_next_activity = False
+        self.activity_entered = asyncio.Event()
+        self.activity_release = asyncio.Event()
+        self.late_changes: list[tuple[dict[str, Any], float]] = []
+        self._reported = asyncio.Condition()
 
     async def respond(self, request: httpx.Request) -> httpx.Response:
-        return self.answer(request)
+        response = self.answer(request)
+        if request.url.path.endswith("/activity"):
+            if self.activity_responses:
+                response = self.activity_responses.popleft()
+            response.headers[API_VERSION_HEADER] = SUPPORTED_VERSION
+            async with self._reported:
+                self.activity_bodies.append(json.loads(request.content))
+                self._reported.notify_all()
+            if self.hold_next_activity:
+                self.hold_next_activity = False
+                self.activity_entered.set()
+                await self.activity_release.wait()
+        return response
+
+    async def bodies_reach(self, count: int) -> list[dict[str, Any]]:
+        async with self._reported:
+            await self._reported.wait_for(lambda: len(self.activity_bodies) >= count)
+        return self.activity_bodies
+
+    async def body_at(self, index: int) -> dict[str, Any]:
+        await self.bodies_reach(index + 1)
+        return self.activity_bodies[index]
+
+    async def next_body(self) -> dict[str, Any]:
+        """Wait for the platform to receive one more activity body."""
+        return await self.body_at(len(self.activity_bodies))
+
+    async def body_matching(self, expected: dict[str, Any]) -> dict[str, Any]:
+        """Join receipt of an exact activity report at the HTTP boundary."""
+        async with self._reported:
+            await self._reported.wait_for(lambda: expected in self.activity_bodies)
+        return next(body for body in self.activity_bodies if body == expected)
+
+    async def shown(self, observation: Awaitable[None] | Callable[[], None]) -> None:
+        """Make a visible change and wait until the platform has received it.
+
+        Assumes looptime: under real time every change would look late. A body
+        that arrives only after virtual time passed came from a keep-alive, not
+        the change; it is recorded with that delay in ``late_changes`` rather
+        than raised, because a handler would swallow the error as a failed turn.
+        """
+        loop = asyncio.get_running_loop()
+        index = len(self.activity_bodies)
+        observed_at = loop.time()
+        if callable(observation):
+            observation()
+        else:
+            await observation
+        body = await self.body_at(index)
+        if waited := loop.time() - observed_at:
+            self.late_changes.append((body, waited))
 
     def answer(self, request: httpx.Request) -> httpx.Response:
-        tail = request.url.path.rsplit("/", 1)[-1]
-        if tail == "participants":
-            return page([{**ALICE, "role": "member", "status": "active"}])
+        if request.method == "POST" and request.url.path.endswith("/events"):
+            event = json.loads(request.content)["event"]
+            # A plain error notice (e.g. an approval timeout) carries no failure.
+            if event["message_type"] == "error" and event.get("metadata"):
+                self.failures.append(event["metadata"]["failure"])
         if is_message_post(request):
+            self.posts.append(request.url.path.rsplit("/", 1)[-1])
             self.room_messages.append(message_content(request))
             return httpx.Response(
                 201, json={"data": {"id": "m-1", "success": True, "recipients": []}}
             )
         return super().answer(request)
+
+
+class ObservedIdle(asyncio.Event):
+    """The idle event a graceful stop waits on, announcing that wait."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set()
+        self.awaited = asyncio.Event()
+
+    async def wait(self) -> Literal[True]:
+        self.awaited.set()
+        return await super().wait()
 
 
 class IdleReportGate:
@@ -95,4 +216,4 @@ class HeldReplyPlatform(ActivityPlatform):
         if is_message_post(request) and message_content(request) == self.held_reply:
             self.reply_entered.set()
             await self.release.wait()
-        return self.answer(request)
+        return await super().respond(request)

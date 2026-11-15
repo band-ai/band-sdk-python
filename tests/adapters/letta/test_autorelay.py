@@ -17,6 +17,7 @@ from band.testing import (
     failure_reports,
     reported_failures,
 )
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.letta.kit import REPLY_SETTLING_CALLS, sent_contents
 from tests.adapters.lettakit import (
     make_platform_message,
@@ -78,7 +79,7 @@ class TestAutoRelayDisabled:
             final_text="Done!",
         )
 
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await adapter.on_message(
             make_platform_message(),
             tools,

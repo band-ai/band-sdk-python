@@ -123,6 +123,9 @@ Integration"), in this order, running the named suites after each step:
    precedence; validation-error mapping;
    **two rooms without leakage**; cleanup and failure rollback. For native
    session runtimes, also cover resume, resume-miss history, and recovery.
+   Apply [test conventions](../band-python-test-conventions/SKILL.md), including
+   "Test helpers and peers". Exercise real components for protocol, callback
+   context, and lifecycle claims; do not reproduce those mechanisms in fakes.
 5. **Registration** in both `__init__.py`s, pyproject extra + dev list.
 6. **Example(s)** following `AGENTS.md` → "Example Files" (PEP 723 headers
    and the rest), `ValueError` for missing config,

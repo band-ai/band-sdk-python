@@ -16,16 +16,23 @@ from band.core.types import (
 from band.integrations.opencode import OpencodePermissionRequest
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
+    APPROVED_ASK_NOTICES,
     FakeOpencodeClient,
+    approve,
     event_message_updated,
     event_session_idle,
     event_text_part,
     idle_client,
     make_platform_message,
+    model_answer,
+    parked_turn_client,
+    room_turn,
     run_single_turn,
     tools_protocol,
+    turn_finished,
     wait_for,
 )
 from tests.adapters.usage_events import recorded_usage_payloads
@@ -33,7 +40,9 @@ from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 
 
 class TestLifecycle:
-    async def test_watch_task_drains_the_turn_that_started_it(self) -> None:
+    async def test_watch_task_drains_the_turn_that_started_it(
+        self,
+    ) -> None:
         """Regression: the turn's future and usage dict are snapshotted before
         the prompt await. When the turn completes while prompt_async's POST is
         still open and a racing message begins the next turn, the resumed
@@ -44,7 +53,7 @@ class TestLifecycle:
             client_factory=lambda _config: fake_client,
             emit=Emit.USAGE,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         await adapter.on_started("OpenCode Agent", "A coding agent")
 
         room_state = await adapter._get_or_create_room_state("room-1")
@@ -57,6 +66,7 @@ class TestLifecycle:
             room_state.turn.usage_by_message["msg-1"] = TurnUsage(
                 input_tokens=100, output_tokens=20
             )
+            tools.turn.settle()
             adapter._finish_turn(room_state)
             # ...and a racing message begins (and finishes) the next turn
             # before the first on_message resumes.
@@ -65,7 +75,7 @@ class TestLifecycle:
                 session_id="sess-1",
                 client=fake_client,
                 tools=tools_protocol(tools),
-                sender_id="user-2",
+                sender_ids=("user-2",),
             )
             adapter._finish_turn(room_state)
             await orig_prompt(*args, **kwargs)
@@ -103,7 +113,7 @@ class TestLifecycle:
             client_factory=lambda _config: FakeOpencodeClient(),
             emit=Emit.USAGE,
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
         room_state = await adapter._get_or_create_room_state("room-1")
         room_state.tools = tools_protocol(tools)
 
@@ -112,7 +122,7 @@ class TestLifecycle:
             session_id="sess-1",
             client=FakeOpencodeClient(),
             tools=tools_protocol(tools),
-            sender_id="user-1",
+            sender_ids=("user-1",),
         )
         first_turn.usage_by_message["msg-1"] = TurnUsage(
             input_tokens=100, output_tokens=20
@@ -123,7 +133,7 @@ class TestLifecycle:
             session_id="sess-1",
             client=FakeOpencodeClient(),
             tools=tools_protocol(tools),
-            sender_id="user-2",
+            sender_ids=("user-2",),
         )
         assert next_turn.usage_by_message == {}
 
@@ -155,7 +165,7 @@ class TestLifecycle:
             session_id="sess-a",
             client=client_a,
             tools=tools_protocol(tools),
-            sender_id="user-1",
+            sender_ids=("user-1",),
         )
         await turn_a.approvals.on_permission_asked(
             OpencodePermissionRequest(id="perm-1", permission="bash")
@@ -167,7 +177,7 @@ class TestLifecycle:
             session_id="sess-b",
             client=client_b,
             tools=tools_protocol(tools),
-            sender_id="user-2",
+            sender_ids=("user-2",),
         )
 
         assert await turn_a.approvals.try_handle_reply("approve perm-1", "user-1")
@@ -190,7 +200,7 @@ class TestLifecycle:
             session_id="sess-a",
             client=client_a,
             tools=tools_protocol(tools),
-            sender_id="user-1",
+            sender_ids=("user-1",),
         )
         await turn_a.approvals.on_permission_asked(
             OpencodePermissionRequest(id="perm-1", permission="bash")
@@ -202,7 +212,7 @@ class TestLifecycle:
             session_id="sess-b",
             client=client_b,
             tools=tools_protocol(tools),
-            sender_id="user-2",
+            sender_ids=("user-2",),
         )
 
         assert await turn_a.approvals.abandon()
@@ -268,7 +278,7 @@ class TestLifecycle:
         adapter = OpencodeAdapter(
             client_factory=lambda _config: clients.pop(0),
         )
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         with backends_created_by(fake_backend):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -340,7 +350,7 @@ class TestLifecycle:
                 adapter,
                 make_platform_message(content="second"),
                 tools_protocol(tools),
-                OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+                OpencodeSessionState(),
                 participants_msg=None,
                 contacts_msg=None,
                 is_session_bootstrap=False,
@@ -357,6 +367,48 @@ class TestLifecycle:
         except asyncio.CancelledError:
             pass
         await adapter.on_cleanup("room-1")
+
+    async def test_a_turn_held_on_approval_leaves_another_room_progressing(
+        self, park_room, tools
+    ) -> None:
+        """Every room shares one client and event stream, so a room waiting on
+        a human must not stall another room's turn on that stream."""
+        fake_client = parked_turn_client(
+            after_approval=model_answer("msg-r1", "reply to room 1"),
+            later_prompts=[
+                [
+                    event_message_updated("sess-2", "msg-r2"),
+                    event_text_part("sess-2", "msg-r2", "reply to room 2"),
+                    event_session_idle("sess-2"),
+                ]
+            ],
+        )
+        adapter = await park_room(fake_client)
+        held = await room_turn(adapter)
+        room2_tools = FakeAgentTools(participants=ROOM_MEMBERS)
+
+        await deliver_message(
+            adapter,
+            make_platform_message(room_id="room-2", content="hello room 2"),
+            tools_protocol(room2_tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-2",
+        )
+
+        assert [m["content"] for m in room2_tools.messages_sent] == ["reply to room 2"]
+        # Room 1 has only its approval request: its turn is still waiting.
+        assert [m["content"] for m in tools.messages_sent] == APPROVED_ASK_NOTICES[:1]
+
+        await approve(adapter)
+        await turn_finished(held)
+
+        assert [m["content"] for m in tools.messages_sent] == [
+            *APPROVED_ASK_NOTICES,
+            "reply to room 1",
+        ]
 
     async def test_two_rooms_active_concurrently(self, tools) -> None:
         """Interleaved turns keep events and platform tools scoped by room."""
@@ -386,8 +438,8 @@ class TestLifecycle:
 
         fake_client = InterleavedClient()
         adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-        tools_r1 = FakeAgentTools()
-        tools_r2 = FakeAgentTools()
+        tools_r1 = FakeAgentTools(participants=ROOM_MEMBERS)
+        tools_r2 = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
 
@@ -431,7 +483,9 @@ class TestLifecycle:
         assert fake_client.closed
         assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
 
-    async def test_concurrent_room_start_waits_for_mcp_registration(self) -> None:
+    async def test_concurrent_room_start_waits_for_mcp_registration(
+        self,
+    ) -> None:
         """Every room start waits for the shared client's MCP startup barrier."""
 
         class SlowRegistrationClient(FakeOpencodeClient):
@@ -441,11 +495,13 @@ class TestLifecycle:
                 self.release_registration = asyncio.Event()
 
             async def register_mcp_server(
-                self, *, name: str, url: str
+                self, *, name: str, url: str, headers: dict[str, str]
             ) -> dict[str, Any]:
                 self.registration_started.set()
                 await self.release_registration.wait()
-                return await super().register_mcp_server(name=name, url=url)
+                return await super().register_mcp_server(
+                    name=name, url=url, headers=headers
+                )
 
         fake_client = SlowRegistrationClient()
         adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
@@ -474,11 +530,12 @@ class TestLifecycle:
         """
         fake_client = FakeOpencodeClient(
             prompt_event_sequences=[
-                [],  # interrupted: no terminal event ever arrives
+                [],  # interrupted: terminal evidence arrives after the abort
+                # The interrupted seed left sess-1 unseeded, so a new session runs.
                 [
-                    event_message_updated("sess-1", "msg-2"),
-                    event_text_part("sess-1", "msg-2", "after the interrupt"),
-                    event_session_idle("sess-1"),
+                    event_message_updated("sess-2", "msg-2"),
+                    event_text_part("sess-2", "msg-2", "after the interrupt"),
+                    event_session_idle("sess-2"),
                 ],
             ]
         )
@@ -513,7 +570,14 @@ class TestLifecycle:
         assert fake_client.aborted_sessions == ["sess-1"], "OpenCode kept working"
         assert tools.messages_sent == [], "posted the reply the user interrupted"
 
-        # The room takes the next message instead of answering "still processing".
+        with pytest.raises(InputNotAccepted) as refused:
+            await run_single_turn(adapter, tools)
+        assert len(fake_client.prompt_calls) == 1
+        await fake_client.push_event(event_session_idle("sess-1"))
+        assert refused.value.ready is not None
+        await refused.value.ready
+
+        # Independent terminal evidence permits a newly seeded session.
         await deliver_message(
             adapter,
             make_platform_message(content="next"),

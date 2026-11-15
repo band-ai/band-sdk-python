@@ -7,15 +7,22 @@ import logging
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
-from band.integrations.codex.types import CodexSessionState
+from band.converters.codex import CODEX_RESUME_RECORD
+from band.integrations.codex.types import CodexRequestMethod, CodexSessionState
 from band.testing import reported_failures
 from tests.adapters.codex.kit import (
     NOTICE_REJECTED,
+    REPLAYED,
     ROOM_ID,
+    TRANSCRIPT,
     FailingNoticeTools,
     ToolSchemaFakeTools,
+    agent_input,
+    answered_turn,
     make_platform_message,
+    replayed_history,
     send_bootstrap,
+    stored,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -158,32 +165,34 @@ class TestSlashCommandCoverage:
         )
 
     @pytest.mark.asyncio
-    async def test_thread_archive_clears_raw_history(self) -> None:
-        """/thread archive also clears raw history and injection state."""
-        events = [
-            turn_completed(),
-        ]
-        fake_client = FakeCodexClient(events=events)
+    async def test_thread_archive_starts_a_fresh_thread_seeded_from_the_room(
+        self,
+    ) -> None:
+        """After /thread archive the next turn starts a new thread, replays the
+        room's stored transcript into it, and records it in place of the old."""
+        fake_client = FakeCodexClient(
+            events=[*answered_turn("turn-1"), *answered_turn("turn-2")]
+        )
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        tools = ToolSchemaFakeTools()
-
         await adapter.on_started("Agent", "A coding agent")
-        await send_bootstrap(adapter, tools=tools)
-
-        # Seed raw history and injection flag
-        adapter._raw_history_by_room[ROOM_ID] = [{"role": "user", "content": "hi"}]
-        adapter._needs_history_injection.add(ROOM_ID)
-
-        await deliver_message(
-            adapter,
-            make_platform_message(content="/thread archive"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=False,
-            room_id=ROOM_ID,
+        tools = ToolSchemaFakeTools()
+        seeding = agent_input("hello", tools, raw_history=TRANSCRIPT)
+        archive = agent_input("/thread archive", tools, is_session_bootstrap=False)
+        following = agent_input("start over", tools, is_session_bootstrap=False)
+        tools.set_room_context(
+            [*TRANSCRIPT, *(stored(i.msg) for i in (seeding, archive, following))]
         )
 
-        assert ROOM_ID not in adapter._raw_history_by_room
-        assert ROOM_ID not in adapter._needs_history_injection
+        await adapter.on_event(seeding)
+        await adapter.on_event(archive)
+        await adapter.on_event(following)
+
+        assert fake_client.request_methods.count(CodexRequestMethod.THREAD_START) == 2
+        first, second = fake_client.params_of(CodexRequestMethod.TURN_START)
+        assert second["threadId"] != first["threadId"]
+        (history,) = replayed_history(second)
+        assert REPLAYED in history
+        assert "[Alice]: hello" in history
+        assert CODEX_RESUME_RECORD.candidates(tools.events_sent) == {
+            ROOM_ID: second["threadId"]
+        }

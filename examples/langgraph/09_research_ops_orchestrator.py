@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=4.0.0"]
+# dependencies = ["band-sdk[langgraph]>=6.0.1"]
 # ///
 """
 Custom LangGraph orchestrator with platform tools and subgraph delegation.

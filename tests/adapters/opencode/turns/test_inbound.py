@@ -7,6 +7,7 @@ import pytest
 from band.core.exceptions import InputNotAccepted
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
+from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.opencode.helpers import (
     APPROVED_ASK_NOTICES,
     FIRST_ANSWER,
@@ -51,7 +52,7 @@ class TestInbound:
             },
         )
         adapter = make_adapter(fake_client)
-        approver_tools = FakeAgentTools()
+        approver_tools = FakeAgentTools(participants=ROOM_MEMBERS)
 
         await run_single_turn(adapter, tools, content="run it")
         await deliver_followup(
@@ -71,7 +72,7 @@ class TestInbound:
             prompt_event_sequences=[[event_message_updated("sess-1", "msg-1")]]
         )
         adapter = make_adapter(fake_client)
-        busy_tools = FakeAgentTools()
+        busy_tools = FakeAgentTools(participants=ROOM_MEMBERS)
         running_turn = asyncio.create_task(run_single_turn(adapter, tools))
         await wait_for(lambda: len(fake_client.prompt_calls) == 1)
 
@@ -102,8 +103,8 @@ class TestInbound:
         adapter = make_adapter(fake_client)
         first_tools, busy_tools, next_tools = (
             HeldReplyTools(),
-            FakeAgentTools(),
-            FakeAgentTools(),
+            FakeAgentTools(participants=ROOM_MEMBERS),
+            FakeAgentTools(participants=ROOM_MEMBERS),
         )
         running_turn = asyncio.create_task(run_single_turn(adapter, first_tools))
         await first_tools.reply_entered.wait()
@@ -133,8 +134,8 @@ class TestInbound:
         adapter = make_adapter(fake_client)
         first_tools, busy_tools, next_tools = (
             HeldReplyTools(),
-            FakeAgentTools(),
-            FakeAgentTools(),
+            FakeAgentTools(participants=ROOM_MEMBERS),
+            FakeAgentTools(participants=ROOM_MEMBERS),
         )
         await park_turn(adapter, first_tools)
         await approve(adapter)

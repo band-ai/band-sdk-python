@@ -164,10 +164,10 @@ class Backends(BaseSettings):
 
     # OpenCode server.
     opencode_base_url: str = ""  # OPENCODE_BASE_URL (a running `opencode serve`)
-    opencode_provider_id: str = "opencode"  # OPENCODE_PROVIDER_ID (the Zen provider)
-    # A current OpenCode Zen *free* model (the catalogue shifts; confirm against the
-    # server's /config/providers). Overridable via OPENCODE_MODEL_ID.
-    opencode_model_id: str = "mimo-v2.6-flash-free"  # OPENCODE_MODEL_ID
+    # Our own Anthropic key (ANTHROPIC_API_KEY), which the serve's config reads.
+    opencode_provider_id: str = "anthropic"  # OPENCODE_PROVIDER_ID
+    # In the /config/providers catalogue of the version setup-opencode.sh pins.
+    opencode_model_id: str = ANTHROPIC_MODEL  # OPENCODE_MODEL_ID
     # Whether the serve behind opencode_base_url gates its `bash` tool to `ask`.
     # Only the server's own permission rules decide when it raises a
     # `permission.asked`, so the manual-approval smoke has no way to provoke one
@@ -203,19 +203,33 @@ class Backends(BaseSettings):
     cursor_command: str = ""  # CURSOR_COMMAND (override the `agent` binary + args)
     cursor_api_key: str = Field(default="", repr=False)  # CURSOR_API_KEY
 
+    # JSON argv preserves executable paths and arguments containing spaces.
+    antigravity_command: tuple[str, ...] | None = None  # ANTIGRAVITY_COMMAND
+
     # OMP (oh-my-pi) over ACP (`omp_acp` adapter). Defaults to `omp acp` with
     # provider-qualified OMP_MODEL (passed as --model); override binary/args via OMP_COMMAND.
+    # Native RPC needs its own complete override because ACP requires a subcommand.
     omp_command: str = ""  # OMP_COMMAND
+    omp_native_command: str = ""  # OMP_NATIVE_COMMAND (defaults to `omp --mode rpc`)
     omp_model: str = DEFAULT_OMP_MODEL  # OMP_MODEL
 
-    # Copilot-hosted auth for the non-BYOK smokes in test_copilot_acp.py; the
-    # BYOK matrix cells never read it. Those smokes skip when unset.
+    # Copilot-hosted auth for the non-BYOK smokes in smoke/adapters/copilotacp/;
+    # the BYOK matrix cells never read it. Those smokes skip when unset.
     github_token: str = Field(default="", repr=False)  # GITHUB_TOKEN
-    # Those smokes' typed model (see hermetic_copilot_config) rather than
-    # Copilot's own pick, which can be an expensive reasoning-tier model
-    # (observed: gpt-5.6-terra); OPENAI_MODEL keeps billed turns cheap and
-    # deterministic.
+    # The model those smokes' billed turns run on (hosted auth, the live
+    # switch's starting model) rather than Copilot's own pick, which can be an
+    # expensive reasoning-tier model (observed: gpt-5.6-terra); OPENAI_MODEL
+    # keeps billed turns cheap and deterministic.
     copilot_hosted_model: str = OPENAI_MODEL  # COPILOT_HOSTED_MODEL
+
+    @field_validator("antigravity_command")
+    @classmethod
+    def validate_antigravity_command(
+        cls, value: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        if value is not None and (not value or any(not arg.strip() for arg in value)):
+            raise ValueError("ANTIGRAVITY_COMMAND must contain nonempty argv entries")
+        return value
 
     @field_validator("codex_model")
     @classmethod

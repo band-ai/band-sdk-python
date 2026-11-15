@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=4.0.0"]
+# dependencies = ["band-sdk[langgraph]>=6.0.1"]
 # ///
 """
 Simple LangGraph agent example using the composition API.

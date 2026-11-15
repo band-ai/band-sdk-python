@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         RoomDeletedPayload,
         RoomRemovedPayload,
     )
+    from band.client.streaming.readiness import ResumedCallback, RoomReadyCallback
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ class SubscriptionManager:
         *,
         on_room_added: Callable[[RoomAddedPayload], Awaitable[None]],
         on_room_removed: Callable[[RoomRemovedPayload], Awaitable[None]],
+        on_resumed: ResumedCallback | None = None,
     ) -> None:
         """Subscribe to agent room events (room_added/removed)."""
         await self._subscribe_agent_topic(
@@ -122,6 +124,7 @@ class SubscriptionManager:
                 agent_id,
                 on_room_added=on_room_added,
                 on_room_removed=on_room_removed,
+                on_resumed=on_resumed,
             ),
             ws,
         )
@@ -135,6 +138,7 @@ class SubscriptionManager:
         on_participant_added: Callable[[ParticipantAddedPayload], Awaitable[None]],
         on_participant_removed: Callable[[ParticipantRemovedPayload], Awaitable[None]],
         on_room_deleted: Callable[[RoomDeletedPayload], Awaitable[None]],
+        on_ready: RoomReadyCallback | None = None,
     ) -> None:
         """Subscribe to room messages and participants.
 
@@ -160,6 +164,7 @@ class SubscriptionManager:
                 await ws.join_chat_room_channel(
                     room_id,
                     on_message_created=on_message_created,
+                    on_ready=on_ready,
                 )
             except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
                 logger.warning("Failed to join chat_room:%s: %s", room_id, e)
@@ -378,24 +383,12 @@ class SubscriptionManager:
     def _detect_room_rejoin_failures(
         self, ws: WebSocketClient, joined: frozenset[str]
     ) -> None:
-        """PHXChannelsClient has no per-topic rejoin callback, so this
-        compares its settled post-rejoin registry against the tracker's
-        belief instead -- safe with no race, since PHX's own rejoin pass
-        for every topic completes before this hook fires.
+        """Detect retired room topics after the initial reconnect attempts.
 
-        Only catches an explicit rejoin rejection: a topic hit by a
-        transient failure stays in PHX's own registry ("will retry on next
-        reconnect"), so it still reads as joined here and is caught later
-        if it ever fails for real.
-
-        Reports each candidate's own generation ticket, so a room that was
-        unsubscribed and re-subscribed between the failure and this check
-        is left alone: the tracker rejects the stale ticket as a no-op.
-
-        ``joined`` is a single ``ws.joined_topics()`` snapshot shared across
-        this whole reconnect pass by ``BandLink._on_reconnected`` -- never
-        taken here directly, so all detection in the pass sees the same
-        registry state.
+        Transient recovering topics stay in the transport registry. A missing
+        topic retires only its own tracker generation; a replacement room's
+        ticket makes a delayed report a no-op. The reconnect pass shares one
+        retained-topic snapshot across room and agent-topic detection.
         """
         candidates = self._subscriptions.room_rejoin_candidates()
         if not candidates:
@@ -468,6 +461,14 @@ class SubscriptionManager:
                 ),
                 level=logging.DEBUG,
             )
+            if not self._is_current_session(ws):
+                return
+            retained = ws.joined_topics()
+            if (
+                chat_room_topic(room_id) in retained
+                or room_participants_topic(room_id) in retained
+            ):
+                continue
             self._subscriptions.acknowledge_room_reconciled(room_id=room_id)
             self._rooms_needing_reconciliation.discard(room_id)
 
@@ -490,6 +491,10 @@ class SubscriptionManager:
                 description=f"best-effort reconciliation leave of {topic}",
                 level=logging.DEBUG,
             )
+            if not self._is_current_session(ws):
+                return
+            if topic in ws.joined_topics():
+                continue
             self._subscriptions.acknowledge_agent_topic_reconciled(topic=topic)
             self._agent_topics_needing_reconciliation.discard(topic)
 

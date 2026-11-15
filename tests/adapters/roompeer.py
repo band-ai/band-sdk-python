@@ -11,14 +11,16 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
-from band.runtime.tools import BandTool
+from band.runtime.tools import BAND_MCP_SERVER_NAME, MCP_TOOL_PREFIX, BandTool
 
 WRITE_PREFIX = "WRITE="
 MEMO_PREFIX = "MEMO="
@@ -38,6 +40,11 @@ HOLD_POLL_S = 0.01
 # Flags that fail or hold a peer's start while their file exists.
 FAIL_STARTUP_ARG = "--fail-startup"
 HOLD_STARTUP_ARG = "--hold-startup"
+# The Claude CLI's flag carrying its MCP servers as JSON, and their key.
+MCP_CONFIG_ARG = "--mcp-config"
+MCP_SERVERS_KEY = "mcpServers"
+# A ``${VAR}`` reference the Claude CLI expands in an MCP header value.
+ENV_REFERENCE = re.compile(r"\$\{(\w+)\}")
 
 
 class PeerCommand(StrEnum):
@@ -78,14 +85,45 @@ def reply_text(tool_name: str, value: str) -> str:
     return read_reply(value) if tool_name == "Read" else value
 
 
-async def reply(url: str, content: str) -> None:
+def expand_env(value: str, environ: Mapping[str, str]) -> str:
+    """``value`` with each ``${VAR}`` set in ``environ`` expanded, as the
+    Claude CLI expands MCP header values; an unset one stays as written."""
+    return ENV_REFERENCE.sub(lambda ref: environ.get(ref[1], ref[0]), value)
+
+
+def dialed_server(
+    config: Mapping[str, Any], environ: Mapping[str, str]
+) -> dict[str, Any]:
+    """An MCP server config with its headers as the Claude CLI sends them."""
+    headers = {
+        name: expand_env(value, environ)
+        for name, value in config.get("headers", {}).items()
+    }
+    return {**config, "headers": headers}
+
+
+def band_server(mcp_config: str) -> dict[str, Any]:
+    """The Band MCP server in a Claude CLI ``--mcp-config`` JSON argument."""
+    config = json.loads(mcp_config)[MCP_SERVERS_KEY][BAND_MCP_SERVER_NAME]
+    return dialed_server(config, os.environ)
+
+
+async def reply(server: dict[str, Any], content: str, hooks: ToolHooks) -> None:
+    from band.integrations.claude_sdk.activity import CLAUDE_TOOL_USE_META  # noqa: PLC0415 -- the Codex peer runs without the optional Claude SDK
+
     async with (
-        streamable_http_client(url) as (read, write, *_),
+        create_mcp_http_client(headers=server["headers"]) as http,
+        streamable_http_client(server["url"], http_client=http) as (read, write, *_),
         ClientSession(read, write) as session,
     ):
         await session.initialize()
+        call_id = uuid.uuid4().hex
+        arguments = {"content": content, "mentions": ["@alice"]}
+        hooks.before_tool(
+            f"{MCP_TOOL_PREFIX}{BandTool.SEND_MESSAGE}", arguments, call_id
+        )
         result = await session.call_tool(
-            BandTool.SEND_MESSAGE, {"content": content, "mentions": ["@alice"]}
+            BandTool.SEND_MESSAGE, arguments, meta={CLAUDE_TOOL_USE_META: call_id}
         )
         if result.isError:
             raise RuntimeError(f"The Band reply tool failed: {result.content}")
@@ -134,6 +172,47 @@ def initialize(failure: Path | None, hold: Path | None) -> bool:
 def rollout_path(home: Path, thread_id: str) -> Path:
     """Where the Codex peer saves ``thread_id`` under ``home``."""
     return home / f"{thread_id}.json"
+
+
+class ToolHooks:
+    """Honor the Claude SDK's registered native identity hooks over real stdio."""
+
+    def __init__(self) -> None:
+        self.registered: dict[str, list[dict[str, Any]]] = {}
+
+    def before_tool(self, name: str, arguments: dict[str, Any], call_id: str) -> None:
+        for entry in self.registered.get("PreToolUse", []):
+            matcher = entry.get("matcher")
+            if matcher not in (None, "*") and re.search(matcher, name) is None:
+                continue
+            for callback_id in entry["hookCallbackIds"]:
+                request_id = uuid.uuid4().hex
+                emit(
+                    {
+                        "type": "control_request",
+                        "request_id": request_id,
+                        "request": {
+                            "subtype": "hook_callback",
+                            "callback_id": callback_id,
+                            "tool_use_id": call_id,
+                            "input": {
+                                "hook_event_name": "PreToolUse",
+                                "session_id": "workspace-peer",
+                                "cwd": str(Path.cwd()),
+                                "transcript_path": "",
+                                "tool_name": name,
+                                "tool_input": arguments,
+                                "tool_use_id": call_id,
+                            },
+                        },
+                    }
+                )
+                response = json.loads(sys.stdin.readline())["response"]
+                if (
+                    response["request_id"] != request_id
+                    or response["subtype"] != "success"
+                ):
+                    raise RuntimeError(f"Claude hook failed: {response}")
 
 
 class AppServer:
@@ -295,10 +374,11 @@ def main() -> None:
     parser.add_argument(FAIL_STARTUP_ARG, type=Path)
     parser.add_argument(HOLD_STARTUP_ARG, type=Path)
     parser.add_argument("--stay", action="store_true")
-    parser.add_argument("--band-url")
+    parser.add_argument(MCP_CONFIG_ARG)
     parser.add_argument("--home", type=Path, default=Path(CODEX_HOME))
     options = parser.parse_args()
     tool_name = ""
+    hooks = ToolHooks()
     server = AppServer(options.home, options.fail_startup, options.hold_startup)
     for line in sys.stdin:
         message = json.loads(line)
@@ -307,6 +387,8 @@ def main() -> None:
             continue
         match message["type"]:
             case "control_request":
+                if message["request"]["subtype"] == "initialize":
+                    hooks.registered = message["request"].get("hooks") or {}
                 failed = message["request"]["subtype"] == "initialize" and initialize(
                     options.fail_startup, options.hold_startup
                 )
@@ -334,6 +416,8 @@ def main() -> None:
                     return
                 request = file_request(content)
                 tool_name = request["tool_name"]
+                tool_use_id = uuid.uuid4().hex
+                hooks.before_tool(tool_name, request["input"], tool_use_id)
                 emit(
                     {
                         "type": "control_request",
@@ -342,7 +426,7 @@ def main() -> None:
                             "subtype": "can_use_tool",
                             "tool_name": tool_name,
                             "input": request["input"],
-                            "tool_use_id": "file-operation",
+                            "tool_use_id": tool_use_id,
                         },
                     }
                 )
@@ -357,8 +441,14 @@ def main() -> None:
                     if denied
                     else perform(tool_name, response["response"]["updatedInput"])
                 )
-                if options.band_url is not None and not denied:
-                    asyncio.run(reply(options.band_url, reply_text(tool_name, result)))
+                if options.mcp_config is not None and not denied:
+                    asyncio.run(
+                        reply(
+                            band_server(options.mcp_config),
+                            reply_text(tool_name, result),
+                            hooks,
+                        )
+                    )
                 emit(
                     {
                         "type": "assistant",

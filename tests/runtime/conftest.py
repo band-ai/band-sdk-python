@@ -17,6 +17,7 @@ conftest when building oneshot/REST-side fixtures.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -33,9 +34,16 @@ from band_rest import (
 )
 
 from band.core.types import PlatformConnection, PlatformMessage
+from band.runtime.execution import ExecutionContext
 from band.runtime.presence import RoomPresence
-from tests.conftest import make_participant_mock
-from tests.runtime.helpers import AGENT_ID
+from tests.activitysupport import install_activity_support
+from tests.conftest import make_participant_mock, mirror_settlement_results
+from tests.runtime.helpers import AGENT_ID, WAIT_SECONDS
+
+
+@pytest.fixture(autouse=True)
+def pinned_periodic_wake(periodic_wake_after_the_full_interval: None) -> None:
+    """Every runtime test runs rooms with the pinned first periodic resync."""
 
 
 async def wait_for_condition(
@@ -47,6 +55,31 @@ async def wait_for_condition(
         if asyncio.get_running_loop().time() >= deadline:
             pytest.fail("Timed out waiting for condition")
         await asyncio.sleep(interval)
+
+
+class Waiting:
+    """What a test waits on in a started room, on the loop's clock."""
+
+    @staticmethod
+    async def until(condition: Callable[[], bool]) -> None:
+        await wait_for_condition(condition, timeout=WAIT_SECONDS)
+
+    @staticmethod
+    async def suspended(ctx: ExecutionContext) -> None:
+        """Wait for the consumer to finish its pass and suspend or exit."""
+        while True:
+            wait = ctx.scheduler.queue_wait
+            # An expiring wait still owes its reconciliation pass.
+            if ctx.scheduler.current_pass is None and (
+                not ctx.is_running
+                or (
+                    wait is not None
+                    and not wait.expired()
+                    and ctx.scheduler.queue.empty()
+                )
+            ):
+                return
+            await asyncio.sleep(0)
 
 
 def admit_room(presence: RoomPresence, room_id: str) -> None:
@@ -237,6 +270,7 @@ def make_link_mock(
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
+    mirror_settlement_results(link)
     link.report_activity = AsyncMock(return_value=True)
     link.disconnect = AsyncMock()
     return link
@@ -255,7 +289,14 @@ def link(mock_rest_client: MagicMock) -> MagicMock:
     link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
+    mirror_settlement_results(link)
     link.get_next_message = AsyncMock(return_value=None)
     link.get_stale_processing_messages = AsyncMock(return_value=[])
     link.report_activity = AsyncMock(return_value=True)
     return link
+
+
+@pytest.fixture(autouse=True)
+def runtime_activity_support(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every runtime test on a platform that already advertised detail."""
+    install_activity_support(monkeypatch, learned=True)

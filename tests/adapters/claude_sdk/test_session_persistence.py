@@ -1,3 +1,5 @@
+"""Persist completed Claude sessions for room-local resume with retried records."""
+
 from __future__ import annotations
 
 import re
@@ -80,3 +82,25 @@ class TestSessionPersistence:
 
         assert room.chat == ["answered anyway"]
         assert room.persisted_sessions == []
+
+    async def test_a_failed_resume_record_is_retried_then_posted_only_once(
+        self, claude_room: OpenRoom
+    ) -> None:
+        room = await claude_room()
+        room.claude.script(
+            [room.model_reply("first")],
+            [room.model_reply("second")],
+            [room.model_reply("third")],
+        )
+        room.tools.send_event_error = ConnectionError("events endpoint down")
+
+        await room.send("hello")
+        assert room.persisted_sessions == []
+        room.tools.send_event_error = None
+        await room.send("again")
+        await room.send("and again")
+
+        [session] = room.claude.sessions
+        assert room.persisted_sessions == [session.session_id]
+        assert room.claude.resumed == [None]
+        assert room.chat == ["first", "second", "third"]

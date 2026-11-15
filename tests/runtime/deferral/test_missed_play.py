@@ -1,3 +1,5 @@
+"""A missed PLAY releases busy work at the existing reconciliation boundary."""
+
 from __future__ import annotations
 
 from band.platform.link import BandLink
@@ -29,16 +31,16 @@ class TestMissedPlay:
                     enable_context_hydration=False, enable_working_state=False
                 ),
             )
-            await ctx._reconcile()
+            await ctx.scheduler.run_pass(recovery=True)
             ctx.stop_room()
             peer.stopped = True
-            await ctx._reconcile()
+            await ctx.scheduler.run_pass(recovery=True)
             assert peer.marked("processed") == []
             # PLAY was lost on the socket; /next's accepted gate discovers it.
             peer.stopped = False
             adapter.reject = False
             peer.add_message("D")
-            await ctx._reconcile()
+            await ctx.scheduler.run_pass(recovery=True)
             assert adapter.completed == ["B", "D"]
             assert peer.marked("processed") == ["B", "D"]
             assert peer.marked("failed") == []

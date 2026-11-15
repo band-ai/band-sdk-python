@@ -1,3 +1,5 @@
+"""A one-shot control acknowledges only itself and a rejection never drains."""
+
 from __future__ import annotations
 
 from band.platform.link import BandLink

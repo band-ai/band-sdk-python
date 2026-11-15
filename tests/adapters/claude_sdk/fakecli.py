@@ -27,8 +27,10 @@ from mcp import ClientSession
 
 from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
 from band.integrations.claude_sdk import session_manager
+from band.integrations.claude_sdk.activity import CLAUDE_TOOL_USE_META
 from band.integrations.mcp import BandMCPTransport
 from tests.adapters.hold import Hold
+from tests.adapters.roompeer import dialed_server
 from tests.baseline.decisions import ModelDecision, ToolCall
 from tests.mcpclient import mcp_session
 
@@ -36,6 +38,7 @@ MODEL = "claude-fake"
 # What the fake raises when its startup or its close fails.
 STARTUP_EXITED = "Claude CLI exited during startup"
 CLEANUP_FAILED = "Claude CLI cleanup failed"
+TASK_STOP_REFUSED = "Claude native task stop refused"
 MCP_DISCONNECTED = "Band MCP endpoint disconnected"
 # acceptEdits auto-approves these file-writing tools.
 EDIT_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
@@ -158,6 +161,8 @@ class FakeClaude:
         # Parks the next close; the session that reaches it takes it.
         self.closing: Hold | None = None
         self.refuse_close = False
+        self.stop_requests: asyncio.Queue[str] = asyncio.Queue()
+        self.refuse_task_stop = False
 
     def script(self, *turns: Turn) -> None:
         self._turns.extend(turns)
@@ -283,6 +288,18 @@ class FakeCLISession(Transport):
         request = message["request"]
         if request["subtype"] == "initialize":
             self._hooks = request.get("hooks") or {}
+        if request["subtype"] == "stop_task":
+            self.claude.stop_requests.put_nowait(request["task_id"])
+            if self.claude.refuse_task_stop:
+                self._emit(
+                    type="control_response",
+                    response={
+                        "subtype": "error",
+                        "request_id": message["request_id"],
+                        "error": TASK_STOP_REFUSED,
+                    },
+                )
+                return
         self._emit(
             type="control_response",
             response={
@@ -441,7 +458,7 @@ class FakeCLISession(Transport):
                 "tool_use_id": tool_use_id,
                 "tool_input": call.arguments,
             }
-        content, is_error = await self._execute(call)
+        content, is_error = await self._execute(call, tool_use_id)
         self._tool_result(tool_use_id, content, is_error=is_error)
         return None
 
@@ -457,7 +474,9 @@ class FakeCLISession(Transport):
             return {"behavior": "allow"}
         return await self._can_use_tool(tool_use_id, call)
 
-    async def _pre_tool_use(self, tool_use_id: str, call: ToolCall) -> str | None:
+    async def _pre_tool_use(
+        self, tool_use_id: str, call: ToolCall, *, agent_id: str | None = None
+    ) -> str | None:
         decision = None
         for matcher in self._hooks.get("PreToolUse", []):
             if not re.search(matcher.get("matcher") or ".*", call.name):
@@ -469,6 +488,8 @@ class FakeCLISession(Transport):
                     input={
                         "hook_event_name": "PreToolUse",
                         "tool_name": call.name,
+                        "tool_use_id": tool_use_id,
+                        **({"agent_id": agent_id} if agent_id is not None else {}),
                         "tool_input": call.arguments,
                     },
                     tool_use_id=tool_use_id,
@@ -476,6 +497,24 @@ class FakeCLISession(Transport):
                 specific = output["response"].get("hookSpecificOutput") or {}
                 decision = specific.get("permissionDecision", decision)
         return decision
+
+    async def background_tool(
+        self, task_id: str, tool_use_id: str, call: ToolCall
+    ) -> None:
+        """Send a subagent's real control hook and HTTP MCP request."""
+        decision = await self._pre_tool_use(tool_use_id, call, agent_id=task_id)
+        if decision is not None:
+            raise AssertionError(
+                f"Unsupported background permission decision: {decision}"
+            )
+        content, failed = await self._execute(call, tool_use_id)
+        if failed:
+            raise AssertionError(content)
+        self._tool_result(tool_use_id, content, is_error=False)
+
+    def native_event(self, **message: Any) -> None:
+        """Emit a source-ordered native lifecycle frame."""
+        self._emit(**message)
 
     def _ask_rule_matches(self, tool_name: str) -> bool:
         if "project" not in (self.options.setting_sources or []):
@@ -523,21 +562,33 @@ class FakeCLISession(Transport):
             self._served[server] = {tool.name for tool in listing.tools}
         return self._served[server]
 
-    async def _execute(self, call: ToolCall) -> tuple[Any, bool]:
+    async def _execute(self, call: ToolCall, tool_use_id: str) -> tuple[Any, bool]:
         if not call.name.startswith("mcp__"):
             return f"{call.name} ran", False
         _, server, tool = call.name.split("__", 2)
         async with self._mcp(server) as session:
-            result = await session.call_tool(tool, call.arguments)
+            result = await session.call_tool(
+                tool, call.arguments, meta={CLAUDE_TOOL_USE_META: tool_use_id}
+            )
         content = [block.model_dump(exclude_none=True) for block in result.content]
         return content, result.isError
 
-    def _mcp(self, server: str) -> AbstractAsyncContextManager[ClientSession]:
-        """A session to the MCP server the options name, dialed by its URL."""
+    def dialed_server(self, server: str) -> dict[str, Any]:
+        """The MCP server config this CLI dials ``server`` with: its headers
+        expanded from the variables the SDK adds to the CLI's environment."""
         servers = self.options.mcp_servers
         assert isinstance(servers, dict), servers
-        config = servers[server]
-        return mcp_session(config["url"], BandMCPTransport(config["type"]))
+        return dialed_server(servers[server], self.options.env)
+
+    def _mcp(self, server: str) -> AbstractAsyncContextManager[ClientSession]:
+        """A session to the MCP server the CLI was configured with, dialed by
+        its URL and headers."""
+        config = self.dialed_server(server)
+        return mcp_session(
+            config["url"],
+            BandMCPTransport(config["type"]),
+            headers=config["headers"],
+        )
 
     def _tool_result(self, tool_use_id: str, content: Any, *, is_error: bool) -> None:
         self._emit(

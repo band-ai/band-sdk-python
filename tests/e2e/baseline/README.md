@@ -16,7 +16,7 @@ already does it (or nearly does):
 - **A scenario like yours may already exist.** `grep -rl` the `smoke/` tree for
   the behaviour; if a test covers it for one adapter or a hardcoded subset,
   *parametrize/extend it* (or flip a registry selector — `runs_tool_loop=True`,
-  `supports={Capability.MEMORY}`) instead of adding a parallel test. A matrix test
+  `batch_input=True`, `supports={Capability.MEMORY}`) instead of adding a parallel test. A matrix test
   supersedes a hardcoded-list one; delete what it subsumes rather than stacking.
 - **Custom tools / driving instructions already exist** in
   `smoke/samples/sample_tools.py` (`LOOKUP_TOOL`, `WEATHER_TOOL`, `EXECUTION_REPORTING`)
@@ -102,7 +102,7 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
 | several named adapters in one room | `@with_adapters(Adapter.LANGGRAPH, Adapter.ANTHROPIC)` | `agents` — list; `a, b = agents` |
 | two of the **same** adapter | `@with_adapters(Adapter.ANTHROPIC, Adapter.ANTHROPIC)` | `agents` |
 | the **same scenario across every adapter** | `@per_adapter()` (the full matrix, explicitly) | `agent` (id via `agent.adapter_id`) |
-| a **subset** of adapters | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude=[ExcludedAdapter(Adapter.X, "reason")] / supports={Capability.MEMORY} / without={Capability.MEMORY} / runs_tool_loop=True)` | `agent` |
+| a **subset** of adapters | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude=[ExcludedAdapter(Adapter.X, "reason")] / supports={Capability.MEMORY} / without={Capability.MEMORY} / runs_tool_loop=True / batch_input=True)` | `agent` |
 | to **drive the lifecycle yourself** (build-only, reboot, rehydration) | `@per_adapter()` | `cell` — an `AdapterCell` (see **AdapterCell** below) |
 | a **fanned cell A + one different-framework peer B** (cross-framework) | `@per_adapter(exclude=[ExcludedAdapter(Adapter.X, "it is the peer")], peer=Adapter.X)` | `cell` (A) + `peer` (B, an `AdapterCell` you drive); peer deps fold into the cell's `@requires` |
 | custom tools (any tool-capable framework) | `@with_adapters(Adapter.X, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` — one `ToolSpec`, translated per framework (anthropic-family, pydantic-ai, agno) | `agent` |
@@ -152,6 +152,51 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
   `wait_for_processed` durable read).
 - **Inspect (read-after-barrier):** `capture.tool_calls()`, `capture.thoughts()/errors()/tasks()`,
   `capture.memory(agent)` — see the inspection sections below.
+
+### Observing adapter turns
+
+Reply counts cannot show how many model turns ran or which messages shared one. For
+that, pass an `InvocationObserver` (the `invocation_observer` fixture) to the cell:
+it wraps `on_turn` of the real adapter the cell builds — the one model-input builder
+every singleton and batch dispatch reaches — records the original message ids each
+turn was handed, and calls the real method, so admission, judgement and settlement run
+as in production. A `Hold` parks one turn at its entry (its originals are already
+admitted), so everything sent meanwhile queues behind it with no sleeps:
+
+```python notest
+# batch_input=True: every adapter whose class declares supports_batch_input
+@per_adapter(batch_input=True)
+async def test_queued_messages(
+    cell, resource_manager, user_ops, reply_capture, invocation_observer
+):
+    async with cell.running(
+        session_config=SessionConfig(consume_all_queued=True),
+        observer=invocation_observer,
+    ) as agent:
+        room_id = await resource_manager.provision_room(participants=[agent.id])
+        async with reply_capture(room_id) as capture:
+            send = functools.partial(
+                user_ops.send_message,
+                room_id,
+                mention_id=agent.id,
+                mention_name=agent.name,
+            )
+            hold = invocation_observer.hold_next(room_id)
+            first = await send("first")
+            await hold.entered()  # the first turn is open
+            queued = [await send("a"), await send("b"), await send("c")]
+            hold.release()
+            await capture.wait_for_processed(queued[-1], agent.id)
+    assert invocation_observer.partition(room_id) == [(first,), tuple(queued)]
+```
+
+`smoke/samples/queuedroom.py` wraps this flow for the queued-message smokes. Parked turns
+are freed when the cell's run block exits, so a failing test never waits on its own hold.
+An attempt the adapter turns away as busy (`InputNotAccepted`, e.g. while an approval is
+pending) started no execution, so `partition` leaves it out and
+`invocation_observer.handed(room_id)` lists every original the real turns ran, once per
+turn. A bespoke adapter (the approval smokes) takes the same `session_config=` and
+`observer=` through `running_provisioned_agent`.
 
 ## Rules (clean, lean, reuse — no reinvention)
 
@@ -218,14 +263,16 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `toolkit/adapters.py` | E2E registry core: the `@adapter` decorator + registry, `spec_for`, `build_adapter`, `specs`, `adapter_lane`, and the registry/discovery guard |
 | `toolkit/builders.py` | the per-framework `@adapter` builder functions (one `_build_*` each); imported by `adapters.py` for the registration side-effect — no public API. Add a new adapter's builder here (see `ADDING_AN_ADAPTER.md`) |
 | `toolkit/ci_lanes.py` | the CI-lane partition + workflow-drift guards: `CILane`, `ci_lanes`, `hosting_lanes` (which lanes' `uv` extra can host a framework), `assert_every_adapter_has_a_ci_home`, `assert_workflow_lane_*` |
+| `toolkit/workspaceroot.py` | `InheritedTemporaryDirectory` — an agent workspace root that keeps its parent's permissions, unlike `mkdtemp`/`tmp_path` (owner-only on Windows, which Codex's sandbox cannot enter) |
 | `toolkit/tools.py` | `ToolSpec` — define a custom tool **once** (input model + handler); the builders translate it to each framework's native form |
-| `agents.py` | topology decorators: `@with_adapters(Adapter.X, ...)` (fixed set / one room → `agent`/`agents`), `@per_adapter(*adapters, exclude/supports/without/runs_tool_loop, prompt=, features=, tools=)` (fan across the matrix/subset → `agent`/`cell`); `adapter_params` is the internal parameter source `@per_adapter` feeds to the `adapter_id` fixture |
+| `agents.py` | topology decorators: `@with_adapters(Adapter.X, ...)` (fixed set / one room → `agent`/`agents`), `@per_adapter(*adapters, exclude/supports/without/runs_tool_loop/batch_input, prompt=, features=, tools=)` (fan across the matrix/subset → `agent`/`cell`); `adapter_params` is the internal parameter source `@per_adapter` feeds to the `adapter_id` fixture |
 | `smoke/samples/sample_agents.py` | shared driving glue: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_adapters(..., **SHAPE)` / `@per_adapter(..., **SHAPE)`, and the `*_instruction(...)` builders |
-| `fixtures/agents.py` | the agent fixtures: `agent` (single running `ProvisionedAgent`), `agents` (the `@with_adapters` group), `cell` (an `AdapterCell` to drive yourself), `adapter_id` (internal `@per_adapter` parametrize target) |
+| `fixtures/agents.py` | the agent fixtures: `agent` (single running `ProvisionedAgent`), `agents` (the `@with_adapters` group), `cell` (an `AdapterCell` to drive yourself), `adapter_id` (internal `@per_adapter` parametrize target), `workspace_root` (a root for `workspace_for_room` that native sandboxes can enter; use it instead of `tmp_path`, which is owner-only on Windows) |
 | `agent_wiring.py` | `assert_agent_fixtures_wired` — the collection-time guard that rejects mis-wired decorator/fixture pairings (see **Wiring fences**) |
 | `smoke/samples/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, and the `EXECUTION_REPORTING` shape |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events, `lookup_peers` — the invitable roster) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_reply` (reply barrier), `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
+| `toolkit/invocations.py` | `InvocationObserver`: records each adapter turn (`on_turn` of the real adapter a cell built) with the original message ids it was handed, per room, and parks chosen turns (`hold_next`) so messages queue behind them — see **Observing adapter turns** |
 | `toolkit/deps.py` | pytest-free requirement facts: `Dep` enum, `DepSpec` predicates, `Lane`/`LANE_EXTRAS`, `dep_lane` (the **one** source of the `Dep`/lane facts the registry references without importing pytest) |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
 | `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies; `snapshot()`/`since()`, `mentioning(id)` to filter to replies mentioning a participant, `assert_contains_any`/`assert_mentions`), `ToolCalls`/`ToolCall` + `MemoryToolCalls`, `Events`→`Thoughts`/`Errors`/`Tasks`, `Memories`/`MemoryObservation`; shared `tolerant_match` + `ContentAssertions` |
@@ -237,9 +284,9 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `smoke/` | proof tests that exercise the tools end to end — read these as worked examples — grouped by subject (below) |
 | `smoke/samples/` | shared driving glue (not tests): `sample_agents.py`, `sample_tools.py` |
 | `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_rehydration_offline.py` / `test_rehydration_partial.py` (cold-boot / partial-reboot `/context` recall), `test_rehydration_cross_framework.py` (a different-framework `peer=` authors, A rehydrates), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
-| `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_duplicate_start.py` (the platform refuses a second start of a live agent id under `ConflictPolicy.REJECT`), `test_room_rejoin.py` (a Codex, Claude SDK or ACP agent removed from a room and re-added answers again), `test_agent_scenarios.py`, `approvals/test_approvals.py` (chat-mediated approve/decline/timeout for every coding agent; builds via `smoke/samples/approvals.py`) |
+| `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_failure_continuation.py` (a lost FAILED response blocks singleton replay until confirmation), `test_processing_barrier.py`, `test_isolation.py`, `test_duplicate_start.py` (the platform refuses a second start of a live agent id under `ConflictPolicy.REJECT`), `test_room_rejoin.py` (a Codex, Claude SDK or ACP agent removed from a room and re-added answers again), `test_agent_scenarios.py`, `approvals/test_approvals.py` (chat-mediated approve/decline/timeout for every coding agent; builds via `smoke/samples/approvals.py`), `test_queued_messages.py` / `test_queued_rooms.py` (what an invocation is handed when messages queue behind a busy turn, `consume_all_queued` on and off; every adapter declaring `supports_batch_input`; drives `smoke/samples/queuedroom.py`) |
 | `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py`, `test_usage.py` (the `Emit.USAGE` fan), plus `test_next_actionable_semantics.py` (a platform `/next` invariant, `@lane`-pinned since it runs no adapter) |
-| `smoke/adapters/` | adapter-specific showcases: `test_a2a.py`, `test_a2a_gateway.py`, `test_a2a_roundtrip.py` (+ their shared `a2aServer.py` fixture -- a scripted, non-Band A2A counterparty), `test_agno.py`, `test_copilot_acp.py`, `copilotsdk/`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
+| `smoke/adapters/` | adapter-specific showcases: `test_a2a.py`, `test_a2a_gateway.py`, `test_a2a_roundtrip.py` (+ their shared `a2aServer.py` fixture -- a scripted, non-Band A2A counterparty), `test_agno.py`, `copilotacp/`, `copilotsdk/`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
 
 The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 (`settings`, `requires`, `agents`, `conftest`) is the pytest wiring.
@@ -257,7 +304,7 @@ fixture-closure / platform-touching cases under `guards/`.
 ## Fixtures (from `conftest.py`)
 
 `baseline_settings`, `user_ops`, `second_user_ops`, `resource_manager`,
-`reply_capture`, `judge`, `agent`, `agents`, `cell`, `adapter_id`, `baseline_ws`.
+`reply_capture`, `invocation_observer`, `judge`, `agent`, `agents`, `cell`, `adapter_id`, `baseline_ws`.
 
 - `second_user_ops` drives a second human (`BAND_API_KEY_USER_2`), for scenarios
   where who sends a message matters (e.g. an approver allowlist). It fails, never
@@ -299,6 +346,10 @@ defaults (a method argument overrides).
 | `await cell.provision(label=…)` | registers a tracked+reaped identity (`ProvisionedAgent`) | yes | no |
 | `async with cell.run_as(identity)` | runs a *fresh* adapter under an existing identity | no | yes |
 | `async with cell.running(label=…)` | provision **and** run in one step (what `agent` uses) | yes | yes |
+
+`run_as` / `running` also take `session_config=` (the agent's execution policy, e.g.
+`SessionConfig(consume_all_queued=True)`) and `observer=` (an `InvocationObserver`; see
+**Observing adapter turns**).
 
 Build-only (cheap, sync test):
 
@@ -400,7 +451,7 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | Run a specific named agent | `@with_adapters(Adapter.ANTHROPIC)` → `agent` (or `agents` for several); auto-gates + runs + reaps |
 | Run a standard prompt/features shape | `@with_adapters(Adapter.X, **TOOL_AGENT)` / `**MEMORY_AGENT` — don't re-spell `prompt=`/`features=` |
 | Run the same scenario across every adapter | `@per_adapter()` → `agent` (id via `agent.adapter_id`) |
-| Run a scenario across a subset | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude= by id, supports=/without={Capability.MEMORY} by capability, or runs_tool_loop=True for the custom-tool subgroup)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
+| Run a scenario across a subset | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude= by id, supports=/without={Capability.MEMORY} by capability, runs_tool_loop=True for the custom-tool subgroup, or batch_input=True for the adapters declaring batch support)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
 | Drive the agent lifecycle myself (build-only / reboot / rehydration) | `@per_adapter()` → `cell` (`cell.build()` / `cell.provision()` / `cell.run_as()` — see **AdapterCell**) |
 | Clean up what I created | nothing: `resource_manager` reaps on teardown (`BAND_E2E_AUTOCLEAN=false` keeps it for debugging). Each provision gets its own name, so a missed reap cannot block the next cell. |
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
@@ -412,6 +463,9 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | Wait for a specific delivery state (e.g. a failure) | `await capture.wait_for_delivery(mid, agent_id, until={DeliveryStatus.FAILED})` |
 | Inspect the delivery lifecycle | `capture.delivery_status(mid, agent_id)` / `capture.delivery_history(mid, agent_id)` |
 | Wait on a custom condition | `await capture.wait_until(predicate)` |
+| Count an agent's turns / see which original messages each was handed | `cell.running(observer=invocation_observer)`, then `invocation_observer.partition(room_id)` — one tuple of message ids per turn |
+| Make messages queue behind a busy turn, deterministically | `hold = invocation_observer.hold_next(room_id)`, send, `await hold.entered()`, send more, `hold.release()` |
+| Run the agent with an execution policy (e.g. `consume_all_queued`) | `cell.running(session_config=SessionConfig(...))` / `cell.run_as(identity, session_config=...)` |
 | Scope a read to a later turn (reused capture) | `mark = capture.messages.snapshot()` before sending; `capture.messages.since(mark)` after the barrier |
 | See which tools fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (needs `Emit.TOOL_CALLS`; memory tools excluded — `include_memory=True` or `capture.memory(agent)`) |
 | Assert a specific tool fired | `calls.assert_fired("name", with_args={...})` (case-insensitive, subset args) |
@@ -467,18 +521,27 @@ Each message carries a per-recipient delivery state, exposed as
 DELIVERED -> PROCESSING -> PROCESSED | FAILED
 ```
 
-`FAILED` is **not** terminal — the platform's `/next` serves a failed message again,
+`FAILED` is **not** terminal on the platform — `/next` serves a failed message again,
 so a new agent process (or execution context) may cycle it `FAILED -> PROCESSING`
 before `PROCESSED`. The running agent skips a message once it has failed
 `max_message_retries` times (default 1), so it does not retry the message itself.
 `PROCESSED` is the only success terminal.
 
+`wait_for_processed` and `wait_for_reply` therefore raise `DeliveryFailedError` as
+soon as a message fails, instead of waiting out the deadline. A test whose agent is
+configured to retry passes `retries=` (its `max_message_retries - 1`) to wait
+through that many failures.
+
 ```python notest
 mid = await user_ops.send_message(room_id, "...", mention_id=a.id, mention_name=a.name)
 
-# Success barrier (the common case): wait until PROCESSED. Waits through any
-# transient FAILED; on timeout it reports the last status + attempt error.
+# Success barrier (the common case): wait until PROCESSED. A FAILED message
+# raises DeliveryFailedError at once; on timeout it reports the last status +
+# attempt error.
 await capture.wait_for_processed(mid, a.id)
+
+# An agent configured to retry once (max_message_retries=2):
+await capture.wait_for_processed(mid, a.id, retries=1)
 
 # Any specific state(s): the general waiter, returns the DeliveryStatus reached.
 reached = await capture.wait_for_delivery(mid, a.id, until={DeliveryStatus.FAILED})
@@ -578,8 +641,9 @@ the `dev` extra but are split out for isolation.
 | `nooa` | `dev-strands-nooa` | nooa | Anthropic key; Python 3.12–3.13 on POSIX; Linux-only E2E lane |
 | `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth |
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
-| `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
-| `backends` | `dev` | codex, opencode, copilot_acp, cursor_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), the `copilot` CLI (`Dep.COPILOT_CLI` + `Dep.ANTHROPIC` — Anthropic BYOK; optional `GITHUB_TOKEN` for the Copilot-hosted smokes), and Cursor `agent` CLI (`CURSOR_API_KEY` in CI; local `agent login` also works) |
+| `google` | `dev` | gemini, google_adk, antigravity_acp | provider keys and the checksum-pinned Antigravity native bundle; split from `core` so Google rate-limit flakiness is isolated |
+| `backends` | `dev` | codex, copilot_acp, cursor_acp | the CLI coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), the `copilot` CLI (`Dep.COPILOT_CLI` + `Dep.ANTHROPIC` — Anthropic BYOK; optional `GITHUB_TOKEN` for the Copilot-hosted smokes), and Cursor `agent` CLI (`CURSOR_API_KEY` in CI; local `agent login` also works) |
+| `opencode` | `dev` | opencode | a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`) on Anthropic (`ANTHROPIC_API_KEY`) |
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 | `parlant` | `dev-parlant` | *(none — parlant is a bespoke smoke, not a registered matrix adapter; pinned via `@lane(Lane.PARLANT)`)* | provider keys; isolated venv (parlant's `griffe`/`griffelib` transitive deps collide with pydantic_ai's — `pyproject.toml [tool.uv] conflicts`); no server setup — the smoke spins up its own in-process Parlant server |
 
@@ -594,10 +658,10 @@ E2E_TESTS_ENABLED=true BAND_E2E_LANE=backends uv run pytest \
   tests/e2e/baseline/ -k cursor_acp -v -s --no-cov
 ```
 
-`backends` folds codex + opencode into one job (both install `dev`, differ only in
+`backends` folds the coding-agent CLIs into one job (all install `dev`, differ only in
 the backend their job stands up) so a job-per-backend isn't needed; the cost is that
-one backend failing to come up can redden the other's cells (the per-adapter report
-still shows which). `google` gets its own lane so Google free-tier rate-limit
+one backend failing to come up can redden the others' cells (the per-adapter report
+still shows which). `opencode` stands alone for the `opencode serve` its job stands up. `google` gets its own lane so Google free-tier rate-limit
 flakiness is isolated; `letta` stands alone for the live Letta server its job stands up;
 `parlant` stands alone because its own venv can't share a resolved environment with
 `pydantic_ai` (unlike every other split above, this one is a packaging conflict, not
@@ -634,7 +698,7 @@ schedulable as-is.
 **Run locally:**
 
 ```bash
-uv sync --extra dev            # the core/google/backends/letta venv
+uv sync --extra dev            # the core/google/backends/opencode/letta venv
 BAND_E2E_LANE=core E2E_TESTS_ENABLED=true \
   uv run pytest tests/e2e/baseline/ -v -s --no-cov
 
@@ -694,10 +758,30 @@ nodeid. Excluded adapters get explicit N/A rows.
   emits nothing.
 - **CI checks every supported lane and OS pair.** Each lane writes
   `artifacts/scorecard-<lane>-<os>.json`. The final job compares every fragment
-  with `expected-cells.json`, including bespoke smokes, and writes a merged grid
+  with `expected-cells.yaml`, including bespoke smokes, and writes a merged grid
   for the run summary. An absent fragment, missing result, required skip, unexpected
-  active cell, or failure reddens the gate. The manifest lists supported OSes
-  for each lane and explicit N/A reasons for environment-gated file cells.
+  active cell, or failure reddens the gate. Supported OSes come from the lane
+  registry, not the manifest.
+- **The manifest stores only what the registry can't derive.** It is grouped by
+  test file, then test:
+
+  ```yaml
+  guards/test_adapter_registry.py:
+    test_every_adapter_has_a_ci_home: all     # adapter-agnostic, every lane
+  smoke/adapters/test_codex.py:
+    test_codex_thoughts_are_not_placeholders: backends   # one lane (@lane / @with_adapters)
+  smoke/activity/test_permission_activity.py::TestPermissionActivity:
+    test_pending_approval_reports_permission_and_clears:
+      pass: [claude_sdk, codex, opencode]     # each in its home lane
+      na:                                     # expected N/A in every lane
+      - reason: no E2E room-approval dialect
+        adapters: [agno, anthropic, ...]
+  ```
+
+  A matrix test carries `lane: <id>` only when `@lane` pins it off its adapters'
+  home lanes; an env-gated adapter-agnostic test is an `na` group whose adapter is
+  `suite`. Loading rejects unknown keys, lanes, and adapters, and regeneration
+  refuses any collected cells the format can't reproduce.
 - **Update the manifest when intentional coverage changes.** Collect the default
   extra, then collect legacy and union Parlant's structurally separate extra:
 
@@ -707,7 +791,7 @@ nodeid. Excluded adapters get explicit N/A rows.
   uv run --isolated --python 3.12 --extra dev-parlant --all-packages python -m tests.e2e.baseline.scorecard manifest --merge-existing
   ```
 
-  Review the JSON diff and keep the conformance collection check passing. The
+  Review the manifest diff and keep the conformance collection check passing. The
   gate derives selected lanes from the workflow dispatch inputs, not from
   whichever fragments happened to arrive.
 
@@ -888,8 +972,30 @@ So `letta` is listed in `LINUX_ONLY_LANES` (`toolkit/deps.py`) and the e2e
 workflow emits no `letta × windows` cell — every other lane runs on both OSes.
 
 `e2e_pending` (which once excluded Letta) is now a reason *string*
-(`str | None`), pinned to an allowlist — empty today — in
+(`str | None`), pinned to an explicit allowlist in
 `tests/framework_conformance/test_agent_wiring_rules.py`.
+
+### Antigravity ACP
+
+The Google lane installs the complete native Antigravity 1.4.3 bundle on Ubuntu
+and Windows through `.github/scripts/setup-antigravity.py`. Both fresh downloads
+and cached archives must match the pinned SHA256 before extraction. CI caches
+only the release archive; each job gets a fresh installation and private native
+session homes.
+
+For a local run, install the complete bundle (including `localharness_external`)
+and put its executable on `PATH`, or set `ANTIGRAVITY_COMMAND` to a JSON argv
+array. Paths and arguments containing spaces remain individual argv entries.
+The dependency gate requires `band-sdk[acp]`, a reachable native executable, and
+`GEMINI_API_KEY` or `GOOGLE_API_KEY` (Gemini takes precedence). Vertex-only
+credentials do not authenticate this server.
+
+The matrix builder uses the shared Gemini model, `auto_decline` for requested
+native permissions, and a disposable workspace and home. Rebuilding through
+`cell.run_as` creates a fresh home, so the ordinary rejoin case tests platform
+history fallback. The dedicated native-resume smoke retains its private home
+across adapter instances to exercise the native load path. Native reads and
+`schedule` can bypass ACP permission requests; `auto_decline` is not a sandbox.
 
 
 ### Legacy OpenAI environments
@@ -904,7 +1010,9 @@ E2E_TESTS_ENABLED=true BAND_E2E_LANE=nooa uv run --locked --isolated --python 3.
 NOOA remains POSIX-only on Python 3.12–3.13; its CI E2E lane is Linux-only.
 Strands runs on both CI operating systems. Core tests retain exact collection
 of lazy legacy matrix cells even though those cells execute in their own lanes.
-Only modules absent at import time (such as Parlant) need a manifest union.
+Only cells whose collection imports an absent module need a manifest union: Parlant's
+smoke, and the Strands and NOOA cells `@per_adapter(batch_input=True)` selects (it
+reads `supports_batch_input` off the adapter class, which core cannot import for them).
 The legacy cross-framework wrapper assigns Strands + LangGraph to the Strands
 lane; `@per_adapter(lane=...)` filters adapter selection and `@lane(...)` assigns
 execution. These are separate decisions.

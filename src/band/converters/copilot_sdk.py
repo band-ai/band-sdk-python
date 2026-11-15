@@ -3,30 +3,42 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from band.core.protocols import HistoryConverter
 from band.core.types import MessageType
+from band.runtime.sessionresume import ResumeRecord
 
 logger = logging.getLogger(__name__)
 
-# Task-event metadata key carrying the room's Copilot session id — the single
-# source of truth shared by the adapter (writer) and this converter (reader).
-SESSION_ID_METADATA_KEY = "copilot_session_id"
+
+class CopilotMetadataKey(StrEnum):
+    """Metadata keys of the Copilot SDK adapter's resume record."""
+
+    ROOM = "copilot_room_id"
+    SESSION = "copilot_session_id"
+
+
+COPILOT_RESUME_RECORD = ResumeRecord(
+    label="Copilot SDK session",
+    room_key=CopilotMetadataKey.ROOM,
+    session_key=CopilotMetadataKey.SESSION,
+)
 
 
 @dataclass
 class CopilotSDKSessionState:
     """Composite state returned by the Copilot SDK converter.
 
-    Combines the text history (for context injection) with an optional
-    ``session_id`` extracted from persisted task events, enabling session
-    resume after process restart.
+    Combines the text history (for context injection) with each room's
+    newest ``COPILOT_RESUME_RECORD`` session, enabling session resume after
+    process restart.
     """
 
     text: str = ""
-    session_id: str | None = None
+    room_to_session: dict[str, str] = field(default_factory=dict)
 
 
 def _format_line(hist: dict[str, Any]) -> str | None:
@@ -54,8 +66,8 @@ class CopilotSDKHistoryConverter(HistoryConverter[CopilotSDKSessionState]):
     """Convert platform history to Copilot SDK text format with session state.
 
     Returns a :class:`CopilotSDKSessionState` containing the text history
-    and an optional ``session_id`` extracted from persisted task events,
-    enabling session resume after process restart.
+    and each room's resumable session, enabling session resume after
+    process restart.
 
     Output example::
 
@@ -74,19 +86,8 @@ class CopilotSDKHistoryConverter(HistoryConverter[CopilotSDKSessionState]):
         self._agent_name = name
 
     def convert(self, raw: list[dict[str, Any]]) -> CopilotSDKSessionState:
-        if not raw:
-            return CopilotSDKSessionState(text="")
-
-        # Scan history in reverse for the latest task event with a session_id.
-        session_id = next(
-            (
-                sid
-                for hist in reversed(raw)
-                if hist.get("message_type") == MessageType.TASK
-                and (sid := (hist.get("metadata") or {}).get(SESSION_ID_METADATA_KEY))
-            ),
-            None,
-        )
-
         lines = [line for hist in raw if (line := _format_line(hist))]
-        return CopilotSDKSessionState(text="\n".join(lines), session_id=session_id)
+        return CopilotSDKSessionState(
+            text="\n".join(lines),
+            room_to_session=COPILOT_RESUME_RECORD.candidates(raw),
+        )

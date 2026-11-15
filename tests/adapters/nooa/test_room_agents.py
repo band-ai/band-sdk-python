@@ -10,6 +10,7 @@ from band.testing.nooa import room_agent_class
 from tests.adapters.nooa.kit import (
     declining_turns,
     prompt_text,
+    received_contents,
     room_message,
     run_turn,
     started_adapter,
@@ -39,7 +40,7 @@ class TestRoomAgents:
         )
 
         assert "secret plan" not in room_b_prompt
-        assert "[Alice]: secret plan" in prompt_text(llm)
+        assert received_contents(llm) == ["secret plan", "and again"]
 
     async def test_a_room_remembers_its_earlier_messages(self) -> None:
         llm = declining_turns(2)
@@ -53,7 +54,7 @@ class TestRoomAgents:
             is_session_bootstrap=False,
         )
 
-        assert "[Alice]: first" in prompt_text(llm)
+        assert received_contents(llm) == ["first", "second"]
 
     async def test_session_start_seeds_the_platform_transcript(self) -> None:
         llm = declining_turns(1)

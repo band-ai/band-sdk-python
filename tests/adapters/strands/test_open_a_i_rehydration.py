@@ -34,7 +34,11 @@ from band.testing import (
     ScriptedStrandsModel,
     TextTurn,
 )
-from tests.adapters.strands.kit import ROOM, SEND_TURN, _make_msg
+from tests.adapters.strands.kit import (
+    ROOM,
+    SEND_TURN,
+    _make_msg,
+)
 from tests.responsespeer import ResponsesPeer
 
 

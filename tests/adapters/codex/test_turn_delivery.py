@@ -227,7 +227,7 @@ class TestTurnDelivery:
         await send_bootstrap(
             adapter,
             tools=tools,
-            history=CodexSessionState(thread_id="thr-old", room_id=ROOM_ID),
+            history=CodexSessionState(room_to_thread={ROOM_ID: "thr-old"}),
         )
 
         methods = fake_client.request_methods

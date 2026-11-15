@@ -27,6 +27,10 @@ class AdapterSupport:
 
 
 SUPPORT: tuple[AdapterSupport, ...] = (
+    AdapterSupport(
+        Adapter.ANTIGRAVITY_ACP,
+        reason="external Antigravity ACP process is outside isolated adapter execution",
+    ),
     AdapterSupport(Adapter.ANTHROPIC, injection="AnthropicAdapter._call_anthropic"),
     AdapterSupport(
         Adapter.CLAUDE_SDK, reason="requires a Claude SDK session injection seam"
@@ -45,6 +49,10 @@ SUPPORT: tuple[AdapterSupport, ...] = (
     AdapterSupport(
         Adapter.OMP_ACP,
         reason="external OMP ACP process is outside isolated adapter execution",
+    ),
+    AdapterSupport(
+        Adapter.OMP,
+        reason="external OMP RPC process is outside isolated adapter execution",
     ),
     AdapterSupport(
         Adapter.LANGGRAPH, reason="requires a graph-model decision translator"

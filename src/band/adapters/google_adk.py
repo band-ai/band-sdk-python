@@ -12,19 +12,27 @@ import functools
 import json
 import logging
 import re
+import sys
 import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
 import httpx
+from band_sdk_core import AgentFailure
 from pydantic import Field, PositiveInt, ValidationError
 from typing_extensions import Unpack
 
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
-from band.core.adapterconfig import BaseAdapterConfig
+from band.core.adapterconfig import DEFAULT_MAX_TOOL_ROUNDS, BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
-from band.core.exceptions import ProviderRunError
+from band.core.exceptions import (
+    HOST_CONTROL_ERRORS,
+    ProviderRunError,
+    ToolRoundsExceededError,
+)
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
     Capability,
@@ -33,29 +41,45 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    ids_of,
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
-    execute_custom_tool,
+    declared_effect,
     find_custom_tool,
+    run_custom_tool,
 )
-from band.runtime.prompts import render_system_prompt
+from band.runtime.formatters import format_current_inputs
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
 from band.runtime.tools import (
     BandTool,
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.tools.effects import turn_effect
+from band.runtime.tools.schema import (
+    format_tool_validation_error,
+    is_failed_tool_output,
+    tool_execution_failure,
+)
+from band.runtime.tools.types import TurnEffect
 
 if TYPE_CHECKING:
     from google.adk.runners import InMemoryRunner
     from google.adk.tools import ToolContext
     from google.genai import Client
 
+    from band.integrations.google_adk.decline import DeclineBatch
+
 logger = logging.getLogger(__name__)
 
 _APP_NAME = "band"
+_PROVIDER = "google_adk"
+
+HISTORY_CONTEXT_START: Final[str] = "[Previous conversation context]"
+HISTORY_CONTEXT_END: Final[str] = "[End of previous context]"
 
 # Extra HTTP attempts per generation request (total attempts = max_retries + 1).
 GOOGLE_ADK_MAX_GENERATION_RETRIES: Final[int] = 10
@@ -67,6 +91,15 @@ _DECLARATION_CANDIDATES: tuple[str, ...] = (
     "_get_declaration",  # google-adk 1.x (current internal API)
     "get_declaration",  # likely public rename candidate
 )
+
+
+@dataclass(frozen=True)
+class TurnPrompt:
+    """Carry rendered input and transcript sizes for orchestration diagnostics."""
+
+    text: str
+    original_transcript_chars: int
+    retained_transcript_chars: int
 
 
 def _redacted_function_response_output(tool_name: str, response: Any) -> str:
@@ -152,13 +185,19 @@ def _require_adk() -> tuple[type, type, type, type, Any]:
 
         @functools.cached_property
         def api_client(self) -> Client:
+            tracking = self._tracking_headers
+            headers: dict[str, str] = tracking() if callable(tracking) else tracking
+            client_options: dict[str, Any] = {}
+            if self.model.startswith("projects/"):
+                client_options["vertexai"] = True
             # aiohttp reconnects outside genai's configured attempt budget.
             return genai.Client(
+                **client_options,
                 http_options=genai.types.HttpOptions(
-                    headers=self._tracking_headers,
+                    headers=headers,
                     retry_options=self.retry_options,
                     httpx_async_client=self.httpx_client,
-                )
+                ),
             )
 
         async def aclose(self) -> None:
@@ -209,7 +248,7 @@ def _get_tool_bridge_class() -> type:
             "google-adk BaseTool has no known declaration method "
             f"(tried: {', '.join(_DECLARATION_CANDIDATES)}). "
             "This adapter relies on overriding the declaration method "
-            "(pinned to google-adk >=1.10,<2). Your installed version "
+            "(pinned to google-adk >=1.10,<3). Your installed version "
             "may be incompatible."
         )
 
@@ -237,11 +276,13 @@ def _get_tool_bridge_class() -> type:
             parameters_schema: dict[str, Any],
             tools: AgentToolsProtocol,
             custom_tools: list[CustomToolDef],
+            batch: DeclineBatch | None = None,
         ):
             super().__init__(name=tool_name, description=tool_description)
             self._parameters_schema = parameters_schema
             self._tools = tools
             self._custom_tools = custom_tools
+            self._batch = batch
 
             # Eagerly build and cache the declaration so schema errors
             # surface at construction time rather than mid-conversation.
@@ -286,32 +327,50 @@ def _get_tool_bridge_class() -> type:
             tool_context: ToolContext,
         ) -> Any:
             """Execute the tool via Band's AgentToolsProtocol."""
+            effect = TurnEffect.OBSERVE
+            round_outcome = self._batch.capture() if self._batch is not None else None
             try:
                 custom_tool = find_custom_tool(self._custom_tools, self.name)
                 if custom_tool:
-                    result = await execute_custom_tool(
-                        custom_tool, args, turn=self._tools.turn
+                    effect = declared_effect(custom_tool[1]) or TurnEffect.OBSERVE
+                    outcome = await run_custom_tool(
+                        custom_tool, args, tools=self._tools
                     )
                 else:
-                    result = await self._tools.execute_tool_call(self.name, args)
-
-                if not isinstance(result, str):
-                    return json.dumps(result, default=str)
-                return result
-            except ValidationError as e:
-                errors = "; ".join(
-                    f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}"
-                    for err in e.errors()
-                )
-                msg = f"Invalid arguments for {self.name}: {errors}"
-                logger.error("Tool %s validation failed: %s", self.name, msg)
-                return msg
-            except ValueError as e:
-                logger.error("Invalid arguments for %s: %s", self.name, e)
-                return str(e)
-            except Exception as e:
+                    effect = turn_effect(self.name)
+                    outcome = await self._tools.execute_tool_call_structured(
+                        self.name, args
+                    )
+                result, succeeded = outcome.value, outcome.ok
+            except HOST_CONTROL_ERRORS:
+                raise
+            except ValidationError as exc:
+                # Platform validation can raise before a structured outcome exists.
+                result = format_tool_validation_error(self.name, exc)
+                succeeded = False
+                logger.error("Tool %s validation failed", self.name)
+            except ValueError as exc:
+                logger.error("Invalid arguments for %s: %s", self.name, exc)
+                result, succeeded = str(exc), False
+            except Exception as exc:
                 logger.exception("Tool %s failed", self.name)
-                return f"Error executing {self.name}: {e}"
+                result = tool_execution_failure(self.name, exc)
+                succeeded = False
+
+            if succeeded and not isinstance(result, str):
+                result = json.dumps(result, default=str)
+
+            if self._batch is not None:
+                self._batch.completed(
+                    tool_context.invocation_id,
+                    self.name,
+                    succeeded,
+                    effect,
+                    round_outcome=round_outcome,
+                )
+            if not succeeded:
+                return {"ok": False, "error": result}
+            return result
 
     # Override every detected declaration method so the bridge works
     # even if ADK renames the internal API in a future minor release.
@@ -342,7 +401,7 @@ def _get_tool_bridge_class() -> type:
             "google-adk BaseTool declaration smoke-test failed. "
             f"Method '{active_methods[0]}' exists but did not return a valid "
             "FunctionDeclaration. The adapter is pinned to google-adk "
-            ">=1.10,<2 — your installed version may be incompatible."
+            ">=1.10,<3 — your installed version may be incompatible."
         ) from exc
 
     return _BandToolBridge
@@ -355,6 +414,7 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
         model: Gemini model name passed to the ADK agent.
         system_prompt: Replaces the rendered Band system prompt entirely.
         custom_section: Extra instructions appended to the rendered prompt.
+        max_tool_rounds: Model calls a single turn may make before it fails.
         max_retries: Extra HTTP attempts per provider generation request;
             never retries a tool or turn. Zero disables recovery. Capped at
             :data:`GOOGLE_ADK_MAX_GENERATION_RETRIES`.
@@ -367,6 +427,8 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
     model: str = GEMINI_MODEL
     system_prompt: str | None = None
     custom_section: str | None = None
+    # ADK's RunConfig rejects ``sys.maxsize`` as ``max_llm_calls``.
+    max_tool_rounds: int = Field(default=DEFAULT_MAX_TOOL_ROUNDS, gt=0, lt=sys.maxsize)
     max_retries: int = Field(
         default=2,
         ge=0,
@@ -376,14 +438,14 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
     max_transcript_chars: PositiveInt = 100_000
 
 
-class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
+class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
     """
     Google ADK adapter using SimpleAdapter pattern.
 
     Uses Google's Agent Development Kit with Gemini models for agent
     interactions, with automatic tool bridging and session management.
 
-    Tool bridges are created per ``on_message`` call with direct references
+    Tool bridges are created per turn with direct references
     to the current ``AgentToolsProtocol`` and custom tools, so each
     invocation is self-contained and safe for concurrent use.
 
@@ -437,7 +499,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         # A fresh InMemoryRunner is created per message, so continuity comes
         # from injecting the accumulated transcript, not from runner state.
         # Thread-safety: the runtime's ExecutionContext guarantees that
-        # on_message is called sequentially per room (single asyncio.Task per
+        # turns run sequentially per room (single asyncio.Task per
         # room with an asyncio.Queue), so no lock is needed here.
         self._room_history: dict[str, GoogleADKMessages] = {}
 
@@ -465,7 +527,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
 
         logger.info("Google ADK adapter started for agent: %s", agent_name)
 
-    def _build_adk_tools(self, tools: AgentToolsProtocol) -> list[Any]:
+    def _build_adk_tools(
+        self, tools: AgentToolsProtocol, batch: DeclineBatch | None = None
+    ) -> list[Any]:
         """Build ADK tool bridges from Band tool schemas."""
         ToolBridge = _get_tool_bridge_class()
         openai_schemas = tools.get_openai_tool_schemas(
@@ -482,6 +546,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     parameters_schema=func_def.get("parameters", {}),
                     tools=tools,
                     custom_tools=self._custom_tools,
+                    batch=batch,
                 )
             )
 
@@ -497,6 +562,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         parameters_schema=func_def.get("parameters", {}),
                         tools=tools,
                         custom_tools=self._custom_tools,
+                        batch=batch,
                     )
                 )
 
@@ -505,7 +571,12 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
     def _create_runner(self, tools: AgentToolsProtocol) -> InMemoryRunner:
         """Create a fresh ADK InMemoryRunner with current tools."""
         ADKAgent, InMemoryRunnerCls, _, Gemini, types = _require_adk()
-        adk_tools = self._build_adk_tools(tools)
+        from band.integrations.google_adk.decline import (  # noqa: PLC0415 -- optional google_adk dependency
+            DeclineBatch,
+        )
+
+        batch = DeclineBatch()
+        adk_tools = self._build_adk_tools(tools, batch)
 
         adk_agent = ADKAgent(
             name=_sanitize_adk_agent_name(self.agent_name),
@@ -517,6 +588,8 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             ),
             instruction=self._system_prompt,
             tools=adk_tools,
+            before_model_callback=batch.before_model,
+            after_model_callback=batch.after_model,
         )
 
         return InMemoryRunnerCls(
@@ -524,9 +597,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             app_name=_APP_NAME,
         )
 
-    async def on_message(
+    async def on_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: GoogleADKMessages,
         participants_msg: str | None,
@@ -536,14 +609,21 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         room_id: str,
     ) -> None:
         """
-        Handle incoming message via Google ADK.
+        Handle one turn over its original messages via Google ADK.
 
         Uses ADK's Runner for the full tool loop. The runner handles
         LLM calls, tool execution, and conversation management.
         """
         _, _, _, _, types = _require_adk()
+        from google.adk.agents.invocation_context import (  # noqa: PLC0415 -- optional google_adk extra
+            LlmCallsLimitExceededError,
+        )
+        from google.adk.agents.run_config import (  # noqa: PLC0415 -- optional google_adk extra
+            RunConfig,
+        )
 
-        logger.debug("Handling message %s in room %s", msg.id, room_id)
+        message_ids = ids_of(messages)
+        logger.debug("Handling messages %s in room %s", message_ids, room_id)
 
         # Initialize or seed per-room history
         if is_session_bootstrap:
@@ -558,9 +638,27 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             # Safety: ensure history exists even if not first message
             self._room_history[room_id] = []
 
+        prompt = self._build_turn_prompt(
+            self._room_history[room_id], messages, participants_msg, contacts_msg
+        )
+        self._remember_inputs(room_id, messages)
+        if prompt.retained_transcript_chars < prompt.original_transcript_chars:
+            logger.warning(
+                "Room %s: Transcript truncated from %d to %d chars "
+                "to stay within token budget",
+                room_id,
+                prompt.original_transcript_chars,
+                prompt.retained_transcript_chars,
+            )
+        if participants_msg:
+            logger.info("Room %s: Participants updated", room_id)
+        if contacts_msg:
+            logger.info("Room %s: Contacts broadcast received", room_id)
+
         # Per-turn usage, summed across the event stream below. Initialized
         # outside the try so the finally can emit whatever accumulated.
         turn_usage = TurnUsage()
+        tool_sequence: list[list[str]] = []
         # None until the try's construction succeeds, so the finally's close()
         # has nothing to do if runner construction itself is what failed.
         runner: InMemoryRunner | None = None
@@ -584,58 +682,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             )
             logger.debug("Room %s: Created new ADK session %s", room_id, session_id)
 
-            # Build the user message content
-            parts: list[str] = []
-
-            # Inject recent accumulated history as transcript for context.
-            # Apply sliding window to avoid unbounded transcript growth.
-            room_history = self._room_history[room_id]
-            if room_history:
-                windowed = room_history[-self.config.max_history_messages :]
-                transcript = self._format_history_transcript(windowed)
-                if transcript:
-                    if len(transcript) > self.config.max_transcript_chars:
-                        original_len = len(transcript)
-                        transcript = transcript[-self.config.max_transcript_chars :]
-                        # Cut to the next newline to avoid a partial first line
-                        nl = transcript.find("\n")
-                        if nl != -1:
-                            transcript = transcript[nl + 1 :]
-                        logger.warning(
-                            "Room %s: Transcript truncated from %d to %d chars "
-                            "to stay within token budget",
-                            room_id,
-                            original_len,
-                            len(transcript),
-                        )
-                    parts.append(
-                        f"[Previous conversation context]\n{transcript}\n"
-                        f"[End of previous context]\n\n"
-                    )
-
-            # Inject participants update
-            if participants_msg:
-                parts.append(f"[System]: {participants_msg}")
-                logger.info("Room %s: Participants updated", room_id)
-
-            # Inject contacts update
-            if contacts_msg:
-                parts.append(f"[System]: {contacts_msg}")
-                logger.info("Room %s: Contacts broadcast received", room_id)
-
-            # Add the actual message
-            parts.append(msg.format_for_llm())
-
             user_content = types.Content(
                 role="user",
-                parts=[types.Part.from_text(text="\n".join(parts))],
-            )
-
-            logger.info(
-                "Room %s: Running ADK agent (bootstrap=%s, history_size=%s)",
-                room_id,
-                is_session_bootstrap,
-                len(room_history),
+                parts=[types.Part.from_text(text=prompt.text)],
             )
 
             # Run the ADK agent - it handles the full tool loop. Usage is
@@ -643,11 +692,17 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             # the loop into one per-turn TurnUsage.
             final_response_text = ""
             model_failure: ProviderRunError | None = None
+            # ADK refuses the model call past max_llm_calls. A landed decline
+            # answers the next request in before_model_callback, which runs
+            # before ADK counts the call, so a decline never uses up the cap.
             async for event in runner.run_async(
                 user_id=room_id,
                 session_id=session_id,
                 new_message=user_content,
+                run_config=RunConfig(max_llm_calls=self.config.max_tool_rounds),
             ):
+                if function_calls := event.get_function_calls():
+                    tool_sequence.append([call.name or "" for call in function_calls])
                 if Emit.USAGE in self.features.emit:
                     turn_usage = turn_usage + self._usage_from_event(event)
 
@@ -655,7 +710,14 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 # run after one, so drain rather than break: breaking leaves
                 # ADK's nested generators open inside their tracing spans.
                 # ADK <= 1.10 reports an empty normal finish as "STOP".
-                if event.error_code and event.error_code != types.FinishReason.STOP:
+                # ADK 2.x marks the same case MODEL_RETURNED_NO_CONTENT via
+                # apply_empty_response_policy; keep both as missing-reply, not
+                # a hard provider failure.
+                if event.error_code and event.error_code not in {
+                    types.FinishReason.STOP,
+                    "STOP",
+                    "MODEL_RETURNED_NO_CONTENT",
+                }:
                     model_failure = ProviderRunError(
                         event.error_code, event.error_message
                     )
@@ -676,9 +738,15 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     )
             if model_failure is not None:
                 raise model_failure
+        except LlmCallsLimitExceededError as exc:
+            error = ToolRoundsExceededError(
+                self.config.max_tool_rounds, room_id, tool_sequence
+            )
+            await tools.send_failure(AgentFailure(_PROVIDER, str(error)))
+            raise error from exc
         except Exception as e:
             logger.exception("Error running ADK agent in room %s", room_id)
-            await tools.send_failure(generic_provider_failure("google_adk", e))
+            await tools.send_failure(generic_provider_failure(_PROVIDER, e))
             raise
         finally:
             # Emit before close so a close() failure can't drop the usage, but
@@ -693,25 +761,77 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     finally:
                         await cast(Any, runner.agent).model.aclose()
 
-        # Accumulate message history for future transcript injection
-        self._room_history[room_id].append(
-            {"role": "user", "content": msg.format_for_llm()}
-        )
+        # Failed runs keep their inputs, but not unfinished model output.
         if final_response_text:
             self._room_history[room_id].append(
                 {"role": "model", "content": final_response_text}
             )
 
-        # Trim accumulated history to prevent unbounded memory growth.
-        # Keep twice the window so the sliding window in the next call
-        # still has a full page of messages to work with.
-        trim_threshold = self.config.max_history_messages * 2
-        if len(self._room_history[room_id]) > trim_threshold:
+        self._trim_history(room_id)
+
+        logger.debug("Messages %s processed successfully", message_ids)
+
+    def _build_turn_prompt(
+        self,
+        history: GoogleADKMessages,
+        messages: Sequence[PlatformMessage],
+        participants_msg: str | None,
+        contacts_msg: str | None,
+    ) -> TurnPrompt:
+        """Render bounded context and current inputs without changing history."""
+        current_ids = set(ids_of(messages))
+        context = [entry for entry in history if entry.get("id") not in current_ids]
+        transcript = self._format_history_transcript(
+            context[-self.config.max_history_messages :]
+        )
+        original_transcript_chars = len(transcript)
+        parts: list[str] = []
+        if transcript:
+            if len(transcript) > self.config.max_transcript_chars:
+                transcript = transcript[-self.config.max_transcript_chars :]
+                # Drop the partial first line when the character limit cuts one.
+                newline = transcript.find("\n")
+                if newline != -1:
+                    transcript = transcript[newline + 1 :]
+            parts.append(
+                f"{HISTORY_CONTEXT_START}\n{transcript}\n{HISTORY_CONTEXT_END}\n\n"
+            )
+        if participants_msg:
+            parts.append(f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
+        if contacts_msg:
+            parts.append(f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
+        parts.append(format_current_inputs(messages))
+        return TurnPrompt(
+            text="\n".join(parts),
+            original_transcript_chars=original_transcript_chars,
+            retained_transcript_chars=len(transcript),
+        )
+
+    def _remember_inputs(
+        self, room_id: str, messages: Sequence[PlatformMessage]
+    ) -> None:
+        """Retain each inbound message once within the room's history window."""
+        room_history = self._room_history[room_id]
+        remembered_ids = {entry.get("id") for entry in room_history}
+        for message in messages:
+            if message.id not in remembered_ids:
+                room_history.append(
+                    {
+                        "id": message.id,
+                        "role": "user",
+                        "content": message.format_for_llm(),
+                    }
+                )
+                remembered_ids.add(message.id)
+        self._trim_history(room_id)
+
+    def _trim_history(self, room_id: str) -> None:
+        """Bound retained inputs even when provider execution fails."""
+        # Keep twice the window so the next turn still has a full page.
+        if len(self._room_history[room_id]) > self.config.max_history_messages * 2:
             self._room_history[room_id] = self._room_history[room_id][
                 -self.config.max_history_messages :
             ]
-
-        logger.debug("Message %s processed successfully", msg.id)
 
     @staticmethod
     def _usage_from_event(event: Any) -> TurnUsage:
@@ -818,6 +938,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         content=json.dumps(
                             {
                                 ToolEventKey.NAME: tool_name,
+                                ToolEventKey.IS_ERROR: is_failed_tool_output(
+                                    getattr(fr, "response", None)
+                                ),
                                 ToolEventKey.OUTPUT: _redacted_function_response_output(
                                     tool_name, getattr(fr, "response", None)
                                 ),

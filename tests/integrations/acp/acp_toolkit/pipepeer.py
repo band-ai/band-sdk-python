@@ -20,6 +20,7 @@ class PipeCommand(StrEnum):
     START = "start"
     EXIT = "exit"
     RELEASE = "release"
+    REJECT_INITIALIZE = "reject-initialize"
 
 
 def control_line(value: PipeRole | PipeCommand) -> bytes:

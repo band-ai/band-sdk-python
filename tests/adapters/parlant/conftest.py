@@ -24,9 +24,11 @@ from tests.adapters.parlant.helpers import (
     BAND_DESCRIPTION,
     BAND_NAME,
     MESSAGE_KIND,
+    SENDER_ID,
     SENDER_NAME,
     SESSION_ID,
     RecordingBackgroundTasks,
+    RecordingEngineHooks,
 )
 from tests.integrations.parlant.sessions import (
     clear_session_tools,  # noqa: F401 -- autouse fixture
@@ -42,7 +44,7 @@ def sample_message() -> PlatformMessage:
         id="msg-123",
         room_id="room-123",
         content="Hello, agent!",
-        sender_id="user-456",
+        sender_id=SENDER_ID,
         sender_type="User",
         sender_name=SENDER_NAME,
         message_type="text",
@@ -54,7 +56,31 @@ def sample_message() -> PlatformMessage:
 @pytest.fixture
 def mock_tools() -> FakeAgentTools:
     """The room's tools, recording what the adapter posted."""
-    return FakeAgentTools()
+    return FakeAgentTools(
+        participants=[
+            {
+                "id": SENDER_ID,
+                "name": SENDER_NAME,
+                "type": "User",
+                "role": "member",
+                "status": "active",
+            },
+            {
+                "id": "alice",
+                "name": "Alice",
+                "type": "User",
+                "role": "member",
+                "status": "active",
+            },
+            {
+                "id": "helper",
+                "name": "Helper",
+                "type": "Agent",
+                "role": "member",
+                "status": "active",
+            },
+        ]
+    )
 
 
 @pytest.fixture
@@ -142,11 +168,25 @@ def parlant_sessions() -> Iterator[None]:
 
 
 @pytest.fixture
+def engine_hooks_class() -> Iterator[type[RecordingEngineHooks]]:
+    with patch.dict(
+        sys.modules,
+        {
+            "parlant.core.engines.alpha.hooks": MagicMock(
+                EngineHooks=RecordingEngineHooks
+            ),
+        },
+    ):
+        yield RecordingEngineHooks
+
+
+@pytest.fixture
 def mock_parlant_server(
     mock_app: MagicMock,
     application_class: MagicMock,
     background_tasks: RecordingBackgroundTasks,
     background_task_service_class: MagicMock,
+    engine_hooks_class: type[RecordingEngineHooks],
 ) -> MagicMock:
     """A Parlant server whose container holds ``mock_app`` and the recording
     background-task service."""
@@ -154,6 +194,7 @@ def mock_parlant_server(
     server.container = {
         application_class: mock_app,
         background_task_service_class: background_tasks,
+        engine_hooks_class: RecordingEngineHooks(),
     }
     server.create_customer = AsyncMock(return_value=MagicMock(id="customer-123"))
     created_agent = MagicMock()

@@ -265,9 +265,10 @@ def room() -> Any:
         transport: RelayStatus | None = None,
         tuning: RoomViewTuning | None = None,
         clock: Clock | None = None,
+        events: RoomEventBroker | None = None,
     ) -> Room:
         tools = transcript(*reads)
-        events = RoomEventBroker()
+        events = events or RoomEventBroker()
         service = RoomTranscriptService(
             tools,
             events=events,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from band.integrations.omp import (
@@ -12,7 +14,6 @@ from band.integrations.omp import (
     OMP_ELICITATION_CALL_ID_PREFIX,
     OMP_FORM_APPROVE,
     OMP_FORM_DENY,
-    OMP_PINNED_PACKAGE,
     XD_MCP_PREFIX,
     finalize_omp_command,
     is_omp_approve_deny_form,
@@ -24,7 +25,6 @@ from band.integrations.omp import (
     omp_provider_env,
     validate_omp_command,
 )
-from tests.paths import CI_SCRIPTS
 
 
 def test_default_command_is_safe_after_finalize() -> None:
@@ -159,6 +159,25 @@ def test_a_malformed_write_to_a_band_tool_keeps_its_identity(content: str) -> No
     ) == ("band_send_message", arguments)
 
 
+def test_an_oversized_integer_payload_keeps_the_tool_identity() -> None:
+    """``json.loads`` refuses an integer past the interpreter's digit limit
+    with a bare ``ValueError``; that payload is malformed like any other."""
+    arguments = {
+        "path": "xd://mcp__band_send_message",
+        "content": '{"count":' + "9" * 5000 + "}",
+        "append": False,
+    }
+    limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    try:
+        projected = normalize_omp_mcp_device_call(
+            "write", arguments, frozenset({"band_send_message"}), kind="execute"
+        )
+    finally:
+        sys.set_int_max_str_digits(limit)
+    assert projected == ("band_send_message", arguments)
+
+
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -238,8 +257,3 @@ def test_default_command_uses_approval_mode_constants() -> None:
         OMP_APPROVAL_MODE_FLAG,
         OMP_APPROVAL_MODE_ALWAYS_ASK,
     )
-
-
-def test_setup_omp_script_pins_same_package() -> None:
-    script = (CI_SCRIPTS / "setup-omp.sh").read_text()
-    assert OMP_PINNED_PACKAGE in script

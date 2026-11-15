@@ -6,12 +6,15 @@ import asyncio
 import copy
 import itertools
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
-from claude_agent_sdk.types import Message
+from claude_agent_sdk import ClaudeAgentOptions
+from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+from claude_agent_sdk.types import Message, _configure_can_use_tool
 
 from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE,
@@ -19,9 +22,10 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
 )
-from band.converters.claude_sdk import SESSION_ID_METADATA_KEY
+from band.converters.claude_sdk import CLAUDE_SDK_RESUME_RECORD
 from band.core.retention import RoomRetentionConfig
 from band.core.turn import Turn
+from band.core.turn_lifecycle import TurnTask
 from band.core.types import (
     AgentInput,
     ApprovalMode,
@@ -29,17 +33,21 @@ from band.core.types import (
     MessageType,
     PlatformMessage,
 )
+from band.integrations.claude_sdk.activity import Origin
 from band.integrations.claude_sdk.session_manager import (
     ClaudeRoomSession,
     ClaudeSessionManager,
 )
 from band.integrations.mcp.backends import BandMCPBackend
+from band.runtime.formatters import format_message_for_llm
 from band.runtime.tools import BAND_MCP_SERVER_NAME, MCP_TOOL_PREFIX
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
 from tests.adapters.dispatch import deliver_event
 from tests.baseline.decisions import ModelDecision
+from tests.claudesdkrecords import recorded_session
 from tests.mcpclient import crash_backend
+from tests.roomhistory import stored
 
 # The agent metadata every test adapter is started with.
 AGENT_NAME = "Test Agent"
@@ -57,16 +65,53 @@ WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
 # Short enough that a held transition reports quickly, long enough for a real
 # CLI child to start and the Band MCP server to shut down on a slow runner.
 REPORTING_BUDGET = RoomRetentionConfig(transition_timeout_s=1.0)
+# Short enough to abandon a held turn quickly, long enough for the next
+# turn's real loopback round trips to the Band MCP server on a slow runner.
+TURN_TIMEOUT_S = 2.0
 # A turn still running when its room closes is cancelled at once.
 NO_SETTLE_GRACE = ClaudeSDKAdapterConfig(turn_settle_timeout_s=0)
+
+
+@contextmanager
+def query_origin(session: ClaudeRoomSession) -> Iterator[None]:
+    """Give a direct session query the actual caller's execution owner."""
+    task = asyncio.current_task()
+    assert task is not None and session.activity is not None
+    origin = Origin(FakeAgentTools(room_id=session.room_id), TurnTask(task), ())
+    with session.activity.foreground(origin):
+        yield
 
 
 async def exchange(session: ClaudeRoomSession, prompt: str) -> list[Message]:
     """One leased query through the room's single reader, up to its result."""
     async with session.using() as client:
-        with session.listening() as stream:
+        with session.listening() as stream, query_origin(session):
             await client.query(prompt)
             return [message async for message in stream.until_result()]
+
+
+def sdk_cli_argv(options: ClaudeAgentOptions) -> list[str]:
+    """The argv the SDK's own connect path would launch the CLI with."""
+    transport = SubprocessCLITransport(
+        prompt="", options=_configure_can_use_tool(options)
+    )
+    # _build_command refuses to run until connect() has located the binary.
+    transport._cli_path = "claude"
+    return transport._build_command()
+
+
+async def launch_options(
+    room: ClaudeRoom, session_id: str | None = None
+) -> ClaudeAgentOptions:
+    """The options of the CLI process the room's next message launches."""
+    room.claude.script([room.model_reply("Hello.")])
+    await room.send("hi", session_id=session_id)
+    return room.claude.sessions[-1].options
+
+
+def band_mcp_running(adapter: ClaudeSDKAdapter) -> bool:
+    """Whether the adapter's shared Band MCP server is open."""
+    return adapter._mcp.current is not None
 
 
 def with_approvals(
@@ -79,22 +124,30 @@ def with_approvals(
 APPROVER = {"id": "u1", "name": "Bob", "handle": "@bob"}
 
 
+def room_message(
+    content: str,
+    *,
+    message_id: str,
+    room_id: str = "room-1",
+    sender: dict[str, str] = APPROVER,
+) -> PlatformMessage:
+    """One room message from ``sender``, as the platform delivers it."""
+    return PlatformMessage(
+        id=message_id,
+        room_id=room_id,
+        content=content,
+        sender_id=sender["id"],
+        sender_type="User",
+        sender_name=sender["name"],
+        message_type="text",
+        metadata={},
+        created_at=datetime.now(UTC),
+    )
+
+
 def said(sender_name: str, content: str) -> dict[str, Any]:
-    """One earlier room message, as raw platform history."""
-    return {
-        "message_type": MessageType.TEXT,
-        "role": "user",
-        "sender_name": sender_name,
-        "content": content,
-    }
-
-
-def recorded_session(session_id: str) -> dict[str, Any]:
-    """The task event a room persisted for a Claude session, as raw history."""
-    return {
-        "message_type": MessageType.TASK,
-        "metadata": {SESSION_ID_METADATA_KEY: session_id},
-    }
+    """One earlier room message, as the runtime hands it over on bootstrap."""
+    return format_message_for_llm(stored(content, sender_name=sender_name))
 
 
 class ClaudeRoom:
@@ -103,7 +156,12 @@ class ClaudeRoom:
     room saw."""
 
     def __init__(
-        self, adapter: ClaudeSDKAdapter, claude: FakeClaude, room_id: str = "room-1"
+        self,
+        adapter: ClaudeSDKAdapter,
+        claude: FakeClaude,
+        room_id: str = "room-1",
+        *,
+        participants: list[dict[str, Any]] | None = None,
     ) -> None:
         self.adapter = adapter
         self.claude = claude
@@ -111,9 +169,9 @@ class ClaudeRoom:
         # The room's shared log: every message's tools post into it.
         self.tools = FakeAgentTools(
             room_id=room_id,
-            participants=[
-                {**APPROVER, "role": "member", "status": "active", "type": "User"}
-            ],
+            participants=participants
+            if participants is not None
+            else [{**APPROVER, "role": "member", "status": "active", "type": "User"}],
         )
         self._message_ids = itertools.count(1)
         self._bootstrapped = False
@@ -129,6 +187,17 @@ class ClaudeRoom:
     @property
     def chat(self) -> list[str]:
         return [message["content"] for message in self.tools.messages_sent]
+
+    def mentions(self, fragment: str) -> list[list[str]]:
+        """Whom each room message containing ``fragment`` mentions, in order."""
+        return [
+            [
+                mention["id"] if isinstance(mention, dict) else mention
+                for mention in message["mentions"]
+            ]
+            for message in self.tools.messages_sent
+            if fragment in message["content"]
+        ]
 
     @property
     def events(self) -> list[str]:
@@ -185,19 +254,25 @@ class ClaudeRoom:
     def persisted_sessions(self) -> list[str]:
         """Session ids the room recorded for a later resume, in order."""
         return [
-            event["metadata"][SESSION_ID_METADATA_KEY]
+            event["metadata"][CLAUDE_SDK_RESUME_RECORD.session_key]
             for event in self.tools.events_sent
             if event["message_type"] == MessageType.TASK
-            and SESSION_ID_METADATA_KEY in (event["metadata"] or {})
+            and CLAUDE_SDK_RESUME_RECORD.session_key in (event["metadata"] or {})
+        ]
+
+    @property
+    def session_band_servers(self) -> list[dict[str, Any]]:
+        """The Band MCP server config each CLI session (any room) was started
+        with, in order."""
+        return [
+            session.dialed_server(BAND_MCP_SERVER_NAME)
+            for session in self.claude.sessions
         ]
 
     @property
     def session_band_urls(self) -> list[str]:
         """The Band MCP URL each CLI session (any room) was started with, in order."""
-        return [
-            session.options.mcp_servers[BAND_MCP_SERVER_NAME]["url"]
-            for session in self.claude.sessions
-        ]
+        return [server["url"] for server in self.session_band_servers]
 
     @property
     def session_band_ports(self) -> list[int | None]:
@@ -234,11 +309,67 @@ class ClaudeRoom:
             mentions=[APPROVER["handle"]],
         )
 
+    def message(
+        self, content: str, *, sender: dict[str, str] = APPROVER
+    ) -> PlatformMessage:
+        """The next message ``sender`` posts to the room."""
+        return room_message(
+            content,
+            message_id=f"msg-{next(self._message_ids)}",
+            room_id=self.room_id,
+            sender=sender,
+        )
+
+    def _turn_input(
+        self,
+        messages: tuple[PlatformMessage, ...],
+        *,
+        history: tuple[dict[str, Any], ...],
+        session_id: str | None,
+        tools: FakeAgentTools | None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
+    ) -> AgentInput:
+        bootstrap, self._bootstrapped = not self._bootstrapped, True
+        raw_history = [*history]
+        if session_id is not None:
+            raw_history.append(recorded_session(self.room_id, session_id))
+        return AgentInput(
+            msg=messages[0],
+            messages=messages,
+            tools=tools or self.fresh_tools(),
+            history=HistoryProvider(raw=raw_history),
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
+            is_session_bootstrap=bootstrap,
+            room_id=self.room_id,
+        )
+
     async def send(
         self,
         content: str,
         *,
         sender: dict[str, str] = APPROVER,
+        history: tuple[dict[str, Any], ...] = (),
+        session_id: str | None = None,
+        tools: FakeAgentTools | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
+    ) -> None:
+        """``deliver`` the next message ``sender`` posts to the room."""
+        await self.deliver(
+            self.message(content, sender=sender),
+            history=history,
+            session_id=session_id,
+            tools=tools,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
+        )
+
+    async def deliver(
+        self,
+        message: PlatformMessage,
+        *,
         history: tuple[dict[str, Any], ...] = (),
         session_id: str | None = None,
         tools: FakeAgentTools | None = None,
@@ -254,31 +385,29 @@ class ClaudeRoom:
         by default, as the runtime builds per message). ``participants_msg``
         and ``contacts_msg`` are the runtime's pending room updates.
         """
-        bootstrap, self._bootstrapped = not self._bootstrapped, True
-        raw_history = [*history]
-        if session_id is not None:
-            raw_history.append(recorded_session(session_id))
-        await deliver_event(
-            self.adapter,
-            AgentInput(
-                msg=PlatformMessage(
-                    id=f"msg-{next(self._message_ids)}",
-                    room_id=self.room_id,
-                    content=content,
-                    sender_id=sender["id"],
-                    sender_type="User",
-                    sender_name=sender["name"],
-                    message_type="text",
-                    metadata={},
-                    created_at=datetime.now(UTC),
-                ),
-                tools=tools or self.fresh_tools(),
-                history=HistoryProvider(raw=raw_history),
-                participants_msg=participants_msg,
-                contacts_msg=contacts_msg,
-                is_session_bootstrap=bootstrap,
-                room_id=self.room_id,
-            ),
+        inp = self._turn_input(
+            (message,),
+            history=history,
+            session_id=session_id,
+            tools=tools,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
+        )
+        await deliver_event(self.adapter, inp)
+
+    async def send_batch(
+        self,
+        *messages: PlatformMessage,
+        history: tuple[dict[str, Any], ...] = (),
+        session_id: str | None = None,
+        tools: FakeAgentTools | None = None,
+    ) -> None:
+        """Deliver several originals as one turn, as the runtime does for a
+        batch; like ``send``, returns once the adapter hands the turn back."""
+        await self.adapter.on_messages(
+            self._turn_input(
+                messages, history=history, session_id=session_id, tools=tools
+            )
         )
 
     def send_in_background(self, content: str) -> asyncio.Task[None]:

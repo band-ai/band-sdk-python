@@ -210,7 +210,7 @@ AgentCore Runtime:
 If you want LangGraph, CrewAI, pydantic-ai, etc. instead of the
 `AnthropicAdapter`:
 
-1. Copy `examples/agentcore/agentcore_llm_server.py` to your own
+1. Copy `examples/oneshot/server.py` to your own
    container directory.
 2. In `_build_adapter`, swap `AnthropicAdapter` for your chosen one
    (e.g. `LangGraphAdapter`, see `src/band/adapters/langgraph.py`).
@@ -297,7 +297,7 @@ BAND_AGENT_ID=<your-agent-uuid> \
 BAND_API_KEY=<your-agent-key> \
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
 SYSTEM_PROMPT="$(cat my_prompt.txt)" \
-uv run python examples/agentcore/agentcore_llm_server.py
+uv run --isolated examples/oneshot/server.py
 ```
 
 Then send a fake invocation:

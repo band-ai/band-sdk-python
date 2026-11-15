@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[anthropic]>=6.0.0"]
+# dependencies = ["band-sdk[anthropic]>=6.0.1"]
 # ///
 """Two custom tools share one HTTP client, closed by the adapter's host.
 

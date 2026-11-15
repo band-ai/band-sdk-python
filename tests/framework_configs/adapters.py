@@ -291,7 +291,7 @@ def _crewai_factory(**kw: Any) -> Any:
     # Guard the runtime methods in both venvs: without crewai they would fail on its
     # function-local import, and with it they would build a Crew and call an LLM for
     # real. on_cleanup is never guarded (dict.pop + logging, no CrewAI interaction).
-    for method_name in ("on_message", "_invoke_crew"):
+    for method_name in ("on_message", "on_turn", "_invoke_crew"):
         if hasattr(instance, method_name):
             setattr(instance, method_name, _crewai_conformance_guard)
     return instance
@@ -336,6 +336,50 @@ def _parlant_factory(**kw: Any) -> Any:
         server.create_agent = AsyncMock(return_value=mock_agent)
         kw["server"] = server
     return ParlantAdapter(**kw)
+
+
+async def _omp_advertised_arg_text() -> dict[str, dict[str, str | None]]:
+    from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra may be absent in other framework lanes
+        OmpAdapter,
+    )
+
+    adapter = OmpAdapter(capabilities=ALL_CAPABILITIES)
+    advertised: dict[str, dict[str, str | None]] = {}
+    for tool in adapter._host_tools():
+        parameters = tool["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters.get("properties")
+        assert isinstance(properties, dict)
+        arguments: dict[str, str | None] = {}
+        for name, specification in properties.items():
+            assert isinstance(specification, dict)
+            description = specification.get("description")
+            assert description is None or isinstance(description, str)
+            arguments[name] = description
+        advertised[str(tool["name"])] = arguments
+    return advertised
+
+
+def _build_omp_config() -> AdapterConfig:
+    from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra may be absent in other framework lanes
+        OmpAdapter,
+        OmpAdapterConfig,
+    )
+
+    custom = OmpAdapterConfig(
+        model="openai/conformance",
+        reasoning_effort="high",
+        custom_section="Be concise.",
+        turn_timeout_s=90,
+    )
+    return AdapterConfig(
+        framework_id="omp",
+        display_name="OMP",
+        adapter_factory=OmpAdapter,
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
+        advertised_arg_text=_omp_advertised_arg_text,
+    )
 
 
 def _codex_factory(**kw: Any) -> Any:
@@ -801,9 +845,9 @@ def _build_gemini_config() -> AdapterConfig:
 # on_cleanup contract), so they cannot share the same conformance tests.
 # acp uses the ACP protocol (Agent Client Protocol) with a similar non-standard
 # lifecycle (ACP JSON-RPC over stdio), so it is also excluded.
-# copilot_acp, cursor_acp, and omp_acp are thin ACPClientAdapter subclasses. They
-# share the excluded acp bridge's lifecycle and converter, so the baseline matrix
-# exercises them live instead of the framework-conformance matrix.
+# antigravity_acp, copilot_acp, cursor_acp, and omp_acp are ACPClientAdapter
+# subclasses. They share the excluded acp bridge's lifecycle and converter,
+# so they do not have separate framework-conformance entries.
 # slack is a transport bridge that *wraps* an inner framework adapter (the brain)
 # and adds Slack ingress/egress; it has no model/LLM contract of its own, so it
 # cannot share the framework-adapter conformance tests (same rationale as a2a/acp).
@@ -815,6 +859,7 @@ _excluded = {
     "a2a",
     "a2a_gateway",
     "acp",
+    "antigravity_acp",
     "copilot_acp",
     "cursor_acp",
     "omp_acp",
@@ -860,6 +905,7 @@ _ADAPTER_CONFIG_BUILDERS: list[Callable[[], AdapterConfig]] = [
     _build_strands_config,
     _build_parlant_config,
     _build_codex_config,
+    _build_omp_config,
     _build_letta_config,
     _build_opencode_config,
     _build_agno_config,

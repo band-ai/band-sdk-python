@@ -1,3 +1,5 @@
+"""A stop between control discovery and its claim prevents provider effects."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,7 +42,7 @@ class TestStopBeforeClaim:
                     enable_context_hydration=False, enable_working_state=False
                 ),
             )
-            await ctx._reconcile()
+            await ctx.scheduler.run_pass(recovery=True)
             assert adapter.controls == []
             assert peer.requested("processing") == ["B", "C"]
             assert peer.marked("processing") == ["B"]

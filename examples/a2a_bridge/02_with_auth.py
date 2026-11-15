@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[a2a]>=4.0.0"]
+# dependencies = ["band-sdk[a2a]>=6.0.1"]
 # ///
 """
 A2A adapter with authentication example.

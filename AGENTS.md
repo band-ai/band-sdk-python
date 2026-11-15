@@ -12,6 +12,22 @@ Before implementation, form a plan proportional to the work: scope, approach,
 important scenarios, and validation. Prefer focused, clear solutions that reuse
 existing patterns.
 
+Every implementation plan must assess the owning layer and whether relevant
+behavior exists in sibling repositories. For shared behavior or mechanisms used
+across adapters or SDKs, inspect affected consumers and relevant sibling source
+before choosing the design. Consider `band-sdk-core` for policy shared across
+SDKs, while distinguishing it from this repository's `src/band/core` and from
+adapter or runtime mechanics. Record the sources and a brief placement rationale
+in the plan. For clearly local changes, a brief explanation of why sibling
+comparison is unnecessary is enough. Choose the smallest boundary that owns the
+behavior; do not move code to core or expand adapter support solely for possible
+future reuse.
+When source comparison reveals a relevant sibling gap, propose a scoped followup
+with evidence rather than silently expanding the current work. For workflow rule
+changes, also consider whether a counterpart skill needs the same correction and
+suggest it where relevant. Feature differences alone do not establish a defect
+or make sibling work a prerequisite.
+
 Assess whether existing tests meaningfully cover the affected behavior. Close
 material coverage gaps and validate realistic flows, including complex
 interactions and failure paths where relevant. Passing tests or high coverage
@@ -25,6 +41,11 @@ readiness review passes.
 Other developers and agents may be working concurrently. Preserve their
 changes, inspect current local and remote state before integrating or pushing,
 and avoid unrelated edits or destructive Git operations.
+
+Never create a `docs/` directory or files under a `docs/` directory at any depth
+in this repository. Keep necessary documentation in existing `README.md` or
+`AGENTS.md` files, or in code docstrings. Keep task plans in scratch files outside
+the repository, following the planning skill.
 
 ## Core Features
 
@@ -42,8 +63,12 @@ read, and apply the existing skills relevant to the task. Reassess when the work
 changes, such as moving from investigation to implementation, testing, or review.
 Skill discovery alone does not load its instructions.
 
-Follow each skill's activation rules; `band-code-review` requires explicit
-invocation. Read the referenced `SKILL.md` directly when automatic loading is
+Follow each skill's activation rules: `band-code-review` runs only when a user
+explicitly asks for it; `band-pr-assess` when assessing a PR toward merge — including
+"is this PR good", "assess this PR", "evaluate this PR", "quality-check this PR"
+(invokes `band-code-review --fix` once and requires that run to converge before
+ship, unless a wrong-layer, incomplete-claim, design-only, or no-push stop
+halts first). Read the referenced `SKILL.md` directly when automatic loading is
 unavailable. Reference only skills that actually exist; disclose missing guidance
 when it materially affects the work. Workflow execution follows
 [the shared runtime guidance](.claude/skills/workflow-runtime.md).
@@ -64,7 +89,7 @@ explicit user approval.
 | Skill | Use when |
 |---|---|
 | [band-python-conventions](.claude/skills/band-python-conventions/SKILL.md) | Python source, comments, docstrings, and error handling |
-| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing/reviewing tests or assessing meaningful coverage and realistic flows |
+| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing/reviewing any test (non-live unit tests included); before-writing gate and before-finishing checklist; complementary branches not line counts; intent assertions; seams not patches; non-live isolation; no wall-clock proof |
 
 | Skill | Use when |
 |---|---|
@@ -75,6 +100,7 @@ explicit user approval.
 | [band-run-e2e-live](.claude/skills/band-run-e2e-live/SKILL.md) | running the E2E baseline lanes against the live platform |
 | [band-investigate-test-error](.claude/skills/band-investigate-test-error/SKILL.md) | finding the root cause of a failing or flaky test |
 | [band-code-review](.claude/skills/band-code-review/SKILL.md) | running the team's fixed-criteria review on a PR or branch |
+| [band-pr-assess](.claude/skills/band-pr-assess/SKILL.md) | end-to-end PR assessment ("is this PR good", "assess/evaluate/quality-check this PR"); one converging `band-code-review --fix` before ship |
 | [band-here-is-a-review](.claude/skills/band-here-is-a-review/SKILL.md) | handling review feedback on a PR or pasted review findings |
 | [band-pr-triage](.claude/skills/band-pr-triage/SKILL.md) | a quick read-only check of whether a PR can merge or needs a full review |
 | [band-ci-triage](.claude/skills/band-ci-triage/SKILL.md) | investigating failing GitHub Actions checks on the current commit |
@@ -101,8 +127,10 @@ that replied, declined via `band_no_reply`, did real work, was settled by the
 adapter, or already reported a failure completes; anything else is reported
 once and marked FAILED. Adapters never judge turns themselves. Post an
 adapter's own messages with `send_notice` (never `send_message`, which counts as
-the reply) and relay a model's final text only through `relay_reply`. See
-[docs/turn-outcome.md](docs/turn-outcome.md).
+the reply) and relay a model's final text only through `relay_reply`. The
+implementation and conformance contract are in
+`src/band/core/simple_adapter.py`, `src/band/core/turn.py`, and
+`tests/framework_conformance/test_turn_outcome.py`.
 
 ## Adapter Constructor Shape
 
@@ -134,20 +162,37 @@ The SDK uses a Fern-generated REST client with a property-based namespace API
 (`link.rest.agent_api_<resource>.method(...)`). **Never pass `None`** for an
 optional parameter — the Fern client sends `null`, which fails backend
 validation; build a `kwargs` dict and omit the key instead
-(`tests/platform/test_rest_client.py` pins that wire behavior). See
-[docs/rest-client.md](docs/rest-client.md) for the `band-client-rest`
-version-pin workaround discipline.
+(`tests/platform/test_rest_client.py` pins that wire behavior). Keep the
+`band-client-rest` dependency pin in `pyproject.toml` aligned with the released
+client: verify a needed capability in that exact version, and remove a
+workaround only when the pin and its boundary test confirm the upstream fix.
+
+## Room Retention
+
+Do not enable provider idle retention until that provider's background activity,
+safe resume, and cleanup paths are qualified. Unknown activity and an empty SDK
+task set do not prove a native provider is idle. `RoomRetentionConfig` and its
+guards live in `src/band/core/retention/`; behavior is covered by
+`tests/core/retention/` and `tests/adapters/test_retention_config.py`.
 
 ## WebSocket Channels & Events
 
 The SDK subscribes to Phoenix Channels in
 `src/band/client/streaming/client.py` and hydrates each event's payload into a
-typed, rule-free `WirePayload` projection without re-validating. See
-[docs/websocket-events.md](docs/websocket-events.md) for which rules and
-delivery-lifecycle decisions live in `band-sdk-core` instead.
+typed, rule-free `WirePayload` projection without re-validating. The projection
+is in `src/band/platform/event.py`; shared delivery rules and lifecycle
+decisions live in `band-sdk-core`, while transport behavior is covered by
+`tests/websocket/`. `SessionDecider` is phoenix's `reconnect_decider`: it
+drives band-sdk-core's `Session` for every connect, reconnect and stop
+decision, and the SDK keeps no reconnect policy of its own.
 CI's isolated-wheel smoke (`.github/scripts/wheel-smoke.py`) finds every
 `band_sdk_core` name the installed `band` package refers to and fails if the
 pinned wheel lacks one, so a new core symbol needs no manual CI step.
+
+WebSocket credentials are sent in the `x-api-key` or `x-auth-token` handshake
+header, never the query; optional agent identity and non-default conflict
+policy are query parameters. Preserve credential redaction. The transport and
+regression coverage are in `src/band/client/streaming/` and `tests/websocket/`.
 
 ## Contact Event Handling
 
@@ -178,16 +223,16 @@ confined to an explicit AST-enforced allowlist
 
 `OpencodeAdapter` maps each Band room to a session on a running `opencode
 serve`. Band tools are never gated behind approval, unlike other tool
-calls — see [docs/adapters/opencode.md](docs/adapters/opencode.md) for this
-and four more invariants that are easy to break.
+calls. The remaining adapter behavior and regression coverage live in
+`src/band/adapters/opencode/` and `tests/adapters/opencode/`.
 
 ## ACP (Agent Client Protocol) Integration
 
 ACP enables editors (Zed, Cursor, JetBrains, Neovim) to talk to AI agents via
 JSON-RPC over stdio; the SDK provides both server (`ACPServer` +
-`BandACPServerAdapter`) and client (`ACPClientAdapter`) sides. See
-[docs/acp.md](docs/acp.md) for the full session lifecycle, live-emission
-ordering, and permission-pairing rules.
+`BandACPServerAdapter`) and client (`ACPClientAdapter`) sides. Session
+lifecycle, live-emission ordering, and permission pairing are implemented in
+`src/band/integrations/acp/` and covered by `tests/integrations/acp/`.
 
 ## Code Structure
 
@@ -215,17 +260,18 @@ within a duration to establish correctness. Hold an operation at the relevant
 boundary, assert the behavior while it is blocked, then release it and await
 confirmed completion.
 
-Test timeout, expiry, and deadline behavior with a controlled clock. Keep real
-subprocess and network readiness independent of that clock. Real-time timeouts
-may guard against a hung test, but must not drive the scenario or serve as proof
-of the behavior under test. Cleanup must account for resources created during
-failed or cancelled startup and await their confirmed release.
+Test timeout, expiry, and deadline behavior with a controlled clock
+(`looptime`). Keep real subprocess and network readiness independent of that
+clock. Real-time timeouts may guard against a hung test, but must not drive the
+scenario or serve as proof of the behavior under test. Cleanup must account for
+resources created during failed or cancelled startup and await their confirmed
+release.
 
 ## Testing Structure
 
 ```
 tests/
-├── adapters/       # Unit tests per adapter (mocked)
+├── adapters/       # Adapter unit and behavioral tests
 ├── converters/     # Unit tests per converter
 ├── core/           # Core logic tests
 ├── runtime/        # Runtime tests
@@ -251,6 +297,31 @@ helper module (e.g. `kit.py`) for shared doubles and helpers, and one test file
 per concern. Apply this to every test file you add, and split a file you
 touch that breaks it.
 
+### Test helper design
+
+- Do not use autouse fixtures to replace product clients or bypass startup
+  validation. Scope deliberate failure doubles to the tests that need them.
+- Keep fixtures in `conftest.py`; use them for resource setup and confirmed
+  cleanup, including failed or cancelled startup.
+- Keep scenario actions and outcome assertions visible in tests. Helpers must
+  not branch on scenario names to choose test actions or expected outcomes.
+- Do not create a runtime subclass for each input, event, or response. Drive
+  simple cases with real data and explicit callbacks.
+- Do not copy the subject's reader, scheduler, callback context, retry, or
+  cleanup logic into a fake. Exercise those real components together.
+- Keep doubles at external boundaries. Reject unsupported commands and
+  selections; never return success by default. Share closed vocabularies through
+  enums or constants.
+- Assert observable decisions, delivery, state, and cleanup. Reasserting fake
+  setup flags or recording a call does not prove the claimed behavior.
+- Treat growing helper machinery as a design problem. Remove unnecessary
+  simulation and duplicated setup before splitting files. Each remaining
+  helper module must own one concern; `kit.py` is not a catch-all.
+
+Apply these rules to helper and peer diffs as strictly as to collected tests.
+The [test conventions](.claude/skills/band-python-test-conventions/SKILL.md)
+define boundary selection, peer contracts, and the review gate.
+
 Before writing a new E2E test or helper, read `tests/e2e/baseline/README.md`
 — it documents the reusable baseline toolkit (provisioning, user ops, reply
 capture, judge, assertions, fixtures) so you reuse it instead of rebuilding it.
@@ -272,8 +343,11 @@ uv sync --all-packages --locked --extra dev-strands-nooa
 # Install parlant adapter deps (isolated from dev/crewai/pydantic-ai)
 uv sync --all-packages --locked --extra dev-parlant
 
-# Run unit tests
+# Run unit tests (serial; use this for --pdb and whenever live gates are on)
 uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+
+# Run unit tests the way CI does (xdist worksteal; never with --pdb or live gates)
+uv run --all-packages pytest -n 4 --dist worksteal --ignore=tests/e2e --ignore=tests/integration -q
 
 # Run single test
 uv run --all-packages pytest tests/ -k "test_name"
@@ -347,7 +421,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, opencode, copilot_acp, cursor_acp, and omp_acp coding agents), `letta` (self-hosted letta server), `strands` (`dev-strands-nooa` extra), `nooa` (same `dev-strands-nooa` extra, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, copilot_acp, cursor_acp, and omp_acp coding agents), `opencode` (opencode against a local `opencode serve` on Anthropic), `letta` (self-hosted letta server), `strands` (`dev-strands-nooa` extra), `nooa` (same `dev-strands-nooa` extra, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
@@ -392,18 +466,14 @@ files have failure modes plain examples don't. Follow these:
 - **Keep `main()` thin.** Extract persistence (config/ledger writes) and the
   user-facing summary into small named helpers — easier to read and to test.
 
-## Documentation Testing (markdown snippets)
+## Markdown Snippet Testing
 
-Tracked `.md` files (except `examples/`) run in CI as tests via `pytest-markdown-docs`
-— so `python` snippets in the docs must stay correct and runnable, not rot:
+Tracked Markdown outside `examples/` runs through `pytest-markdown-docs` in CI.
+Runnable Python fences execute as checks:
 
 ```bash
-uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
-uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest --markdown-docs docs/adapters/nooa.md --no-cov
+uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
 ```
-
-NOOA's runnable documentation requires its legacy environment; the two commands
-above cover the complete tracked documentation suite.
 
 Fence tags: plain ` ```python ` **executes** (top-level `assert`s are the
 checks); ` ```python notest ` is collected out — reserve it for pseudo-code,
@@ -416,8 +486,8 @@ breaks the doc.
 **Gotcha — snippets under `tests/e2e/**` skip in CI**, silently, since that
 tree's conftest skips every collected item unless `E2E_TESTS_ENABLED=true`
 and CI's markdown-docs step never sets it — worse than honest `notest`. Keep
-E2E-doc snippets `notest`; put a runnable check of E2E-adjacent symbols in a
-doc outside `tests/e2e/**` instead, where it actually executes.
+snippets there `notest`; put a runnable check of E2E-adjacent symbols in
+Markdown outside `tests/e2e/**` instead, where it actually executes.
 
 ## External Research & Code Reuse
 
@@ -431,7 +501,9 @@ install` it and exercise the real call in this repo's venv.
 
 For Python changes, before selecting checks, re-read your own diff once against
 the `band-python-conventions` skill — including code you just wrote this session,
-not only code you started from. The two rules that get skipped under time pressure:
+not only code you started from. Test diffs also walk the
+[test conventions' "Before finishing" checklist](.claude/skills/band-python-test-conventions/SKILL.md#before-finishing).
+Check these design rules explicitly:
 
 - **Single source of truth**: a literal, magic string, or multi-line block
   re-typed in more than one place (a second copy you just wrote counts) instead
@@ -440,9 +512,12 @@ not only code you started from. The two rules that get skipped under time pressu
   small, intent-named helper — e.g. `[e for e in tools.events_sent if
   e["message_type"] == "x"]` repeated at each call site instead of one
   `events_of_type(tools, "x")`.
+- **Test helpers**: inspect helpers and peers with their consuming tests. Reject
+  hidden scenario logic, copied subject behavior, unsupported-operation success,
+  and fixture setup that reasserts its own assumptions. Reduce unnecessary
+  machinery before splitting files.
 
-Ruff/pyrefly/pytest catch correctness and style; they do not catch either of
-these, so this step is the only gate for them.
+Passing lint, types, and tests does not satisfy these design checks.
 
 Choose validation for the behavior the diff can affect. Explicit user limits
 take precedence; report checks not run instead of implying they passed.
@@ -454,6 +529,10 @@ take precedence; report checks not run instead of implying they passed.
 | Localized Python source or tests | Run relevant lint, format, type checks, and the affected behavioral tests. Broaden when shared callers or regressions warrant it. |
 | Shared runtime/protocol behavior, dependencies, packaging, or broad refactors | Run the full gate below in the appropriate dependency environments, plus boundary-specific checks such as conformance, wheel smoke, or live E2E where needed. |
 | CI workflows | Run actionlint and affected workflow guards; validate server-side behavior when local checks cannot exercise it. Avoid publishing during a probe. |
+
+GitHub rulesets and environment policies are server-side state. Inspect their
+current configuration when changing workflows that depend on them; actionlint
+does not prove GitHub accepted or started a workflow or permitted a release.
 
 Mixed changes use the union of applicable checks. Existing required CI checks
 remain required for merging; selecting local checks does not bypass them.
@@ -556,10 +635,10 @@ The readiness review checks the actual diff and relevant existing tests:
 - **Implementation complete:** the diff solves the cause or need at its
   authoritative boundary, is focused and maintainable, and has no known
   blocking defects or unfinished in-scope work hidden as follow-ups.
-- **Coverage meaningful:** apply the test-conventions skill's "Coverage and
-  realistic flows" guidance. Map important scenarios to assertions, include
-  relevant complex interactions and failure/recovery paths, and close material
-  in-scope gaps. Passing tests and coverage percentages alone are insufficient.
+- **Coverage meaningful:** apply the test-conventions skill's
+  [coverage guidance](.claude/skills/band-python-test-conventions/SKILL.md#coverage-is-branches-not-lines).
+  Map important scenarios to assertions, include relevant complex
+  interactions and failure/recovery paths, and close material in-scope gaps. Passing tests and coverage percentages alone are insufficient.
 - **Validation evidenced:** the applicable author checks from the Pre-Commit
   Checklist passed for the implementation being reviewed. Record the reviewed
   head, checks and outcomes, scenario coverage, and material limitations in

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from band.integrations.parlant.tools import set_session_tools
 from band.runtime.tools import MISSING_MENTIONS_ERROR
 from band.testing import FakeAgentTools
+from tests.integrations.parlant.enginecontext import bind_engine_tools
 from tests.testing.support import seeded_participant
 
 pytest.importorskip("parlant.sdk")  # real @p.tool schemas; dev-parlant venv only
@@ -20,7 +20,7 @@ class TestChatTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should call tools.send_message with parsed mentions."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         send_message = parlant_tools["band_send_message"]
         result = await send_message(mock_context, "Hello world", "Alice, Bob")
@@ -34,7 +34,7 @@ class TestChatTools:
     ):
         """The adapter reads the turn, so it won't duplicate the tool's reply."""
         tools = FakeAgentTools()
-        set_session_tools(mock_context.session_id, tools)
+        await bind_engine_tools(mock_context.session_id, tools)
 
         send_message = parlant_tools["band_send_message"]
         await send_message(mock_context, "Hello", "Alice")
@@ -46,7 +46,7 @@ class TestChatTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should end the turn locally without posting to the room."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         no_reply = parlant_tools["band_no_reply"]
         result = await no_reply(mock_context, reason="addressed elsewhere")
@@ -58,7 +58,7 @@ class TestChatTools:
     async def test_no_reply_omits_a_blank_reason(
         self, parlant_tools, mock_tools, mock_context
     ):
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         no_reply = parlant_tools["band_no_reply"]
         await no_reply(mock_context, reason="")
@@ -69,7 +69,7 @@ class TestChatTools:
     async def test_no_reply_settles_the_turn_reply(self, parlant_tools, mock_context):
         """A decline settles the turn, so the adapter posts nothing of its own."""
         tools = FakeAgentTools()
-        set_session_tools(mock_context.session_id, tools)
+        await bind_engine_tools(mock_context.session_id, tools)
 
         no_reply = parlant_tools["band_no_reply"]
         await no_reply(mock_context, reason="")
@@ -86,7 +86,7 @@ class TestChatTools:
                 seeded_participant("self", handle="self"),
             ],
         )
-        set_session_tools(mock_context.session_id, tools)
+        await bind_engine_tools(mock_context.session_id, tools)
 
         send_message = parlant_tools["band_send_message"]
         result = await send_message(mock_context, "Hello", "")
@@ -101,7 +101,7 @@ class TestChatTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should call tools.send_event with correct parameters."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         send_event = parlant_tools["band_send_event"]
         result = await send_event(mock_context, "Thinking...", "thought")
@@ -114,7 +114,7 @@ class TestChatTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should reject invalid message types."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         send_event = parlant_tools["band_send_event"]
         result = await send_event(mock_context, "Test", "invalid_type")
@@ -126,7 +126,7 @@ class TestChatTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should call tools.add_participant."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         add_participant = parlant_tools["band_add_participant"]
         result = await add_participant(mock_context, "Research Agent")
@@ -141,7 +141,7 @@ class TestChatTools:
         tools = FakeAgentTools(
             participants=[seeded_participant("bob-id", handle="bob")]
         )
-        set_session_tools(mock_context.session_id, tools)
+        await bind_engine_tools(mock_context.session_id, tools)
 
         add_participant = parlant_tools["band_add_participant"]
         result = await add_participant(mock_context, "bob")
@@ -153,7 +153,7 @@ class TestChatTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should call tools.remove_participant."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         remove_participant = parlant_tools["band_remove_participant"]
         result = await remove_participant(mock_context, "Research Agent")
@@ -166,7 +166,7 @@ class TestChatTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should return formatted list of peers."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         lookup_peers = parlant_tools["band_lookup_peers"]
         result = await lookup_peers(mock_context)
@@ -182,7 +182,7 @@ class TestChatTools:
     ):
         """Should handle empty peers list."""
         mock_tools.lookup_peers.return_value = {"data": [], "metadata": {}}
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         lookup_peers = parlant_tools["band_lookup_peers"]
         result = await lookup_peers(mock_context)
@@ -194,7 +194,7 @@ class TestChatTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should return formatted list of participants."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         get_participants = parlant_tools["band_get_participants"]
         result = await get_participants(mock_context)
@@ -209,7 +209,7 @@ class TestChatTools:
     ):
         """Should handle empty participants list."""
         mock_tools.get_participants.return_value = []
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         get_participants = parlant_tools["band_get_participants"]
         result = await get_participants(mock_context)
@@ -221,7 +221,7 @@ class TestChatTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should call tools.create_chatroom."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         create_chatroom = parlant_tools["band_create_chatroom"]
         result = await create_chatroom(mock_context, "task-456")
@@ -234,7 +234,7 @@ class TestChatTools:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should handle empty task_id."""
-        set_session_tools(mock_context.session_id, mock_tools)
+        await bind_engine_tools(mock_context.session_id, mock_tools)
 
         create_chatroom = parlant_tools["band_create_chatroom"]
         result = await create_chatroom(mock_context, "")

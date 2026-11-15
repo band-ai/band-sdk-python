@@ -131,14 +131,17 @@ COST_MULTI_TURN_AGENT = {
 # Adapters excluded from every per-turn-usage gate (the usage smokes and the
 # restart usage split). Keep this registry-derived fan honest: only adapters
 # unable to observe per-turn usage belong here.
+ACP_USAGE_UNAVAILABLE = "ACP adapter does not emit per-turn token usage"
 USAGE_EXCLUSIONS = (
     ExcludedAdapter(Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"),
     ExcludedAdapter(
         Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
     ),
-    ExcludedAdapter(Adapter.COPILOT_ACP, "ACP exposes no per-turn token-usage updates"),
-    ExcludedAdapter(Adapter.CURSOR_ACP, "ACP exposes no per-turn token-usage updates"),
-    ExcludedAdapter(Adapter.OMP_ACP, "ACP exposes no per-turn token-usage updates"),
+    ExcludedAdapter(Adapter.ANTIGRAVITY_ACP, ACP_USAGE_UNAVAILABLE),
+    ExcludedAdapter(Adapter.COPILOT_ACP, ACP_USAGE_UNAVAILABLE),
+    ExcludedAdapter(Adapter.CURSOR_ACP, ACP_USAGE_UNAVAILABLE),
+    ExcludedAdapter(Adapter.OMP_ACP, ACP_USAGE_UNAVAILABLE),
+    ExcludedAdapter(Adapter.OMP, "native OMP adapter does not emit per-turn usage"),
 )
 
 
@@ -158,6 +161,13 @@ LIVENESS_REPLY_PROMPT = (
     REPLY_PROMPT
     + " When another participant asks you to confirm you are active, include the "
     "complete token from their message exactly in your reply."
+)
+# A batched turn tempts a model to answer only the newest request; ask for all.
+QUEUED_REPLY_PROMPT = (
+    LIVENESS_REPLY_PROMPT
+    + " When one turn delivers several such requests, answer every one of them, "
+    "not just the latest: include each requested token and mention each sender, "
+    "whether a person or an agent."
 )
 REMEMBER = (
     "Please remember this note: {note}. Call band_send_message to confirm you "
@@ -180,6 +190,28 @@ def liveness_probe(marker: str) -> str:
     return (
         "To confirm you're still active, call band_send_message to reply with "
         f"this complete token exactly as written: {marker}."
+    )
+
+
+# Sets the role and nothing else, so whether a turn replies or declines is left to
+# the SDK's own turn guidance -- the thing the queued-decision smokes exercise.
+ASSISTANT_PROMPT = "You are a helpful assistant in a chat room."
+
+# Announcements that ask nothing of the agent.
+FYI_NOTICES = (
+    "FYI: the weekly sync moved to Thursday at 4pm.",
+    "FYI: the staging database was refreshed overnight.",
+)
+NO_REPLY_FYI_NOTICES = tuple(
+    f"{notice} No reply or acknowledgment is needed." for notice in FYI_NOTICES
+)
+
+
+def correction_probe(marker: str) -> str:
+    """Follow-up that replaces the token an earlier ``liveness_probe`` asked for."""
+    return (
+        "Correction: reply with this complete token instead of the previous one, "
+        f"exactly as written: {marker}."
     )
 
 

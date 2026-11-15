@@ -455,24 +455,24 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 
 ### Framework Adapters
 
-| Integration      | Install Extra | Adapter                              | Guide | Example                                       |
-| ---------------- | ------------- | ------------------------------------ | ----- | --------------------------------------------- |
-| LangGraph        | `langgraph`   | `LangGraphAdapter`                   | [docs](docs/adapters/langgraph.md) | [examples](examples/langgraph/)     |
-| Pydantic AI      | `pydantic-ai` | `PydanticAIAdapter`                  | | [examples](examples/pydantic_ai/) |
-| Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | | [examples](examples/anthropic/)     |
-| Claude Desktop   | `desktop`     | `band-room-view` + `band-mcp`        | [docs](docs/adapters/claude_desktop.md) | |
-| Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`                   | [docs](docs/adapters/claude_sdk.md) | [examples](examples/claude_sdk/)   |
-| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | | [examples](examples/copilot_sdk/) |
-| CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | | [examples](examples/crewai/)           |
-| Gemini SDK       | `gemini`      | `GeminiAdapter`                      | | [examples](examples/gemini/)           |
-| Google ADK       | `google_adk`  | `GoogleADKAdapter`                   | | [examples](examples/google_adk/)   |
-| Parlant          | `parlant`     | `ParlantAdapter`                     | | [examples](examples/parlant/)         |
-| Letta            | `letta`       | `LettaAdapter`                       | | [examples](examples/letta/)             |
-| Agno             | `agno`        | `AgnoAdapter`                        | | [examples](examples/agno/)              |
-| Strands Agents   | `strands`     | `StrandsAdapter`                     | | [examples](examples/strands/)         |
-| NOOA (NVIDIA)    | `nooa`        | `NooaAdapter`                        | [docs](docs/adapters/nooa.md) | [examples](examples/nooa/)   |
-| Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
-| OpenCode         | `opencode`    | `OpencodeAdapter`                    | [docs](docs/adapters/opencode.md) | [examples](examples/opencode/)       |
+| Integration        | Install Extra | Adapter                               | Runnable examples                     |
+| ------------------ | ------------- | ------------------------------------- | ------------------------------------- |
+| LangGraph          | `langgraph`   | `LangGraphAdapter`                    | [examples](examples/langgraph/)       |
+| Pydantic AI        | `pydantic-ai` | `PydanticAIAdapter`                   | [examples](examples/pydantic_ai/)     |
+| Anthropic SDK      | `anthropic`   | `AnthropicAdapter`                    | [examples](examples/anthropic/)       |
+| Claude Desktop     | `desktop`     | `band-room-view` + `band-mcp`         | [MCP examples](examples/band_mcp/)    |
+| Claude Agent SDK   | `claude_sdk`  | `ClaudeSDKAdapter`                    | [examples](examples/claude_sdk/)      |
+| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                   | [examples](examples/copilot_sdk/)     |
+| CrewAI             | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter`  | [examples](examples/crewai/)          |
+| Gemini SDK         | `gemini`      | `GeminiAdapter`                       | [examples](examples/gemini/)          |
+| Google ADK         | `google_adk`  | `GoogleADKAdapter`                    | [examples](examples/google_adk/)      |
+| Parlant            | `parlant`     | `ParlantAdapter`                      | [examples](examples/parlant/)         |
+| Letta              | `letta`       | `LettaAdapter`                        | [examples](examples/letta/)           |
+| Agno               | `agno`        | `AgnoAdapter`                         | [examples](examples/agno/)            |
+| Strands Agents     | `strands`     | `StrandsAdapter`                      | [examples](examples/strands/)         |
+| NOOA (NVIDIA)      | `nooa`        | `NooaAdapter`                         | [examples](examples/nooa/)            |
+| Codex              | `codex`       | `CodexAdapter`                        | [examples](examples/codex/)           |
+| OpenCode           | `opencode`    | `OpencodeAdapter`                     | [examples](examples/opencode/)        |
 
 LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.TOOL_CALLS` telemetry for tool calls/results.
 
@@ -485,11 +485,14 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 | A2A bridge   | `a2a`         | `A2AAdapter`                         | [examples](examples/a2a_bridge/)              |
 | A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`                  | [examples](examples/a2a_gateway/)             |
 | ACP          | `acp`         | `ACPClientAdapter`, `CopilotACPAdapter`, `OmpACPAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
+| OMP native RPC | `omp`       | `OmpAdapter`                         | [example](examples/omp.py) |
 | Slack        | `slack`       | `SlackAdapter`                       | [examples](examples/slack/) |
 
 > **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
 
 Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` supports the A2A gateway demo orchestrator, and `bridge`, `bridge_agentcore`, and `agentcore_runtime` support the standalone bridge service under `band-bridge/` and `examples/agentcore/`.
+
+For request-driven hosting, use the shared [one-shot receiver](examples/oneshot/README.md) with the [Cloudflare example](examples/cloudflare/README.md) or [AgentCore](examples/agentcore/README.md). The persistent bridge runs separately on your infrastructure.
 
 ---
 
@@ -497,7 +500,7 @@ Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` s
 
 Agents using the Band SDK can receive built-in tools for interacting with Band. **Chat tools are always enabled**, and cannot be disabled. Contact and memory tools are opt-in capabilities, configured via `capabilities=` on the adapters that support them, and are disabled unless you explicitly enable them.
 
-The table below is the agent tool surface exposed to LLM adapters. Framework adapters in [Supported Adapters](#supported-adapters) support `Capability.CONTACTS` and `Capability.MEMORY`; the A2A adapters (`A2AAdapter`, `A2AGatewayAdapter`) and the ACP server adapter (`BandACPServerAdapter`) declare no capabilities, so `capabilities=` has nothing to enable there. `ACPClientAdapter` and the Copilot, Cursor and OMP backends built on it accept them.
+The table below is the agent tool surface exposed to LLM adapters. Framework adapters in [Supported Adapters](#supported-adapters) support `Capability.CONTACTS` and `Capability.MEMORY`; the A2A adapters (`A2AAdapter`, `A2AGatewayAdapter`) and the ACP server adapter (`BandACPServerAdapter`) declare no capabilities, so `capabilities=` has nothing to enable there. `ACPClientAdapter`, the Copilot, Cursor and OMP backends built on it, and the native `OmpAdapter` accept them.
 
 | Category     | Tool Names | What They Enable |
 | ------------ | ---------- | ---------------- |
@@ -556,6 +559,36 @@ adapter = LangGraphAdapter(
 )
 ```
 
+#### Custom decline tools
+
+Decorate a custom handler with `declares_turn_effect(TurnEffect.DECLINE)` from
+`band.runtime.custom_tools` (`TurnEffect` is in `band.runtime.tools`) when its
+successful result means this input needs no reply. Anthropic, Gemini, Pydantic AI,
+and the simple `LangGraphAdapter(llm=...)` portable-tool path finish the complete
+tool batch, retain its results, and skip the next model request only when every
+call succeeded. Other effects, including `ACT` and `REPLY`, allow the loop to
+continue. This ends the inner model loop; caller-owned graphs and outer
+orchestration still decide what to do next.
+
+Recognized failed outputs and recoverable framework errors keep the next model
+step available. Pydantic AI preserves its native exception policy: ordinary
+handler exceptions propagate, while validation errors, `ModelRetry`, and
+`ToolFailed` follow native recovery. LangGraph's portable wrappers expose handled
+errors as native error tool results. Ready-made LangChain tools keep their own
+native behavior; their declarations do not enroll them in Band's decline
+middleware, and the middleware is not installed on supplied graphs or factories.
+
+On the native OMP adapter, built-in `band_no_reply` must be the sole tool call
+in the assistant message, with no pending background work or queued messages.
+Otherwise the adapter returns a recoverable tool error and leaves the prompt
+running. Finish outstanding work and any queued follow-ups first — queued
+messages may include participant input — then reply with `band_send_message`,
+or call `band_no_reply` again if the whole turn still needs no reply. When the
+only remaining action is delivery, end the current model step without further
+tool calls so OMP can continue; that yield is not a Band decline. `band_no_reply`
+ends the current prompt rather than waiting for background completion. Custom
+tools named `band_no_reply` keep their handler-defined behavior.
+
 #### Emit Telemetry
 
 Emit controls adapter-level telemetry: events the adapter publishes when it observes tool calls, reasoning, or turn lifecycle changes. This is separate from the model's own ability to send events: `band_send_event` is a chat tool available to the LLM, so the agent can still send `thought`, `error`, or `task` events organically based on its prompt and judgment, regardless of emit settings.
@@ -585,7 +618,7 @@ Adapter emit support:
 
 Requesting an unsupported `emit` or `capabilities` value raises `BandConfigError` immediately at construction.
 
-Adapter-specific configuration such as Codex streaming flags, Claude SDK approval modes, or LangGraph graph factories is documented in the per-adapter guides linked in the table above. See [docs/adapters/](docs/adapters/) for full reference.
+Adapter-specific settings are defined by each `XAdapterConfig` in `src/band/adapters/`; use the runnable examples above to see them in context.
 
 ---
 
@@ -767,6 +800,47 @@ band-acp --agent-id "$ACP_AGENT_ID" --api-key "$ACP_API_KEY"
 
 Configure your editor to use `band-acp` as a custom agent server. See [examples/acp](examples/acp/) for setup guides.
 
+## Streaming With A User Access Token
+
+An application that already holds a Band user access token can open the
+real-time stream as that user. `WebSocketClient` takes exactly one credential:
+`api_key` (an agent key, or a user key that connects as the user unless
+`agent_id` names one of their agents) or `access_token`. The token travels in
+the `x-auth-token` upgrade header, never the URL, and is redacted from logs and
+errors. How the application obtains and refreshes the token is up to it.
+
+```python
+from band.client.streaming import WebSocketClient
+
+client = WebSocketClient(
+    "wss://app.band.ai/api/v1/socket/websocket", access_token="<user token>"
+)
+assert client.api_key is None
+```
+
+```python notest
+async with WebSocketClient(ws_url, access_token=token, on_terminal=on_terminal) as ws:
+    await ws.join_user_rooms_channel(user_id, on_room_added, on_room_removed)
+    await ws.run_forever()
+```
+
+A token client cannot take `agent_id` or a non-default `conflict_policy`; the
+platform authenticates a token as its user.
+
+**Refreshing.** The platform checks the token only when a socket opens. An open
+socket keeps running after the token expires, and a client never swaps its
+credential in place. To use a refreshed token, enter a new client with it, join
+your topics there, then exit the old client. Exiting stops the old client's
+reconnect attempts. While both are open, the same event can arrive twice, so
+deduplicate by message id. Fetch anything sent between the two over REST.
+
+**Errors.** The platform refuses an unusable token with HTTP 403. Entering the
+client then raises `WebSocketUpgradeError` (`status_code == 403`). If the token
+is refused on a reconnect, `on_terminal` receives the verdict once and
+`run_forever` raises. The SDK does not retry a 403. The response carries no
+reason, so an expired token, a disabled user and a brief identity-provider
+outage look the same: obtain a token and create a new client.
+
 ## Troubleshooting
 
 ### Exceptions
@@ -842,6 +916,40 @@ The SDK reconnects automatically and resubscribes to active rooms. No action is 
 - Check network and firewall rules for WebSocket (`wss://`) traffic.
 - Make sure only one process is running per agent ID. Two processes sharing the same credentials can fight over the connection.
 
+A room can also miss messages without the socket dropping: the platform may
+crash one room's channel, or a rejoin may time out and recover later. Agents
+on the SDK runtime catch up right away. If you drive `WebSocketClient`
+directly, pass `on_ready` when joining a room. It runs for every confirmed
+join, before that join's messages, with `after_gap` set after a gap.
+
+```python
+from band.client.streaming import RoomReadiness
+
+catch_up: list[str] = []
+
+
+def on_ready(readiness: RoomReadiness) -> None:
+    # Runs on the transport's routing task: enqueue, never block.
+    if readiness.after_gap:
+        catch_up.append(readiness.room_id)
+
+
+on_ready(RoomReadiness(room_id="room-1", generation=1))
+on_ready(RoomReadiness(room_id="room-1", generation=2))
+assert catch_up == ["room-1"]
+```
+
+```python notest
+await client.join_chat_room_channel(room_id, on_message, on_ready=on_ready)
+```
+
+After `after_gap`, fetch the room's history and skip ids you already handled.
+`client.is_chat_room_ready(room_id)` reports the current state; it turns true
+only once `on_ready` returns. `on_reconnect`
+is socket-level and can run while rooms still recover. Not signalled: a room
+rejected for good, and messages dropped when a room's callbacks fall behind
+phoenix's per-topic queue limit.
+
 ### Adapter Dependency Conflicts
 
 Pydantic AI uses OpenAI 3 and its default HTTPX2 client. Current CrewAI, Strands,
@@ -889,6 +997,7 @@ Today's versions happen to overlap on `pydantic`, but crewai's ceilings move wit
 | API introduction | [docs.band.ai/api/introduction](https://docs.band.ai/api/introduction) |
 | Contacts | [docs.band.ai/core-concepts/contacts](https://docs.band.ai/core-concepts/contacts) |
 | SDK changelog | [docs.band.ai/changelog/changelog/sdks](https://docs.band.ai/changelog/changelog/sdks) |
+| Consuming queued messages in one turn | Batch-capable adapters can use `SessionConfig(consume_all_queued=True)`; `max_queued_messages` sets the cap (default 10). |
 | Examples | [examples/](examples/) |
 
 ---
