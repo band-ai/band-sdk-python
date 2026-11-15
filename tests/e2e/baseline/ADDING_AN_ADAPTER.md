@@ -233,11 +233,12 @@ next developer/agent knows the knob exists.
 
 The matrix can pass `tools=[CustomToolDef, ...]` (from `@with_adapters(..., tools=[...])`).
 
-- If your framework accepts band `CustomToolDef`s, forward them as
-  `additional_tools=tools`.
-- If your framework takes tools in a different form, translate the `ToolSpec`:
-  agno uses `t.as_callable()` (a plain callable), pydantic-ai uses
-  `t.as_callable(ctx_annotation=RunContext)` (a `RunContext`-first callable).
+- If your framework accepts band `CustomToolDef`s, forward them with
+  `_custom_tool_defs(tools)`. Prefer this path: the adapter then runs them through
+  `run_custom_tool`, so a failing tool reaches the model as a failed result the
+  same way in every adapter.
+- If your framework takes tools only in a different form, translate the
+  `ToolSpec`: agno uses `t.as_callable()` (a plain callable).
 - If it genuinely **can't** accept a locally-defined tool (only letta today —
   its tools live on a Band MCP server, which the adapter self-hosts in-process
   by default), call `_reject_tools(Adapter.MYFRAMEWORK, tools)`

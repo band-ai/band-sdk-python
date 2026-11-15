@@ -38,6 +38,7 @@ from band.runtime.tools import (
     turn_effect,
     validate_tool_arguments,
 )
+from band.runtime.tools.schema import tool_execution_failure
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +244,7 @@ async def _dispatch_failed(
         exc_info=error,
     )
     if notify_room or not turn_effect(definition.name).did_work:
-        message = f"Error executing {definition.name}: {error}"
+        message = tool_execution_failure(definition.name, error)
     else:
         # The method completed, so the model must not read it as a failure and
         # redo it (re-posting a message) just because the result could not be

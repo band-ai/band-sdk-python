@@ -33,7 +33,11 @@ except ImportError as e:
 from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
 from band.core.adapterconfig import DEFAULT_MAX_TOOL_ROUNDS, BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
-from band.core.exceptions import ProviderRunError, ToolRoundsExceededError
+from band.core.exceptions import (
+    HOST_CONTROL_ERRORS,
+    ProviderRunError,
+    ToolRoundsExceededError,
+)
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import sanitize_tool_schema
@@ -49,22 +53,22 @@ from band.core.types import (
 from band.runtime.custom_tools import (
     CustomToolDef,
     declared_effect,
-    execute_custom_tool,
     find_custom_tool,
     format_validation_error,
     get_custom_tool_name,
+    run_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    ImageContentResult,
     TurnEffect,
     decode_image_blocks,
     image_block_placeholder,
-    is_image_passthrough_result,
+    image_passthrough_result,
     redact_tool_call_args,
     turn_effect,
 )
-from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +76,7 @@ _PROVIDER = "gemini"
 
 
 def _image_function_response_parts(
-    result: dict[str, Any],
+    result: ImageContentResult,
 ) -> list[types.FunctionResponsePart]:
     """Convert an MCP-content-shaped band_read_room_file result into Gemini
     FunctionResponsePart inline_data blocks, so the model receives real image
@@ -568,43 +572,43 @@ class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
                     logger.warning("Failed to send tool_call event: %s", e)
 
             response_parts: list[types.FunctionResponsePart] | None = None
+            effect = TurnEffect.OBSERVE
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    result = await execute_custom_tool(
+                    outcome = await run_custom_tool(
                         custom_tool, tool_input, tools=tools
                     )
-                    succeeded = not is_failed_tool_output(result)
                     effect = declared_effect(custom_tool[1]) or TurnEffect.OBSERVE
                 else:
                     outcome = await tools.execute_tool_call_structured(
                         tool_name, tool_input
                     )
-                    result = outcome.value
-                    succeeded = outcome.ok
                     effect = turn_effect(tool_name)
-                outcome_record.record(effect, succeeded)
-                if is_image_passthrough_result(tool_name, result):
-                    response_parts = _image_function_response_parts(result)
-                    result_str = image_block_placeholder(len(response_parts))
-                else:
-                    result_str = (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
-                    )
-                is_error = not succeeded
+                result, succeeded = outcome.value, outcome.ok
+            except HOST_CONTROL_ERRORS:
+                raise
             except ValidationError as exc:
                 errors = format_validation_error(exc)
                 result_str = f"Invalid arguments for {tool_name}: {errors}"
-                is_error = True
+                result, succeeded = result_str, False
                 logger.warning("Validation error for tool %s: %s", tool_name, errors)
             except Exception as e:
-                result_str = f"Error: {e}"
-                is_error = True
+                result, succeeded = f"Error: {e}", False
                 logger.exception("Tool %s failed", tool_name)
-            if is_error:
-                outcome_record.record(TurnEffect.OBSERVE, False)
+            outcome_record.record(effect, succeeded)
+            if (
+                image_result := image_passthrough_result(tool_name, result)
+            ) is not None:
+                response_parts = _image_function_response_parts(image_result)
+                result_str = image_block_placeholder(len(response_parts))
+            else:
+                result_str = (
+                    json.dumps(result, default=str)
+                    if not isinstance(result, str)
+                    else result
+                )
+            is_error = not succeeded
             if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(

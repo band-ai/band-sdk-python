@@ -15,6 +15,7 @@ from strands.types.tools import ToolResult
 from band.adapters.strands import StrandsAdapter
 from band.converters.strands import StrandsHistoryConverter
 from band.core.types import MessageType
+from band.runtime.tools.schema import tool_execution_failure
 from band.testing import (
     FakeAgentTools,
     TextTurn,
@@ -97,7 +98,9 @@ class TestCustomDeclineFailure:
                         "status": NativeStatus.ERROR,
                         "content": [
                             {
-                                "text": f"Error executing tool 'decline': {REJECTION_NOTE}"
+                                "text": tool_execution_failure(
+                                    "decline", ValueError(REJECTION_NOTE)
+                                )
                             }
                         ],
                     }
@@ -125,7 +128,7 @@ class TestCustomDeclineFailure:
             raise ValueError(note)
 
         model = DeclineModel(
-            [ToolTurn("decline", {"note": REJECTION_NOTE}), TextTurn("")]
+            [ToolTurn("decline", {"note": REJECTION_NOTE}), SEND_TURN, TextTurn("")]
         )
         adapter = StrandsAdapter(
             llm=model, additional_tools=[custom_decline_tools(fail)[kind]]
@@ -133,12 +136,16 @@ class TestCustomDeclineFailure:
         await adapter.on_started("Bot", "A bot")
         tools = FakeAgentTools()
 
-        await _run_message(adapter, tools)
+        await run_judged_turn(adapter, tools)
 
-        assert len(model.requests) == 2
         assert results(model.requests[1]) == expected
-        assert not tools.turn.complete
-        assert not tools.turn.replied
+        assert len(model.requests) == 3
+        tools.assert_message_sent(content="hi", count=1)
+        result_events = events_of_type(tools, MessageType.TOOL_RESULT)
+        assert [
+            json.loads(event["content"])["is_error"] for event in result_events
+        ] == [True, False]
+        assert failure_reports(tools) == []
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -152,7 +159,7 @@ class TestCustomDeclineFailure:
                         "status": NativeStatus.ERROR,
                         "content": [
                             {
-                                "text": "Error executing tool 'decline': Invalid arguments for decline: note: Field required"
+                                "text": "Invalid arguments for decline: note: Field required"
                             }
                         ],
                     }

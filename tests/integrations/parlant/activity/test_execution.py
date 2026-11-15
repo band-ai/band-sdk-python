@@ -12,6 +12,7 @@ from parlant.core.tools import ToolContext
 
 from band.integrations.parlant.customtools import build_custom_tool
 from band.integrations.parlant.tools import create_parlant_tools
+from band.runtime.tools.schema import tool_execution_failure
 from band.testing import FakeAgentTools
 from band.testing.activity import ActivityRecorder, shown_tool
 from tests.integrations.activitykit import LookupInput
@@ -23,6 +24,7 @@ class TestParlantActivity:
     async def test_real_server_reports_only_calling_session_and_always_ends(
         self, plugin_server: ToolServer, failed: bool
     ) -> None:
+        failure = ValueError("private-error")
         recorder, quiet = ActivityRecorder(), ActivityRecorder()
         tools = recorder.observing(FakeAgentTools())
         other = quiet.observing(FakeAgentTools())
@@ -36,7 +38,7 @@ class TestParlantActivity:
             entered.set()
             await release.wait()
             if failed:
-                raise ValueError("private-error")
+                raise failure
             return "private-result"
 
         await plugin_server.enable(
@@ -55,7 +57,7 @@ class TestParlantActivity:
             release.set()
         result = await call
         assert result == (
-            "Error running lookup: private-error" if failed else "private-result"
+            tool_execution_failure("lookup", failure) if failed else "private-result"
         )
         recorder.assert_completed_tool("lookup")
         assert not tools.events_sent

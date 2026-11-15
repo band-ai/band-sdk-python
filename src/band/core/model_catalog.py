@@ -7,7 +7,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict
 
 from band.core.exceptions import BandConfigError
-from band.core.validation import listing
+from band.core.validation import available
 
 
 class ModelSetting(StrEnum):
@@ -112,8 +112,7 @@ def _check_model(model_id: str, catalog: ModelCatalog) -> None:
     if catalog.choice(model_id) is not None:
         return
     raise ModelSelectionError(
-        f'model "{model_id}" is not advertised; available: '
-        f"{listing(catalog.model_ids)}",
+        f'model "{model_id}" is not advertised; {available(catalog.model_ids)}',
         setting=ModelSetting.MODEL,
         value=model_id,
         advertised=catalog.model_ids,
@@ -124,14 +123,9 @@ def _check_effort(effort: str, *, model_id: str | None, catalog: ModelCatalog) -
     choice = catalog.choice(model_id) if model_id is not None else None
     if choice is None or choice.efforts is None or effort in choice.efforts:
         return
-    message = (
-        f'reasoning effort "{effort}" is not advertised for model "{model_id}"; '
-        f"available: {listing(choice.efforts)}"
-        if choice.efforts
-        else f'model "{model_id}" offers no reasoning effort'
-    )
     raise ModelSelectionError(
-        message,
+        f'reasoning effort "{effort}" is not advertised for model "{model_id}"; '
+        f"{available(choice.efforts)}",
         setting=ModelSetting.REASONING_EFFORT,
         value=effort,
         advertised=choice.efforts,

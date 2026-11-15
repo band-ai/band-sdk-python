@@ -7,10 +7,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
+from band.integrations.omprpc.decline import is_sole_tool_call
 from band.integrations.omprpc.errors import BACKLOG_EXCEEDED, OmpProcessError
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
-    OmpContentKind,
     OmpEvent,
     OmpEventType,
     OmpHostToolCall,
@@ -21,15 +21,8 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from band.runtime.tools import BandTool
 
 EVENT_BACKLOG_LIMIT = 256
-
-BUSY_DECLINE_REFUSAL = (
-    "This turn still has background work, queued results, or other "
-    "tool calls to handle. Wait for and process their results, then call "
-    f"{BandTool.NO_REPLY} separately when no work remains."
-)
 
 
 class OmpCallbackKind(StrEnum):
@@ -190,13 +183,7 @@ class PromptRun:
         return self.result.done() or self.terminal_seen or self.settled_proven()
 
     def is_single_tool_call(self, tool_call_id: str) -> bool:
-        message = self.last_assistant
-        if message is None or isinstance(message.content, str):
-            return False
-        calls = [
-            block for block in message.content if block.type == OmpContentKind.TOOL_CALL
-        ]
-        return len(calls) == 1 and calls[0].id == tool_call_id
+        return is_sole_tool_call(self.last_assistant, tool_call_id)
 
     def has_pending_native_work(self) -> bool:
         event_claims_pending_work = (

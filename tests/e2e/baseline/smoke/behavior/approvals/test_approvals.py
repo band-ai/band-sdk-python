@@ -15,7 +15,6 @@ from tests.e2e.baseline.smoke.behavior.approvals.kit import (
     THREE_BARRIERS,
     _wait_timeout_s,
     approval_room,
-    readback_commands,
 )
 from tests.e2e.baseline.smoke.samples.approvals import (
     UNATTENDED_POLICIES,
@@ -78,11 +77,6 @@ class TestApprovals:
                 room.dialect.notice(outcome, request),
                 since=after_request,
                 closing_reply=done,
-                allowed_followup_commands=(
-                    readback_commands(target)
-                    if outcome is Outcome.APPROVE
-                    else frozenset()
-                ),
             )
 
             if outcome is Outcome.TIMEOUT:
@@ -200,7 +194,6 @@ class TestApprovals:
                 room.dialect.notice(Outcome.APPROVE, request),
                 since=start,
                 closing_reply=done,
-                allowed_followup_commands=readback_commands(target),
             )
             for token, token_start, token_id in (
                 (first, first_start, first_id),
@@ -282,7 +275,6 @@ class TestApprovals:
                 resolved,
                 since=approved,
                 closing_reply=done,
-                allowed_followup_commands=readback_commands(target),
             )
             assert written_lines(target) == [marker]
 

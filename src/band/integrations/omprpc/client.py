@@ -21,6 +21,11 @@ from band.integrations.codex.winspawn import (
     close_stdin,
     kill_process_tree,
 )
+from band.integrations.omprpc.decline import (
+    compose_decline_refusals,
+    decline_backlog_refusal,
+    decline_sole_tool_refusal,
+)
 from band.integrations.omprpc.errors import (
     CALLBACKS_UNFINISHED,
     OmpCompletionTimeout,
@@ -37,12 +42,10 @@ from band.integrations.omprpc.frames import (
     ui_response_frame,
 )
 from band.integrations.omprpc.prompt import (
-    BUSY_DECLINE_REFUSAL,
     CompletionAction,
     OmpCallbackKind,
     PromptCallback,
     PromptRun,
-    state_has_async_backlog,
 )
 from band.integrations.omprpc.scope import OmpProcessScope
 from band.integrations.ompwire import (
@@ -293,10 +296,24 @@ class OmpRpcClient:
             raise ValueError("OMP stop requires an active host tool callback")
         return turn, callback
 
-    async def can_stop_after_tool(self, call: OmpHostToolCall) -> bool:
-        """Check that a host tool can end the prompt without stranding native work."""
+    async def stop_after_tool_refusal(self, call: OmpHostToolCall) -> str | None:
+        """Return the observed blocker, or None when the host tool may stop."""
         turn, callback = self._require_tool_callback(call.id)
-        return await self._stop_snapshot_is_safe(turn, call, callback.identity)
+        await self._refresh_completion_snapshot(turn, _STOP_PROTOCOL_ERROR)
+        if self._turn is not turn or not self._callback_still_active(
+            turn, OmpCallbackKind.TOOL, call.id, callback.identity
+        ):
+            raise asyncio.CancelledError
+        assert turn.snapshot is not None
+        _, state = turn.snapshot
+        # Report every observed blocker in one refusal so backlog never masks
+        # a failed sole-tool proof (and the reverse). Yield is only valid when
+        # delivery is the remaining action — omit it when sole-tool also fails.
+        sole = decline_sole_tool_refusal(turn.last_assistant, call.toolCallId)
+        return compose_decline_refusals(
+            backlog=decline_backlog_refusal(state, allow_yield=sole is None),
+            sole=sole,
+        )
 
     def arm_stop_after_tool(
         self, call: OmpHostToolCall, *, on_commit: Callable[[], None]
@@ -910,21 +927,6 @@ class OmpRpcClient:
         else:
             await self._write_frame(frame)
 
-    async def _stop_snapshot_is_safe(
-        self, turn: PromptRun, call: OmpHostToolCall, identity: object
-    ) -> bool:
-        await self._refresh_completion_snapshot(turn, _STOP_PROTOCOL_ERROR)
-        if self._turn is not turn or not self._callback_still_active(
-            turn, OmpCallbackKind.TOOL, call.id, identity
-        ):
-            raise asyncio.CancelledError
-        assert turn.snapshot is not None
-        _, state = turn.snapshot
-        # A sibling tool can register background work after an idle snapshot.
-        return not state_has_async_backlog(state) and turn.is_single_tool_call(
-            call.toolCallId
-        )
-
     async def _stop_after_result(
         self, turn: PromptRun, result: dict[str, JsonValue]
     ) -> None:
@@ -941,14 +943,13 @@ class OmpRpcClient:
                 return
             assert turn.snapshot is not None
             _, state = turn.snapshot
-            if state_has_async_backlog(state):
+            reason = decline_backlog_refusal(state)
+            if reason is not None:
                 # Keep stop_after_tool_id so HOST_TOOL_CANCEL can still cancel
                 # this task mid-write; only drop the DECLINE commit.
                 turn.stop_commit = None
                 refusal = OmpToolResult(
-                    content=[
-                        OmpContent(type=OmpContentKind.TEXT, text=BUSY_DECLINE_REFUSAL)
-                    ],
+                    content=[OmpContent(type=OmpContentKind.TEXT, text=reason)],
                     is_error=True,
                 )
                 await self._write_frame(
