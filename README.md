@@ -488,6 +488,13 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 | OMP native RPC | `omp`       | `OmpAdapter`                         | [example](examples/omp.py) |
 | Slack        | `slack`       | `SlackAdapter`                       | [examples](examples/slack/) |
 
+The native `OmpAdapter` runs OMP in RPC-UI mode with headless extensions. An
+SDK-owned config overlay, applied after any `--config` in your `command`,
+disables OMP's interactive `ask` tool for Band sessions. To ask the room a
+question, the agent writes it as an ordinary reply, and the answer arrives as a
+later room message. Native tool permission prompts still reach the adapter:
+pass `resolve_permission=` to `OmpAdapter` to decide them.
+
 > **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
 
 Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` supports the A2A gateway demo orchestrator, and `bridge`, `bridge_agentcore`, and `agentcore_runtime` support the standalone bridge service under `band-bridge/` and `examples/agentcore/`.
