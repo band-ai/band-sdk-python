@@ -578,13 +578,16 @@ errors as native error tool results. Ready-made LangChain tools keep their own
 native behavior; their declarations do not enroll them in Band's decline
 middleware, and the middleware is not installed on supplied graphs or factories.
 
-The native OMP adapter accepts the built-in `band_no_reply` only as the sole
-tool call in its assistant message, with no pending background work or queued
-messages. Otherwise it returns a recoverable tool error without recording a
-decline or aborting the prompt. Wait for and process outstanding results before
-calling `band_no_reply` separately; it ends the current prompt rather than
-waiting for background completion. Custom tools named `band_no_reply` retain
-their handler-defined behavior.
+On the native OMP adapter, built-in `band_no_reply` must be the sole tool call
+in the assistant message, with no pending background work or queued messages.
+Otherwise the adapter returns a recoverable tool error and leaves the prompt
+running. Finish outstanding work and any queued follow-ups first — queued
+messages may include participant input — then reply with `band_send_message`,
+or call `band_no_reply` again if the whole turn still needs no reply. When the
+only remaining action is delivery, end the current model step without further
+tool calls so OMP can continue; that yield is not a Band decline. `band_no_reply`
+ends the current prompt rather than waiting for background completion. Custom
+tools named `band_no_reply` keep their handler-defined behavior.
 
 #### Emit Telemetry
 
