@@ -79,6 +79,15 @@ class TestDeclineRefusal:
             f"{RECONSIDER_PENDING_INPUT}"
         )
 
+    def test_queued_message_count_uses_observed_count(self) -> None:
+        assert decline_backlog_refusal(busy(queued=3)) == (
+            f"{BandTool.NO_REPLY} refused: native {queued_message_count_label(3)}. "
+            "Allow OMP to deliver the queued messages on continuation, then read and "
+            f"handle them. {NATIVE_QUEUED_INPUT_GUIDANCE} "
+            f"{NATIVE_REFUSED_DECLINE_GUIDANCE} {NATIVE_BACKLOG_YIELD_GUIDANCE} "
+            f"{RECONSIDER_PENDING_INPUT}"
+        )
+
     def test_work_and_input_refuse_together(self) -> None:
         assert decline_backlog_refusal(busy(work=True, queued=1)) == (
             f"{BandTool.NO_REPLY} refused: native {PENDING_ASYNC_WORK_LABEL} "

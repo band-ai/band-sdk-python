@@ -26,6 +26,7 @@ from tests.integrations.omppeers.base import FOLLOW_UP_PROMPT, RpcPeer
 
 DECLINE_CALL = "decline"
 SECOND_DECLINE_CALL = "decline-concurrent"
+DECLINE_RETRY = "decline-retry"
 STOP_CHECKPOINT = "stop-checkpoint"
 ADMIT_SECOND_DECLINE = "admit-second-decline"
 DECLINE_TRANSCRIPT = "frames.jsonl"
@@ -52,6 +53,7 @@ class DeclineScenario(StrEnum):
     MISMATCHED_ID = "mismatched-id"
     POST_CHECK_PENDING = "post-check-pending"
     POST_CHECK_QUEUED = "post-check-queued"
+    RECOVER_THEN_DECLINE = "recover-then-decline"
     CANCEL_SNAPSHOT = "cancel-snapshot"
     CANCEL_AFTER_ABORT = "cancel-after-abort"
 
@@ -173,6 +175,9 @@ class DeclinePeer(RpcPeer):
         self.prompt_count += 1
         send({"type": OmpEventType.AGENT_START})
         if self.prompt_count > 1:
+            if self.scenario_name == DeclineScenario.RECOVER_THEN_DECLINE:
+                self.call(BandTool.NO_REPLY, {}, DECLINE_RETRY)
+                return
             self.reply()
             return
         if self.scenario_name == DeclineScenario.ABORTED:
@@ -183,6 +188,7 @@ class DeclinePeer(RpcPeer):
             DeclineScenario.BACKGROUND_COMPLETING,
             DeclineScenario.BACKGROUND_BOTH,
             DeclineScenario.BACKGROUND_MIXED,
+            DeclineScenario.RECOVER_THEN_DECLINE,
         }
         self.background_queued = self.scenario_name in {
             DeclineScenario.BACKGROUND_QUEUED,
@@ -277,10 +283,15 @@ class DeclinePeer(RpcPeer):
                         "result": frame.result,
                     }
                 )
-                if frame.id in {DECLINE_CALL, SECOND_DECLINE_CALL}:
+                if frame.id in {DECLINE_CALL, SECOND_DECLINE_CALL, DECLINE_RETRY}:
                     self.background_pending = False
                     self.background_queued = False
                     self.post_check_pending = False
+                    if frame.id == DECLINE_RETRY:
+                        self.emit_assistant_turn("")
+                        self.send_prompt_result(settled=True)
+                        self.settle_session()
+                        return
                     self.reply()
                 else:
                     self.emit_assistant_turn("")

@@ -119,6 +119,18 @@ def decline_refused(tmp_path: Path) -> bool:
     return host_outcomes(tmp_path).get(DECLINE_CALL) is True
 
 
+def decline_refusal_text(tmp_path: Path) -> str:
+    """Host-tool error text returned for the refused built-in decline."""
+    for frame in wire_frames(tmp_path):
+        if (
+            frame["type"] == OmpFrameType.HOST_TOOL_RESULT
+            and frame["id"] == DECLINE_CALL
+            and frame["isError"]
+        ):
+            return frame["result"]["content"][0]["text"]
+    raise AssertionError("missing refused decline host-tool result")
+
+
 def wire_frames(tmp_path: Path) -> list[dict[str, Any]]:
     transcript = (tmp_path / DECLINE_TRANSCRIPT).read_text(encoding="utf-8")
     return [json.loads(line) for line in transcript.splitlines()]
