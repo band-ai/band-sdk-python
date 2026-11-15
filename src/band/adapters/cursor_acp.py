@@ -355,7 +355,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             ),
             tools=tools,
             room_id=room_id,
-        )
+        ).task
         # Registered before it runs, so an interrupt during startup reaches it.
         self._accept(turn)
         turn_task.add_done_callback(partial(self._on_turn_task_done, turn=turn))

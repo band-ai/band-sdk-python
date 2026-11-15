@@ -642,11 +642,14 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         """
         final_text_parts: list[str] = []
         calls_awaiting_return: dict[str, Any] = {}
+        stop_reason: str | None = None
         for resp_msg in response_messages:
             match getattr(resp_msg, "message_type", None):
                 case "assistant_message":
                     if text := (getattr(resp_msg, "content", "") or ""):
                         final_text_parts.append(text)
+                case "stop_reason":
+                    stop_reason = resp_msg.stop_reason
                 case "tool_call_message":
                     # MCP tool calls executed server-side — observe only.
                     # tool_call alone holds only the first parallel call.
@@ -682,7 +685,14 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
                 room_id,
             )
         elif not final_text_parts:
-            logger.debug("Room %s: Letta turn complete, no output", room_id)
+            # The stop reason tells an empty model answer apart from a
+            # provider-side stop when the turn is then judged missing a reply.
+            logger.log(
+                logging.DEBUG if tools.turn.complete else logging.WARNING,
+                "Room %s: Letta turn produced no reply or text (stop_reason=%s)",
+                room_id,
+                stop_reason,
+            )
         elif not self.config.auto_relay:
             logger.error(
                 "Room %s: Agent did not call %s and auto-relay is disabled; "
@@ -966,6 +976,8 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         # Letta's Docker server requires an embedding model on agent create.
         if self.config.embedding:
             create_kwargs["embedding"] = self.config.embedding
+        if self.config.model_settings:
+            create_kwargs["model_settings"] = self.config.model_settings
 
         agent = await self._client.agents.create(**create_kwargs)
         agent_id = agent.id

@@ -62,21 +62,6 @@ class TurnPhase(Enum):
 
 
 @dataclass
-class ReadbackAllowance:
-    """The one read-back of an approved write a coding agent may follow up with."""
-
-    commands: frozenset[str]
-    used: bool = False
-
-    def take(self, command: str | None) -> bool:
-        """Whether ``command`` is the allowed read-back, spending the allowance."""
-        if self.used or command not in self.commands:
-            return False
-        self.used = True
-        return True
-
-
-@dataclass
 class ApprovalRoom:
     """One manual-approval agent in its own room, driven by the room's humans."""
 
@@ -145,15 +130,15 @@ class ApprovalRoom:
         *notices: Notice,
         since: int,
         closing_reply: str,
-        allowed_followup_commands: frozenset[str] = frozenset(),
     ) -> None:
-        """Decline extra requests and wait for the decided turn to close."""
+        """Decline every further request and wait for the decided turn to close.
+
+        Which further commands a model chooses to run is its own choice; each
+        one must still reach the room and have its decision shown."""
         expected_notices = list(notices)
         try:
             async with asyncio.timeout(self.budget.deadline_s):
-                await self._await_close(
-                    since, expected_notices, closing_reply, allowed_followup_commands
-                )
+                await self._await_close(since, expected_notices, closing_reply)
         except TimeoutError:
             pytest.fail(
                 f"Approval turn did not close within {self.budget.deadline_s}s: "
@@ -200,9 +185,7 @@ class ApprovalRoom:
         since: int,
         notices: list[Notice],
         closing_reply: str,
-        allowed_followup_commands: frozenset[str],
     ) -> None:
-        readback = ReadbackAllowance(allowed_followup_commands)
         while True:
             await self._wait_for_reply_or_request(since, notices, closing_reply)
             match await self._turn_phase(since, notices, closing_reply):
@@ -214,7 +197,7 @@ class ApprovalRoom:
                 case TurnPhase.OPEN:
                     pass
                 case list() as requests:
-                    await self._decline_followups(requests, notices, readback)
+                    await self._decline_followups(requests, notices)
 
     async def _turn_phase(
         self, since: int, notices: list[Notice], closing_reply: str
@@ -244,27 +227,19 @@ class ApprovalRoom:
         return TurnPhase.RUNNING
 
     async def _decline_followups(
-        self,
-        requests: list[re.Match[str]],
-        notices: list[Notice],
-        readback: ReadbackAllowance,
+        self, requests: list[re.Match[str]], notices: list[Notice]
     ) -> None:
-        """Decline every follow-up request, failing on any but one read-back."""
-        unexpected: list[str] = []
+        """Decline each follow-up request and expect its decision notice."""
         for request in requests:
-            if not readback.take(self.dialect.shell_command(request)):
-                unexpected.append(request["token"])
             logger.log(
                 APPROVAL_LOG_LEVEL,
-                "Declining follow-up approval adapter=%s request=%s permission=%s",
+                "Declining follow-up approval adapter=%s request=%s command=%s",
                 self.adapter_id,
                 request["token"],
-                request.groupdict().get("permission", ""),
+                self.dialect.shell_command(request),
             )
             await self.decide(Outcome.DECLINE, request)
             notices.append(self.dialect.notice(Outcome.DECLINE, request))
-        if unexpected:
-            pytest.fail(f"Unexpected follow-up approvals: {unexpected}")
 
     async def _closing_state(
         self, since: int, notices: list[Notice], closing_reply: str
