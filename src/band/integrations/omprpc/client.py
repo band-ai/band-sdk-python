@@ -307,8 +307,8 @@ class OmpRpcClient:
         # Report every observed blocker in one refusal so backlog never masks
         # a failed sole-tool proof (and the reverse).
         return compose_decline_refusals(
-            decline_backlog_refusal(state),
-            decline_sole_tool_refusal(turn.last_assistant, call.toolCallId),
+            backlog=decline_backlog_refusal(state),
+            sole=decline_sole_tool_refusal(turn.last_assistant, call.toolCallId),
         )
 
     def arm_stop_after_tool(

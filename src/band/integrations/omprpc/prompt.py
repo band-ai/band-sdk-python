@@ -69,9 +69,16 @@ def tool_call_id_label(tool_call_id: str) -> str:
     return f"toolCallId={tool_call_id}"
 
 
-def compose_decline_refusals(*parts: str | None) -> str | None:
-    """Join every observed decline refusal into one host-tool error text."""
-    texts = [part for part in parts if part is not None]
+def compose_decline_refusals(backlog: str | None, sole: str | None) -> str | None:
+    """Join backlog and sole-tool refusals without contradictory next actions.
+
+    Yield is only valid when delivery is the remaining action. A sole-tool failure
+    means sibling or proof work remains, so strip yield guidance from the backlog
+    half before joining.
+    """
+    if backlog is not None and sole is not None:
+        backlog = backlog.replace(f" {NATIVE_BACKLOG_YIELD_GUIDANCE}", "")
+    texts = [part for part in (backlog, sole) if part is not None]
     return " ".join(texts) if texts else None
 
 
@@ -254,17 +261,27 @@ def state_has_async_backlog(state: OmpState) -> bool:
     return bool(state.hasPendingAsyncWork or state.queuedMessageCount > 0)
 
 
+RECONSIDER_PENDING_WORK = (
+    "Reconsider whether a reply is needed after processing the pending work."
+)
+RECONSIDER_PENDING_INPUT = (
+    "Reconsider whether a reply is needed after processing the pending input."
+)
+RECONSIDER_PENDING_WORK_AND_INPUT = (
+    "Reconsider whether a reply is needed after processing the pending work and input."
+)
+
+
 def _backlog_reconsider_clause(*, has_work: bool, has_input: bool) -> str:
     match (has_work, has_input):
         case (True, True):
-            pending = "pending work and input"
+            return RECONSIDER_PENDING_WORK_AND_INPUT
         case (True, False):
-            pending = "pending work"
+            return RECONSIDER_PENDING_WORK
         case (False, True):
-            pending = "pending input"
+            return RECONSIDER_PENDING_INPUT
         case _:
             raise ValueError("backlog reconsider requires at least one blocker")
-    return f"Reconsider whether a reply is needed after processing the {pending}."
 
 
 def decline_backlog_refusal(state: OmpState) -> str | None:

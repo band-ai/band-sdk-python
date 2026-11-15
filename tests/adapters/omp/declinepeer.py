@@ -44,6 +44,7 @@ class DeclineScenario(StrEnum):
     BACKGROUND_PENDING = "background-pending"
     BACKGROUND_QUEUED = "background-queued"
     BACKGROUND_BOTH = "background-both"
+    BACKGROUND_MIXED = "background-mixed"
     BACKGROUND_COMPLETING = "background-completing"
     MIXED_BATCH = "mixed-batch"
     MISSING_BATCH = "missing-batch"
@@ -105,7 +106,11 @@ class DeclinePeer(RpcPeer):
                     }
                 ]
                 if (
-                    self.scenario_name == DeclineScenario.MIXED_BATCH
+                    self.scenario_name
+                    in {
+                        DeclineScenario.MIXED_BATCH,
+                        DeclineScenario.BACKGROUND_MIXED,
+                    }
                     and call_id == DECLINE_CALL
                 ):
                     content.append(
@@ -177,6 +182,7 @@ class DeclinePeer(RpcPeer):
             DeclineScenario.BACKGROUND_PENDING,
             DeclineScenario.BACKGROUND_COMPLETING,
             DeclineScenario.BACKGROUND_BOTH,
+            DeclineScenario.BACKGROUND_MIXED,
         }
         self.background_queued = self.scenario_name in {
             DeclineScenario.BACKGROUND_QUEUED,

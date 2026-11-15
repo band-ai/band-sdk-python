@@ -14,6 +14,9 @@ from band.integrations.omprpc.prompt import (
     NATIVE_REFUSED_DECLINE_GUIDANCE,
     PENDING_ASYNC_WORK_LABEL,
     QUEUED_MESSAGE_COUNT_PREFIX,
+    RECONSIDER_PENDING_INPUT,
+    RECONSIDER_PENDING_WORK,
+    RECONSIDER_PENDING_WORK_AND_INPUT,
     SOLE_TOOL_ID_MISMATCH_RECOVERY,
     SOLE_TOOL_SIBLING_RECOVERY,
     SOLE_TOOL_UNSTRUCTURED_RECOVERY,
@@ -112,23 +115,70 @@ class TestTerminalDecline:
         [
             (
                 DeclineScenario.BACKGROUND_PENDING,
-                (PENDING_ASYNC_WORK_LABEL, *BACKLOG_YIELD_CUES),
-                (QUEUED_MESSAGE_COUNT_PREFIX, SOLE_TOOL_SIBLING_RECOVERY),
+                (
+                    PENDING_ASYNC_WORK_LABEL,
+                    RECONSIDER_PENDING_WORK,
+                    *BACKLOG_YIELD_CUES,
+                ),
+                (
+                    QUEUED_MESSAGE_COUNT_PREFIX,
+                    SOLE_TOOL_SIBLING_RECOVERY,
+                    RECONSIDER_PENDING_INPUT,
+                    RECONSIDER_PENDING_WORK_AND_INPUT,
+                ),
             ),
             (
                 DeclineScenario.BACKGROUND_QUEUED,
-                (QUEUED_ONE_LABEL, *BACKLOG_YIELD_CUES),
-                (PENDING_ASYNC_WORK_LABEL, SOLE_TOOL_SIBLING_RECOVERY),
+                (
+                    QUEUED_ONE_LABEL,
+                    RECONSIDER_PENDING_INPUT,
+                    *BACKLOG_YIELD_CUES,
+                ),
+                (
+                    PENDING_ASYNC_WORK_LABEL,
+                    SOLE_TOOL_SIBLING_RECOVERY,
+                    RECONSIDER_PENDING_WORK,
+                    RECONSIDER_PENDING_WORK_AND_INPUT,
+                ),
             ),
             (
                 DeclineScenario.BACKGROUND_COMPLETING,
-                (PENDING_ASYNC_WORK_LABEL, *BACKLOG_YIELD_CUES),
-                (QUEUED_MESSAGE_COUNT_PREFIX, SOLE_TOOL_SIBLING_RECOVERY),
+                (
+                    PENDING_ASYNC_WORK_LABEL,
+                    RECONSIDER_PENDING_WORK,
+                    *BACKLOG_YIELD_CUES,
+                ),
+                (
+                    QUEUED_MESSAGE_COUNT_PREFIX,
+                    SOLE_TOOL_SIBLING_RECOVERY,
+                    RECONSIDER_PENDING_INPUT,
+                    RECONSIDER_PENDING_WORK_AND_INPUT,
+                ),
             ),
             (
                 DeclineScenario.BACKGROUND_BOTH,
-                (PENDING_ASYNC_WORK_LABEL, QUEUED_ONE_LABEL, *BACKLOG_YIELD_CUES),
-                (SOLE_TOOL_SIBLING_RECOVERY,),
+                (
+                    PENDING_ASYNC_WORK_LABEL,
+                    QUEUED_ONE_LABEL,
+                    RECONSIDER_PENDING_WORK_AND_INPUT,
+                    *BACKLOG_YIELD_CUES,
+                ),
+                (
+                    SOLE_TOOL_SIBLING_RECOVERY,
+                    RECONSIDER_PENDING_WORK,
+                    RECONSIDER_PENDING_INPUT,
+                ),
+            ),
+            (
+                DeclineScenario.BACKGROUND_MIXED,
+                (
+                    PENDING_ASYNC_WORK_LABEL,
+                    RECONSIDER_PENDING_WORK,
+                    DECLINE_TOOL_LABEL,
+                    SOLE_TOOL_SIBLING_RECOVERY,
+                    *SOLE_YIELD_CUES,
+                ),
+                (NATIVE_BACKLOG_YIELD_GUIDANCE, QUEUED_MESSAGE_COUNT_PREFIX),
             ),
             (
                 DeclineScenario.MIXED_BATCH,
@@ -197,13 +247,29 @@ class TestTerminalDecline:
         [
             (
                 DeclineScenario.POST_CHECK_PENDING,
-                (PENDING_ASYNC_WORK_LABEL, *BACKLOG_YIELD_CUES),
-                (QUEUED_MESSAGE_COUNT_PREFIX,),
+                (
+                    PENDING_ASYNC_WORK_LABEL,
+                    RECONSIDER_PENDING_WORK,
+                    *BACKLOG_YIELD_CUES,
+                ),
+                (
+                    QUEUED_MESSAGE_COUNT_PREFIX,
+                    RECONSIDER_PENDING_INPUT,
+                    RECONSIDER_PENDING_WORK_AND_INPUT,
+                ),
             ),
             (
                 DeclineScenario.POST_CHECK_QUEUED,
-                (QUEUED_ONE_LABEL, *BACKLOG_YIELD_CUES),
-                (PENDING_ASYNC_WORK_LABEL,),
+                (
+                    QUEUED_ONE_LABEL,
+                    RECONSIDER_PENDING_INPUT,
+                    *BACKLOG_YIELD_CUES,
+                ),
+                (
+                    PENDING_ASYNC_WORK_LABEL,
+                    RECONSIDER_PENDING_WORK,
+                    RECONSIDER_PENDING_WORK_AND_INPUT,
+                ),
             ),
         ],
     )

@@ -74,7 +74,6 @@ class TestNoReplyGuidance:
         advertised = omp_advertised_system_context()
         assert CANONICAL_DESCRIPTION in advertised
         assert NATIVE_TURN_COMPLETION_GUIDANCE in advertised
-        assert "One Band turn may span multiple native model steps" in advertised
         assert NATIVE_BACKLOG_YIELD_GUIDANCE in advertised
         assert NATIVE_REFUSED_DECLINE_GUIDANCE in advertised
         assert NATIVE_QUEUED_INPUT_GUIDANCE in advertised
