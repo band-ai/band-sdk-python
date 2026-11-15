@@ -292,12 +292,16 @@ def _backlog_reconsider_clause(*, has_work: bool, has_input: bool) -> str:
             raise ValueError("backlog reconsider requires at least one blocker")
 
 
-def decline_backlog_refusal(state: OmpState, *, allow_yield: bool = True) -> str | None:
-    """Describe only the native backlog observed in this snapshot.
+@dataclass(frozen=True)
+class _BacklogObservation:
+    blockers: tuple[str, ...]
+    recovery: tuple[str, ...]
+    has_work: bool
+    has_input: bool
 
-    Yield guidance is omitted when sole-tool work also remains — finishing that
-    proof is the next action, not a tool-free model-step yield.
-    """
+
+def _observe_backlog(state: OmpState) -> _BacklogObservation | None:
+    """Collect named backlog blockers and recovery steps, or None when idle."""
     if not state_has_async_backlog(state):
         return None
     has_work = state.hasPendingAsyncWork
@@ -313,32 +317,54 @@ def decline_backlog_refusal(state: OmpState, *, allow_yield: bool = True) -> str
             "Allow OMP to deliver the queued messages on continuation, then read and "
             f"handle them. {NATIVE_QUEUED_INPUT_GUIDANCE}"
         )
+    return _BacklogObservation(
+        blockers=tuple(blockers),
+        recovery=tuple(recovery),
+        has_work=has_work,
+        has_input=has_input,
+    )
+
+
+def _format_backlog_refusal(observed: _BacklogObservation, *, allow_yield: bool) -> str:
     parts = [
-        f"{BandTool.NO_REPLY} refused: native {'; '.join(blockers)}.",
-        " ".join(recovery),
+        f"{BandTool.NO_REPLY} refused: native {' '.join(observed.blockers)}.",
+        " ".join(observed.recovery),
         NATIVE_REFUSED_DECLINE_GUIDANCE,
     ]
     if allow_yield:
         parts.append(NATIVE_BACKLOG_YIELD_GUIDANCE)
-    parts.append(_backlog_reconsider_clause(has_work=has_work, has_input=has_input))
+    parts.append(
+        _backlog_reconsider_clause(
+            has_work=observed.has_work, has_input=observed.has_input
+        )
+    )
     return " ".join(parts)
 
 
-def decline_sole_tool_refusal(
+def decline_backlog_refusal(state: OmpState, *, allow_yield: bool = True) -> str | None:
+    """Describe only the native backlog observed in this snapshot."""
+    observed = _observe_backlog(state)
+    if observed is None:
+        return None
+    return _format_backlog_refusal(observed, allow_yield=allow_yield)
+
+
+def _sole_tool_diagnosis(
     message: OmpMessage | None, tool_call_id: str
-) -> str | None:
-    """Describe why the decline is not the sole tool call, or None when it is."""
+) -> tuple[str, str] | None:
+    """Return (diagnosis, recovery) when sole-tool proof fails, else None."""
     label = tool_call_id_label(tool_call_id)
-    calls = assistant_tool_calls(message)
-    match calls:
+    match assistant_tool_calls(message):
         case None:
-            diagnosis = (
-                f"no sole-tool-call proof for {label} (string or missing content)"
+            return (
+                f"no sole-tool-call proof for {label} (string or missing content)",
+                SOLE_TOOL_UNSTRUCTURED_RECOVERY,
             )
-            recovery = SOLE_TOOL_UNSTRUCTURED_RECOVERY
         case []:
-            diagnosis = f"no sole-tool-call proof for {label} (no TOOL_CALL blocks)"
-            recovery = SOLE_TOOL_UNSTRUCTURED_RECOVERY
+            return (
+                f"no sole-tool-call proof for {label} (no TOOL_CALL blocks)",
+                SOLE_TOOL_UNSTRUCTURED_RECOVERY,
+            )
         case [only] if only.id == tool_call_id:
             return None
         case [only]:
@@ -346,17 +372,31 @@ def decline_sole_tool_refusal(
                 f"no sole-tool-call proof for {label} "
                 f"(assistant {tool_call_id_label(only.id or '')})"
             )
-            recovery = SOLE_TOOL_ID_MISMATCH_RECOVERY
+            return diagnosis, SOLE_TOOL_ID_MISMATCH_RECOVERY
         case many:
             diagnosis = (
                 f"no sole-tool-call proof for {label} "
                 f"({len(many)} TOOL_CALL blocks in the assistant message)"
             )
-            recovery = SOLE_TOOL_SIBLING_RECOVERY
+            return diagnosis, SOLE_TOOL_SIBLING_RECOVERY
+
+
+def _format_sole_tool_refusal(diagnosis: str, recovery: str) -> str:
     return (
         f"{BandTool.NO_REPLY} refused: {diagnosis}. {recovery} "
         f"{NATIVE_REFUSED_DECLINE_GUIDANCE}"
     )
+
+
+def decline_sole_tool_refusal(
+    message: OmpMessage | None, tool_call_id: str
+) -> str | None:
+    """Describe why the decline is not the sole tool call, or None when it is."""
+    diagnosed = _sole_tool_diagnosis(message, tool_call_id)
+    if diagnosed is None:
+        return None
+    diagnosis, recovery = diagnosed
+    return _format_sole_tool_refusal(diagnosis, recovery)
 
 
 def state_is_idle(state: OmpState) -> bool:
