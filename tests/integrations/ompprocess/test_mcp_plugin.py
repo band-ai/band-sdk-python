@@ -61,6 +61,11 @@ class TestMcpPluginProjection:
             assert Path(local["cwd"]) == tmp_path.resolve()
             assert Path(local["command"]) == (tmp_path / "server").resolve()
 
+            startup = json.loads(
+                (root / OMP_MCP_STARTUP_CONFIG).read_text(encoding="utf-8")
+            )
+            assert startup == {"startup": {"quiet": False}, "ask": {"enabled": False}}
+
         assert not Path(plugin).exists()
 
     def test_connection_instructions_become_an_always_applied_rule(
