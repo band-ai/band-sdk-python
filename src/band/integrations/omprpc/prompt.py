@@ -313,14 +313,15 @@ def decline_backlog_refusal(state: OmpState, *, allow_yield: bool = True) -> str
             "Allow OMP to deliver the queued messages on continuation, then read and "
             f"handle them. {NATIVE_QUEUED_INPUT_GUIDANCE}"
         )
-    guidance = f"{NATIVE_REFUSED_DECLINE_GUIDANCE}"
+    parts = [
+        f"{BandTool.NO_REPLY} refused: native {'; '.join(blockers)}.",
+        " ".join(recovery),
+        NATIVE_REFUSED_DECLINE_GUIDANCE,
+    ]
     if allow_yield:
-        guidance = f"{guidance} {NATIVE_BACKLOG_YIELD_GUIDANCE}"
-    return (
-        f"{BandTool.NO_REPLY} refused: native {'; '.join(blockers)}. "
-        f"{' '.join(recovery)} {guidance} "
-        f"{_backlog_reconsider_clause(has_work=has_work, has_input=has_input)}"
-    )
+        parts.append(NATIVE_BACKLOG_YIELD_GUIDANCE)
+    parts.append(_backlog_reconsider_clause(has_work=has_work, has_input=has_input))
+    return " ".join(parts)
 
 
 def decline_sole_tool_refusal(
