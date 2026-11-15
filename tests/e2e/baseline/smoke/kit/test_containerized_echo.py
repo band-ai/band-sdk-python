@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from tests.docker.toolkit.docker_cli import BUILD_TIMEOUT_S
+from tests.docker.toolkit.live_agent import assert_echoed
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -37,7 +38,4 @@ class TestContainerizedEcho:
             )
             replies = await capture.wait_for_reply(mid, agent.id)
 
-        # The content carries the platform's mention token ahead of the text,
-        # so match the echo prefix and the original text separately.
-        replies.assert_contains_any(["echo:"])
-        replies.assert_contains_any(["ping"])
+        assert_echoed(replies, "ping")

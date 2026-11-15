@@ -48,6 +48,8 @@ BAND_HOST_PATTERN = "**.band.ai"
 # The kit declares PyPI in its network policy; an undeclared host is refused.
 DECLARED_HOST_URL = "https://pypi.org/simple/"
 UNDECLARED_HOST_URL = "https://example.com"
+# The agent uid, then the declared and undeclared hosts' HTTP status.
+DECLARED_POSTURE = ("1000", "200", "403")
 
 
 def deployment_hosts(endpoints: BandEndpoints) -> list[str]:

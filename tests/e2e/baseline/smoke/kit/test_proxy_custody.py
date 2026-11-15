@@ -19,7 +19,7 @@ import pytest
 
 from band.credentials import PROXY_MANAGED_API_KEY
 from tests.docker.toolkit.docker_cli import BUILD_TIMEOUT_S
-from tests.docker.toolkit.sandbox_agent import workload_posture
+from tests.docker.toolkit.sandbox_agent import DECLARED_POSTURE, workload_posture
 from tests.docker.toolkit.sbx_cli import CREATE_TIMEOUT_S, PROXY_CA_MARKER, Sandbox
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.requires import Dep, requires
@@ -55,7 +55,7 @@ class TestProxyManagedCustody:
         """Before foreground startup, VM exec uses agent and enforces declared hosts."""
         sandbox, _ = custody_sandbox
 
-        assert workload_posture(sandbox) == ("1000", "200", "403")
+        assert workload_posture(sandbox) == DECLARED_POSTURE
 
     async def test_real_band_key_never_enters_the_vm(
         self, custody_sandbox: tuple[Sandbox, str]

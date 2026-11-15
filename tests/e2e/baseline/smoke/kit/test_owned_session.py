@@ -9,7 +9,8 @@ from __future__ import annotations
 import pytest
 
 from tests.docker.toolkit.docker_cli import BUILD_TIMEOUT_S
-from tests.docker.toolkit.sandbox_agent import workload_posture
+from tests.docker.toolkit.live_agent import assert_echoed
+from tests.docker.toolkit.sandbox_agent import DECLARED_POSTURE, workload_posture
 from tests.docker.toolkit.sbx_cli import CREATE_TIMEOUT_S, Sandbox
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.requires import Dep, requires
@@ -40,11 +41,10 @@ class TestOwnedSandboxSession:
                     room_id, message, mention_id=agent.id, mention_name=agent.name
                 )
                 replies = await capture.wait_for_reply(mid, agent.id)
-            replies.assert_contains_any(["echo:"])
-            replies.assert_contains_any([message])
+            assert_echoed(replies, message)
 
         with sandbox.owned_run():
-            assert workload_posture(sandbox) == ("1000", "200", "403")
+            assert workload_posture(sandbox) == DECLARED_POSTURE
             for turn in range(1, OWNED_TURNS + 1):
                 await completed_echo(f"owned-session-{turn}")
         sandbox.stop()

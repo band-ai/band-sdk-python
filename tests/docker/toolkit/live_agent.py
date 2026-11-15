@@ -15,6 +15,7 @@ from pathlib import Path
 
 from tests.docker.toolkit.docker_cli import Container, Image
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.observations.replies import Replies
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.toolkit.tasks import off_loop
 
@@ -24,6 +25,16 @@ SDK_PYTHON = "$BAND_SDK_PYTHON"
 # text and shipped into the container via `$BAND_SDK_PYTHON -c <source>`, so a
 # refactor there shows up here instead of silently drifting until this runs.
 ECHO_AGENT_SCRIPT = (Path(__file__).parents[1] / "echo_agent.py").read_text()
+
+
+def assert_echoed(replies: Replies, message: str) -> None:
+    """The kit's echo agents answered ``message`` with their ``echo:`` prefix.
+
+    The content carries the platform's mention token ahead of the text, so the
+    prefix and the original text are matched separately.
+    """
+    replies.assert_contains_any(["echo:"])
+    replies.assert_contains_any([message])
 
 
 @asynccontextmanager

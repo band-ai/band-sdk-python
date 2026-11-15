@@ -14,6 +14,7 @@ import pytest
 
 from band.docker.provision import run as provision_run
 from tests.docker.toolkit.docker_cli import BUILD_TIMEOUT_S
+from tests.docker.toolkit.live_agent import assert_echoed
 from tests.docker.toolkit.sbx_cli import CREATE_TIMEOUT_S
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.requires import Dep, requires
@@ -40,8 +41,7 @@ class TestSelfRegistration:
                 room_id, "ping", mention_id=agent_id, mention_name=agent_id
             )
             replies = await capture.wait_for_reply(mid, agent_id)
-        replies.assert_contains_any(["echo:"])
-        replies.assert_contains_any(["ping"])
+        assert_echoed(replies, "ping")
 
         # A duplicate registration would 422 (same name) or mint a new id; the
         # identical id means the idempotency guard skipped registration.
