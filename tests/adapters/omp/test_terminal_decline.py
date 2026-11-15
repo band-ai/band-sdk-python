@@ -8,8 +8,7 @@ from pathlib import Path
 import pytest
 
 from band.core.protocols import TurnResultAlreadyReported
-from band.integrations.omprpc.errors import OmpPromptError
-from band.integrations.omprpc.prompt import (
+from band.integrations.omprpc.decline import (
     NATIVE_BACKLOG_YIELD_GUIDANCE,
     NATIVE_REFUSED_DECLINE_GUIDANCE,
     PENDING_ASYNC_WORK_LABEL,
@@ -23,6 +22,7 @@ from band.integrations.omprpc.prompt import (
     queued_message_count_label,
     tool_call_id_label,
 )
+from band.integrations.omprpc.errors import OmpPromptError
 from band.integrations.ompwire import OmpCommandName, OmpFrameType, OmpPromptStatus
 from band.runtime.tools import BandTool
 from band.testing import failure_reports

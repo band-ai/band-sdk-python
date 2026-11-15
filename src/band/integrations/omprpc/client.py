@@ -21,6 +21,11 @@ from band.integrations.codex.winspawn import (
     close_stdin,
     kill_process_tree,
 )
+from band.integrations.omprpc.decline import (
+    compose_decline_refusals,
+    decline_backlog_refusal,
+    decline_sole_tool_refusal,
+)
 from band.integrations.omprpc.errors import (
     CALLBACKS_UNFINISHED,
     OmpCompletionTimeout,
@@ -41,9 +46,6 @@ from band.integrations.omprpc.prompt import (
     OmpCallbackKind,
     PromptCallback,
     PromptRun,
-    compose_decline_refusals,
-    decline_backlog_refusal,
-    decline_sole_tool_refusal,
 )
 from band.integrations.omprpc.scope import OmpProcessScope
 from band.integrations.ompwire import (

@@ -30,7 +30,7 @@ from band.core.protocols import (
 )
 from band.core.types import Emit, MessageType, PlatformMessage
 from band.integrations import omproomask, omprpc
-from band.integrations.omprpc.prompt import (
+from band.integrations.omprpc.decline import (
     NATIVE_BACKLOG_YIELD_GUIDANCE,
     NATIVE_QUEUED_INPUT_GUIDANCE,
     NATIVE_REFUSED_DECLINE_GUIDANCE,

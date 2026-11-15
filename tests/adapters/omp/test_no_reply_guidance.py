@@ -8,7 +8,7 @@ from band_sdk_core import no_reply_tool
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.adapters.omp.turns import NATIVE_TURN_COMPLETION_GUIDANCE
-from band.integrations.omprpc.prompt import (
+from band.integrations.omprpc.decline import (
     NATIVE_BACKLOG_YIELD_GUIDANCE,
     NATIVE_QUEUED_INPUT_GUIDANCE,
     NATIVE_REFUSED_DECLINE_GUIDANCE,
