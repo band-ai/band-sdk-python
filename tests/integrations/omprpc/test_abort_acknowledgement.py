@@ -51,6 +51,7 @@ class TestAbortAcknowledgement:
         async with stopping_completion_turn as turn:
             await turn.observer.wait_for(OmpEventType.AGENT_END)
             await snapshots_observed(turn.client)
+            assert stopping_observer.sibling_parked is True
             await turn.clock.elapse(2 * CALLBACK_EXIT_TIMEOUT_S)
 
             await turn.clock.run_io(turn.client.request(PeerCommand.RELEASE_ACK))

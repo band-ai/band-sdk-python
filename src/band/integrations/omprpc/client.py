@@ -21,10 +21,6 @@ from band.integrations.codex.winspawn import (
     close_stdin,
     kill_process_tree,
 )
-from band.integrations.omprpc.decline import (
-    compose_decline_refusals,
-    decline_backlog_refusal,
-)
 from band.integrations.omprpc.errors import (
     CALLBACKS_UNFINISHED,
     OmpCompletionTimeout,
@@ -308,11 +304,7 @@ class OmpRpcClient:
         # Report every observed blocker in one refusal so backlog never masks
         # a failed sole-tool proof (and the reverse). Yield is only valid when
         # delivery is the remaining action — omit it when sole-tool also fails.
-        sole = turn.sole_pending_refusal(call.toolCallId, call.id)
-        return compose_decline_refusals(
-            backlog=decline_backlog_refusal(state, allow_yield=sole is None),
-            sole=sole,
-        )
+        return turn.composed_decline_refusal(state, call.toolCallId, call.id)
 
     def arm_stop_after_tool(
         self, call: OmpHostToolCall, *, on_commit: Callable[[], None]
@@ -945,10 +937,8 @@ class OmpRpcClient:
                 return
             assert turn.snapshot is not None
             _, state = turn.snapshot
-            sole = turn.sole_pending_refusal(turn.stop_tool_call_id, call_id)
-            reason = compose_decline_refusals(
-                backlog=decline_backlog_refusal(state, allow_yield=sole is None),
-                sole=sole,
+            reason = turn.composed_decline_refusal(
+                state, turn.stop_tool_call_id, call_id
             )
             if reason is not None:
                 # Keep stop_after_tool_id so HOST_TOOL_CANCEL can still cancel

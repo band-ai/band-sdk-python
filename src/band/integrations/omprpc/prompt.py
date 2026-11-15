@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from band.integrations.omprpc.decline import (
+    compose_decline_refusals,
+    decline_backlog_refusal,
     decline_running_tools_refusal,
     decline_sibling_callback_refusal,
     decline_sole_tool_refusal,
@@ -229,6 +231,16 @@ class PromptRun:
         )
         return decline_sole_tool_refusal(
             message, tool_call_id, finished_tools=self.finished_tools
+        )
+
+    def composed_decline_refusal(
+        self, state: OmpState, tool_call_id: str, host_call_id: str
+    ) -> str | None:
+        """Compose backlog and sole-pending refusals for one decline check."""
+        sole = self.sole_pending_refusal(tool_call_id, host_call_id)
+        return compose_decline_refusals(
+            backlog=decline_backlog_refusal(state, allow_yield=sole is None),
+            sole=sole,
         )
 
     def has_pending_native_work(self) -> bool:
