@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
-from band.adapters.codex.adapter import _MAX_DIFF_METADATA_BYTES
+from band.adapters.codex.narration import MAX_DIFF_METADATA_BYTES
 from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,
     send_bootstrap,
@@ -28,9 +28,9 @@ class TestDiffByteCap:
 
         # Each emoji is 4 UTF-8 bytes; use ~1.5× the byte budget worth.
         emoji = "\U0001f600"
-        diff_chars = (_MAX_DIFF_METADATA_BYTES // 4) + 5000
+        diff_chars = (MAX_DIFF_METADATA_BYTES // 4) + 5000
         big_diff = emoji * diff_chars
-        assert len(big_diff.encode("utf-8")) > _MAX_DIFF_METADATA_BYTES
+        assert len(big_diff.encode("utf-8")) > MAX_DIFF_METADATA_BYTES
 
         events = [
             event_notification(
@@ -58,6 +58,6 @@ class TestDiffByteCap:
         emitted = meta["codex_diff"]
         # The emitted diff (including the truncation marker) stays within a
         # small overhead of the byte budget — nowhere near 4× it.
-        assert len(emitted.encode("utf-8")) <= _MAX_DIFF_METADATA_BYTES + 256
+        assert len(emitted.encode("utf-8")) <= MAX_DIFF_METADATA_BYTES + 256
         assert meta["codex_diff_truncated"] is True
-        assert meta["codex_diff_original_bytes"] > _MAX_DIFF_METADATA_BYTES
+        assert meta["codex_diff_original_bytes"] > MAX_DIFF_METADATA_BYTES
