@@ -500,9 +500,7 @@ class BackendTurns(Generic[H]):
     def bind(self, room_id: str, handle: H) -> None:
         """Attach the handle the backend revealed; a stop already asked for runs now."""
         turn = self._turns.get(room_id)
-        if turn is None:
-            return
-        if turn.handle is not None:
+        if turn is None or turn.handle is not None:
             return
         turn.handle = handle
         if turn.stop_requested:
@@ -606,14 +604,9 @@ class BackendTurns(Generic[H]):
 
     async def require_admission(self, room_id: str, tools: AgentToolsProtocol) -> None:
         """Refuse before execution while a stop is pending, unconfirmed, or unavailable."""
-        from band.runtime.tools.schema import is_failed_tool_output  # noqa: PLC0415 -- runtime imports this lifecycle owner
-
         stop = self._unconfirmed.get(room_id)
         if stop is not None and stop.unavailable:
-            await self._report_unavailable(room_id, tools, stop)
-            raise ProviderUnavailableError(
-                AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
-            )
+            raise await self._unavailable_error(tools, stop)
         if (
             stop is not None
             and stop.recovery is not None
@@ -637,53 +630,51 @@ class BackendTurns(Generic[H]):
                     type(error).__name__,
                 )
                 self.mark_unavailable(room_id)
-                await self._report_unavailable(room_id, tools, stop)
-                raise ProviderUnavailableError(
-                    AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
-                ) from error
+                raise await self._unavailable_error(tools, stop) from error
             else:
                 stop.process_released = True
                 if stop.effects_retired:
                     self.confirm_stopped(room_id, stop.handle)
         blocker = self.blocker(room_id)
-        if blocker is None:
-            stop = self._unconfirmed.get(room_id)
-            if stop is not None and stop.unavailable:
-                await self._report_unavailable(room_id, tools, stop)
-                raise ProviderUnavailableError(
-                    AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
-                )
-            return
         stop = self._unconfirmed.get(room_id)
-        if stop is not None and blocker is stop.ready and not stop.reported:
-            try:
-                result = await tools.send_failure(
-                    AgentFailure(self._provider, backend_stop_unconfirmed_message())
-                )
-            except Exception as error:  # noqa: BLE001 -- reporting cannot release blocked work
-                logger.warning(
-                    "Could not report blocked backend (%s)",
-                    type(error).__name__,
-                )
-            else:
-                stop.reported = not is_failed_tool_output(result)
+        if blocker is None:
+            if stop is not None and stop.unavailable:
+                raise await self._unavailable_error(tools, stop)
+            return
+        if stop is not None and blocker is stop.ready:
+            await self._report_once(
+                tools, stop, backend_stop_unconfirmed_message(), "blocked"
+            )
         raise InputNotAccepted("The previous backend turn is not ready", ready=blocker)
 
-    async def _report_unavailable(
-        self, room_id: str, tools: AgentToolsProtocol, stop: UnconfirmedStop[H]
+    async def _unavailable_error(
+        self, tools: AgentToolsProtocol, stop: UnconfirmedStop[H]
+    ) -> ProviderUnavailableError:
+        """Report the room unavailable once and return the refusal to raise."""
+        await self._report_once(
+            tools, stop, PROVIDER_UNAVAILABLE_MESSAGE, "unavailable"
+        )
+        return ProviderUnavailableError(
+            AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
+        )
+
+    async def _report_once(
+        self,
+        tools: AgentToolsProtocol,
+        stop: UnconfirmedStop[H],
+        message: str,
+        what: str,
     ) -> None:
+        """Tell the room once why this stop blocks it; reporting never releases it."""
         from band.runtime.tools.schema import is_failed_tool_output  # noqa: PLC0415 -- runtime imports this lifecycle owner
 
         if stop.reported:
             return
         try:
-            result = await tools.send_failure(
-                AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
-            )
-        except Exception as error:  # noqa: BLE001 -- reporting cannot clear unavailability
+            result = await tools.send_failure(AgentFailure(self._provider, message))
+        except Exception as error:  # noqa: BLE001 -- reporting cannot release blocked work
             logger.warning(
-                "Could not report unavailable backend (%s)",
-                type(error).__name__,
+                "Could not report %s backend (%s)", what, type(error).__name__
             )
         else:
             stop.reported = not is_failed_tool_output(result)

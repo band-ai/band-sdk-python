@@ -514,8 +514,7 @@ class DeliveryLifecycle:
             return self._unadmitted_outcome()
         if control and scope.intent is None:
             self._charge_control_failure(scope)
-        replay = self.replays_failures if allow_retry is None else allow_retry
-        self.store_intent(scope, DeliveryStatus.FAILED, allow_retry=replay)
+        self.store_intent(scope, DeliveryStatus.FAILED, allow_retry=allow_retry)
         final = not self._will_retry(scope)
         await self.settle(scope)
         await self.host.report_delivery_failure(final=final, error=error)

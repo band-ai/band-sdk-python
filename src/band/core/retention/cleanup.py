@@ -11,12 +11,12 @@ from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator
 from contextlib import contextmanager
 from typing import Any, TypeVar
 
-T = TypeVar("T")
-
 from band.core.exceptions import CleanupIncompleteError
 from band.core.retention.config import RoomRetentionConfig
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 # Callers awaiting each owned task that re-raise its failure themselves.
 _reporters: Counter[asyncio.Task[Any]] = Counter()
