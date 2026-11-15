@@ -17,7 +17,11 @@ from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import BandTool, ToolCallOutcome
 from band.testing import FakeAgentTools
 from tests.adapters.hold import Hold
-from tests.adapters.omp.declinepeer import DECLINE_TRANSCRIPT, DeclineScenario
+from tests.adapters.omp.declinepeer import (
+    DECLINE_CALL,
+    DECLINE_TRANSCRIPT,
+    DeclineScenario,
+)
 from tests.paths import REPO_ROOT
 
 CustomDeclineInput = create_model(f"{BandTool.NO_REPLY}Input")
@@ -77,37 +81,29 @@ async def declining_adapter(
         await adapter.cleanup_all()
 
 
-def tool_results(tmp_path: Path) -> list[dict[str, Any]]:
-    return [
-        frame
+def executed(tools: FakeAgentTools) -> list[str]:
+    """Tool names the turn actually ran, in call order."""
+    return [call["tool_name"] for call in tools.tool_calls]
+
+
+def abort_count(tmp_path: Path) -> int:
+    """How many ABORT commands the host issued."""
+    return sum(
+        1 for frame in wire_frames(tmp_path) if frame["type"] == OmpCommandName.ABORT
+    )
+
+
+def host_outcomes(tmp_path: Path) -> dict[str, bool]:
+    """Each host-tool result id mapped to isError."""
+    return {
+        frame["id"]: bool(frame["isError"])
         for frame in wire_frames(tmp_path)
         if frame["type"] == OmpFrameType.HOST_TOOL_RESULT
-    ]
+    }
 
 
-def tool_result_errors(tmp_path: Path) -> dict[str, bool]:
-    """Map each host-tool result id to whether the host marked it an error."""
-    return {frame["id"]: bool(frame["isError"]) for frame in tool_results(tmp_path)}
-
-
-def tool_result_text(tmp_path: Path, call_id: str) -> str:
-    """Return the text payload of one host-tool result."""
-    for frame in tool_results(tmp_path):
-        if frame["id"] == call_id:
-            return frame["result"]["content"][0]["text"]
-    raise KeyError(call_id)
-
-
-def stop_commands(tmp_path: Path) -> list[dict[str, Any]]:
-    return [
-        frame
-        for frame in wire_frames(tmp_path)
-        if frame["type"] == OmpCommandName.ABORT
-    ]
-
-
-def decline_ids_before_stop(tmp_path: Path) -> frozenset[str]:
-    """Decline host-tool call ids that appear before the owned ABORT."""
+def admitted_declines(tmp_path: Path) -> frozenset[str]:
+    """Decline call ids admitted before the owned ABORT."""
     frames = wire_frames(tmp_path)
     stop = next(frame for frame in frames if frame["type"] == OmpCommandName.ABORT)
     return frozenset(
@@ -116,6 +112,11 @@ def decline_ids_before_stop(tmp_path: Path) -> frozenset[str]:
         if frame["type"] == OmpFrameType.HOST_TOOL_CALL
         and frame["toolName"] == BandTool.NO_REPLY
     )
+
+
+def decline_refused(tmp_path: Path) -> bool:
+    """True when the decline host-tool result was reported as an error."""
+    return host_outcomes(tmp_path).get(DECLINE_CALL) is True
 
 
 def wire_frames(tmp_path: Path) -> list[dict[str, Any]]:
