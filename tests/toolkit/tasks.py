@@ -32,8 +32,19 @@ async def off_loop(manager: AbstractContextManager[Result]) -> AsyncIterator[Res
 
     A minutes-long setup (an image build, a microVM boot) run on the loop
     thread starves every live connection on it, such as a session WebSocket.
+    Cancelling the caller cannot stop the thread, so a cancellation during
+    the enter waits for it and exits whatever it entered before re-raising.
+    The enter is a bare executor future, not a task, so the loop's shutdown
+    cancels only the caller.
     """
-    value = await asyncio.to_thread(manager.__enter__)
+    entering = asyncio.get_running_loop().run_in_executor(None, manager.__enter__)
+    try:
+        value = await asyncio.shield(entering)
+    except asyncio.CancelledError:
+        await asyncio.wait([entering])
+        if entering.exception() is None:
+            await asyncio.to_thread(manager.__exit__, None, None, None)
+        raise
     try:
         yield value
     except BaseException as error:

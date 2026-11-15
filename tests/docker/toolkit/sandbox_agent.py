@@ -11,6 +11,7 @@ including after a failed start.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import shutil
@@ -24,6 +25,8 @@ import yaml
 
 from band.credentials import PROXY_MANAGED_API_KEY
 from band.docker.launcher.config import PLACEHOLDER_AGENT_ID
+from band.docker.launcher.credentials import CredentialName
+from band.docker.launcher.run import AGENT_UID
 from band.docker.provision import read_agent_id
 from band.docker.provision import run as provision_run
 from tests.docker.toolkit.docker_cli import Image
@@ -49,7 +52,7 @@ BAND_HOST_PATTERN = "**.band.ai"
 DECLARED_HOST_URL = "https://pypi.org/simple/"
 UNDECLARED_HOST_URL = "https://example.com"
 # The agent uid, then the declared and undeclared hosts' HTTP status.
-DECLARED_POSTURE = ("1000", "200", "403")
+DECLARED_POSTURE = (str(AGENT_UID), "200", "403")
 
 
 def deployment_hosts(endpoints: BandEndpoints) -> list[str]:
@@ -113,7 +116,7 @@ def proxy_managed_sandbox(
             custom_secret(
                 sandbox=name,
                 host=BAND_HOST_PATTERN,
-                env="BAND_API_KEY",
+                env=CredentialName.BAND_API_KEY,
                 value=band_key,
                 placeholder=PROXY_MANAGED_API_KEY,
             )
@@ -229,7 +232,7 @@ async def self_registered_sandbox(
                 error.add_note(f"Cleanup incomplete for agent {known_agent_id}")
                 failures.append(error)
         try:
-            _remove_scoped_secret(name)
+            await asyncio.to_thread(_remove_scoped_secret, name)
         except Exception as error:
             logger.exception(
                 "Could not confirm scoped secret cleanup for sandbox %s", name

@@ -1,4 +1,4 @@
-"""Strict acceptance teardown attempts every resource and fails visibly."""
+"""Teardown attempts every owned resource and keeps the failed ones for a retry."""
 
 from __future__ import annotations
 
@@ -11,10 +11,9 @@ from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 
 
-class TestStrictReap:
-    @pytest.mark.parametrize("strict", [False, True])
+class TestReapAll:
     async def test_reap_all_attempts_every_resource_and_retains_failed_ids(
-        self, monkeypatch: pytest.MonkeyPatch, strict: bool
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         client = AsyncMock()
         client.human_api_agents.register_my_agent.side_effect = [
@@ -40,19 +39,7 @@ class TestStrictReap:
             None,
         ]
 
-        if strict:
-            with pytest.raises(ExceptionGroup) as caught:
-                await resources.reap_all(strict=True)
-            assert [str(error) for error in caught.value.exceptions] == [
-                "room blocked",
-                "agent blocked",
-            ]
-            assert [error.__notes__ for error in caught.value.exceptions] == [
-                ["Cleanup incomplete for room blocked-room"],
-                ["Cleanup incomplete for agent blocked-agent"],
-            ]
-        else:
-            await resources.reap_all()
+        await resources.reap_all()
         assert [call.args[0] for call in room_cleanup.await_args_list] == [
             "blocked-room",
             "removed-room",
@@ -64,7 +51,7 @@ class TestStrictReap:
 
         room_cleanup.reset_mock(side_effect=True)
         client.human_api_agents.delete_my_agent.reset_mock(side_effect=True)
-        await resources.reap_all(strict=True)
+        await resources.reap_all()
         room_cleanup.assert_awaited_once_with("blocked-room")
         client.human_api_agents.delete_my_agent.assert_awaited_once_with(
             "blocked-agent", force=True

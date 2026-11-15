@@ -29,7 +29,7 @@ from tests.e2e.baseline.settings import BaselineSettings
 @lane(Lane.KIT)
 @requires(Dep.DOCKER, Dep.SBX)
 @pytest.mark.timeout(extra=BUILD_TIMEOUT_S + CREATE_TIMEOUT_S)
-# The session WebSocket observer lives on the session loop.
+# The session-scoped async image fixture lives on the session loop.
 @pytest.mark.asyncio(loop_scope="session")
 class TestProxyManagedCustody:
     async def test_band_host_rides_the_injection_path(

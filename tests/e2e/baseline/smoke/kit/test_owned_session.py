@@ -1,10 +1,14 @@
 """A proxy-managed sandbox agent completes turns under one owner and after a restart.
 
 Completed echo turns prove the proxy replaced the sentinel with a working key
-on the wire (REST + WS), which the custody smokes cannot.
+on the wire (REST + WS), which the custody smokes cannot. The turns are not
+held past sbx's idle auto-stop window (``attached_run``), so surviving that
+window is not proven live: only wall-clock time could prove it.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 
@@ -17,6 +21,7 @@ from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+from tests.toolkit.tasks import off_loop
 
 OWNED_TURNS = 3
 
@@ -43,10 +48,12 @@ class TestOwnedSandboxSession:
                 replies = await capture.wait_for_reply(mid, agent.id)
             assert_echoed(replies, message)
 
-        with sandbox.owned_run():
-            assert workload_posture(sandbox) == DECLARED_POSTURE
+        # Every sbx call blocks for seconds, so none runs on the session loop.
+        async with off_loop(sandbox.owned_run()):
+            posture = await asyncio.to_thread(workload_posture, sandbox)
+            assert posture == DECLARED_POSTURE
             for turn in range(1, OWNED_TURNS + 1):
                 await completed_echo(f"owned-session-{turn}")
-        sandbox.stop()
-        with sandbox.owned_run():
+        await asyncio.to_thread(sandbox.stop)
+        async with off_loop(sandbox.owned_run()):
             await completed_echo("after-restart")

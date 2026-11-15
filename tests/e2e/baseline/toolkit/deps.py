@@ -509,7 +509,7 @@ _DEPS: dict[Dep, DepSpec] = {
     ),
     Dep.SBX: DepSpec(
         lambda _s: sbx_available(),
-        "Docker Sandboxes `sbx` CLI not found on PATH (signed in, on a KVM host)",
+        "Docker Sandboxes `sbx` CLI not found on PATH",
         lane=Lane.KIT,
     ),
 }

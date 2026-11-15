@@ -15,7 +15,8 @@ set -euo pipefail
 echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
   | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
 sudo udevadm control --reload-rules
-sudo udevadm trigger --name-match=kvm
+# --settle waits for udevd to apply the rule before the check below.
+sudo udevadm trigger --name-match=kvm --settle
 test -w /dev/kvm
 
 # The runner already has Docker Engine; add only Docker's apt repo and sbx.
