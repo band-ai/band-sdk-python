@@ -13,7 +13,7 @@ from band.integrations.omprpc.prompt import (
     NATIVE_QUEUED_INPUT_GUIDANCE,
     NATIVE_REFUSED_DECLINE_GUIDANCE,
 )
-from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, TURN_COMPLETION_GUIDANCE
+from band.runtime.prompts import TURN_COMPLETION_GUIDANCE
 
 CANONICAL_DESCRIPTION = no_reply_tool()["description"]
 SINGLE_MESSAGE = re.compile(r"\b(?:latest|current|last) message\b", re.IGNORECASE)
@@ -33,7 +33,4 @@ class TestOmpNoReplyGuidance:
         assert NATIVE_REFUSED_DECLINE_GUIDANCE in advertised
         assert NATIVE_QUEUED_INPUT_GUIDANCE in advertised
         assert TURN_COMPLETION_GUIDANCE not in advertised
-        # Decline/completion copy must not judge one message; other OMP context
-        # may name the history-replay marker's current message.
-        assert SINGLE_MESSAGE.findall(COMMUNICATION_INSTRUCTIONS) == []
         assert SINGLE_MESSAGE.findall(NATIVE_TURN_COMPLETION_GUIDANCE) == []

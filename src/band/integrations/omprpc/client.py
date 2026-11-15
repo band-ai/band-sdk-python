@@ -305,10 +305,12 @@ class OmpRpcClient:
         assert turn.snapshot is not None
         _, state = turn.snapshot
         # Report every observed blocker in one refusal so backlog never masks
-        # a failed sole-tool proof (and the reverse).
+        # a failed sole-tool proof (and the reverse). Yield is only valid when
+        # delivery is the remaining action — omit it when sole-tool also fails.
+        sole = decline_sole_tool_refusal(turn.last_assistant, call.toolCallId)
         return compose_decline_refusals(
-            backlog=decline_backlog_refusal(state),
-            sole=decline_sole_tool_refusal(turn.last_assistant, call.toolCallId),
+            backlog=decline_backlog_refusal(state, allow_yield=sole is None),
+            sole=sole,
         )
 
     def arm_stop_after_tool(
