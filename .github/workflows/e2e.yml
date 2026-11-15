@@ -298,10 +298,6 @@ jobs:
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-omp.sh
 
-    - name: Verify native OMP headless capabilities without inference
-      if: matrix.lane == 'backends'
-      run: uv run pytest tests/integrations/ompprocess/test_headless.py -v --no-cov
-
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'opencode'
       run: bash .github/scripts/setup-opencode.sh
@@ -361,6 +357,11 @@ jobs:
         BAND_E2E_TEST_SELECTOR: ${{ inputs.test_selector || '' }}
         BAND_E2E_LOG_LEVEL: ${{ inputs.log_level || '' }}
       run: bash .github/scripts/run-baseline-e2e.sh
+
+    # After uv sync so pytest and the omp extra's psutil are present.
+    - name: Verify native OMP headless capabilities without inference
+      if: matrix.lane == 'backends'
+      run: uv run pytest tests/integrations/ompprocess/test_headless.py -v --no-cov
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp).
     # It uses the same ~/.codex login and a local MCP server — no Band platform.

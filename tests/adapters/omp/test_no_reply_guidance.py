@@ -7,7 +7,10 @@ import re
 from band_sdk_core import no_reply_tool
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
-from band.adapters.omp.turns import NATIVE_TURN_COMPLETION_GUIDANCE
+from band.adapters.omp.turns import (
+    NATIVE_TURN_COMPLETION_GUIDANCE,
+    ROOM_QUESTION_GUIDANCE,
+)
 from band.integrations.omprpc.decline import (
     NATIVE_BACKLOG_YIELD_GUIDANCE,
     NATIVE_QUEUED_INPUT_GUIDANCE,
@@ -32,5 +35,6 @@ class TestOmpNoReplyGuidance:
         assert NATIVE_BACKLOG_YIELD_GUIDANCE in advertised
         assert NATIVE_REFUSED_DECLINE_GUIDANCE in advertised
         assert NATIVE_QUEUED_INPUT_GUIDANCE in advertised
+        assert ROOM_QUESTION_GUIDANCE in advertised
         assert TURN_COMPLETION_GUIDANCE not in advertised
         assert SINGLE_MESSAGE.findall(NATIVE_TURN_COMPLETION_GUIDANCE) == []
