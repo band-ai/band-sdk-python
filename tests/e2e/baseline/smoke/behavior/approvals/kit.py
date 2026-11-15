@@ -32,19 +32,6 @@ from tests.e2e.baseline.toolkit.provisioning import (
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
-
-def readback_commands(target: Path) -> frozenset[str]:
-    """The one optional read-only follow-up seen from coding agents after a write."""
-    return frozenset(
-        {
-            f"cat {target.name}",
-            f'cat "{target.name}"',
-            f'Get-Content "{target.name}"',
-            f'Get-Content -LiteralPath "{target}"',
-        }
-    )
-
-
 TURN_BUDGET_S = BaselineSettings().e2e_timeout
 
 BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=2)
@@ -98,11 +85,17 @@ async def approval_room(
         tempfile.TemporaryDirectory(
             prefix="band-e2e-approval-", dir=dialect.workdir_root(cell.settings)
         ) as workdir,
+        tempfile.TemporaryDirectory(prefix="band-e2e-native-home-") as native_home,
     ):
         # Resolved: a symlinked temp root (macOS /var) reads as an outside dir.
         root = Path(workdir).resolve()
         setup = AgentSetup(
-            root, wait_timeout_s, approvers, features=features, approval=approval
+            root,
+            wait_timeout_s,
+            approvers,
+            features=features,
+            approval=approval,
+            native_home=Path(native_home),
         )
         adapter = (build or dialect.build)(cell.settings, setup)
         async with running_provisioned_agent(

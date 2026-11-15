@@ -38,7 +38,13 @@ from pydantic_ai.capabilities.abstract import (
     ValidatedToolArgs,
     WrapToolExecuteHandler,
 )
-from pydantic_ai.exceptions import SkipModelRequest
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    SkipModelRequest,
+    ToolFailed,
+)
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -86,7 +92,7 @@ from band.runtime.custom_tools import (
     declared_effect,
     declared_effects,
     get_custom_tool_name,
-    invoke_validated_custom_tool,
+    run_validated_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX, render_system_prompt
@@ -324,21 +330,30 @@ async def report_tool_execution(
         return await handler(args)
 
 
+# Tool-control exceptions pydantic-ai handles itself, which a portable handler
+# written for pydantic-ai may raise.
+PYDANTIC_AI_TOOL_SIGNALS = (ModelRetry, ToolFailed, CallDeferred, ApprovalRequired)
+
+
 def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     """Adapt a portable ``CustomToolDef`` to a native pydantic-ai tool callable.
 
     The wrapper takes ``RunContext`` (whose deps are the room's tools), then
     ``args: InputModel``, which pydantic-ai flattens into the tool's arguments
-    and validates. ``invoke_validated_custom_tool`` runs the handler exactly as
+    and validates. ``run_validated_custom_tool`` runs the handler exactly as
     every other adapter does, records its declared effect on the room's turn,
-    and shows it as the turn's activity while it runs.
+    shows it as the turn's activity while it runs, and returns a failure as the
+    tool's result, which the model reads, instead of failing the run.
     The validated instance is passed through as is, since a dump/re-validate
     round-trip would break aliased fields.
     """
     input_model, _ = tool_def
 
     async def native(ctx: RunContext[AgentToolsProtocol], args: Any) -> Any:
-        return await invoke_validated_custom_tool(tool_def, args, tools=ctx.deps)
+        outcome = await run_validated_custom_tool(
+            tool_def, args, tools=ctx.deps, native_signals=PYDANTIC_AI_TOOL_SIGNALS
+        )
+        return outcome.value
 
     native.__name__ = get_custom_tool_name(input_model)
     native.__doc__ = input_model.__doc__ or native.__name__
@@ -490,7 +505,7 @@ class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
             for tool in (additional_tools or [])
         ]
         # Effects the native callables declared; a converted CustomToolDef
-        # declares none, since invoke_validated_custom_tool records its effect.
+        # declares none, since run_validated_custom_tool records its effect.
         self._custom_effects = declared_effects(
             (fn.__name__, fn) for fn in self._custom_tools
         )

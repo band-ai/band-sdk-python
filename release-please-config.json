@@ -1,11 +1,21 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "python",
+  "plugins": [{
+    "type": "linked-versions",
+    "groupName": "band",
+    "components": ["band-sdk", "band-mcp"],
+    "merge": false
+  }],
   "packages": {
     ".": {
       "package-name": "band-sdk",
       "changelog-path": "CHANGELOG.md",
-      "exclude-paths": ["packages"]
+      "exclude-paths": ["packages"],
+      "extra-files": [{
+        "type": "generic",
+        "path": "packages/band-mcp/pyproject.toml"
+      }]
     },
     "packages/band-mcp": {
       "package-name": "band-mcp",

@@ -232,11 +232,13 @@ def start_releasable_turn(
     *,
     tools: AgentToolsProtocol,
     room_id: str,
-) -> asyncio.Task[None]:
+) -> TurnTask:
     """Start a turn that may be released before it ends as the room's owned work.
 
-    A released turn cancelled by its room's final disposal is judged then,
-    since nothing else answers for its message; an interrupt ends it on purpose.
+    The turn is bound to its delivery's scope, so it keeps that delivery's
+    authority to post after the release until it actually ends. A released
+    turn cancelled by its room's final disposal is judged then, since nothing
+    else answers for its message; an interrupt ends it on purpose.
     """
 
     async def run() -> None:
@@ -247,7 +249,7 @@ def start_releasable_turn(
                 await judge_detached_turn(tools, room_id=room_id)
             raise
 
-    return retained.start_owned(run)
+    return bind_turn_task(tools, retained.start_owned(run))
 
 
 def bind_turn_task(

@@ -7,10 +7,17 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+AVAILABLE_PREFIX = "available: "
+
 
 def listing(values: Iterable[str]) -> str:
     """The accepted values as a rejection message shows them."""
     return ", ".join(values) or "(none)"
+
+
+def available(values: Iterable[str]) -> str:
+    """The clause of a rejection message naming what would have been accepted."""
+    return f"{AVAILABLE_PREFIX}{listing(values)}"
 
 
 def _join_with_or(names: list[str]) -> str:

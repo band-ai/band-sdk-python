@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +16,11 @@ from band.adapters.cursor_acp import (
 )
 from band.core.types import Capability
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.types import BandTool
 from tests.adapters.cursor_acp.kit import (
     CursorRoom,
+    ScopedCursorRoom,
     cursor_custom_tools,
     echo,
 )
@@ -27,6 +30,9 @@ from tests.baseline.adapter import Adapter
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 from tests.integrations.acp.acp_toolkit.harness import pair_in_process
 from tests.integrations.acp.lifecycleprofile import PROFILES
+from tests.platform.settlement.kit import link_over
+from tests.runtime.activityownership.kit import ActivityPlatform
+from tests.runtime.helpers import ALICE, rest_client_over, run_through
 
 
 @pytest_asyncio.fixture(loop_scope="function")
@@ -67,6 +73,31 @@ async def cursor_room() -> AsyncIterator[Callable[..., Awaitable[CursorRoom]]]:
     yield open_room
     for adapter in adapters:
         await adapter.stop()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def scoped_cursor_room() -> AsyncIterator[
+    Callable[..., Awaitable[ScopedCursorRoom]]
+]:
+    platform = ActivityPlatform()
+    async with AsyncExitStack() as stack:
+        rest = await stack.enter_async_context(rest_client_over(platform.answer))
+
+        async def open_room(agent: FakeACPAgent, **config: Any) -> ScopedCursorRoom:
+            adapter = CursorACPAdapter(CursorACPAdapterConfig(**config), emit=())
+            pair_in_process(adapter, agent)
+            stack.push_async_callback(adapter.cleanup_all)
+            await adapter.on_started("Cursor", "Cursor agent under test")
+            ctx = run_through(
+                adapter,
+                link_over(rest),
+                config=SessionConfig(enable_context_hydration=False),
+            )
+            stack.push_async_callback(ctx.stop)
+            ctx.set_participants([ALICE])
+            return ScopedCursorRoom(adapter, agent, ctx, platform)
+
+        yield open_room
 
 
 @pytest.fixture

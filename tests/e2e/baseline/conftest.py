@@ -24,6 +24,7 @@ from tests.e2e.baseline.fixtures.agents import (
     agents,
     cell,
     peer,
+    workspace_root,
 )
 from tests.e2e.baseline.fixtures.capture import (
     invocation_observer,
@@ -78,6 +79,7 @@ __all__ = [
     "resource_manager",
     "second_user_ops",
     "user_ops",
+    "workspace_root",
 ]
 
 

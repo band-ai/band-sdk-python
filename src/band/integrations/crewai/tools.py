@@ -29,7 +29,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from crewai.tools import BaseTool, ToolFailure
 
-from band.core.exceptions import BandToolError, InputNotAccepted
+from band.core.exceptions import HOST_CONTROL_ERRORS, BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
@@ -54,8 +54,8 @@ from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
     CustomToolDef,
     declared_effect,
-    execute_custom_tool,
     get_custom_tool_name,
+    run_custom_tool,
 )
 from band.runtime.tools import (
     EVENT_TOOL_NAMES,
@@ -67,7 +67,6 @@ from band.runtime.tools import (
     turn_effect,
     withheld_tool_names,
 )
-from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +110,7 @@ def _execute_tool(
     async def _execute() -> str | ToolFailure:
         try:
             return await coro_factory(tools)
-        except InputNotAccepted:
+        except HOST_CONTROL_ERRORS:
             raise
         except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             error_msg = str(e)
@@ -243,10 +242,8 @@ def _custom_tool(
                 from crewai.tools import ToolFailure  # noqa: PLC0415 -- optional dependency
 
                 await reporter.report_call(tools, tool_name, kwargs)
-                result = await execute_custom_tool(
-                    tool=definition, arguments=kwargs, tools=tools
-                )
-                failed = is_failed_tool_output(result)
+                outcome = await run_custom_tool(definition, kwargs, tools=tools)
+                result, failed = outcome.value, not outcome.ok
                 await reporter.report_result(tools, tool_name, result, is_error=failed)
                 envelope = json.dumps(
                     {

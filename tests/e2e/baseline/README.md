@@ -263,10 +263,11 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `toolkit/adapters.py` | E2E registry core: the `@adapter` decorator + registry, `spec_for`, `build_adapter`, `specs`, `adapter_lane`, and the registry/discovery guard |
 | `toolkit/builders.py` | the per-framework `@adapter` builder functions (one `_build_*` each); imported by `adapters.py` for the registration side-effect — no public API. Add a new adapter's builder here (see `ADDING_AN_ADAPTER.md`) |
 | `toolkit/ci_lanes.py` | the CI-lane partition + workflow-drift guards: `CILane`, `ci_lanes`, `hosting_lanes` (which lanes' `uv` extra can host a framework), `assert_every_adapter_has_a_ci_home`, `assert_workflow_lane_*` |
+| `toolkit/workspaceroot.py` | `InheritedTemporaryDirectory` — an agent workspace root that keeps its parent's permissions, unlike `mkdtemp`/`tmp_path` (owner-only on Windows, which Codex's sandbox cannot enter) |
 | `toolkit/tools.py` | `ToolSpec` — define a custom tool **once** (input model + handler); the builders translate it to each framework's native form |
 | `agents.py` | topology decorators: `@with_adapters(Adapter.X, ...)` (fixed set / one room → `agent`/`agents`), `@per_adapter(*adapters, exclude/supports/without/runs_tool_loop/batch_input, prompt=, features=, tools=)` (fan across the matrix/subset → `agent`/`cell`); `adapter_params` is the internal parameter source `@per_adapter` feeds to the `adapter_id` fixture |
 | `smoke/samples/sample_agents.py` | shared driving glue: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_adapters(..., **SHAPE)` / `@per_adapter(..., **SHAPE)`, and the `*_instruction(...)` builders |
-| `fixtures/agents.py` | the agent fixtures: `agent` (single running `ProvisionedAgent`), `agents` (the `@with_adapters` group), `cell` (an `AdapterCell` to drive yourself), `adapter_id` (internal `@per_adapter` parametrize target) |
+| `fixtures/agents.py` | the agent fixtures: `agent` (single running `ProvisionedAgent`), `agents` (the `@with_adapters` group), `cell` (an `AdapterCell` to drive yourself), `adapter_id` (internal `@per_adapter` parametrize target), `workspace_root` (a root for `workspace_for_room` that native sandboxes can enter; use it instead of `tmp_path`, which is owner-only on Windows) |
 | `agent_wiring.py` | `assert_agent_fixtures_wired` — the collection-time guard that rejects mis-wired decorator/fixture pairings (see **Wiring fences**) |
 | `smoke/samples/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, and the `EXECUTION_REPORTING` shape |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events, `lookup_peers` — the invitable roster) |
@@ -285,7 +286,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_rehydration_offline.py` / `test_rehydration_partial.py` (cold-boot / partial-reboot `/context` recall), `test_rehydration_cross_framework.py` (a different-framework `peer=` authors, A rehydrates), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
 | `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_failure_continuation.py` (a lost FAILED response blocks singleton replay until confirmation), `test_processing_barrier.py`, `test_isolation.py`, `test_duplicate_start.py` (the platform refuses a second start of a live agent id under `ConflictPolicy.REJECT`), `test_room_rejoin.py` (a Codex, Claude SDK or ACP agent removed from a room and re-added answers again), `test_agent_scenarios.py`, `approvals/test_approvals.py` (chat-mediated approve/decline/timeout for every coding agent; builds via `smoke/samples/approvals.py`), `test_queued_messages.py` / `test_queued_rooms.py` (what an invocation is handed when messages queue behind a busy turn, `consume_all_queued` on and off; every adapter declaring `supports_batch_input`; drives `smoke/samples/queuedroom.py`) |
 | `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py`, `test_usage.py` (the `Emit.USAGE` fan), plus `test_next_actionable_semantics.py` (a platform `/next` invariant, `@lane`-pinned since it runs no adapter) |
-| `smoke/adapters/` | adapter-specific showcases: `test_a2a.py`, `test_a2a_gateway.py`, `test_a2a_roundtrip.py` (+ their shared `a2aServer.py` fixture -- a scripted, non-Band A2A counterparty), `test_agno.py`, `test_copilot_acp.py`, `copilotsdk/`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
+| `smoke/adapters/` | adapter-specific showcases: `test_a2a.py`, `test_a2a_gateway.py`, `test_a2a_roundtrip.py` (+ their shared `a2aServer.py` fixture -- a scripted, non-Band A2A counterparty), `test_agno.py`, `copilotacp/`, `copilotsdk/`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
 
 The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 (`settings`, `requires`, `agents`, `conftest`) is the pytest wiring.
@@ -520,18 +521,27 @@ Each message carries a per-recipient delivery state, exposed as
 DELIVERED -> PROCESSING -> PROCESSED | FAILED
 ```
 
-`FAILED` is **not** terminal — the platform's `/next` serves a failed message again,
+`FAILED` is **not** terminal on the platform — `/next` serves a failed message again,
 so a new agent process (or execution context) may cycle it `FAILED -> PROCESSING`
 before `PROCESSED`. The running agent skips a message once it has failed
 `max_message_retries` times (default 1), so it does not retry the message itself.
 `PROCESSED` is the only success terminal.
 
+`wait_for_processed` and `wait_for_reply` therefore raise `DeliveryFailedError` as
+soon as a message fails, instead of waiting out the deadline. A test whose agent is
+configured to retry passes `retries=` (its `max_message_retries - 1`) to wait
+through that many failures.
+
 ```python notest
 mid = await user_ops.send_message(room_id, "...", mention_id=a.id, mention_name=a.name)
 
-# Success barrier (the common case): wait until PROCESSED. Waits through any
-# transient FAILED; on timeout it reports the last status + attempt error.
+# Success barrier (the common case): wait until PROCESSED. A FAILED message
+# raises DeliveryFailedError at once; on timeout it reports the last status +
+# attempt error.
 await capture.wait_for_processed(mid, a.id)
+
+# An agent configured to retry once (max_message_retries=2):
+await capture.wait_for_processed(mid, a.id, retries=1)
 
 # Any specific state(s): the general waiter, returns the DeliveryStatus reached.
 reached = await capture.wait_for_delivery(mid, a.id, until={DeliveryStatus.FAILED})

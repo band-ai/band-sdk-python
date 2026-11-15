@@ -1,6 +1,6 @@
 # Preparing a PR workspace
 
-Shared by `band-here-is-a-review` and `band-code-review`. Run it once, before reading any
+Shared by `band-here-is-a-review`, `band-code-review`, and `band-pr-assess`. Run it once, before reading any
 code, whenever the work targets a GitHub PR.
 
 Follow [workflow-runtime.md](../workflow-runtime.md) for tools and existing

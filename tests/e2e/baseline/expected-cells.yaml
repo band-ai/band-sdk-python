@@ -85,6 +85,19 @@ smoke/adapters/antigravity/test_cancellation.py::TestAntigravityCancellation:
 smoke/adapters/antigravity/test_native_sessions.py::TestAntigravityNativeSessions:
   test_native_sessions_resume_per_agent_and_room:
     pass: [antigravity_acp]
+smoke/adapters/copilotacp/test_hosted_auth.py::TestHostedAuth:
+  test_copilot_hosted_auth_replies[default]: backends
+  test_copilot_hosted_auth_replies[typed-effort]: backends
+smoke/adapters/copilotacp/test_live_switch.py::TestLiveSwitch:
+  test_copilot_switches_model_and_effort_in_a_live_room: backends
+smoke/adapters/copilotacp/test_session_load_miss.py::TestSessionLoadMiss:
+  test_acp_recall_via_room_replay_when_session_load_misses: backends
+smoke/adapters/copilotacp/test_tool_narration.py::TestBandToolNarration:
+  test_acp_band_tool_call_is_narrated: backends
+  test_acp_band_tool_result_is_a_single_clean_payload: backends
+smoke/adapters/copilotacp/test_unadvertised_selection.py::TestUnadvertisedSelection:
+  test_copilot_turn_fails_loudly_on_an_unadvertised_selection[byok-model]: backends
+  test_copilot_turn_fails_loudly_on_an_unadvertised_selection[hosted-effort]: backends
 smoke/adapters/copilotsdk/test_handler.py::TestAskUserHandler:
   test_copilot_ask_user_handler_round_trips_to_room_reply: core
 smoke/adapters/copilotsdk/test_resume.py::TestResumeMiss:
@@ -135,15 +148,6 @@ smoke/adapters/test_codex.py:
 smoke/adapters/test_codex_background.py::TestCodexBackground:
   test_session_close_terminates_a_native_child_after_its_turn[native-control]: backends
   test_session_close_terminates_a_native_child_after_its_turn[opt-out]: backends
-smoke/adapters/test_copilot_acp.py:
-  test_acp_band_tool_call_is_narrated: backends
-  test_acp_band_tool_result_is_a_single_clean_payload: backends
-  test_acp_recall_via_room_replay_when_session_load_misses: backends
-  test_copilot_hosted_auth_replies[default]: backends
-  test_copilot_hosted_auth_replies[typed-effort]: backends
-  test_copilot_switches_model_and_effort_in_a_live_room: backends
-  test_copilot_turn_fails_loudly_on_an_unadvertised_selection[byok-model]: backends
-  test_copilot_turn_fails_loudly_on_an_unadvertised_selection[hosted-effort]: backends
 smoke/adapters/test_crewai.py:
   test_crewai_executes_custom_tool: crewai
   test_crewai_flow_replies: crewai
@@ -207,15 +211,16 @@ smoke/behavior/approvals/test_approvals.py::TestApprovals:
   test_the_room_reply_decides_whether_the_gated_command_runs[timeout-codex]: backends
   test_the_room_reply_decides_whether_the_gated_command_runs[timeout-cursor_acp]: backends
   test_the_room_reply_decides_whether_the_gated_command_runs[timeout-opencode]: opencode
+smoke/behavior/cursorworkflows/test_human_gate.py::TestCursorHumanGate:
+  test_repairs_a_failing_project_after_a_human_gate:
+    pass: [cursor_acp]
+smoke/behavior/cursorworkflows/test_restart_recovery.py::TestCursorRestartRecovery:
+  test_sequential_rooms_keep_their_work_after_restart:
+    pass: [cursor_acp]
 smoke/behavior/test_agent_scenarios.py:
   test_two_agents_greet_each_other: core
 smoke/behavior/test_control_signals.py:
   test_interrupt_cancels_and_consumes: core
-smoke/behavior/test_cursor_workflows.py:
-  test_repairs_a_failing_project_after_a_human_gate:
-    pass: [cursor_acp]
-  test_sequential_rooms_keep_their_work_after_restart:
-    pass: [cursor_acp]
 smoke/behavior/test_delivery_status.py:
   test_failing_agent_reaches_failed_state: all
   test_healthy_message_reaches_processed_via_processing: core

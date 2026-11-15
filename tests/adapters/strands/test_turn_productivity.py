@@ -34,6 +34,7 @@ from band.core.types import (
 )
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
+from band.runtime.tools.schema import tool_execution_failure
 from band.testing import (
     MISSING_REPLY_FAILURE,
     ErrorTurn,
@@ -437,8 +438,10 @@ class TestTurnProductivity:
 
             note: str
 
+        failure = RuntimeError("no network")
+
         async def boom(args: BoomInput) -> str:
-            raise RuntimeError("no network")
+            raise failure
 
         adapter = await scripted(
             ToolTurn("boom", {"note": "go"}), additional_tools=[(BoomInput, boom)]
@@ -446,7 +449,7 @@ class TestTurnProductivity:
 
         await _run_message(adapter, tools)
 
-        assert _tool_results(adapter) == ["Error executing tool 'boom': no network"]
+        assert _tool_results(adapter) == [tool_execution_failure("boom", failure)]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)

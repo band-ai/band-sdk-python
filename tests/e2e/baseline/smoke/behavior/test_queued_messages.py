@@ -10,9 +10,11 @@ declares ``supports_batch_input`` joins the matrix.
 
 With ``consume_all_queued`` on, the originals queued behind the opener reach one
 invocation together, in order, whoever sent them; the message sent after that
-invocation began waits for a later one; every original ends processed; and the
-replies address every sender. With it off, the same queue is handed over one original
-per invocation, and only the original being worked on is admitted.
+invocation began waits for a later one; and every original ends processed. With it
+off, the same queue is handed over one original per invocation, and only the original
+being worked on is admitted. Those are the SDK contract. Whether the replies answer
+every request and mention every sender is the model's choice, checked last and
+reported as model compliance.
 
 Two senders are covered twice: a second human (needs ``BAND_API_KEY_USER_2``) and a
 peer agent that posts through its own key.
@@ -33,7 +35,7 @@ from tests.e2e.baseline.smoke.samples.queuedroom import (
     TURN_BARRIERS,
     queued_room,
 )
-from tests.e2e.baseline.smoke.samples.sample_agents import LIVENESS_REPLY_PROMPT
+from tests.e2e.baseline.smoke.samples.sample_agents import QUEUED_REPLY_PROMPT
 from tests.e2e.baseline.timeouts import slow_turn_budget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.invocations import InvocationObserver
@@ -44,7 +46,7 @@ BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=TURN_BARRIERS
 
 
 class TestQueuedMessages:
-    @per_adapter(batch_input=True, prompt=LIVENESS_REPLY_PROMPT)
+    @per_adapter(batch_input=True, prompt=QUEUED_REPLY_PROMPT)
     @pytest.mark.timeout(extra=BUDGET.extra_s)
     @pytest.mark.asyncio(loop_scope="session")
     async def test_queued_originals_share_one_invocation(
@@ -67,10 +69,10 @@ class TestQueuedMessages:
             assert run.admitted == run.queued
             assert room.partition == run.batched_turns
             assert run.processed == run.originals
-            run.assert_every_request_answered()
-            run.replies.assert_mentions(room.owner.id)
 
-    @per_adapter(batch_input=True, prompt=LIVENESS_REPLY_PROMPT)
+            run.assert_model_answered(room.owner)
+
+    @per_adapter(batch_input=True, prompt=QUEUED_REPLY_PROMPT)
     @pytest.mark.timeout(extra=BUDGET.extra_s)
     @pytest.mark.asyncio(loop_scope="session")
     async def test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered(
@@ -96,11 +98,10 @@ class TestQueuedMessages:
             assert run.admitted == run.queued
             assert room.partition == run.batched_turns
             assert run.processed == run.originals
-            run.assert_every_request_answered()
-            run.replies.assert_mentions(owner.id)
-            run.replies.assert_mentions(guest.id)
 
-    @per_adapter(batch_input=True, prompt=LIVENESS_REPLY_PROMPT)
+            run.assert_model_answered(owner, guest)
+
+    @per_adapter(batch_input=True, prompt=QUEUED_REPLY_PROMPT)
     @pytest.mark.timeout(extra=BUDGET.extra_s)
     @pytest.mark.asyncio(loop_scope="session")
     async def test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered(
@@ -127,11 +128,10 @@ class TestQueuedMessages:
             assert run.admitted == run.queued
             assert room.partition == run.batched_turns
             assert run.processed == run.originals
-            run.assert_every_request_answered()
-            run.replies.assert_mentions(owner.id)
-            run.replies.assert_mentions(agent_sender.id)
 
-    @per_adapter(batch_input=True, prompt=LIVENESS_REPLY_PROMPT)
+            run.assert_model_answered(owner, agent_sender)
+
+    @per_adapter(batch_input=True, prompt=QUEUED_REPLY_PROMPT)
     @pytest.mark.timeout(extra=BUDGET.extra_s)
     @pytest.mark.asyncio(loop_scope="session")
     async def test_without_opt_in_each_queued_original_gets_its_own_invocation(

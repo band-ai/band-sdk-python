@@ -25,7 +25,7 @@ from band.adapters.omp.turnstate import OmpTurn
 from band.converters.omp import OmpMetadataKey
 from band.core import delivery, exceptions
 from band.core.delivery import DeliveryFailedError
-from band.core.exceptions import InvalidToolArgumentsError
+from band.core.exceptions import HOST_CONTROL_ERRORS, InvalidToolArgumentsError
 from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import (
     PERMISSION_CANCELLED,
@@ -55,7 +55,7 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 from band.runtime.activity import retain_request_permission
-from band.runtime.custom_tools import execute_custom_tool, find_custom_tool
+from band.runtime.custom_tools import find_custom_tool, run_custom_tool
 from band.runtime.tools import (
     is_image_passthrough_result,
     iter_tool_definitions,
@@ -78,23 +78,13 @@ class OmpCallbackMixin(OmpAdapterContract):
         try:
             custom = find_custom_tool(self._custom_tools, call.toolName)
             if custom:
-                value = await execute_custom_tool(custom, call.arguments, tools=tools)
+                outcome = await run_custom_tool(custom, call.arguments, tools=tools)
             else:
                 outcome = await tools.execute_tool_call_structured(
                     call.toolName, call.arguments
                 )
-                if not outcome.ok:
-                    return _text_tool_result(
-                        outcome.error_message or str(outcome.value), is_error=True
-                    )
-                value = outcome.value
-            if is_image_passthrough_result(call.toolName, value):
-                return OmpToolResult(
-                    content=[
-                        OmpContent.model_validate(block) for block in value["content"]
-                    ]
-                )
-            return _text_tool_result(tool_result_text(value))
+        except HOST_CONTROL_ERRORS:
+            raise
         except DeliveryFailedError:
             raise
         except InvalidToolArgumentsError as error:
@@ -103,6 +93,17 @@ class OmpCallbackMixin(OmpAdapterContract):
         except Exception as error:
             logger.exception("OMP host tool %s failed", call.toolName)
             return _text_tool_result(str(error), is_error=True)
+
+        if not outcome.ok:
+            return _text_tool_result(
+                outcome.error_message or str(outcome.value), is_error=True
+            )
+        value = outcome.value
+        if is_image_passthrough_result(call.toolName, value):
+            return OmpToolResult(
+                content=[OmpContent.model_validate(block) for block in value["content"]]
+            )
+        return _text_tool_result(tool_result_text(value))
 
     async def _ask_room(
         self,
