@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import CodexAdapter, CodexCommand
+from band.adapters.codex import CodexCommand
+from band.adapters.codex.commands import parse_command
 
 
 class TestSlashCommandExtraction:
-    """``_extract_local_command`` reads a command only when one leads the message."""
+    """``parse_command`` reads a command only when one leads the message."""
 
     @pytest.mark.parametrize(
         "content",
@@ -27,7 +28,7 @@ class TestSlashCommandExtraction:
         word anywhere in the prefix turned "don't /approve req-1 yet" into an
         approval of ``req-1``.
         """
-        assert CodexAdapter._extract_local_command(content) is None
+        assert parse_command(content) is None
 
     @pytest.mark.parametrize(
         ("content", "expected"),
@@ -54,8 +55,8 @@ class TestSlashCommandExtraction:
         self, content: str, expected: tuple[CodexCommand, str]
     ) -> None:
         """The delivery mention block must never hide a real command."""
-        assert CodexAdapter._extract_local_command(content) == expected
+        assert parse_command(content) == expected
 
     @pytest.mark.parametrize("content", ["@team/bot /", "@team/bot /notacommand x", ""])
     def test_non_commands_are_ignored(self, content: str) -> None:
-        assert CodexAdapter._extract_local_command(content) is None
+        assert parse_command(content) is None

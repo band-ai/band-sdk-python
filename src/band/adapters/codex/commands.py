@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from band.adapters.codex.approvals import ApprovalDecision
+from band.runtime.formatters import strip_leading_mentions
 
 
 class CodexCommand(StrEnum):
@@ -93,3 +94,26 @@ HELP_TEXT = (
     f"`/{CodexCommand.SANDBOX} <mode>`, `/{CodexCommand.PERMISSIONS}`, "
     f"`/{CodexCommand.USAGE}`, `/{CodexCommand.HELP}`."
 )
+
+
+def parse_command(content: str) -> tuple[CodexCommand, str] | None:
+    """Return ``(command, args)`` when ``content`` opens with a slash command.
+
+    A delivered room message always leads with the platform's ``@handle``
+    mention block (a message reaches an agent only by mentioning it), so
+    that block is stripped first -- otherwise the command never leads the
+    content and ``/approve``/``/decline`` silently miss. Only the token
+    that remains in front is considered, so prose merely *containing* a
+    slash word ("don't /approve it yet") stays prose instead of resolving
+    to the command it argues against.
+    """
+    stripped = strip_leading_mentions(content).lstrip()
+    if not stripped.startswith("/"):
+        return None
+    # Split on any whitespace, so a tab- or newline-separated argument still
+    # reaches the command it belongs to.
+    parts = stripped.removeprefix("/").split(maxsplit=1)
+    word = parts[0].lower() if parts else ""
+    if word not in COMMAND_WORDS:
+        return None
+    return CodexCommand(word), parts[1].strip() if len(parts) > 1 else ""
