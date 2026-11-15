@@ -39,7 +39,9 @@ class TestStreamCompaction:
             async with asyncio.TaskGroup() as group:
                 running = group.create_task(
                     adapter._call_provider(
-                        LettaRun(client, "agent", conversation), messages, tools
+                        LettaRun(client, "agent", conversation, "room"),
+                        messages,
+                        tools,
                     )
                 )
                 await peer.paused.wait()
@@ -52,7 +54,11 @@ class TestStreamCompaction:
         await peer.closed.wait()
         assert recorder.events == [SHOWN_MEMORY, SHOWN_REASONING]
         assert usage == expected_usage
-        assert [message.content for message in response] == [RESULT]
+        assert [message.message_type for message in response] == [
+            "assistant_message",
+            "stop_reason",
+        ]
+        assert response[0].content == RESULT
         assert peer.requests == [
             {
                 "messages": messages,

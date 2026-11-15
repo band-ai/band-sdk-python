@@ -43,6 +43,7 @@ from band.core.turn_lifecycle import BackendTurns
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.protocol import (
     RETRYABLE_TASK_FAILURE_STATES,
+    STOP_TERMINAL_TASK_STATES,
     TERMINAL_TASK_STATE_NAMES,
     TERMINAL_TASK_STATES,
     apply_task_stream_event,
@@ -169,7 +170,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         self._contexts: dict[str, str] = {}  # room_id → A2A context_id
         self._tasks: dict[str, str] = {}  # room_id → last task_id
         self._backend_turns = BackendTurns[A2ATaskRun](
-            self._cancel_task, provider=_PROVIDER
+            self._cancel_task, provider=_PROVIDER, requires_confirmation=True
         )
         self._task_cache: dict[tuple[str, str], Task] = {}
         # Track sender per task for mentions: (room_id, task_id) → sender info
@@ -229,11 +230,9 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             history,
         )
 
-        # A pending tasks/cancel deletes the local continuation, then waits
-        # on the remote. Rehydration and the outgoing message must run after
-        # that wait, or a still-nonterminal resubscribe restores the task
-        # the cancel is about to finish.
-        await self.backend_turns.settled(room_id)
+        # A pending tasks/cancel keeps identity until stop-terminal evidence;
+        # rehydration and the outgoing message must wait for that settlement.
+        await self.backend_turns.require_admission(room_id, tools)
         if is_session_bootstrap and history:
             await self._rehydrate_from_history(room_id, history)
 
@@ -300,7 +299,10 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             run.finished = True
         try:
             await self._deliver_task_update(task, tools, self._task_senders[key])
-            if state == TaskState.TASK_STATE_INPUT_REQUIRED:
+            if state in (
+                TaskState.TASK_STATE_INPUT_REQUIRED,
+                TaskState.TASK_STATE_AUTH_REQUIRED,
+            ):
                 await self._emit_task_event(tools, task, state)
         finally:
             # A terminal task must be persisted and released even when Band
@@ -319,6 +321,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                         task.id,
                     )
                 self._finalize_task(room_id, task.id)
+                if run is not None:
+                    self.backend_turns.confirm_stopped(room_id, run)
 
     async def _deliver_message(
         self,
@@ -347,11 +351,20 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         return task
 
     async def _cancel_task(self, run: A2ATaskRun) -> None:
-        """Release the turn's task and cancel it remotely unless it finished;
-        a cancelled task is never continued."""
-        self._finalize_task(run.room_id, run.task_id)
-        if not run.finished:
-            await run.client.cancel_task(CancelTaskRequest(id=run.task_id))
+        """Cancel remotely and confirm only on matching stop-terminal evidence.
+
+        Local task identity stays until a completed/failed/canceled/rejected
+        Task is observed; auth/input-required are not stop proof.
+        """
+        if run.finished:
+            self._finalize_task(run.room_id, run.task_id)
+            self.backend_turns.confirm_stopped(run.room_id, run)
+            return
+        task = await run.client.cancel_task(CancelTaskRequest(id=run.task_id))
+        if task is not None and task.status.state in STOP_TERMINAL_TASK_STATES:
+            run.finished = True
+            self._finalize_task(run.room_id, run.task_id)
+            self.backend_turns.confirm_stopped(run.room_id, run)
 
     def _remember_task(self, room_id: str, task: Task) -> None:
         """Record task identity needed for subsequent turns and resumption."""
@@ -375,6 +388,11 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
         if state == TaskState.TASK_STATE_INPUT_REQUIRED:
             text = self._get_status_text(task) or "Please provide more information."
+            await deliver_reply(tools, text, mentions=[sender])
+            return
+
+        if state == TaskState.TASK_STATE_AUTH_REQUIRED:
+            text = self._get_status_text(task) or "Authentication is required."
             await deliver_reply(tools, text, mentions=[sender])
             return
 

@@ -11,19 +11,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import partial
-from inspect import getattr_static
-from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeVar
+from inspect import getattr_static, ismethod
+from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeVar, cast
 
 from band_sdk_core import AgentFailure, backend_stop_unconfirmed_message
 from pydantic import Field, NonNegativeFloat
 
 from band.client.streaming import ControlMode
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import (
+    CleanupIncompleteError,
+    InputNotAccepted,
+    ProviderUnavailableError,
+)
 from band.core.protocols import AgentToolsProtocol
 from band.core.retention import Residency, RetainedRoom
 from band.core.retention.cleanup import spawn_owned
@@ -51,6 +56,15 @@ TurnSettleTimeout = Annotated[
 ]
 
 H = TypeVar("H")
+
+# Room-safe report when bounded recovery cannot reopen admission.
+PROVIDER_UNAVAILABLE_MESSAGE = (
+    "The provider for this room is unavailable until it is safely recovered. "
+    "Queued and new input fails without invoking the provider."
+)
+
+# Latch deferred originals into terminal delivery failure before readiness wakes.
+FailureLatch = Callable[[str, frozenset[str]], None]
 
 
 def terminal_deadline() -> float:
@@ -283,17 +297,27 @@ class BackendTurn(Generic[H]):
 
     handle: H | None = None
     stop_requested: bool = False
+    # Captured before tool rebinding so late work cannot follow a successor.
+    generation: int | None = None
 
 
 @dataclass
 class UnconfirmedStop(Generic[H]):
-    """Keep admission blocked until the provider independently confirms its end."""
+    """Keep admission blocked until matching evidence retires this operation."""
 
     handle: H
     ready: asyncio.Future[None]
     reported: bool = False
     recovery: tuple[RetainedRoom, int] | None = None
     release_callback: Callable[[], None] | None = None
+    # Physical process release alone does not reopen when effects remain.
+    process_released: bool = False
+    effects_outstanding: int = 0
+    # Latched after one failed recovery attempt; wakes readiness for recheck.
+    unavailable: bool = False
+    # Originals deferred on this stop; latched terminal before the wake.
+    waiting: set[str] = field(default_factory=set)
+    owner: BackendTurns[H] | None = None
 
     def detach_release(self) -> None:
         """Remove the recovery observation when this stop loses authority."""
@@ -301,6 +325,10 @@ class UnconfirmedStop(Generic[H]):
             retained, _ = self.recovery
             retained.remove_release_callback(self.release_callback)
         self.release_callback = None
+
+    @property
+    def effects_retired(self) -> bool:
+        return self.effects_outstanding == 0
 
 
 class BackendTurns(Generic[H]):
@@ -310,6 +338,11 @@ class BackendTurns(Generic[H]):
     here. A turn is stopped at most once, never by awaiting on the caller, and
     within ``BACKEND_CANCEL_TIMEOUT_SECONDS``. The room's next turn and its
     teardown wait for that stop.
+
+    A deadline requests abandonment only. Reuse requires matching provider
+    evidence and retirement of effectful local callbacks. When bounded recovery
+    fails, the room becomes unavailable: deferred and new model input finishes
+    with a terminal, non-retrying failure before readiness wakes.
 
     Placement:
 
@@ -339,14 +372,92 @@ class BackendTurns(Generic[H]):
         self._stopping: dict[str, asyncio.Task[None]] = {}
         self._requires_confirmation = requires_confirmation
         self._unconfirmed: dict[str, UnconfirmedStop[H]] = {}
+        # A bound-method latch belongs to a room that can retire before this
+        # adapter-lifetime owner, so it is held weakly.
+        self._failure_latches: list[
+            weakref.WeakMethod[FailureLatch] | FailureLatch
+        ] = []
+        self._by_ready: dict[asyncio.Future[None], UnconfirmedStop[H]] = {}
+
+    def add_failure_latch(self, latch: FailureLatch) -> None:
+        """Register delivery's terminal latch for unavailable deferred originals."""
+        held: weakref.WeakMethod[FailureLatch] | FailureLatch = latch
+        if ismethod(latch):
+            held = weakref.WeakMethod(cast("Any", latch))
+        if held not in self._failure_latches:
+            self._failure_latches.append(held)
+
+    def _live_failure_latches(self) -> list[FailureLatch]:
+        """The registered latches, forgetting those whose room is gone."""
+        live: list[FailureLatch] = []
+        kept: list[weakref.WeakMethod[FailureLatch] | FailureLatch] = []
+        for held in self._failure_latches:
+            latch = held() if isinstance(held, weakref.WeakMethod) else held
+            if latch is not None:
+                live.append(latch)
+                kept.append(held)
+        self._failure_latches = kept
+        return live
+
+    def note_waiting(self, room_id: str, message_id: str) -> None:
+        """Record an original deferred on this room's unconfirmed stop."""
+        stop = self._unconfirmed.get(room_id)
+        if stop is not None:
+            stop.waiting.add(message_id)
+
+    def note_waiting_on(self, ready: asyncio.Future[None], message_id: str) -> None:
+        """Record a deferred original from its readiness future."""
+        stop = self._by_ready.get(ready)
+        if stop is not None:
+            stop.waiting.add(message_id)
+
+    def unconfirmed_for(self, ready: asyncio.Future[None]) -> UnconfirmedStop[H] | None:
+        return self._by_ready.get(ready)
+
+    def track_effect(self, room_id: str, handle: H) -> Callable[[], None]:
+        """Require one effectful callback to retire before admission reopens."""
+        stop = self._unconfirmed_stop(room_id, handle)
+        if stop.handle is not handle:
+            return lambda: None
+        stop.effects_outstanding += 1
+
+        def retire() -> None:
+            if self._unconfirmed.get(room_id) is not stop:
+                return
+            if stop.effects_outstanding > 0:
+                stop.effects_outstanding -= 1
+            self._try_confirm(room_id, stop)
+
+        return retire
+
+    def mark_unavailable(self, room_id: str) -> frozenset[str]:
+        """Latch terminal failure for waiting originals, then wake readiness."""
+        stop = self._unconfirmed.get(room_id)
+        if stop is None:
+            return frozenset()
+        failed = frozenset(stop.waiting)
+        if not stop.unavailable:
+            stop.unavailable = True
+            for latch in self._live_failure_latches():
+                latch(room_id, failed)
+            if not stop.ready.done():
+                stop.ready.set_result(None)
+        return failed
+
+    def unavailable(self, room_id: str) -> bool:
+        stop = self._unconfirmed.get(room_id)
+        return stop is not None and stop.unavailable
 
     @asynccontextmanager
     async def running(
-        self, room_id: str, handle: H | None = None
+        self, room_id: str, handle: H | None = None, *, generation: int | None = None
     ) -> AsyncIterator[None]:
         """Register the room's turn; a cancelled exit stops its backend."""
         await self.settled(room_id)
-        turn = BackendTurn(handle)
+        prior = self._unconfirmed.get(room_id)
+        if prior is not None and not prior.ready.done():
+            await prior.ready
+        turn = BackendTurn(handle, generation=generation)
         self._turns[room_id] = turn
         try:
             yield
@@ -373,7 +484,8 @@ class BackendTurns(Generic[H]):
         handle it reveals.
 
         The call outlives a cancelled owner, so a turn the backend already
-        accepted is still stopped once its handle arrives.
+        accepted is still stopped once its handle arrives. A late handle after
+        abandonment feeds cleanup only.
         """
         call = asyncio.ensure_future(start)
         try:
@@ -388,7 +500,9 @@ class BackendTurns(Generic[H]):
     def bind(self, room_id: str, handle: H) -> None:
         """Attach the handle the backend revealed; a stop already asked for runs now."""
         turn = self._turns.get(room_id)
-        if turn is None or turn.handle is not None:
+        if turn is None:
+            return
+        if turn.handle is not None:
             return
         turn.handle = handle
         if turn.stop_requested:
@@ -418,7 +532,9 @@ class BackendTurns(Generic[H]):
         if task is not None and not task.done():
             return task
         stop = self._unconfirmed.get(room_id)
-        return stop.ready if stop is not None else None
+        if stop is None or stop.unavailable:
+            return None
+        return stop.ready
 
     def unconfirmed_handle(self, room_id: str) -> H | None:
         stop = self._unconfirmed.get(room_id)
@@ -432,8 +548,10 @@ class BackendTurns(Generic[H]):
         stop = self._unconfirmed.get(room_id)
         if stop is not None and stop.handle is handle:
             del self._unconfirmed[room_id]
+            self._by_ready.pop(stop.ready, None)
             stop.detach_release()
-            stop.ready.set_result(None)
+            if not stop.ready.done():
+                stop.ready.set_result(None)
 
     def recovering(
         self, room_id: str, handle: H, retained: RetainedRoom, *, generation: int
@@ -444,6 +562,7 @@ class BackendTurns(Generic[H]):
             return
         stop.detach_release()
         stop.recovery = retained, generation
+        stop.process_released = False
         stop.release_callback = partial(
             self._released, room_id, stop, retained, generation
         )
@@ -461,7 +580,18 @@ class BackendTurns(Generic[H]):
             retained,
             generation,
         ):
-            self.confirm_stopped(room_id, stop.handle)
+            stop.process_released = True
+            self._try_confirm(room_id, stop)
+
+    def _try_confirm(self, room_id: str, stop: UnconfirmedStop[H]) -> None:
+        """Confirm only after process release and effectful callback retirement."""
+        if stop.unavailable:
+            return
+        if stop.recovery is not None and not stop.process_released:
+            return
+        if not stop.effects_retired:
+            return
+        self.confirm_stopped(room_id, stop.handle)
 
     def confirm_disposed(self, room_id: str) -> None:
         """Forget recovery only after its owner confirms the final physical release."""
@@ -470,13 +600,20 @@ class BackendTurns(Generic[H]):
             return
         retained, _ = stop.recovery
         if retained.snapshot.state in (Residency.DISPOSING, Residency.CLOSED):
+            # Final disposal clears admission even after an unavailable latch;
+            # deferred originals already carry their terminal delivery outcome.
             self.confirm_stopped(room_id, stop.handle)
 
     async def require_admission(self, room_id: str, tools: AgentToolsProtocol) -> None:
-        """Refuse before execution while a stop is pending or unconfirmed."""
+        """Refuse before execution while a stop is pending, unconfirmed, or unavailable."""
         from band.runtime.tools.schema import is_failed_tool_output  # noqa: PLC0415 -- runtime imports this lifecycle owner
 
         stop = self._unconfirmed.get(room_id)
+        if stop is not None and stop.unavailable:
+            await self._report_unavailable(room_id, tools, stop)
+            raise ProviderUnavailableError(
+                AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
+            )
         if (
             stop is not None
             and stop.recovery is not None
@@ -487,15 +624,35 @@ class BackendTurns(Generic[H]):
                 retained.require_admission()
             try:
                 await retained.wait_released(generation=generation)
-            except Exception as error:  # noqa: BLE001 -- failed release keeps admission blocked
+            except CleanupIncompleteError as error:
+                # The caller's reporting budget ended; recovery remains owned.
                 logger.warning(
                     "Backend recovery remains blocked (%s)",
                     type(error).__name__,
                 )
+            except Exception as error:
+                # Any failed release makes the room unavailable; keep ownership.
+                logger.warning(
+                    "Backend recovery failed (%s); marking room unavailable",
+                    type(error).__name__,
+                )
+                self.mark_unavailable(room_id)
+                await self._report_unavailable(room_id, tools, stop)
+                raise ProviderUnavailableError(
+                    AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
+                ) from error
             else:
-                self.confirm_stopped(room_id, stop.handle)
+                stop.process_released = True
+                if stop.effects_retired:
+                    self.confirm_stopped(room_id, stop.handle)
         blocker = self.blocker(room_id)
         if blocker is None:
+            stop = self._unconfirmed.get(room_id)
+            if stop is not None and stop.unavailable:
+                await self._report_unavailable(room_id, tools, stop)
+                raise ProviderUnavailableError(
+                    AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
+                )
             return
         stop = self._unconfirmed.get(room_id)
         if stop is not None and blocker is stop.ready and not stop.reported:
@@ -511,6 +668,25 @@ class BackendTurns(Generic[H]):
             else:
                 stop.reported = not is_failed_tool_output(result)
         raise InputNotAccepted("The previous backend turn is not ready", ready=blocker)
+
+    async def _report_unavailable(
+        self, room_id: str, tools: AgentToolsProtocol, stop: UnconfirmedStop[H]
+    ) -> None:
+        from band.runtime.tools.schema import is_failed_tool_output  # noqa: PLC0415 -- runtime imports this lifecycle owner
+
+        if stop.reported:
+            return
+        try:
+            result = await tools.send_failure(
+                AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
+            )
+        except Exception as error:  # noqa: BLE001 -- reporting cannot clear unavailability
+            logger.warning(
+                "Could not report unavailable backend (%s)",
+                type(error).__name__,
+            )
+        else:
+            stop.reported = not is_failed_tool_output(result)
 
     def active_handle(self, room_id: str) -> H | None:
         """Return the running turn's handle until stopping is requested."""
@@ -536,9 +712,11 @@ class BackendTurns(Generic[H]):
     def _unconfirmed_stop(self, room_id: str, handle: H) -> UnconfirmedStop[H]:
         stop = self._unconfirmed.get(room_id)
         if stop is None:
+            ready = asyncio.get_running_loop().create_future()
             stop = self._unconfirmed[room_id] = UnconfirmedStop(
-                handle, asyncio.get_running_loop().create_future()
+                handle, ready, owner=self
             )
+            self._by_ready[ready] = stop
         return stop
 
     async def _stop_when_started(
@@ -554,8 +732,12 @@ class BackendTurns(Generic[H]):
                 error,
             )
             return
-        if handle is not None:
-            await self._cancel(handle)
+        if handle is None:
+            return
+        # Late identity after abandonment: cleanup only, never publish or rebind.
+        if self._requires_confirmation:
+            self._unconfirmed_stop(room_id, handle)
+        await self._cancel(handle)
 
     def _spawn_stop(self, room_id: str, stop: Awaitable[None]) -> None:
         task = spawn_owned(

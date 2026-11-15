@@ -30,7 +30,7 @@ from band.core.protocols import (
 )
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.timestamps import assume_utc
-from band.core.turn_lifecycle import BackendTurns
+from band.core.turn_lifecycle import PROVIDER_UNAVAILABLE_MESSAGE, BackendTurns
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -72,6 +72,18 @@ logger = logging.getLogger(__name__)
 
 _PROVIDER = "letta"
 
+# The one typed stop reason that says the run was cancelled, not completed.
+_CANCELLED_STOP_REASON = "cancelled"
+
+
+class LettaRunUncertain(Exception):
+    """The stream gave no typed, non-cancellation completion of its run.
+
+    A provider-reported cancellation, a transport failure and an end of stream
+    without a stop reason each leave the server-side worker's fate unknown. A
+    later status, EOF, ``[DONE]`` or cancel response cannot prove otherwise.
+    """
+
 
 @dataclass(frozen=True)
 class LettaRun:
@@ -81,6 +93,7 @@ class LettaRun:
     client: Any
     agent_id: str
     conversation_id: str | None
+    room_id: str
 
 
 @dataclass
@@ -182,8 +195,10 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
 
         # Per-room state
         self._rooms: dict[str, RoomContext] = {}
+        # Letta offers no independent evidence that a stopped run's worker has
+        # ended, so a stopped room is never confirmed: see ``_cancel_runs``.
         self._backend_turns = BackendTurns[LettaRun](
-            self._cancel_runs, provider=_PROVIDER
+            self._cancel_runs, provider=_PROVIDER, requires_confirmation=True
         )
 
         # Shared mode: single agent ID used across all rooms
@@ -321,6 +336,10 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
             message = "Letta adapter not initialized"
             await tools.send_failure(AgentFailure(_PROVIDER, message))
             raise RuntimeError(message)
+
+        # Before anything is bound or created: a room whose last run could not
+        # be proven stopped fails this input terminally.
+        await self.backend_turns.require_admission(room_id, tools)
 
         # Lock only protects MCP/agent setup, not the full message path.
         # This allows concurrent rooms to process messages in parallel. Both
@@ -506,7 +525,9 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         # Emitted on every exit via the finally.
         turn_usage = TurnUsage()
 
-        run = LettaRun(self._client, agent_id, self._shared_conversation(room_ctx))
+        run = LettaRun(
+            self._client, agent_id, self._shared_conversation(room_ctx), room_id
+        )
         try:
             try:
                 # turn_timeout_s bounds only the round-trip to Letta -- response
@@ -522,11 +543,21 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
                             self._call_provider(run, messages, tools),
                             timeout=self.config.turn_timeout_s,
                         )
-                    except TimeoutError:
+                    except (TimeoutError, LettaRunUncertain):
                         await self.backend_turns.stop(room_id)
                         raise
                 room_ctx.pending_seed = []
                 room_ctx.last_interaction = datetime.now(UTC)
+            except LettaRunUncertain as uncertain:
+                logger.error(
+                    "Room %s: Letta run left unconfirmed: %s", room_id, uncertain
+                )
+                await tools.send_failure(
+                    AgentFailure(_PROVIDER, PROVIDER_UNAVAILABLE_MESSAGE)
+                )
+                raise TurnResultAlreadyReported(
+                    "Letta run outcome is unconfirmed"
+                ) from None
             except TimeoutError:
                 # Caught and reported here, at the exact call this timeout
                 # bounds -- a TimeoutError surfacing from anywhere else in
@@ -572,8 +603,19 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         response_messages: list[Any] = []
         usage = TurnUsage()
         compaction: tuple[object, object, object] | None = None
+        completed = False
+        incoming = aiter(stream)
         try:
-            async for message in stream:
+            while True:
+                try:
+                    message = await anext(incoming)
+                except StopAsyncIteration:
+                    break
+                except Exception as error:
+                    # Any transport failure leaves the run's fate unknown.
+                    raise LettaRunUncertain(
+                        f"stream failed ({type(error).__name__})"
+                    ) from error
                 identity = (
                     getattr(message, "run_id", None),
                     getattr(message, "step_id", None),
@@ -597,8 +639,15 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
                     case "usage_statistics":
                         if not run.conversation_id:
                             usage = self._usage_from_statistics(message)
+                    case "stop_reason":
+                        if message.stop_reason == _CANCELLED_STOP_REASON:
+                            raise LettaRunUncertain("provider reported cancellation")
+                        completed = True
+                        response_messages.append(message)
                     case _:
                         response_messages.append(message)
+            if not completed:
+                raise LettaRunUncertain("stream ended without a stop reason")
             return response_messages, usage
         finally:
             try:
@@ -621,9 +670,19 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
             )
         return await run.client.agents.messages.create(agent_id=run.agent_id, **options)
 
-    @staticmethod
-    async def _cancel_runs(run: LettaRun) -> None:
-        """Cancel the room's in-flight runs; the server needs Redis for this."""
+    async def _cancel_runs(self, run: LettaRun) -> None:
+        """Abandon the room's run: revoke its origin, then ask Letta to cancel.
+
+        Letta's cancel needs Redis, and neither its answer nor any later status,
+        EOF or ``[DONE]`` shows the worker stopped, so the stop is never
+        confirmed. With no recovery route here, the room becomes unavailable
+        at once: queued and new input fails terminally, and only a
+        deployment-owner action outside this adapter can reopen it.
+        """
+        if (room_ctx := self._rooms.get(run.room_id)) is not None:
+            # A late tool call from the abandoned run finds no room tools.
+            room_ctx.tools = None
+        self.backend_turns.mark_unavailable(run.room_id)
         if run.conversation_id:
             await run.client.conversations.cancel(run.conversation_id)
         else:

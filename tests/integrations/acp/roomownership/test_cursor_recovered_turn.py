@@ -8,7 +8,14 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from tests.integrations.acp.acp_toolkit import DEFAULT_ROOM, FakeACPAgent
+from band.core.retention import Residency
+from band.integrations.acp.client_adapter import ACPTurn
+from tests.adapters.waiting import spin
+from tests.integrations.acp.acp_toolkit import (
+    DEFAULT_ROOM,
+    FakeACPAgent,
+    accepted_work_finished,
+)
 from tests.integrations.acp.acp_toolkit.harness import SlowFailureReports
 from tests.integrations.acp.roomownership.kit import (
     CANCELLED,
@@ -17,6 +24,7 @@ from tests.integrations.acp.roomownership.kit import (
     cursor,
     decisions,
     holds_prompt,
+    recover,
 )
 
 Ask = Callable[[FakeACPAgent, str], Awaitable[dict[str, object]]]
@@ -49,3 +57,30 @@ class TestCursorRecoveredTurn:
 
         assert stale == CANCELLED
         assert decisions(failing.reply) == []
+
+    @pytest.mark.asyncio
+    async def test_a_late_stop_of_a_retired_turn_leaves_its_successor_running(
+        self,
+    ) -> None:
+        agent = FakeACPAgent(supports_session_load=True).will_say("ok")
+        async with cursor(agent) as session:
+            await session.send("first")
+            room, retired = session.room(), session.runtime()
+            turn = ACPTurn(
+                retired, session.session_id(DEFAULT_ROOM), room, room.generation
+            )
+            agent.knows_session(turn.session_id)
+            await recover(session)
+            await session.send("second")
+            await accepted_work_finished(room)
+            successor = session.runtime()
+
+            await session.adapter._cancel_agent_turn(turn)
+            await spin()
+
+            assert successor is not retired and not successor.closed
+            assert room.retained.snapshot.state == Residency.RESIDENT
+            assert (
+                session.adapter.backend_turns.unconfirmed_handle(DEFAULT_ROOM) is None
+            )
+            assert session.adapter.backend_turns.blocker(DEFAULT_ROOM) is None

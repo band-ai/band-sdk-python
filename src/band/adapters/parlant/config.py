@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import PositiveFloat
 
-from band.core.adapterconfig import BaseAdapterConfig
+from band.core.adapterconfig import SHARED_TRANSITION_TIMEOUT_S, BaseAdapterConfig
 
 if TYPE_CHECKING:
     import parlant.sdk as p
@@ -35,6 +35,9 @@ class ParlantAdapterConfig(BaseAdapterConfig):
             host.
         response_poll: Seconds per polling window within that budget; the wait
             returns as soon as the response arrives, so a warm turn is fast.
+        transition_timeout_s: Max seconds for one setup, stop, or drain
+            transition. Expiry abandons the caller wait only; resistant
+            parent/preamble/plugin work still blocks admission.
     """
 
     name: str | None = None
@@ -43,3 +46,4 @@ class ParlantAdapterConfig(BaseAdapterConfig):
     custom_section: str | None = None
     response_timeout: PositiveFloat = 300.0
     response_poll: PositiveFloat = 30.0
+    transition_timeout_s: PositiveFloat = SHARED_TRANSITION_TIMEOUT_S

@@ -12,11 +12,11 @@ import pytest
 
 from band.adapters.letta import LettaAdapterConfig
 from band.client.streaming import ControlMode
+from band.core.exceptions import ProviderUnavailableError
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.retention import cleanup
 from band.runtime.tools import CHAT_ID_FIELD_NAME, BandTool
 from band.testing.fake_tools import FakeAgentTools
-from tests.adapters.waiting import spin
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     TURN_TIMEOUT_SECONDS,
@@ -33,9 +33,11 @@ AGENT_ID = "agent-1"
 CONVERSATION_ID = "conversation-1"
 CANCEL_AGENT_RUNS = f"cancel agent {AGENT_ID}"
 CANCEL_CONVERSATION_RUNS = f"cancel conversation {CONVERSATION_ID}"
+SEND_AGENT = f"send agent {AGENT_ID}"
 DELETE_AGENT = f"delete agent {AGENT_ID}"
 FAILURE_POSTED = "failure posted"
-NEXT_TURN_ANSWERED = "next turn answered"
+NEXT_TURN_REFUSED = "next turn refused as unavailable"
+LATE_CALL_LANDED = "late call from the stopped run reached a room"
 CANCEL_FAILED_WARNING = "cancel failure logged at WARNING"
 SHUTDOWN_RETURNED = "shutdown returned"
 
@@ -101,7 +103,8 @@ async def end_running_turn(mode: ControlMode, *, shared: bool = False) -> list[s
 
 
 async def server_rejects_cancel() -> list[str]:
-    """Without Redis the cancel fails, is logged, and the room takes its next turn."""
+    """Without Redis the cancel fails and is logged, but its answer proves
+    nothing: the room stays unavailable and its next turn is never sent."""
     adapter, client = held_adapter()
     client.reject_cancels = True
     turn = asyncio.create_task(
@@ -120,13 +123,24 @@ async def server_rejects_cancel() -> list[str]:
         if f"backend stop for room {ROOM_ID}" in record.getMessage()
     ]
     client.release.set()
-    next_tools = FakeAgentTools(participants=[ALICE])
-    await adapter.on_event(turn_input(next_tools))
+    refused = await next_turn_is_refused(adapter)
     return [
+        *client.sent,
         *client.cancels,
         *([CANCEL_FAILED_WARNING] if stop_failures else []),
-        *([NEXT_TURN_ANSWERED] if next_tools.messages_sent else []),
+        *([NEXT_TURN_REFUSED] if refused else []),
+        *(f"replayed: {entry}" for entry in client.sent[1:]),
     ]
+
+
+async def next_turn_is_refused(adapter: Any) -> bool:
+    """Whether the room's next turn fails as unavailable, posting nothing."""
+    tools = FakeAgentTools(participants=[ALICE])
+    try:
+        await adapter.on_event(turn_input(tools))
+    except ProviderUnavailableError:
+        return not tools.messages_sent
+    return False
 
 
 async def stop_holding_cancel(
@@ -149,41 +163,31 @@ def effects(client: Any) -> list[str]:
 
 
 async def late_mcp_call_during_held_cancel() -> list[str]:
-    """A tool call from the stopped run that lands while its cancel is pending
-    posts on that run's tools, not on the replacement turn's."""
+    """The stopped run's origin is revoked while its cancel is pending: a late
+    tool call from it reaches no room, and the replacement turn is refused."""
     from tests.adapters.lettakit import (  # noqa: PLC0415 -- letta extra, absent from some lane venvs
         band_mcp_registrations,
     )
 
     adapter, client = held_adapter()
-    stopped, replacement = (
-        FakeAgentTools(participants=[ALICE]),
-        FakeAgentTools(participants=[ALICE]),
-    )
+    stopped = FakeAgentTools(participants=[ALICE])
     release_cancel = await stop_holding_cancel(adapter, client, stopped)
-    next_turn = asyncio.create_task(adapter.on_event(turn_input(replacement)))
-    # The turn blocks inside the context manager that owns the wait, where
-    # ``waiting_on_stop`` cannot see it; a turn that ignored the cancel would
-    # publish its tools within these loop turns.
-    await spin()
-    await band_mcp_registrations(adapter)[BandTool.SEND_MESSAGE].execute(
-        {
-            "content": "from the stopped run",
-            "mentions": ["@alice"],
-            CHAT_ID_FIELD_NAME: ROOM_ID,
-        }
-    )
-    landed = [
-        *(f"stopped turn's tools got {m['content']}" for m in stopped.messages_sent),
-        *(
-            f"replacement turn's tools got {m['content']}"
-            for m in replacement.messages_sent
-        ),
-    ]
+    refused = await next_turn_is_refused(adapter)
+    with pytest.raises(ValueError, match="No tools available"):
+        await band_mcp_registrations(adapter)[BandTool.SEND_MESSAGE].execute(
+            {
+                "content": "from the stopped run",
+                "mentions": ["@alice"],
+                CHAT_ID_FIELD_NAME: ROOM_ID,
+            }
+        )
     release_cancel.set()
     client.release.set()
-    await next_turn
-    return landed
+    await adapter.backend_turns.drain()
+    return [
+        *([NEXT_TURN_REFUSED] if refused else []),
+        *([LATE_CALL_LANDED] if stopped.messages_sent else []),
+    ]
 
 
 async def cleanup_waits_for_the_cancel() -> list[str]:
@@ -248,11 +252,16 @@ CASES: dict[str, StopCase] = {
     ),
     "server-rejects-cancel": StopCase(
         run=server_rejects_cancel,
-        expected=[CANCEL_AGENT_RUNS, CANCEL_FAILED_WARNING, NEXT_TURN_ANSWERED],
+        expected=[
+            SEND_AGENT,
+            CANCEL_AGENT_RUNS,
+            CANCEL_FAILED_WARNING,
+            NEXT_TURN_REFUSED,
+        ],
     ),
     "late-mcp-call-during-held-cancel": StopCase(
         run=late_mcp_call_during_held_cancel,
-        expected=["stopped turn's tools got from the stopped run"],
+        expected=[NEXT_TURN_REFUSED],
     ),
     "cleanup-waits-for-the-cancel": StopCase(
         run=cleanup_waits_for_the_cancel, expected=[CANCEL_AGENT_RUNS, DELETE_AGENT]

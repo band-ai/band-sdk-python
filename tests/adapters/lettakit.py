@@ -147,8 +147,20 @@ def make_parallel_tool_messages(
     )
 
 
+def make_stop_reason_message(stop_reason: str = "end_turn") -> MagicMock:
+    return make_letta_message("stop_reason", stop_reason=stop_reason)
+
+
 def make_letta_response(*messages: Any) -> LettaStream:
-    return LettaStream(list(messages))
+    """A complete Letta stream: Letta always closes a finished run with a
+    typed stop reason, so one is added unless the messages carry their own."""
+    return LettaStream(_with_stop_reason(messages))
+
+
+def _with_stop_reason(messages: Sequence[Any]) -> list[Any]:
+    if any(getattr(m, "message_type", None) == "stop_reason" for m in messages):
+        return list(messages)
+    return [*messages, make_stop_reason_message()]
 
 
 def ready_letta_adapter(
@@ -326,22 +338,31 @@ def mock_org_user_provisioned(
 
 
 class LettaStream:
-    """External message stream with the released client's explicit close contract."""
+    """External message stream with the released client's explicit close contract.
 
-    def __init__(self, messages: list[Any]) -> None:
+    ``fails_with`` is raised once every message has been yielded, as a
+    transport that drops mid-stream does.
+    """
+
+    def __init__(
+        self, messages: list[Any], *, fails_with: Exception | None = None
+    ) -> None:
         self.messages = messages
+        self.fails_with = fails_with
         self.closed = False
 
     async def __aiter__(self) -> Any:
         for message in self.messages:
             yield message
+        if self.fails_with is not None:
+            raise self.fails_with
 
     async def close(self) -> None:
         self.closed = True
 
 
 def make_mock_async_stream(*messages: Any) -> LettaStream:
-    return LettaStream(list(messages))
+    return make_letta_response(*messages)
 
 
 class RecordingLettaClient:
@@ -351,10 +372,13 @@ class RecordingLettaClient:
     Letta agent mid-turn does. ``hold_cancel()`` does the same for each run
     cancel, which is journaled only once it finishes. ``reject_cancels``
     answers each cancel with the server error Letta returns without Redis.
+    ``script_turns`` answers the next creates with the given streams, in order,
+    instead of an ordinary completed turn.
     """
 
     def __init__(self) -> None:
         self.journal: list[str] = []
+        self.scripted: list[LettaStream] = []
         self.release = asyncio.Event()
         self.release.set()
         self.reject_cancels = False
@@ -373,6 +397,14 @@ class RecordingLettaClient:
 
     def hold(self) -> None:
         self.release.clear()
+
+    def script_turns(self, *streams: LettaStream) -> None:
+        self.scripted.extend(streams)
+
+    def _answer(self) -> LettaStream:
+        if self.scripted:
+            return self.scripted.pop(0)
+        return make_mock_async_stream(make_assistant_message())
 
     def hold_cancel(self) -> asyncio.Event:
         """Each cancel waits for the returned event after it has started."""
@@ -403,7 +435,7 @@ class RecordingLettaClient:
         )
         self.journal.append(f"send agent {agent_id}")
         await self.release.wait()
-        return make_mock_async_stream(make_assistant_message())
+        return self._answer()
 
     async def _create_conversation_turn(
         self,
@@ -421,7 +453,7 @@ class RecordingLettaClient:
         )
         self.journal.append(f"send conversation {conversation_id}")
         await self.release.wait()
-        return make_mock_async_stream(make_assistant_message())
+        return self._answer()
 
     async def _cancel_agent_runs(self, agent_id: str) -> None:
         await self._cancel(f"cancel agent {agent_id}")

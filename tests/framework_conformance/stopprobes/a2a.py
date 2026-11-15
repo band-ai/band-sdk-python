@@ -6,9 +6,11 @@ import asyncio
 from contextlib import suppress
 from dataclasses import replace
 
+import pytest
 from a2a.types import StreamResponse, TaskState
 
 from band.client.streaming import ControlMode
+from band.core.exceptions import InputNotAccepted
 from band.core.types import HistoryProvider, MessageType
 from band.integrations.a2a.adapter import A2AAdapter
 from band.integrations.a2a.types import A2AAdapterConfig
@@ -143,18 +145,20 @@ async def bootstrap_during_cancel() -> list[str]:
     await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
     await wait_until(lambda: client.cancel_started.is_set())
     client.script(task_in(COMPLETED))
-    bootstrap = asyncio.create_task(
-        adapter.on_event(
-            replace(
-                turn_input(FakeAgentTools()),
-                history=HistoryProvider(raw=input_required_history()),
-            )
-        )
+    bootstrap_input = replace(
+        turn_input(FakeAgentTools()),
+        history=HistoryProvider(raw=input_required_history()),
     )
-    await wait_until(lambda: waiting_on_stop(bootstrap))
-    restored = adapter._tasks.get(ROOM_ID) == TASK_ID
+    # Admission refuses until matching stop-terminal evidence arrives; the
+    # readiness future only wakes a recheck after that confirmation. Local
+    # identity may still name the cancelled task until that evidence lands.
+    with pytest.raises(InputNotAccepted) as pending:
+        await adapter.on_event(bootstrap_input)
     release.set()
-    await bootstrap
+    assert pending.value.ready is not None
+    await pending.value.ready
+    await adapter.on_event(bootstrap_input)
+    restored = client.continued[-1] == TASK_ID
     return [
         *client.cancelled,
         *([RESTORED_CANCELLED_TASK] if restored else []),

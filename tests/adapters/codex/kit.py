@@ -60,6 +60,7 @@ from tests.adapters.codexturns import (
     turn_completed,
 )
 from tests.adapters.dispatch import deliver_event, deliver_message
+from tests.adapters.hold import Hold
 from tests.adapters.waiting import until
 from tests.paths import host_absolute_path
 
@@ -684,8 +685,14 @@ class CountingCloseClient(FakeCodexClient):
     """Counts process starts and physical closes, optionally holding each
     close open or refusing it."""
 
-    def __init__(self, *, events: list[RpcEvent], hold: bool = False) -> None:
-        super().__init__(events=events)
+    def __init__(
+        self,
+        *,
+        events: list[RpcEvent],
+        hold: bool = False,
+        interrupt_error: Exception | None = None,
+    ) -> None:
+        super().__init__(events=events, interrupt_error=interrupt_error)
         self.starts = 0
         self.closes = 0
         self.refuse_close = False
@@ -739,6 +746,31 @@ class HeldTurnClient(CountingCloseClient):
         if method == CodexRequestMethod.TURN_START:
             self.turn_started.set()
             await self.finish_turn.wait()
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
+
+
+class UnansweredRequestClient(CountingCloseClient):
+    """An app-server that leaves its first ``held`` request unanswered until
+    the test releases it; later requests, on any process, answer normally."""
+
+    def __init__(self, *, events: list[RpcEvent], held: CodexRequestMethod) -> None:
+        super().__init__(events=events)
+        self.held = held
+        self.unanswered = Hold()
+        self._pending = True
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == self.held and self._pending:
+            self._pending = False
+            await self.unanswered.wait()
         return await super().request(
             method, params, retry_on_overload=retry_on_overload
         )

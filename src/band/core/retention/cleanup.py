@@ -9,7 +9,9 @@ import weakref
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, TypeVar
+
+T = TypeVar("T")
 
 from band.core.exceptions import CleanupIncompleteError
 from band.core.retention.config import RoomRetentionConfig
@@ -100,6 +102,28 @@ async def await_owned(
     with reporting(tasks):
         done, _ = await asyncio.wait(tasks, timeout=timeout)
     return len(done) == len(tasks)
+
+
+async def await_owned_result(
+    operation: Awaitable[T],
+    *,
+    timeout: float | None,
+    label: str,
+) -> T:
+    """Await a provider gate under owned-abandonment rules.
+
+    Expiry stops the caller wait without cancelling ``operation``. The caller
+    keeps the task for cleanup or late-identity observation; a deadline never
+    proves the gate settled.
+    """
+    task = (
+        operation
+        if isinstance(operation, asyncio.Task)
+        else asyncio.ensure_future(operation)
+    )
+    if await await_owned({task}, timeout):
+        return task.result()
+    raise TimeoutError(f"{label} exceeded its budget")
 
 
 async def report_owned(task: asyncio.Task[Any], timeout: float | None) -> None:

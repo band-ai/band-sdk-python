@@ -7,7 +7,7 @@ import weakref
 
 import pytest
 
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import InputNotAccepted, ProviderUnavailableError
 from band.core.retention import Residency
 from band.core.turn_lifecycle import BackendTurns
 from band.testing import FakeAgentTools
@@ -44,25 +44,29 @@ class TestLateRecovery:
             assert ready.done()
             assert turns.blocker("room") is None
 
-    async def test_failed_release_stays_blocked_until_successful_retry(self) -> None:
+    async def test_failed_release_makes_the_room_unavailable_until_confirmed(
+        self,
+    ) -> None:
         async with ResidenceHost(timeout=None) as host:
             resident = host.room()
             await resident.turn()
             resident.fail_close = True
             turns = BackendTurns(RecordingCancel(), provider="test")
+            handle = object()
             generation = resident.room.generation
-            turns.recovering("room", object(), resident.room, generation=generation)
-            with pytest.raises(InputNotAccepted) as refused:
+            turns.recovering("room", handle, resident.room, generation=generation)
+            with pytest.raises(ProviderUnavailableError):
                 await turns.require_admission("room", FakeAgentTools())
-            ready = refused.value.ready
-            assert ready is not None and not ready.done()
+            assert turns.unavailable("room")
             assert resident.live
 
             resident.fail_close = False
             await resident.room.wait_released(generation=generation)
             assert not resident.live
-            assert ready.done()
-            assert turns.blocker("room") is None
+            with pytest.raises(ProviderUnavailableError):
+                await turns.require_admission("room", FakeAgentTools())
+            turns.confirm_stopped("room", handle)
+            await turns.require_admission("room", FakeAgentTools())
 
     async def test_queued_old_release_cannot_confirm_a_replacement_stop(self) -> None:
         async with ResidenceHost(timeout=None) as host:

@@ -29,6 +29,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Model calls one turn of an SDK-driven tool loop may make before it fails.
 DEFAULT_MAX_TOOL_ROUNDS: Final[int] = 20
+# Shared setup/cleanup budget for Copilot SDK and Parlant (one logical
+# transition, not a renewed allowance per RPC). A deadline abandons waiting
+# only; it never proves provider settlement.
+SHARED_TRANSITION_TIMEOUT_S: Final[float] = 120.0
+# A2A setup/first-task-identity budget; matches the existing SSE read gap.
+A2A_TRANSITION_TIMEOUT_S: Final[float] = 300.0
 
 
 class BaseAdapterConfig(BaseModel):

@@ -7,7 +7,7 @@ import json
 import logging
 import time as _time
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
@@ -71,11 +71,12 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import await_owned_result, spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import detached_turn
 from band.core.turn_lifecycle import (
+    BACKEND_CANCEL_TIMEOUT_SECONDS,
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
     BackendTurns,
@@ -449,8 +450,14 @@ class CodexContinuityError(RuntimeError):
 
 @dataclass(frozen=True)
 class CodexTurn:
-    """What interrupting one room's running app-server turn needs."""
+    """What interrupting and recovering one room's app-server turn needs.
 
+    ``generation`` is the process the turn was started on, captured before any
+    wait, so a late answer or a replaced process never recovers its successor.
+    """
+
+    room_id: str
+    generation: int
     client: CodexClientProtocol
     thread_id: str
     turn_id: str
@@ -1094,7 +1101,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         self._turn_tasks: dict[str, TurnTask] = {}
         self._backend_turns = BackendTurns[CodexTurn](
-            self._interrupt_codex_turn, provider=CODEX_PROVIDER
+            self._interrupt_codex_turn,
+            provider=CODEX_PROVIDER,
+            requires_confirmation=True,
         )
         # Token usage tracking per thread
         self._token_usage: dict[str, CodexTokenUsage] = {}
@@ -1426,8 +1435,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
                 raise
             except TimeoutError as timeout:
-                # Only waiting on the room's process start or stop raises
-                # this; an abandoned start stays owned until recovery closes it.
+                # Waiting on the room's process or on an unanswered thread or
+                # turn start raises this; the abandoned wait stays owned until
+                # recovery closes its process.
                 logger.warning(
                     "Room %s: Codex process not ready", room.room_id, exc_info=timeout
                 )
@@ -2001,16 +2011,23 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 thread_id,
                 turn_id,
             )
+            timed_out = CodexTurn(
+                room_id, native.generation, native.client, thread_id, turn_id or ""
+            )
             try:
-                await native.client.request(
-                    CodexRequestMethod.TURN_INTERRUPT,
-                    {"threadId": thread_id, "turnId": turn_id},
+                await await_owned_result(
+                    self._request_interrupt(timed_out),
+                    timeout=BACKEND_CANCEL_TIMEOUT_SECONDS,
+                    label="Codex turn/interrupt",
                 )
             except Exception:
                 logger.warning(
                     "Failed to send turn/interrupt after timeout",
                     exc_info=True,
                 )
+            # An answered, failed or unanswered interrupt never proves the
+            # native work stopped, so the process is replaced either way.
+            self._recover_unconfirmed(timed_out)
             timeout_message = (
                 f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )
@@ -2372,7 +2389,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
             # Approvals the lost process asked for can never be answered.
             self._clear_pending_approvals_for_room(room.room_id)
-            native.events.put_nowait(native.loss)
+            if native.turn_id is not None:
+                native.events.put_nowait(native.loss)
 
     async def _refuse_unowned(
         self, room: RoomCodexClient, client: CodexClientProtocol, event: RpcEvent
@@ -2412,18 +2430,56 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
     async def _interrupt_codex_turn(self, turn: CodexTurn) -> None:
         try:
-            await turn.client.request(
-                CodexRequestMethod.TURN_INTERRUPT,
-                {"threadId": turn.thread_id, "turnId": turn.turn_id},
-            )
+            await self._request_interrupt(turn)
         finally:
-            # An interrupt response does not prove native tool work has stopped.
-            for room in self._room_clients.values():
-                if room.client is turn.client:
-                    self.backend_turns.recovering(
-                        room.room_id, turn, room.retained, generation=room.generation
-                    )
-                    break
+            self._recover_unconfirmed(turn)
+
+    @staticmethod
+    def _request_interrupt(turn: CodexTurn) -> Awaitable[dict[str, Any]]:
+        return turn.client.request(
+            CodexRequestMethod.TURN_INTERRUPT,
+            {"threadId": turn.thread_id, "turnId": turn.turn_id},
+        )
+
+    def _recover_unconfirmed(self, turn: CodexTurn) -> None:
+        """Keep the room blocked until the turn's process is confirmed released.
+
+        Native work is unproven stopped, and any late identity the process
+        reveals feeds only this cleanup, never a publication or tool binding.
+        """
+        room = self._room_clients.get(turn.room_id)
+        if room is None:
+            # Final disposal already confirmed the process gone.
+            self.backend_turns.confirm_stopped(turn.room_id, turn)
+            return
+        self.backend_turns.recovering(
+            turn.room_id, turn, room.retained, generation=turn.generation
+        )
+
+    async def _bounded_request(
+        self, unproven: CodexTurn, method: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Answer one provider request within ``retention.transition_timeout_s``.
+
+        Expiry abandons the wait only: the request stays owned, so a late
+        answer is never published. What it may have created exists only on the
+        process ``unproven`` names, so that process is retired.
+        """
+        try:
+            return await await_owned_result(
+                unproven.client.request(method, params),
+                timeout=self.config.retention.transition_timeout_s,
+                label=f"Codex {method}",
+            )
+        except TimeoutError:
+            self._recover_unconfirmed(unproven)
+            raise
+
+    def _unproven_request(
+        self, room: RoomCodexClient, client: CodexClientProtocol
+    ) -> CodexTurn:
+        """The process generation a thread request is about to wait on."""
+        return CodexTurn(room.room_id, room.generation, client, "", "")
 
     @asynccontextmanager
     async def _native_turn(
@@ -2443,11 +2499,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             yield native
         except asyncio.CancelledError:
             # A cancelled start may never reveal a handle to interrupt.
-            self.backend_turns.recovering(
-                room.room_id,
-                CodexTurn(native.client, native.thread_id or "", native.turn_id or ""),
-                room.retained,
-                generation=native.generation,
+            self._recover_unconfirmed(
+                CodexTurn(
+                    room.room_id,
+                    native.generation,
+                    native.client,
+                    native.thread_id or "",
+                    native.turn_id or "",
+                )
             )
             if native.owner.failure is not None:
                 raise native.owner.failure from None
@@ -2486,25 +2545,41 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         thread_id: str,
     ) -> CodexTurn:
         await self._start_native_turn(room, native, params)
-        return CodexTurn(room.require_client(), thread_id, native.turn_id or "")
+        return CodexTurn(
+            room.room_id,
+            native.generation,
+            room.require_client(),
+            thread_id,
+            native.turn_id or "",
+        )
 
     async def _start_native_turn(
         self, room: RoomCodexClient, native: NativeTurn, params: dict[str, Any]
     ) -> None:
         """Start the native turn and claim the events that arrived before its id."""
         native.thread_id = params["threadId"]
-        started = await native.client.request(CodexRequestMethod.TURN_START, params)
+        started = await self._bounded_request(
+            CodexTurn(
+                room.room_id, native.generation, native.client, native.thread_id, ""
+            ),
+            CodexRequestMethod.TURN_START,
+            params,
+        )
         turn_id = _result_id(started, "turn")
         if not turn_id:
             raise RuntimeError("Codex turn/start returned no turn id")
         async with room.routing_lock:
             native.turn_id = turn_id
+            # A loss that beat the answer queues behind the events held for it.
+            lost_early = native.loss
             early, native.early = native.early, []
             refused = []
             for event in early:
                 await self._observe_command(room, native.generation, event)
                 if not native.claim(event):
                     refused.append(event)
+            if lost_early is not None:
+                native.events.put_nowait(lost_early)
         for event in refused:
             await self._refuse_unowned(room, native.client, event)
 
@@ -2708,7 +2783,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         """Resume the thread Band history names; None falls back to a new one."""
         room_id = room.room_id
         try:
-            result = await client.request(
+            result = await self._bounded_request(
+                self._unproven_request(room, client),
                 CodexRequestMethod.THREAD_RESUME,
                 self._resume_params(room, named),
             )
@@ -2766,7 +2842,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         }
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
-        started = await client.request(CodexRequestMethod.THREAD_START, start_params)
+        started = await self._bounded_request(
+            self._unproven_request(room, client),
+            CodexRequestMethod.THREAD_START,
+            start_params,
+        )
         thread_id = _result_id(started, "thread")
         if not thread_id:
             raise RuntimeError("Codex thread/start returned no thread id")

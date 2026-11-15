@@ -258,11 +258,13 @@ class FakeCLISession(Transport):
             self._turn.cancel()
         self._outbox.put_nowait(None)
 
-    def die(self) -> None:
-        """The process crashes between turns: its output closes and every
-        later write fails."""
+    def die(self, *, closes_output: bool = True) -> None:
+        """The process crashes between turns: every later write fails, and
+        its output closes unless ``closes_output`` is off, so the crash is
+        first found by the next write rather than by the reader."""
         self.alive = False
-        self._outbox.put_nowait(None)
+        if closes_output:
+            self._outbox.put_nowait(None)
 
     async def read_messages(self) -> AsyncIterator[dict[str, Any]]:
         while (message := await self._outbox.get()) is not None:

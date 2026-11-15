@@ -145,6 +145,7 @@ class FakeACPAgent:
         # Holds the next initialize, as a process slow to start.
         self._initialize_gate: Gate | None = None
         self._session_load_gate: Gate | None = None
+        self._new_session_gate: Gate | None = None
         self._close_gate: Gate | None = None
         self._new_session_error: RequestError | None = None
         # Observability for assertions:
@@ -221,6 +222,11 @@ class FakeACPAgent:
         """Hold the next ``session/load`` until release."""
         self._session_load_gate = Gate()
         return self._session_load_gate
+
+    def holds_next_new_session(self) -> Gate:
+        """Hold the next ``session/new`` until release, before creating it."""
+        self._new_session_gate = Gate()
+        return self._new_session_gate
 
     def advertises_models(
         self,
@@ -763,6 +769,9 @@ class FakeACPAgent:
         self, cwd: str, mcp_servers: Any = None, **kwargs: Any
     ) -> NewSessionResponse:
         del kwargs
+        if (gate := self._new_session_gate) is not None:
+            self._new_session_gate = None
+            await gate.hold()
         if (error := self._new_session_error) is not None:
             self._new_session_error = None
             raise error

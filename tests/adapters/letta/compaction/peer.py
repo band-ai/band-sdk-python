@@ -53,6 +53,7 @@ class CompactionStream(httpx.AsyncByteStream):
         await self.release.wait()
         yield frame(phase("summary_message", summary="private summary"))
         yield frame(phase("assistant_message", content=RESULT))
+        yield frame(phase("stop_reason", stop_reason="end_turn"))
         yield frame(
             {
                 "message_type": "usage_statistics",

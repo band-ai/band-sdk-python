@@ -18,6 +18,7 @@ from band.integrations.acp.client_runtime import (
     ACPRuntime,
 )
 from band.integrations.acp.session_config import select_ids
+from band.integrations.acp.sessions import ACPSessionRestoreError
 from band.integrations.mcp import BandMCPTransport
 from tests.integrations.acp.acp_toolkit import FakeSpawn, select_option
 
@@ -154,36 +155,36 @@ class TestACPRuntime:
         )
 
     @pytest.mark.asyncio
-    async def test_load_session_timeout_is_treated_as_unavailable(self) -> None:
+    async def test_load_session_timeout_is_not_a_missing_session(self) -> None:
         mock_conn = AsyncMock()
         mock_conn.load_session = AsyncMock(side_effect=TimeoutError)
         runtime = ACPRuntime(command=["codex"])
         runtime._conn = mock_conn
         runtime._agent_supports_session_load = True
 
-        with patch(
-            "band.integrations.acp.sessions.ACP_SESSION_LOAD_TIMEOUT_SECONDS",
-            0.01,
+        with (
+            patch(
+                "band.integrations.acp.sessions.ACP_SESSION_LOAD_TIMEOUT_SECONDS",
+                0.01,
+            ),
+            pytest.raises(ACPSessionRestoreError, match="no answer"),
         ):
-            assert not await runtime.load_session(
-                cwd="/tmp", session_id="sess-1", mcp_servers=[]
-            )
+            await runtime.load_session(cwd="/tmp", session_id="sess-1", mcp_servers=[])
 
     @pytest.mark.asyncio
-    async def test_load_session_treats_non_session_errors_as_miss(self) -> None:
-        """Any protocol error on session/load is a recoverable load-miss: the
-        caller falls back to a fresh session instead of the turn dying."""
+    async def test_load_session_does_not_treat_other_errors_as_a_miss(self) -> None:
+        """Only a missing-session rejection lets the caller start a fresh
+        session; any other protocol error may leave the load pending."""
         mock_conn = AsyncMock()
         mock_conn.load_session = AsyncMock(side_effect=RequestError.invalid_params())
         runtime = ACPRuntime(command=["codex"])
         runtime._conn = mock_conn
         runtime._agent_supports_session_load = True
 
-        loaded = await runtime.load_session(
-            cwd="/tmp", session_id="sess-1", mcp_servers=[]
-        )
+        with pytest.raises(ACPSessionRestoreError) as refused:
+            await runtime.load_session(cwd="/tmp", session_id="sess-1", mcp_servers=[])
 
-        assert loaded is False
+        assert isinstance(refused.value.__cause__, RequestError)
 
     @pytest.mark.asyncio
     async def test_start_cleans_up_failed_initialize(self) -> None:

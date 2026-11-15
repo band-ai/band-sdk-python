@@ -64,8 +64,11 @@ ALLOWED_REPLY_CALLS: dict[str, tuple[Counter[str], str]] = {
         "forwards the model's tool call to the inner tools",
     ),
     "integrations/a2a/adapter.py": (
-        Counter(send_message=1, deliver_reply=3),
-        "the remote agent's answer; send_message is the A2A client's method",
+        Counter(send_message=1, deliver_reply=4),
+        (
+            "the remote agent's answer, including auth-required status text; "
+            "send_message is the A2A client's method"
+        ),
     ),
     "adapters/crewai_flow.py": (
         Counter(send_message=3),

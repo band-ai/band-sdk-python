@@ -7,13 +7,24 @@ from copy import deepcopy
 from a2a.helpers import get_artifact_text, get_message_text
 from a2a.types import Role, StreamResponse, Task, TaskState
 
+# Conversational completion/failure. AUTH_REQUIRED and INPUT_REQUIRED are
+# interrupted states that may continue; they are not stop proof.
 TERMINAL_TASK_STATES = frozenset(
     {
         TaskState.TASK_STATE_COMPLETED,
         TaskState.TASK_STATE_FAILED,
         TaskState.TASK_STATE_CANCELED,
         TaskState.TASK_STATE_REJECTED,
-        TaskState.TASK_STATE_AUTH_REQUIRED,
+    }
+)
+
+# States that confirm a stop/cancel attempt for the matching task identity.
+STOP_TERMINAL_TASK_STATES = frozenset(
+    {
+        TaskState.TASK_STATE_COMPLETED,
+        TaskState.TASK_STATE_FAILED,
+        TaskState.TASK_STATE_CANCELED,
+        TaskState.TASK_STATE_REJECTED,
     }
 )
 
@@ -29,7 +40,17 @@ RETRYABLE_TASK_FAILURE_STATES = frozenset(
 # with history from before the migration still rehydrate as terminal.
 TERMINAL_TASK_STATE_NAMES = frozenset(
     {TaskState.Name(state) for state in TERMINAL_TASK_STATES}
-    | {"completed", "failed", "canceled", "rejected", "auth-required"}
+    | {"completed", "failed", "canceled", "rejected"}
+)
+
+# Persisted interrupted states that must not be treated as stop settlement.
+INTERRUPTED_TASK_STATE_NAMES = frozenset(
+    {
+        TaskState.Name(TaskState.TASK_STATE_AUTH_REQUIRED),
+        TaskState.Name(TaskState.TASK_STATE_INPUT_REQUIRED),
+        "auth-required",
+        "input-required",
+    }
 )
 
 

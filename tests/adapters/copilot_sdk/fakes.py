@@ -132,11 +132,23 @@ class HeldRestTools(ToolSchemaFakeTools):
         self.hold_context = False
         self.hold_usage = False
         self.parked = asyncio.Event()
+        # While set, a tool call parks at the platform until ``tool_released``.
+        self.hold_tool_calls = False
+        self.tool_started = asyncio.Event()
+        self.tool_released = asyncio.Event()
 
     async def fetch_room_context(self, **kwargs: Any) -> dict[str, Any]:
         if self.hold_context:
             await self._park()
         return await super().fetch_room_context(**kwargs)
+
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> Any:
+        if self.hold_tool_calls:
+            self.tool_started.set()
+            await self.tool_released.wait()
+        return await super().execute_tool_call_structured(tool_name, arguments)
 
     async def send_event(
         self,
@@ -254,7 +266,7 @@ class FakeCopilotSession:
         if self.send_error:
             raise self.send_error
         for data in self.turn_events:
-            event = SimpleNamespace(data=data)
+            event = SimpleNamespace(data=data, agent_id=None)
             for handler in list(self.handlers):
                 if callable(data):
                     continue
@@ -285,8 +297,12 @@ class FakeCopilotSession:
         self.journal.append("idle")
         self._publish(SessionIdleData(aborted=True))
 
-    def _publish(self, data: Any) -> None:
-        event = SimpleNamespace(data=data)
+    def deliver_subagent_idle(self) -> None:
+        """A subagent's own idle: it says nothing about the top-level turn."""
+        self._publish(SessionIdleData(), agent_id="subagent-1")
+
+    def _publish(self, data: Any, *, agent_id: str | None = None) -> None:
+        event = SimpleNamespace(data=data, agent_id=agent_id)
         for handler in list(self.handlers):
             handler(event)
 

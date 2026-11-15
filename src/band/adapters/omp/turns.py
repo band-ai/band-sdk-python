@@ -22,6 +22,7 @@ from band.converters.helpers import (
 from band.converters.omp import OMP_RESUME_RECORD, OmpMetadataKey, OmpSessionState
 from band.core.content import has_visible_content
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
+from band.core.exceptions import CleanupIncompleteError
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -186,7 +187,9 @@ class OmpTurnMixin(OmpAdapterContract):
         except (asyncio.CancelledError, omprpc.OmpCompletionTimeout) as error:
             try:
                 await self._join_disposal(room)
-            except omprpc.OmpProcessError:
+            except (omprpc.OmpProcessError, CleanupIncompleteError):
+                # The turn's own cancellation or timeout stays the outcome; the
+                # room's closed admission keeps the unfinished cleanup contained.
                 raise error
             raise
         except BaseException:

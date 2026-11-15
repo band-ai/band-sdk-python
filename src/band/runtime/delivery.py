@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import replace
 from enum import Enum
 from time import monotonic
@@ -20,7 +20,12 @@ from band_sdk_core import (
 )
 
 from band.client.streaming import ControlMode, DeliveryStatus
-from band.core.exceptions import InputNotAccepted, RoomExecutionStoppedError
+from band.core.exceptions import (
+    InputNotAccepted,
+    ProviderUnavailableError,
+    RoomExecutionStoppedError,
+    TerminalProviderFailure,
+)
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -30,7 +35,7 @@ from band.core.turn_lifecycle import TurnTask
 from band.core.types import delivery_status_for_agent
 from band.platform.event import MessageEvent
 from band.platform.link import BandLink
-from band.runtime.cycle import TurnScope
+from band.runtime.cycle import AttemptPhase, TurnScope
 from band.runtime.originals import message_id, payload
 from band.runtime.selection import Candidate
 from band.runtime.sessionconfig import SessionConfig
@@ -166,6 +171,9 @@ class DeliveryLifecycle:
         self.agent_id = agent_id
         # One model attempt answers for a whole batch, so a failed one is final.
         self.replays_failures = not config.consume_all_queued
+        self._note_backend_waiting: (
+            Callable[[asyncio.Future[None], str], None] | None
+        ) = None
         # Loop time before which an unconfirmed terminal write is not retried, so
         # arrivals cannot multiply an outage's writes. A due or requested
         # reconciliation clears it.
@@ -368,14 +376,23 @@ class DeliveryLifecycle:
                 or await self._execute(scope, control=control)
             )
         except InputNotAccepted as refusal:
-            self.host.defer_delivery(self._first_id(scope), reason=refusal)
+            identity = self._first_id(scope)
+            if identity is not None and refusal.ready is not None:
+                self._note_deferred_readiness(identity, refusal.ready)
+            self.host.defer_delivery(identity, reason=refusal)
             return TurnOutcome.NOT_ACCEPTED
+        except ProviderUnavailableError as error:
+            return await self._fail_unavailable(scope, control=control, error=error)
         except RoomExecutionStoppedError:
             return TurnOutcome.RETRY_LATER
         except Exception as error:  # noqa: BLE001 -- the delivery boundary owns failure settlement
             log_delivery_error(
                 error, "Error processing messages in room %s", self.room_id
             )
+            if isinstance(error, TerminalProviderFailure):
+                return await self._fail(
+                    scope, control=control, error=error, allow_retry=False
+                )
             if not scope.admitted:
                 return self._unadmitted_outcome()
             return await self._fail(scope, control=control, error=error)
@@ -434,13 +451,71 @@ class DeliveryLifecycle:
         await self.settle(scope)
         return self.settled_outcome(scope)
 
+    def _note_deferred_readiness(
+        self, identity: str, ready: asyncio.Future[None]
+    ) -> None:
+        """Tell the backend owner which original waits on its readiness future.
+
+        The future belongs to the backend and can outlive this room, so no
+        callback is left on it; the context's own observer is the only one.
+        """
+        if self._note_backend_waiting is not None:
+            self._note_backend_waiting(ready, identity)
+
+    def fail_unavailable(self, identities: frozenset[str] | set[str]) -> None:
+        """Latch terminal, non-retrying failure for deferred originals before a wake."""
+        for identity in identities:
+            self.claims.record_failed_settlement(
+                self.room_id,
+                identity,
+                GENERIC_PROVIDER_FAILURE_MESSAGE,
+                self.retry_tracker,
+                False,
+            )
+
+    def bind_backend_turns(self, turns: object) -> None:
+        """Wire provider-unavailable latching into shared backend ownership."""
+        add_latch = getattr(turns, "add_failure_latch", None)
+        note_waiting = getattr(turns, "note_waiting_on", None)
+        if not callable(add_latch):
+            return
+        add_latch(self._latch_unavailable)
+        self._note_backend_waiting = note_waiting if callable(note_waiting) else None
+
+    def _latch_unavailable(self, room_id: str, identities: frozenset[str]) -> None:
+        if room_id != self.room_id or not identities:
+            return
+        self.fail_unavailable(identities)
+
+    async def _fail_unavailable(
+        self,
+        scope: TurnScope,
+        *,
+        control: bool,
+        error: ProviderUnavailableError,
+    ) -> TurnOutcome:
+        """Terminal failure even when provider execution was never admitted."""
+        if not scope.admitted and scope.phase is AttemptPhase.PREPARING:
+            if not scope.originals:
+                return self._unadmitted_outcome()
+            scope.admit()
+        return await self._fail(scope, control=control, error=error, allow_retry=False)
+
     async def _fail(
-        self, scope: TurnScope, *, control: bool, error: Exception
+        self,
+        scope: TurnScope,
+        *,
+        control: bool,
+        error: Exception,
+        allow_retry: bool | None = None,
     ) -> TurnOutcome:
         """Settle an admitted attempt whose execution raised as one failure."""
+        if not scope.admitted:
+            return self._unadmitted_outcome()
         if control and scope.intent is None:
             self._charge_control_failure(scope)
-        self.store_intent(scope, DeliveryStatus.FAILED)
+        replay = self.replays_failures if allow_retry is None else allow_retry
+        self.store_intent(scope, DeliveryStatus.FAILED, allow_retry=replay)
         final = not self._will_retry(scope)
         await self.settle(scope)
         await self.host.report_delivery_failure(final=final, error=error)
@@ -541,9 +616,12 @@ class DeliveryLifecycle:
         self,
         scope: TurnScope,
         intent: DeliveryStatus | None,
+        *,
+        allow_retry: bool | None = None,
     ) -> None:
         if not scope.settle(intent):
             return
+        replay = self.replays_failures if allow_retry is None else allow_retry
         for event in scope.originals:
             match intent:
                 case DeliveryStatus.PROCESSED:
@@ -556,7 +634,7 @@ class DeliveryLifecycle:
                         message_id(event),
                         GENERIC_PROVIDER_FAILURE_MESSAGE,
                         self.retry_tracker,
-                        self.replays_failures,
+                        replay,
                     )
 
     async def settle(self, scope: TurnScope) -> None:

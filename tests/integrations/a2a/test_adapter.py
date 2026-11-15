@@ -366,22 +366,16 @@ class TestA2AAdapterMessageFlow:
         assert adapter._tasks == {}, "next turn must start a fresh task"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "state",
-        [TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_AUTH_REQUIRED],
-    )
-    async def test_non_retryable_terminal_task_is_acked_after_error_event(
-        self, adapter: A2AAdapter, state: int
+    async def test_canceled_task_is_acked_after_error_event(
+        self, adapter: A2AAdapter
     ) -> None:
         tools = FakeAgentTools()
-        status_message = (
-            "Please authenticate"
-            if state == TaskState.TASK_STATE_AUTH_REQUIRED
-            else "The task was canceled"
-        )
+        status_message = "The task was canceled"
 
         await adapter._handle_event(
-            task_event(make_task(state, status_message=status_message)),
+            task_event(
+                make_task(TaskState.TASK_STATE_CANCELED, status_message=status_message)
+            ),
             tools,
             "room-123",
             "user-456",
@@ -389,10 +383,32 @@ class TestA2AAdapterMessageFlow:
         )
 
         failures = reported_failures(tools)
-        assert failures, "a non-retryable terminal task must produce an error event"
+        assert failures, "a canceled task must produce an error event"
         assert failures[-1]["message"] == status_message
         assert failures[-1]["provider"] == "a2a"
-        assert failures[-1]["code"] == TaskState.Name(state)
+        assert failures[-1]["code"] == TaskState.Name(TaskState.TASK_STATE_CANCELED)
+
+    @pytest.mark.asyncio
+    async def test_auth_required_is_forwarded_and_kept_for_continuation(
+        self, adapter: A2AAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+
+        await adapter._handle_event(
+            task_event(
+                make_task(
+                    TaskState.TASK_STATE_AUTH_REQUIRED,
+                    status_message="Please authenticate",
+                )
+            ),
+            tools,
+            "room-123",
+            "user-456",
+            "Test User",
+        )
+
+        assert tools.messages_sent[-1]["content"] == "Please authenticate"
+        assert adapter._tasks.get("room-123"), "auth-required must keep the task"
 
     @pytest.mark.asyncio
     async def test_input_required_is_forwarded_and_persisted(

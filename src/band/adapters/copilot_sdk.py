@@ -9,9 +9,11 @@ history, memory, and context stay isolated per room.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from uuid import uuid4
@@ -24,7 +26,7 @@ from band.converters.copilot_sdk import (
     CopilotSDKHistoryConverter,
     CopilotSDKSessionState,
 )
-from band.core.adapterconfig import BaseAdapterConfig
+from band.core.adapterconfig import SHARED_TRANSITION_TIMEOUT_S, BaseAdapterConfig
 from band.core.content import has_visible_content
 from band.core.delivery import (
     DeliveryFailedError,
@@ -101,7 +103,7 @@ except ImportError:
     _COPILOT_SDK_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Awaitable, Callable, Iterator, Sequence
 
     from copilot import (
         CopilotSession,
@@ -155,6 +157,9 @@ class CopilotSDKAdapterConfig(BaseAdapterConfig):
             ``None`` (default) lets the SDK resolve it from
             ``github_token``.
         turn_timeout_s: Max seconds to wait for a turn to complete.
+        transition_timeout_s: Max seconds for one setup or cleanup transition
+            (auth, create/resume, abort join). Expiry abandons the caller wait
+            only; it does not prove the Copilot session settled.
     """
 
     model: str | None = None
@@ -166,6 +171,7 @@ class CopilotSDKAdapterConfig(BaseAdapterConfig):
     github_token: str | None = Field(default=None, repr=False)
     use_logged_in_user: bool | None = None
     turn_timeout_s: PositiveFloat = 120.0
+    transition_timeout_s: PositiveFloat = SHARED_TRANSITION_TIMEOUT_S
 
 
 @dataclass
@@ -181,6 +187,8 @@ class RoomSession:
     resumable: str | None = None
     recorded: str | None = None
     activity: SessionActivity | None = None
+    # The turn whose idle observer and callback count are still live.
+    turn: SessionTurn | None = None
 
     @property
     def unseeded(self) -> str | None:
@@ -210,9 +218,14 @@ class TurnState:
     incidents: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(eq=False)
 class SessionTurn:
-    """The session a stop aborts, the room it seeds, and how far its prompt got."""
+    """The session a stop aborts, the room it seeds, and how far its prompt got.
+
+    Identifies the turn to ``BackendTurns``. A stopped turn reopens its room
+    only once the session reports a top-level idle and every SDK callback the
+    turn started has returned.
+    """
 
     room_id: str
     session: CopilotSession
@@ -220,6 +233,19 @@ class SessionTurn:
     # Set when the prompt is sent, cleared once it returns; a prompt that is
     # cancelled or fails leaves it set.
     prompting: bool = False
+    # Set by the session's own idle (never a subagent's) after this turn began.
+    idled: asyncio.Event = field(default_factory=asyncio.Event)
+    # Bridged-tool and ask_user callbacks the SDK started and has not finished.
+    callbacks: int = 0
+    unsubscribe: Callable[[], None] | None = None
+
+    def stop_observing(self) -> None:
+        """Drop the idle observer; ``idled`` keeps what it already saw."""
+        if self.unsubscribe is not None:
+            self.unsubscribe()
+            self.unsubscribe = None
+        if self.room.turn is self:
+            self.room.turn = None
 
 
 def _turn_incident(data: object) -> str | None:
@@ -370,7 +396,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         self._sessions: dict[str, RoomSession] = {}
         self._turn_state: dict[str, TurnState] = {}
         self._backend_turns: BackendTurns[SessionTurn] = BackendTurns(
-            self._abort_turn, provider=_PROVIDER
+            self._abort_turn, provider=_PROVIDER, requires_confirmation=True
         )
         self._system_prompt: str = ""
 
@@ -408,9 +434,10 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         )
         # Start eagerly so the runtime download/spawn cost lands at boot
         # (visible in logs) instead of inside the first message's turn.
-        await self._session_manager.ensure_started()
         try:
-            await self._check_auth(client)
+            async with asyncio.timeout(self.config.transition_timeout_s):
+                await self._session_manager.ensure_started()
+                await self._check_auth(client)
         except BaseException:
             # Failed startup must not leak a running owned client
             # (Agent.stop is never called when start() raises).
@@ -539,16 +566,23 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 # turn lock serializes turns per room.
                 turn = TurnState(audience=distinct_sender_ids(messages))
                 self._turn_state[room_id] = turn
+                # Registered with no await before the prompt, and kept past a
+                # cancelled or failed prompt until the idle that confirms the stop.
+                self._observe_idle(live)
                 try:
                     final_text = await self._run_turn(live, prompt, turn)
                 except Exception:
                     logger.exception("Room %s: Copilot turn failed", room_id)
                     await self._drop_session(room_id, live.room)
+                    # A cancel from here on stops a dropped session, which has
+                    # no abort left to send; keep what its eviction already saw.
+                    live.stop_observing()
                     await tools.send_failure(
                         AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                     )
                     raise
                 else:
+                    live.stop_observing()
                     live.room.confirm_seed()
                 finally:
                     activity.retire(tools)
@@ -699,9 +733,10 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         """Resume a persisted session, or return None when its state is absent."""
         assert self._session_manager is not None
         try:
-            session = await self._session_manager.client.resume_session(
-                stored_id, **kwargs
-            )
+            async with asyncio.timeout(self.config.transition_timeout_s):
+                session = await self._session_manager.client.resume_session(
+                    stored_id, **kwargs
+                )
         except Exception as exc:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s: resume failed for session %s: %s — creating fresh",
@@ -726,9 +761,10 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         assert self._session_manager is not None
         new_id = f"{self._session_prefix()}{room_id}-{uuid4().hex}"
         try:
-            session = await self._session_manager.client.create_session(
-                session_id=new_id, **kwargs
-            )
+            async with asyncio.timeout(self.config.transition_timeout_s):
+                session = await self._session_manager.client.create_session(
+                    session_id=new_id, **kwargs
+                )
         except BaseException:
             # The runtime may have created it before failing or being stopped.
             await self._session_manager.delete_session(new_id)
@@ -772,9 +808,17 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             tools = self._room_tools.get(room_id)
             if tools is not None:
                 retain_request_permission(tools)
-            return handler(request, context)
+            result = handler(request, context)
+            if not inspect.isawaitable(result):
+                return result
+            return self._await_counted(room_id, result)
 
         return handle
+
+    async def _await_counted(self, room_id: str, pending: Awaitable[Any]) -> Any:
+        """Await a developer handler's answer as one counted SDK callback."""
+        with self._callback(room_id):
+            return await pending
 
     def _make_room_ask_user_handler(self, room_id: str) -> UserInputHandler:
         """Bind the room id for the session's ask_user → room bridge."""
@@ -782,7 +826,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         async def handle(
             request: UserInputRequest, _context: dict[str, str]
         ) -> UserInputResponse:
-            return await self._deliver_question_to_room(room_id, request)
+            with self._callback(room_id):
+                return await self._deliver_question_to_room(room_id, request)
 
         return handle
 
@@ -872,7 +917,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         """
 
         async def handle(invocation: ToolInvocation) -> ToolResult:
-            return await self._execute_bridged_tool(room_id, invocation)
+            with self._callback(room_id):
+                return await self._execute_bridged_tool(room_id, invocation)
 
         return handle
 
@@ -1050,34 +1096,70 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         """
         assert self._session_manager is not None
         if self._session_manager.get_session(live.room_id) is not live.session:
-            return
-        if (unseeded := live.room.unseeded) is not None:
+            # A failed turn's drop was itself interrupted, possibly before its
+            # abort finished: ask again, since only the idle confirms the stop.
+            await self._abort_prompt(live)
+        elif (unseeded := live.room.unseeded) is not None:
             await self._session_manager.discard_session(live.room_id, unseeded)
         else:
             await self._abort_prompt(live)
+        self._settle(live)
 
-    @staticmethod
-    async def _abort_prompt(live: SessionTurn) -> None:
+    async def _abort_prompt(self, live: SessionTurn) -> None:
         """Abort the prompt and, while one is running, wait for the idle that ends it.
 
         The CLI emits that idle just after acknowledging the abort, and
         ``send_and_wait`` ends on any idle: a next prompt sent before it
-        arrives returns on it with no reply. Subscribing first also catches
-        an idle that arrives ahead of the acknowledgement.
+        arrives returns on it with no reply. The turn's own observer, live
+        since before the prompt, also catches an idle that arrives ahead of the
+        acknowledgement. This wait is bounded by the backend stop's limit, but
+        the observer is not: a late idle still confirms the stop.
         """
-        idled = asyncio.Event()
+        await live.session.abort()
+        if live.prompting:
+            await live.idled.wait()
+        else:
+            # No prompt was sent, so no idle is owed.
+            live.idled.set()
+
+    def _observe_idle(self, live: SessionTurn) -> None:
+        """Watch the turn's session for the top-level idle that ends its prompt."""
 
         def on_event(event: SessionEvent) -> None:
-            if isinstance(event.data, SessionIdleData):
-                idled.set()
+            # A subagent's idle says nothing about the turn's own work.
+            if isinstance(event.data, SessionIdleData) and event.agent_id is None:
+                live.idled.set()
+                self._settle(live)
 
-        unsubscribe = live.session.on(on_event)
+        live.room.turn = live
+        live.unsubscribe = live.session.on(on_event)
+
+    def _settle(self, live: SessionTurn) -> None:
+        """Reopen the room once its stopped turn is idle and its callbacks returned.
+
+        Only a stop already requested for this turn can be confirmed: a normal
+        turn's own idle must not release its registration.
+        """
+        if not live.idled.is_set() or live.callbacks:
+            return
+        if self.backend_turns.unconfirmed_handle(live.room_id) is not live:
+            return
+        live.stop_observing()
+        self.backend_turns.confirm_stopped(live.room_id, live)
+
+    @contextmanager
+    def _callback(self, room_id: str) -> Iterator[None]:
+        """Count one SDK callback against the room's turn until it returns."""
+        room = self._sessions.get(room_id)
+        live = room.turn if room is not None else None
+        if live is not None:
+            live.callbacks += 1
         try:
-            await live.session.abort()
-            if live.prompting:
-                await idled.wait()
+            yield
         finally:
-            unsubscribe()
+            if live is not None:
+                live.callbacks -= 1
+                self._settle(live)
 
     async def _run_turn(
         self, live: SessionTurn, prompt: str, turn: TurnState

@@ -221,6 +221,15 @@ class TerminalProviderFailure(BandError):
         self.failure = failure
 
 
+class ProviderUnavailableError(TerminalProviderFailure):
+    """The room's provider scope cannot accept model input until recovered.
+
+    Delivery treats this as a terminal, non-retrying failure: queued and new
+    input finishes without invoking the provider, and a later reopen cannot
+    erase that decision for those originals.
+    """
+
+
 HOST_CONTROL_ERRORS: tuple[type[BandError], ...] = (
     InputNotAccepted,
     RoomExecutionStoppedError,
