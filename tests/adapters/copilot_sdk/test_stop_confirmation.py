@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from band.adapters.copilot_sdk import CopilotSDKAdapter
+from band.core.exceptions import InputNotAccepted
 from band.core.turn_lifecycle import BACKEND_CANCEL_TIMEOUT_SECONDS
 from band.runtime.tools import BandTool
 from tests.adapters.copilot_sdk.fakes import (
@@ -73,18 +74,19 @@ class TestStopConfirmation:
         await wait_until(lambda: "abort" in session.journal)
         session.turn_events = []
 
-        next_turn = asyncio.create_task(
-            adapter.on_event(turn_input(ToolSchemaFakeTools()))
-        )
-        await spin()
-        prompts_while_blocked = len(session.prompts)
+        with pytest.raises(InputNotAccepted) as pending:
+            await adapter.on_event(turn_input(ToolSchemaFakeTools()))
+        assert pending.value.ready is not None
+        assert len(session.prompts) == 2
+
         session.deliver_subagent_idle()
         await spin()
-        prompts_after_subagent_idle = len(session.prompts)
-        session.deliver_aborted_idle()
-        await next_turn
+        assert self.blocked(adapter)
+        assert len(session.prompts) == 2
 
-        assert prompts_while_blocked == prompts_after_subagent_idle == 2
+        session.deliver_aborted_idle()
+        await pending.value.ready
+        await adapter.on_event(turn_input(ToolSchemaFakeTools()))
         assert len(session.prompts) == 3
 
     @pytest.mark.looptime

@@ -550,22 +550,27 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
         Waiting for the parent first is what makes that child visible. The
         stop is confirmed only once the parent, the preamble and every plugin
         body have ended; work that resists cancellation keeps the room closed.
+        Settlement failure latches the room unavailable.
         """
-        turn.origin.revoke()
-        parent = turn.origin.task or processing_task(
-            turn.background_tasks, turn.session_id
-        )
-        await turn.background_tasks.cancel(
-            tag=process_session_tag(turn.session_id), reason=STOP_REASON
-        )
-        if parent is not None:
-            await await_stopped_task(parent)
-        children = live_preamble_tasks(str(turn.session_id))
-        for child in children:
-            child.cancel()
-        for child in children:
-            await await_stopped_task(child)
-        await turn.origin.drain()
+        try:
+            turn.origin.revoke()
+            parent = turn.origin.task or processing_task(
+                turn.background_tasks, turn.session_id
+            )
+            await turn.background_tasks.cancel(
+                tag=process_session_tag(turn.session_id), reason=STOP_REASON
+            )
+            if parent is not None:
+                await await_stopped_task(parent)
+            children = live_preamble_tasks(str(turn.session_id))
+            for child in children:
+                child.cancel()
+            for child in children:
+                await await_stopped_task(child)
+            await turn.origin.drain()
+        except Exception:
+            self.backend_turns.mark_unavailable(turn.room_id)
+            raise
         self.backend_turns.confirm_stopped(turn.room_id, turn)
 
     async def on_cleanup(self, room_id: str) -> None:
@@ -573,6 +578,8 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
         await self.backend_turns.settled(room_id)
         if self._rooms is not None:
             self._rooms.forget(room_id)
+        # Leave retires any unconfirmed stop; Parlant has no retained recovery.
+        self.backend_turns.clear_unconfirmed(room_id)
         logger.debug("Room %s: Cleaned up Parlant session", room_id)
 
     async def cleanup_all(self) -> None:

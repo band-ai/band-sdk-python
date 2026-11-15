@@ -9,7 +9,7 @@ import weakref
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator
 from contextlib import contextmanager
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from band.core.exceptions import CleanupIncompleteError
 from band.core.retention.config import RoomRetentionConfig
@@ -23,15 +23,17 @@ _reporters: Counter[asyncio.Task[Any]] = Counter()
 # Finished tasks whose failure a caller re-raised or this module logged.
 _reported: weakref.WeakSet[asyncio.Task[Any]] = weakref.WeakSet()
 _labels: weakref.WeakKeyDictionary[asyncio.Task[Any], str] = weakref.WeakKeyDictionary()
+# Strong refs so an abandoned owned gate is not collected before it settles.
+_held: set[asyncio.Task[Any]] = set()
 
 
-def spawn_owned(
-    operation: Coroutine[object, object, None], *, label: str
-) -> asyncio.Task[None]:
+def spawn_owned(operation: Coroutine[Any, Any, T], *, label: str) -> asyncio.Task[T]:
     """Run work that outlives a cancelled caller; log its failure only when
     no caller is waiting to report it."""
-    task = asyncio.create_task(operation)
+    task: asyncio.Task[T] = asyncio.create_task(operation)
     _labels[task] = label
+    _held.add(task)
+    task.add_done_callback(_held.discard)
     task.add_done_callback(_log_unreported)
     return task
 
@@ -112,15 +114,19 @@ async def await_owned_result(
 ) -> T:
     """Await a provider gate under owned-abandonment rules.
 
-    Expiry stops the caller wait without cancelling ``operation``. The caller
-    keeps the task for cleanup or late-identity observation; a deadline never
-    proves the gate settled.
+    Expiry stops the caller wait without cancelling ``operation``. Ownership
+    keeps the task alive for cleanup or late-identity observation; a deadline
+    never proves the gate settled.
     """
-    task = (
-        operation
-        if isinstance(operation, asyncio.Task)
-        else asyncio.ensure_future(operation)
-    )
+    task: asyncio.Task[T]
+    if isinstance(operation, asyncio.Task):
+        task = operation
+        _labels.setdefault(task, label)
+        _held.add(task)
+        task.add_done_callback(_held.discard)
+        task.add_done_callback(_log_unreported)
+    else:
+        task = spawn_owned(cast("Coroutine[Any, Any, T]", operation), label=label)
     if await await_owned({task}, timeout):
         return task.result()
     raise TimeoutError(f"{label} exceeded its budget")

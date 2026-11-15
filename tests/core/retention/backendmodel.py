@@ -43,10 +43,10 @@ class BackendModel:
         self.blocked = False
         self.unavailable = False
         self.recovering = False
-        self.reported = False
+        self.blocked_reported = False
+        self.unavailable_reported = False
         self.report_fails = False
-        self.reports = 0
-        self.unavailable_reports = 0
+        self.posted: list[tuple[str, str]] = []
         self.stale: list[tuple[str, RetainedRoom, int]] = []
 
     async def take(self, step: Step) -> None:
@@ -111,7 +111,9 @@ class BackendModel:
         assert self.ready is not None
         self.blocked = True
         self.unavailable = False
-        self.recovering = self.reported = False
+        self.recovering = False
+        self.blocked_reported = False
+        self.unavailable_reported = False
 
     async def release(self) -> None:
         if not self.blocked:
@@ -183,9 +185,9 @@ class BackendModel:
         if self.unavailable:
             with pytest.raises(ProviderUnavailableError):
                 await self.turns.require_admission("room", self.tools)
-            if not self.reported and not self.report_fails:
-                self.unavailable_reports += 1
-                self.reported = True
+            if not self.unavailable_reported and not self.report_fails:
+                self.posted.append(("test", PROVIDER_UNAVAILABLE_MESSAGE))
+                self.unavailable_reported = True
             assert self.turns.blocker("room") is None
         elif self.blocked:
             try:
@@ -193,27 +195,24 @@ class BackendModel:
             except ProviderUnavailableError:
                 self.unavailable = True
                 self.ready = self.turns.blocker("room")
-                if not self.reported and not self.report_fails:
-                    self.unavailable_reports += 1
-                    self.reported = True
+                if not self.unavailable_reported and not self.report_fails:
+                    self.posted.append(("test", PROVIDER_UNAVAILABLE_MESSAGE))
+                    self.unavailable_reported = True
                 return
             except InputNotAccepted as refusal:
                 assert refusal.ready is self.ready
                 assert self.ready is not None and not self.ready.done()
                 if self.recovering:
                     assert self.resident.live
-                if not self.reported and not self.report_fails:
-                    self.reports += 1
-                    self.reported = True
+                if not self.blocked_reported and not self.report_fails:
+                    self.posted.append(("test", backend_stop_unconfirmed_message()))
+                    self.blocked_reported = True
                 return
             raise AssertionError("blocked admission should have refused")
         else:
             await self.turns.require_admission("room", self.tools)
             assert self.ready is None or self.ready.done()
-        expected = [("test", backend_stop_unconfirmed_message())] * self.reports + [
-            ("test", PROVIDER_UNAVAILABLE_MESSAGE)
-        ] * self.unavailable_reports
-        assert failure_reports(self.tools) == expected
+        assert failure_reports(self.tools) == self.posted
 
 
 async def play(steps: list[Step]) -> None:

@@ -43,7 +43,6 @@ from band.core.turn_lifecycle import BackendTurns
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.protocol import (
     RETRYABLE_TASK_FAILURE_STATES,
-    STOP_TERMINAL_TASK_STATES,
     TERMINAL_TASK_STATE_NAMES,
     TERMINAL_TASK_STATES,
     apply_task_stream_event,
@@ -354,17 +353,24 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         """Cancel remotely and confirm only on matching stop-terminal evidence.
 
         Local task identity stays until a completed/failed/canceled/rejected
-        Task is observed; auth/input-required are not stop proof.
+        Task is observed; auth/input-required are not stop proof. Non-terminal
+        or failed cancel evidence latches the room unavailable.
         """
         if run.finished:
             self._finalize_task(run.room_id, run.task_id)
             self.backend_turns.confirm_stopped(run.room_id, run)
             return
-        task = await run.client.cancel_task(CancelTaskRequest(id=run.task_id))
-        if task is not None and task.status.state in STOP_TERMINAL_TASK_STATES:
+        try:
+            task = await run.client.cancel_task(CancelTaskRequest(id=run.task_id))
+        except Exception:
+            self.backend_turns.mark_unavailable(run.room_id)
+            raise
+        if task is not None and task.status.state in TERMINAL_TASK_STATES:
             run.finished = True
             self._finalize_task(run.room_id, run.task_id)
             self.backend_turns.confirm_stopped(run.room_id, run)
+            return
+        self.backend_turns.mark_unavailable(run.room_id)
 
     def _remember_task(self, room_id: str, task: Task) -> None:
         """Record task identity needed for subsequent turns and resumption."""
@@ -468,6 +474,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         for key in stale_keys:
             self._task_senders.pop(key, None)
             self._task_cache.pop(key, None)
+        # Leave retires any unconfirmed stop; A2A has no retained recovery.
+        self.backend_turns.clear_unconfirmed(room_id)
         logger.debug("Cleaned up A2A context for room %s", room_id)
 
     async def cleanup_all(self) -> None:

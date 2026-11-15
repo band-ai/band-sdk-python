@@ -485,6 +485,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         self._room_tools.pop(room_id, None)
         self._sessions.pop(room_id, None)
         self._turn_state.pop(room_id, None)
+        # Leave retires any unconfirmed stop; Copilot has no retained recovery.
+        self.backend_turns.clear_unconfirmed(room_id)
 
     async def cleanup_all(self) -> None:
         """Stop all sessions and, if adapter-owned, the Copilot client."""
@@ -522,6 +524,9 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
 
         # Same-session calls must not interleave; other rooms run concurrently.
         async with self._session_manager.turn_lock(room_id):
+            # Refuse while a prior stop is unconfirmed or the room is unavailable,
+            # instead of parking forever under the turn lock on prior.ready.
+            await self.backend_turns.require_admission(room_id, tools)
             # A cancelled turn's stop aborts the runtime's work; a seeded
             # session stays valid for the next message, an unseeded one is
             # discarded so the next message starts over and replays.
@@ -574,8 +579,10 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 except Exception:
                     logger.exception("Room %s: Copilot turn failed", room_id)
                     await self._drop_session(room_id, live.room)
-                    # A cancel from here on stops a dropped session, which has
-                    # no abort left to send; keep what its eviction already saw.
+                    # Eviction ended the session; no idle can still arrive, so
+                    # settle confirmation before dropping the observer.
+                    live.prompting = False
+                    live.idled.set()
                     live.stop_observing()
                     await tools.send_failure(
                         AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
@@ -1096,11 +1103,13 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         """
         assert self._session_manager is not None
         if self._session_manager.get_session(live.room_id) is not live.session:
-            # A failed turn's drop was itself interrupted, possibly before its
-            # abort finished: ask again, since only the idle confirms the stop.
-            await self._abort_prompt(live)
+            # Session already gone: no idle can arrive, so confirm without waiting.
+            live.prompting = False
+            live.idled.set()
         elif (unseeded := live.room.unseeded) is not None:
             await self._session_manager.discard_session(live.room_id, unseeded)
+            # Discard ends the session; confirmation does not need a further idle.
+            live.idled.set()
         else:
             await self._abort_prompt(live)
         self._settle(live)

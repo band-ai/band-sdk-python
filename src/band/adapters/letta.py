@@ -550,7 +550,10 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
                 room_ctx.last_interaction = datetime.now(UTC)
             except LettaRunUncertain as uncertain:
                 logger.error(
-                    "Room %s: Letta run left unconfirmed: %s", room_id, uncertain
+                    "Room %s: Letta run left unconfirmed: %s",
+                    room_id,
+                    uncertain,
+                    exc_info=uncertain,
                 )
                 await tools.send_failure(
                     AgentFailure(_PROVIDER, PROVIDER_UNAVAILABLE_MESSAGE)
@@ -612,6 +615,14 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
                 except StopAsyncIteration:
                     break
                 except Exception as error:
+                    if completed:
+                        # A typed completion already settled the run; trailing
+                        # transport noise must not latch the room unavailable.
+                        logger.warning(
+                            "Ignoring trailing Letta stream error after completion (%s)",
+                            type(error).__name__,
+                        )
+                        break
                     # Any transport failure leaves the run's fate unknown.
                     raise LettaRunUncertain(
                         f"stream failed ({type(error).__name__})"
@@ -1268,6 +1279,8 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         async with self._rpc_lock:
             room_ctx = self._rooms.pop(room_id, None)
         await self.backend_turns.settled(room_id)
+        # Leave retires any unconfirmed stop; Letta has no retained recovery.
+        self.backend_turns.clear_unconfirmed(room_id)
 
         if room_ctx and self._client:
             if self.config.delete_agents_on_cleanup and self.config.mode == "per_room":
