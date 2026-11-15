@@ -28,6 +28,7 @@ class TurnPeer(StartupPeer):
         self.script = script
         self.actions = iter(enumerate(script.tool_calls))
         self.pending_call: str | None = None
+        self.pending_tool: tuple[str, str] | None = None
 
     def run_prompt(self, frame: Frame) -> None:
         self.begin_prompt(frame)
@@ -38,11 +39,13 @@ class TurnPeer(StartupPeer):
         action = next(self.actions, None)
         if action is None:
             self.pending_call = None
+            self.pending_tool = None
             self.complete_agent_turn(self.script.final_text)
             return
         index, call = action
         self.pending_call = f"request-{index}"
         call_id = f"tool-{index}"
+        self.pending_tool = (call_id, call.name)
         send(
             {
                 "type": OmpEventType.MESSAGE_END,
@@ -59,6 +62,17 @@ class TurnPeer(StartupPeer):
                 },
             }
         )
+        # Native reports tool execution on both sides of every host tool call;
+        # the builtin decline guard proves the declining call is the only one
+        # still running, so a peer that skipped these events could never decline.
+        send(
+            {
+                "type": OmpEventType.TOOL_START,
+                "toolCallId": call_id,
+                "toolName": call.name,
+                "args": call.arguments,
+            }
+        )
         send_host_tool_request(self.pending_call, call_id, call.name, call.arguments)
 
     def state_snapshot(self) -> dict[str, JsonValue]:
@@ -71,6 +85,7 @@ class TurnPeer(StartupPeer):
         self.respond(frame)
         if not self.settled:
             self.pending_call = None
+            self.pending_tool = None
             self.emit_assistant_turn("", stop=OmpPromptStatus.ABORTED)
             self.send_prompt_result(settled=True, status=OmpPromptStatus.ABORTED)
             self.settle_session()
@@ -78,8 +93,24 @@ class TurnPeer(StartupPeer):
     def handle_command(self, frame: Frame) -> None:
         match frame.type:
             case OmpFrameType.HOST_TOOL_RESULT:
-                if self.pending_call is None or frame.id != self.pending_call:
+                if (
+                    self.pending_call is None
+                    or self.pending_tool is None
+                    or frame.id != self.pending_call
+                ):
                     raise ValueError(f"Unexpected host tool result: {frame.id}")
+                call_id, tool_name = self.pending_tool
+                send(
+                    {
+                        "type": OmpEventType.TOOL_END,
+                        "toolCallId": call_id,
+                        "toolName": tool_name,
+                        "result": frame.result,
+                        "isError": bool(frame.isError),
+                    }
+                )
+                self.pending_call = None
+                self.pending_tool = None
                 self.next_action()
             case (
                 OmpCommandName.GET_AVAILABLE_COMMANDS
