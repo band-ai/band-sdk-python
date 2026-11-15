@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Set
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from band.integrations.ompwire import OmpContent, OmpContentKind, OmpMessage, OmpState
@@ -79,7 +79,7 @@ def assistant_tool_calls(message: OmpMessage | None) -> tuple[OmpContent, ...] |
 
 def unfinished_tool_calls(
     message: OmpMessage | None,
-    finished_tools: Set[str] = frozenset(),
+    finished_tools: AbstractSet[str] = frozenset(),
 ) -> tuple[OmpContent, ...] | None:
     """Structured TOOL_CALL blocks that have not yet finished, or None if unstructured."""
     calls = assistant_tool_calls(message)
@@ -92,7 +92,7 @@ def is_sole_tool_call(
     message: OmpMessage | None,
     tool_call_id: str,
     *,
-    finished_tools: Set[str] = frozenset(),
+    finished_tools: AbstractSet[str] = frozenset(),
 ) -> bool:
     """True when unfinished assistant tool calls prove exactly this host tool call."""
     calls = unfinished_tool_calls(message, finished_tools)
@@ -172,7 +172,7 @@ def sole_tool_diagnosis(
     message: OmpMessage | None,
     tool_call_id: str,
     *,
-    finished_tools: Set[str] = frozenset(),
+    finished_tools: AbstractSet[str] = frozenset(),
 ) -> tuple[str, str] | None:
     """Return (diagnosis, recovery) when sole-tool proof fails, else None."""
     label = tool_call_id_label(tool_call_id)
@@ -214,7 +214,7 @@ def decline_sole_tool_refusal(
     message: OmpMessage | None,
     tool_call_id: str,
     *,
-    finished_tools: Set[str] = frozenset(),
+    finished_tools: AbstractSet[str] = frozenset(),
 ) -> str | None:
     """Describe why the decline is not the sole tool call, or None when it is."""
     diagnosed = sole_tool_diagnosis(
@@ -227,7 +227,7 @@ def decline_sole_tool_refusal(
 
 
 def decline_running_tools_refusal(
-    tool_call_id: str, running_tools: Set[str]
+    tool_call_id: str, running_tools: AbstractSet[str]
 ) -> str | None:
     """Refuse when the declining call is not the only native tool still running."""
     if running_tools == {tool_call_id}:
