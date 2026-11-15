@@ -233,13 +233,7 @@ class PromptRun:
         return self.result.done() or self.terminal_seen or self.settled_proven()
 
     def is_single_tool_call(self, tool_call_id: str) -> bool:
-        message = self.last_assistant
-        if message is None or isinstance(message.content, str):
-            return False
-        calls = [
-            block for block in message.content if block.type == OmpContentKind.TOOL_CALL
-        ]
-        return len(calls) == 1 and calls[0].id == tool_call_id
+        return decline_sole_tool_refusal(self.last_assistant, tool_call_id) is None
 
     def has_pending_native_work(self) -> bool:
         event_claims_pending_work = (
