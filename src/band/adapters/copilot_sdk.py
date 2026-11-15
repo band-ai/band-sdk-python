@@ -33,7 +33,7 @@ from band.core.delivery import (
     finish_automatic_reply,
     reraise_delivery_cause,
 )
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import HOST_CONTROL_ERRORS, BandConfigError
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, send_event_safe
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
@@ -61,9 +61,9 @@ from band.integrations.copilot_sdk.room_ask_user import (
 from band.runtime.activity import retain_request_permission
 from band.runtime.custom_tools import (
     custom_tools_to_schemas,
-    execute_custom_tool,
     find_custom_tool,
     format_validation_error,
+    run_custom_tool,
 )
 from band.runtime.formatters import format_current_inputs, messages_before
 from band.runtime.prompts import render_system_prompt
@@ -902,25 +902,19 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
 
         try:
             custom_tool = find_custom_tool(self._custom_tools, tool_name)
+            # Structured: either kind of tool can fail without raising (bad args,
+            # API error, a failure value) via ok=False, which must reach the model
+            # as a failed call.
             if custom_tool:
-                result = await execute_custom_tool(
+                outcome = await run_custom_tool(
                     custom_tool, arguments, tools=room_tools
                 )
             else:
-                # Structured variant: a base tool (e.g. band_send_message) can fail
-                # without raising (bad args, API error) — that surfaces as ok=False,
-                # not an exception, and must reach the model as a failed call.
                 outcome = await room_tools.execute_tool_call_structured(
                     tool_name, arguments
                 )
-                if not outcome.ok:
-                    return await self._fail_tool_call(
-                        room_tools,
-                        invocation,
-                        outcome.error_message or str(outcome.value),
-                        report=should_report,
-                    )
-                result = outcome.value
+        except HOST_CONTROL_ERRORS:
+            raise
         except ValidationError as exc:
             logger.error("Validation error for tool %s: %s", tool_name, exc)
             error_text = (
@@ -935,11 +929,18 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 room_tools, invocation, f"Error: {exc}", report=should_report
             )
 
+        if not outcome.ok:
+            return await self._fail_tool_call(
+                room_tools,
+                invocation,
+                outcome.error_message or str(outcome.value),
+                report=should_report,
+            )
+        result = outcome.value
+
         binary_results: list[ToolBinaryResult] | None = None
         if is_image_passthrough_result(tool_name, result):
-            # Same failure path as the tool-execution try/except above: a
-            # malformed or future-extended content block must still route
-            # through _fail_tool_call, not raise uncaught past it.
+            # Malformed native image content must reach the model as a failure.
             try:
                 binary_results = [
                     ToolBinaryResult(

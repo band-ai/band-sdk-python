@@ -38,3 +38,6 @@ def host_absolute_path(*parts: str) -> str:
     """A path that ``band.workspaces.is_host_absolute`` accepts on the running
     OS, rooted at the current drive."""
     return str(Path(Path.cwd().anchor).joinpath(*parts))
+
+
+RELEASE_CANDIDATES = REPO_ROOT / "tests" / "release" / "candidates"

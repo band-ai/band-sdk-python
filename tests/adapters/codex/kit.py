@@ -64,6 +64,9 @@ from tests.adapters.waiting import until
 from tests.paths import host_absolute_path
 
 ROOM_ID = "room-1"
+
+#: The ``started_codex`` fixture: start an adapter on scripted processes.
+StartCodex = Callable[..., Awaitable[CodexAdapter]]
 # An approval wait no test outlasts: the room's human decides first.
 PATIENT_APPROVAL_S = 3600
 # Bounds a step that would otherwise hang the test if the adapter regressed.

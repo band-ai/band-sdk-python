@@ -75,9 +75,20 @@ class QueuedRun:
         """The turns of a run that handed every original over alone."""
         return [(message_id,) for message_id in self.originals]
 
-    def assert_every_request_answered(self) -> None:
-        for marker in self.markers:
-            self.replies.assert_contains_any([marker])
+    def assert_model_answered(self, *senders: Sender) -> None:
+        """Assert the model's replies echo every queued marker and mention each sender.
+
+        What the model chose to write, unlike the SDK contract (admission, one
+        invocation, delivery state), so a failure here is labelled as model
+        compliance.
+        """
+        try:
+            for marker in self.markers:
+                self.replies.assert_contains_any([marker])
+            for sender in senders:
+                self.replies.assert_mentions(sender.id)
+        except AssertionError as error:
+            raise AssertionError(f"model compliance: {error}") from error
 
 
 @dataclass(frozen=True)

@@ -2,22 +2,29 @@
 
 from __future__ import annotations
 
+from unittest.mock import ANY
+
 import pytest
 from nooa import GenerationError
 
+from band.core.types import Emit, ToolEventKey
 from band.runtime.tools import BandTool
+from band.runtime.tools.schema import tool_execution_failure
 from band.testing import FakeAgentTools, failure_reports
-from band.testing.nooa import code_turn, room_call, scripted_llm
+from band.testing.nooa import code_turn, custom_room_call, room_call, scripted_llm
 from tests.adapters.nooa.kit import (
+    OrderInput,
     dispatched,
     failing_llm,
     prompt_text,
     rejecting_send_tools,
     run_turn,
     started_adapter,
+    tool_results,
 )
 
 REPLY = {"content": "Hi Alice", "mentions": ["Alice"]}
+ORDER_SERVICE_DOWN = "the order service is down"
 
 
 class TestRoomTurn:
@@ -52,6 +59,40 @@ class TestRoomTurn:
             in prompt_text(llm)
         )
         assert dispatched(tools) == [BandTool.SEND_MESSAGE, BandTool.NO_REPLY]
+
+    async def test_a_raising_custom_tool_raises_into_the_model_session(
+        self, tools: FakeAgentTools
+    ) -> None:
+        failure = ValueError(ORDER_SERVICE_DOWN)
+
+        def broken_order(args: OrderInput) -> str:
+            raise failure
+
+        llm = scripted_llm(
+            "try:\n"
+            f"    {custom_room_call('order', {'order_id': 'A-1'})}\n"
+            "except Exception as error:\n"
+            "    print(type(error).__name__, error)\n"
+            f"{room_call(BandTool.NO_REPLY)}"
+        )
+        adapter = await started_adapter(
+            llm,
+            additional_tools=[(OrderInput, broken_order)],
+            emit={Emit.TOOL_CALLS},
+        )
+
+        await run_turn(adapter, tools)
+
+        reported = f"order failed: {tool_execution_failure('order', failure)}"
+        assert f"BandToolError {reported}" in prompt_text(llm)
+        assert tool_results(tools)[0] == {
+            ToolEventKey.NAME: "order",
+            ToolEventKey.OUTPUT: reported,
+            ToolEventKey.TOOL_CALL_ID: ANY,
+            ToolEventKey.IS_ERROR: True,
+        }
+        assert dispatched(tools) == [BandTool.NO_REPLY]
+        assert failure_reports(tools) == []
 
     async def test_a_model_failure_is_reported_once_and_raised(
         self, tools: FakeAgentTools

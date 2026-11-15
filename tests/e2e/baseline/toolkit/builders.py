@@ -23,7 +23,11 @@ import weakref
 from typing import TYPE_CHECKING, Any
 
 from band import create_room_workspace_resolver
-from band.adapters.codex import CodexSandboxMode
+from band.adapters.codex import CodexSandboxMode, CodexWindowsSandbox
+from band.core.defaultmodels import (
+    LETTA_SELF_HOSTED_MODEL,
+    LETTA_SELF_HOSTED_MODEL_SETTINGS,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.omp import omp_provider_env
@@ -48,6 +52,7 @@ from tests.e2e.baseline.toolkit.omp_credentials import (
     omp_provider_api_key,
 )
 from tests.e2e.baseline.toolkit.tools import ToolSpec
+from tests.e2e.baseline.toolkit.workspaceroot import InheritedTemporaryDirectory
 
 if TYPE_CHECKING:
     from band.adapters.copilot_sdk import CopilotSDKAdapter
@@ -65,7 +70,8 @@ _EVERY_CAPABILITY = (
 
 
 def _own_sandbox(
-    adapter: SimpleAdapter[Any], sandbox: tempfile.TemporaryDirectory[str]
+    adapter: SimpleAdapter[Any],
+    sandbox: tempfile.TemporaryDirectory[str] | InheritedTemporaryDirectory,
 ) -> None:
     """Release after SDK teardown, with a fallback for never-started adapters."""
     fallback = weakref.finalize(adapter, sandbox.cleanup)
@@ -241,24 +247,16 @@ def _build_pydantic_ai(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file builds
-        RunContext,
-    )
-
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file builds
         PydanticAIAdapter,
         PydanticAIAdapterConfig,
     )
 
-    # pydantic-ai takes native callables with a RunContext-first signature.
-    native = (
-        [t.as_callable(ctx_annotation=RunContext) for t in tools] if tools else None
-    )
     return PydanticAIAdapter(
         PydanticAIAdapterConfig(
             model=f"openai:{s.llm_models.openai_model}", custom_section=prompt
         ),
-        additional_tools=native,
+        additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
 
@@ -500,6 +498,9 @@ def codex_config_kwargs(
             workspace_root or s.backends.codex_cwd
         ),
         "sandbox": CodexSandboxMode.WORKSPACE_WRITE,
+        # Without a backend, Codex on Windows refuses every command under
+        # workspace-write; unelevated needs no administrator setup.
+        "windows_sandbox": CodexWindowsSandbox.UNELEVATED,
         "custom_section": prompt or "",
         "model": s.backends.codex_model,
     }
@@ -527,8 +528,8 @@ def _build_codex(
         CodexAdapterConfig,
     )
 
-    sandbox = tempfile.TemporaryDirectory(
-        prefix="band-e2e-codex-", dir=s.backends.codex_cwd or None
+    sandbox = InheritedTemporaryDirectory(
+        "band-e2e-codex-", parent=s.backends.codex_cwd or None
     )
     config_kwargs = codex_config_kwargs(s, prompt=prompt, workspace_root=sandbox.name)
     if workspace_for_room is not None:
@@ -582,12 +583,25 @@ def copilot_home_dir(work_dir: str) -> str:
     """Create and return the ``copilot-home`` subdirectory of ``work_dir``.
 
     The one place the subdirectory name and its creation live — the registry
-    builder and the bespoke test configs (``test_copilot_acp.py``) all call
-    this rather than each re-picking the name and an os.path/pathlib API.
+    builder and the bespoke test configs (``smoke/adapters/copilotacp/kit.py``)
+    all call this rather than each re-picking the name and an os.path/pathlib API.
     """
     home = os.path.join(work_dir, "copilot-home")
     os.makedirs(home, exist_ok=True)
     return home
+
+
+def copilot_cli_env(copilot_home: str) -> dict[str, str]:
+    """The env every baseline ``copilot --acp`` spawn starts from.
+
+    ``COPILOT_AUTO_UPDATE=false`` keeps the CLI on the version
+    ``.github/scripts/setup-copilot.sh`` pins. The ACP spawn env is trimmed to
+    a few host variables, so the runner's ``CI=true``, which would otherwise
+    disable updates, never reaches the CLI: it downloads the latest release,
+    replaces the installed binary, and later spawns run that instead. Only
+    this flag also makes a launch ignore a newer version already cached.
+    """
+    return {"COPILOT_HOME": copilot_home, "COPILOT_AUTO_UPDATE": "false"}
 
 
 def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
@@ -605,7 +619,7 @@ def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
     the home never hides auth.
     """
     return {
-        "COPILOT_HOME": copilot_home,
+        **copilot_cli_env(copilot_home),
         "COPILOT_PROVIDER_TYPE": "anthropic",
         "COPILOT_PROVIDER_BASE_URL": "https://api.anthropic.com",
         "COPILOT_PROVIDER_API_KEY": s.llm_credentials.anthropic_api_key,
@@ -906,9 +920,17 @@ def _build_letta(
             provider_key=s.backends.letta_api_key or None,
             model=s.backends.letta_model,
             embedding=s.backends.letta_embedding or None,
+            model_settings=_letta_model_settings(s.backends.letta_model),
             mcp=mcp,
             custom_section=prompt or "",
             consolidate_memory_on_cleanup=False,
         ),
         **feature_kwargs(features),
+    )
+
+
+def _letta_model_settings(model: str) -> dict[str, Any] | None:
+    """The pinned self-hosted model's settings; other models keep Letta's defaults."""
+    return (
+        LETTA_SELF_HOSTED_MODEL_SETTINGS if model == LETTA_SELF_HOSTED_MODEL else None
     )

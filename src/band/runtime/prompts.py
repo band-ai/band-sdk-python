@@ -40,17 +40,19 @@ End every turn with one of the two.
 {MENTION_GUIDANCE}"""
 
 
-# CLI coding runtimes need a tool-free completion after their Band actions.
+# CLI continue-nudge hosts only (ACP, Copilot SDK). Band turn ending stays
+# in COMMUNICATION_INSTRUCTIONS. Native-yield hosts (OMP) must not attach this.
 TURN_COMPLETION_GUIDANCE = (
     "## Turn completion\n\n"
     "This runtime may prompt you to continue after you act (for example, "
     '"continue from where you left off"). Treat that as a check, not a new '
-    "request. Your turn is complete once you have taken every action the current "
-    f"inputs require — including sending your reply with {BandTool.SEND_MESSAGE}. "
-    "When nothing remains to do, end the turn with a brief plain-text response "
-    f'(for example, "Done."); do not call {BandTool.SEND_MESSAGE} again just to report '
-    "that you are finished. Plain text is not delivered to the room — which is "
-    "exactly why it cleanly ends a turn."
+    "request. Finish the Band turn first, as the communication instructions "
+    f"require, with {BandTool.SEND_MESSAGE} or {BandTool.NO_REPLY}. "
+    "Only after that, when nothing remains to do, answer the continue prompt "
+    'with a brief plain-text stop (for example, "Done."); do not call '
+    f"{BandTool.SEND_MESSAGE} again just to report that you are finished. "
+    "That plain text is a CLI idle stop. It is not a room reply and it does "
+    "not settle a Band turn that is still open."
 )
 
 # Base instructions appended to user's custom prompt

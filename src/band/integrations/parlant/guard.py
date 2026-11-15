@@ -15,7 +15,11 @@ from typing import Any
 
 from parlant.core.tools import ToolResult
 
-from band.core.exceptions import BandToolError, InvalidToolArgumentsError
+from band.core.exceptions import (
+    HOST_CONTROL_ERRORS,
+    BandToolError,
+    InvalidToolArgumentsError,
+)
 from band.integrations.parlant.mentions import with_mention_handles
 from band.integrations.parlant.sessiontools import (
     CONTEXT_PARAMETER,
@@ -121,6 +125,8 @@ def guard_failures(
         try:
             with bound_plugin_tools(context) as captured:
                 result = await func(context, *args, **kwargs)
+        except HOST_CONTROL_ERRORS:
+            raise
         except NoSessionTools:
             logger.error(
                 "%s %s: no tools available for session %s",
