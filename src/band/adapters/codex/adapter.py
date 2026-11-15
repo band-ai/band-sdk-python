@@ -19,9 +19,14 @@ from pydantic import ValidationError
 from typing_extensions import Unpack
 
 from band.adapters.codex.approvals import (
+    APPROVAL_OPTIONS,
     ApprovalDecision,
+    CodexApprovals,
     PendingApproval,
     approval_response,
+    approval_summary,
+    approval_type,
+    native_approval_key,
 )
 from band.adapters.codex.commands import (
     APPROVAL_COMMAND_DECISIONS,
@@ -162,7 +167,6 @@ from band.integrations.codex.types import (
     WINDOWS_PLATFORM_OS,
     WINDOWS_SANDBOX_CONFIG_KEY,
     ApprovalAuditEntry,
-    CodexApprovalMethod,
     CodexItemType,
     CodexMetadataKey,
     CodexNotificationMethod,
@@ -184,9 +188,6 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.decisions import (
     APPROVAL_NOT_PENDING_TEMPLATE,
-    DecisionEntry,
-    DecisionRegistry,
-    Registration,
     Timeout,
 )
 from band.runtime.formatters import (
@@ -294,8 +295,12 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._prompt_injected_rooms: set[str] = set()
         self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
-        # Keep each registry's minting state across room disposal and restart.
-        self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
+        self._approvals = CodexApprovals(
+            max_pending=self.config.max_pending_approvals_per_room,
+            max_session_approved=self.config.max_session_approved_per_room,
+            max_audit=self.config.max_approval_audit_per_room,
+            granularity=self.config.session_approval_granularity,
+        )
         # A detached turn releases the input handler during manual approval
         # so the room can dispatch the reply that resolves it.
         self._turn_release: dict[str, asyncio.Future[None]] = {}
@@ -305,12 +310,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         )
         # Token usage tracking per thread
         self._token_usage: dict[str, CodexTokenUsage] = {}
-        # Approval audit trail per room
-        self._approval_audit: dict[str, list[ApprovalAuditEntry]] = {}
-        # Session-level approved patterns.  OrderedDict (used as an ordered
-        # set) so insertion order is preserved for LRU eviction when a room
-        # hits ``max_session_approved_per_room``.  Value is unused.
-        self._session_approved: dict[str, OrderedDict[str, None]] = {}
         # Per-room sandbox overrides (set via /sandbox command)
         self._sandbox_overrides: dict[str, str] = {}
         # Every room's app-server shares one config, so its readiness is checked once.
@@ -1265,7 +1264,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         room = self._room_clients.get(room_id)
         if room is None:
             return
-        self._clear_pending_approvals_for_room(room_id)
+        self._approvals.decline_all(room_id)
         await room.retained.dispose()
 
     async def cleanup_all(self) -> None:
@@ -1278,7 +1277,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         workspace. Success stays sealed until ``on_started``.
         """
         for room_id in list(self._room_clients):
-            self._clear_pending_approvals_for_room(room_id)
+            self._approvals.decline_all(room_id)
         await self._retention.stop()
         await self.backend_turns.drain()
 
@@ -1561,7 +1560,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 cooperative=True,
             )
             # Approvals the lost process asked for can never be answered.
-            self._clear_pending_approvals_for_room(room.room_id)
+            self._approvals.decline_all(room.room_id)
             native.events.put_nowait(native.loss)
 
     async def _refuse_unowned(
@@ -1737,9 +1736,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         """Erase what only a final leave ends: thread, settings, workspace claim."""
         room_id = room.room_id
         self._forget_room_thread(room_id)
-        self._clear_pending_approvals_for_room(room_id)
-        self._approval_audit.pop(room_id, None)
-        self._session_approved.pop(room_id, None)
+        self._approvals.forget_room(room_id)
         self._sandbox_overrides.pop(room_id, None)
         self._room_task_titles.pop(room_id, None)
         self._workspaces.release(room_id, room.workspace)
@@ -2149,8 +2146,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
         ``client`` is the process the request came from; the answer goes back
         there. Concurrency model: this coroutine mutates room-scoped adapter
-        state (``_pending_approvals``, ``_session_approved``,
-        ``_approval_audit``, ``_task_titles_by_id``) without an explicit lock.
+        state (``_approvals``, ``_task_titles_by_id``) without an explicit lock.
         It is safe because it runs only inside a turn, which holds its room's
         ``rpc_lock`` -- and every structure it touches is
         keyed (or routed via ``_active_room``) per room, so a concurrent
@@ -2300,12 +2296,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if event.id is None:
             return
 
-        summary = self._approval_summary(event.method, params)
+        summary = approval_summary(event.method, params)
 
         # Check session-level auto-approval first.
-        session_key = self._session_approval_key(event.method, params)
-        room_session = self._session_approved.get(room_id)
-        session_hit = bool(session_key and room_session and session_key in room_session)
+        session_key = self._approvals.session_key(event.method, params)
+        session_hit = self._approvals.is_session_approved(room_id, session_key)
 
         async with AsyncExitStack() as answers:
             if session_hit:
@@ -2345,8 +2340,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
             await client.respond(event.id, approval_response(decision))
 
-        audit_entry = self._record_approval_audit(
-            room_id=room_id,
+        audit_entry = self._approvals.record(
+            room_id,
             request_id=str(event.id),
             method=event.method,
             decision=decision,
@@ -2388,8 +2383,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 message_type="thought",
                 metadata={
                     "codex_approval_method": event.method,
-                    "codex_approval_type": self._approval_type(event.method),
-                    "codex_approval_options": ["accept", "acceptForSession", "decline"],
+                    "codex_approval_type": approval_type(event.method),
+                    "codex_approval_options": list(APPROVAL_OPTIONS),
                 },
                 log_label="approval thought event",
                 log_level=logging.DEBUG,
@@ -2859,14 +2854,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             summary=summary,
             created_at=datetime.now(UTC),
             future=loop.create_future(),
-            session_key=self._session_approval_key(event.method, params),
-            native_key=self._native_approval_key(event.id, params),
+            session_key=self._approvals.session_key(event.method, params),
+            native_key=native_approval_key(event.id, params),
         )
-        registry = self._pending_approvals.setdefault(
-            room_id,
-            DecisionRegistry(max_pending=self.config.max_pending_approvals_per_room),
-        )
-        if (registration := self._register_approval(registry, pending)) is None:
+        registry = self._approvals.registry(room_id)
+        if (registration := self._approvals.register(room_id, pending)) is None:
             logger.warning(
                 "Approval %s in room %s was redelivered after a reply claimed it; "
                 "declining the redelivery",
@@ -2896,14 +2888,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 if Emit.TASK_EVENTS in self.features.emit:
                     approval_metadata: dict[str, Any] = {
                         "codex_event_type": "approval_request",
-                        "codex_approval_type": self._approval_type(event.method),
+                        "codex_approval_type": approval_type(event.method),
                         "codex_approval_method": event.method,
                         CodexMetadataKey.ROOM: room_id,
-                        "codex_approval_options": [
-                            "accept",
-                            "acceptForSession",
-                            "decline",
-                        ],
+                        "codex_approval_options": list(APPROVAL_OPTIONS),
                     }
                     if params.get("command"):
                         approval_metadata["codex_command"] = params["command"]
@@ -2994,7 +2982,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                             )
                     yield decision
             finally:
-                self._clear_pending_approval(room_id, entry)
+                self._approvals.forget(room_id, entry)
 
     async def _forward_raw_task_event(
         self,
@@ -3262,51 +3250,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     # Phase 1: Approval audit trail
     # ------------------------------------------------------------------
 
-    def _record_session_approval(self, room_id: str, key: str) -> None:
-        """Register ``key`` as a session-level auto-approval for ``room_id``.
-
-        Maintains insertion order so the oldest entry is evicted when the
-        room exceeds ``max_session_approved_per_room``.  Moving an existing
-        key to the most-recent position on re-approval keeps frequently
-        re-approved commands from being evicted.
-        """
-        room = self._session_approved.setdefault(room_id, OrderedDict())
-        if key in room:
-            room.move_to_end(key)
-        else:
-            room[key] = None
-        cap = self.config.max_session_approved_per_room
-        while len(room) > cap:
-            room.popitem(last=False)
-
-    def _record_approval_audit(
-        self,
-        *,
-        room_id: str,
-        request_id: str,
-        method: str,
-        decision: str,
-        decided_by: str,
-        summary: str = "",
-        session_level: bool = False,
-    ) -> ApprovalAuditEntry:
-        """Record an approval decision and return the stored entry."""
-        entry = ApprovalAuditEntry(
-            request_id=str(request_id),
-            method=method,
-            decision=decision,
-            decided_by=decided_by,
-            timestamp=datetime.now(UTC).isoformat(),
-            summary=summary,
-            session_level=session_level,
-        )
-        audit_list = self._approval_audit.setdefault(room_id, [])
-        audit_list.append(entry)
-        # Cap the audit trail to avoid unbounded memory growth in long sessions.
-        if len(audit_list) > self.config.max_approval_audit_per_room:
-            del audit_list[: len(audit_list) - self.config.max_approval_audit_per_room]
-        return entry
-
     async def _emit_approval_audit_event(
         self, *, tools: AgentToolsProtocol, room_id: str, entry: ApprovalAuditEntry
     ) -> None:
@@ -3358,7 +3301,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             usage_line = (
                 usage.format_summary() if usage and usage.total_tokens > 0 else "none"
             )
-            session_approvals = len(self._session_approved.get(room_id) or ())
+            session_approvals = len(self._approvals.session_patterns(room_id))
             room = self._active_client_state()
             selected_model = room.selected_model if room is not None else None
             status_text = (
@@ -3373,7 +3316,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 f"- sandbox: {self._effective_sandbox(room_id) or 'default'}\n"
                 f"- reasoning_effort: {self.config.reasoning_effort or 'default'}\n"
                 f"- reasoning_summary: {self.config.reasoning_summary or 'default'}\n"
-                f"- pending_approvals: {self._open_approval_count(room_id)}\n"
+                f"- pending_approvals: {self._approvals.open_count(room_id)}\n"
                 f"- session_approvals: {session_approvals}\n"
                 f"- token_usage: {usage_line}\n"
                 f"- turn_task_markers: {self.config.emit_turn_task_markers}"
@@ -3528,15 +3471,15 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             return True
 
         if command == CodexCommand.PERMISSIONS:
-            session_approved = self._session_approved.get(room_id) or ()
-            audit = self._approval_audit.get(room_id, [])
+            session_approved = self._approvals.session_patterns(room_id)
+            audit = self._approvals.audit(room_id)
             lines = ["Effective permissions:"]
             lines.append(f"- approval_mode: {self.config.approval_mode}")
             lines.append(f"- sandbox: {self._effective_sandbox(room_id) or 'default'}")
             lines.append(f"- approval_policy: {self.config.approval_policy}")
             if session_approved:
                 lines.append(f"- session_approved patterns: {len(session_approved)}")
-                for pattern in sorted(session_approved):
+                for pattern in session_approved:
                     lines.append(f"  - {pattern}")
             if audit:
                 lines.append(f"- approval_history: {len(audit)} decisions")
@@ -3635,7 +3578,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         args: str,
     ) -> bool:
         mention = self._sender_mention(msg)
-        pending = self._pending_approvals.get(room_id) or DecisionRegistry()
+        pending = self._approvals.pending(room_id)
 
         if command == CodexCommand.APPROVALS:
             if not (open_entries := pending.unclaimed()):
@@ -3690,7 +3633,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         is_session = command == CodexCommand.APPROVE_SESSION
         # Session-level approval needs a non-empty key (e.g. a concrete command
         # string) so future requests can match.  Reject early so we never store
-        # an empty string in _session_approved or report a misleading
+        # an empty session approval or report a misleading
         # "Future `` requests will be auto-approved" message to the user.
         if is_session and not selected.session_key:
             await deliver_notice(
@@ -3714,7 +3657,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
         # Session-level: register the session key for auto-approval
         if is_session:
-            self._record_session_approval(room_id, selected.session_key)
+            self._approvals.approve_for_session(room_id, selected.session_key)
             await deliver_notice(
                 tools,
                 APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision_value)
@@ -3887,100 +3830,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         return ""
 
     @staticmethod
-    def _approval_summary(method: str, params: dict[str, Any]) -> str:
-        match method:
-            case CodexApprovalMethod.COMMAND_EXECUTION:
-                command = params.get("command")
-                if isinstance(command, str) and command:
-                    return f"command: {command}"
-                return "command execution"
-            case CodexApprovalMethod.FILE_CHANGE:
-                reason = params.get("reason")
-                if isinstance(reason, str) and reason:
-                    return f"file changes: {reason}"
-                return "file changes"
-            case _:
-                return method
-
-    @staticmethod
-    def _approval_type(method: str) -> str:
-        """Return a short label for the approval request type."""
-        match method:
-            case CodexApprovalMethod.COMMAND_EXECUTION:
-                return CodexItemType.COMMAND_EXECUTION.value
-            case CodexApprovalMethod.FILE_CHANGE:
-                return CodexItemType.FILE_CHANGE.value
-            case _:
-                return method
-
-    def _session_approval_key(self, method: str, params: dict[str, Any]) -> str:
-        """Build a key for session-level auto-approval matching.
-
-        When ``session_approval_granularity`` is ``"full_command"`` (default),
-        the key includes the full command string so ``/approve-session`` on
-        ``npm test`` only auto-approves future ``npm test`` requests.
-
-        When set to ``"binary"``, keys on the command binary (first token) so
-        ``/approve-session`` on ``npm test`` auto-approves all ``npm`` commands.
-
-        For file changes, keys on the set of paths being modified so
-        ``/approve-session`` on a request touching ``src/foo.py`` only
-        auto-approves future requests touching the same path(s).  When no
-        paths are present we return an empty string so session-level approval
-        is refused — keying on the bare method string would turn
-        ``/approve-session`` into a blanket "approve every future file change"
-        switch, which is a security footgun.
-        """
-        match method:
-            case CodexApprovalMethod.COMMAND_EXECUTION:
-                command = params.get("command")
-                if isinstance(command, str) and command.strip():
-                    cmd = command.strip()
-                    if self.config.session_approval_granularity == "binary":
-                        return f"commandExecution:{cmd.split()[0]}"
-                    return f"commandExecution:{cmd}"
-                # No identifiable command — return empty so session-level
-                # approval is not possible (avoids a blanket wildcard match).
-                return ""
-
-            case CodexApprovalMethod.FILE_CHANGE:
-                paths = self._extract_file_change_paths(params)
-                if not paths:
-                    # No identifiable paths — refuse session-level approval so
-                    # one /approve-session can't auto-approve every future
-                    # file change in this room.
-                    return ""
-                # Sort for a stable key regardless of change order.
-                return "fileChange:" + "|".join(sorted(paths))
-
-        # Unknown method — refuse session-level approval rather than key on
-        # the bare method string (which would collapse all future requests
-        # of this method into one bucket).
-        return ""
-
-    @staticmethod
-    def _extract_file_change_paths(params: dict[str, Any]) -> list[str]:
-        """Extract file paths from an item/fileChange/requestApproval payload."""
-        paths: list[str] = []
-        changes = params.get("changes")
-        if isinstance(changes, list):
-            for change in changes:
-                if isinstance(change, dict):
-                    path = change.get("path")
-                    if isinstance(path, str) and path:
-                        paths.append(path)
-        # Some payload variants carry paths at the top level.
-        for key in ("path", "paths"):
-            value = params.get(key)
-            if isinstance(value, str) and value:
-                paths.append(value)
-            elif isinstance(value, list):
-                for p in value:
-                    if isinstance(p, str) and p:
-                        paths.append(p)
-        return paths
-
-    @staticmethod
     def _task_event_id(params: dict[str, Any]) -> str | None:
         for key in ("taskId", "task_id"):
             value = params.get(key)
@@ -4076,41 +3925,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             return None
         return CodexCommand(word), parts[1].strip() if len(parts) > 1 else ""
 
-    @staticmethod
-    def _native_approval_key(request_id: int | str, params: dict[str, Any]) -> str:
-        for key in ("approvalId", "approval_id", "itemId", "callId"):
-            value = params.get(key)
-            if isinstance(value, str) and value:
-                return value
-        return f"req-{request_id}"
-
-    @staticmethod
-    def _register_approval(
-        registry: DecisionRegistry[PendingApproval], pending: PendingApproval
-    ) -> Registration[PendingApproval] | None:
-        for token, existing in registry.items():
-            if existing.native_key == pending.native_key:
-                return registry.register_keyed(pending, key=token)
-        return registry.register_minted(pending)
-
-    def _open_approval_count(self, room_id: str) -> int:
-        registry = self._pending_approvals.get(room_id)
-        return registry.unclaimed_count() if registry else 0
-
-    def _clear_pending_approval(
-        self, room_id: str, entry: DecisionEntry[PendingApproval]
-    ) -> None:
-        registry = self._pending_approvals.get(room_id)
-        if registry is None:
-            return
-        registry.forget(entry)
-
     def _clear_pending_approvals_for_room(self, room_id: str) -> None:
-        registry = self._pending_approvals.get(room_id)
-        if registry is None:
-            return
-        for entry in registry.cancel_all():
-            entry.payload.future.set_result("decline")
+        """ApprovalInterruptMixin's hook: an interrupt declines the room's approvals."""
+        self._approvals.decline_all(room_id)
 
     @staticmethod
     def _visible_model_ids(result: dict[str, Any]) -> list[str]:

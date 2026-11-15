@@ -48,6 +48,7 @@ from band.adapters.codex import (
     CodexCommand,
     CodexSandboxMode,
 )
+from band.adapters.codex.approvals import approval_summary as codex_approval_summary
 from band.adapters.codex.commands import APPROVAL_REQUESTED_TEMPLATE as CODEX_REQUESTED
 from band.adapters.codex.commands import APPROVAL_RESOLVED_TEMPLATE as CODEX_RESOLVED
 from band.adapters.codex.commands import APPROVAL_TIMED_OUT_TEMPLATE as CODEX_TIMED_OUT
@@ -640,7 +641,7 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         notice=_codex_notice,
         late_notice=lambda _request: Notice(NO_APPROVALS_TO_RESOLVE_MESSAGE),
         shell_command=_summary_command(
-            CodexAdapter._approval_summary(
+            codex_approval_summary(
                 CodexApprovalMethod.COMMAND_EXECUTION, {"command": "{command}"}
             )
         ),

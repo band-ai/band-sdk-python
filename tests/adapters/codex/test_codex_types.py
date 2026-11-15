@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex import CodexAdapterConfig
 from band.adapters.codex.items import (
     MESSAGE_ITEM_TYPES,
     REQUESTED_TOOL_ITEM_TYPES,
@@ -11,7 +11,6 @@ from band.adapters.codex.items import (
     TOOL_ITEM_TYPES,
 )
 from band.integrations.codex.types import (
-    CodexApprovalMethod,
     CodexItemType,
     CodexTokenUsage,
     build_agent_failure,
@@ -134,39 +133,6 @@ class TestCodexTypes:
         assert config.emit_diff_events is False
         assert config.emit_token_usage_events is False
         assert config.emit_turn_lifecycle_events is False
-
-    def test_session_approval_key_full_command_by_default(self) -> None:
-        """Session approval key includes full command string by default."""
-        adapter = CodexAdapter(config=CodexAdapterConfig())
-        key = adapter._session_approval_key(
-            CodexApprovalMethod.COMMAND_EXECUTION, {"command": "npm test"}
-        )
-        assert key == "commandExecution:npm test"
-
-    def test_session_approval_key_binary_granularity(self) -> None:
-        """Session approval key includes only binary when granularity is 'binary'."""
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(session_approval_granularity="binary")
-        )
-        key = adapter._session_approval_key(
-            CodexApprovalMethod.COMMAND_EXECUTION, {"command": "npm test"}
-        )
-        assert key == "commandExecution:npm"
-
-    def test_session_approval_key_empty_for_missing_command(self) -> None:
-        """Session approval key returns empty when command is missing (no wildcard)."""
-        adapter = CodexAdapter(config=CodexAdapterConfig())
-        key = adapter._session_approval_key(CodexApprovalMethod.COMMAND_EXECUTION, {})
-        assert key == ""
-
-    def test_session_approval_key_empty_for_file_changes_without_paths(self) -> None:
-        """A fileChange request without paths has no session key, so
-        /approve-session can't approve every future change."""
-        adapter = CodexAdapter(config=CodexAdapterConfig())
-        key = adapter._session_approval_key(
-            "item/fileChange/requestApproval", {"reason": "update"}
-        )
-        assert key == ""
 
     def test_codex_item_type_fully_classified(self) -> None:
         """Every ``CodexItemType`` lands in exactly one of the adapter's
