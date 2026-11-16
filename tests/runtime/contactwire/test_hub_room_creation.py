@@ -11,7 +11,7 @@ from band.platform.link import BandLink
 from band.runtime.contact_handler import ContactEventHandler
 from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 from tests.runtime.contactwire.kit import (
-    AGENT_API_URL,
+    CHATS_URL,
     HUB_ROOM_CREATED,
     HUB_ROOM_ID,
     sent,
@@ -35,9 +35,7 @@ class TestHubRoomCreation:
         hub_task_id: str | None,
         chat: dict[str, Any],
     ) -> None:
-        httpx_mock.add_response(
-            method="POST", url=f"{AGENT_API_URL}/chats", json=HUB_ROOM_CREATED
-        )
+        httpx_mock.add_response(method="POST", url=CHATS_URL, json=HUB_ROOM_CREATED)
         handler = ContactEventHandler(
             ContactEventConfig(
                 strategy=ContactEventStrategy.HUB_ROOM, hub_task_id=hub_task_id
@@ -47,5 +45,5 @@ class TestHubRoomCreation:
 
         assert await handler.initialize_hub_room() == HUB_ROOM_ID
         assert [sent(r) for r in httpx_mock.get_requests()] == [
-            ("POST", f"{AGENT_API_URL}/chats", {"chat": chat})
+            ("POST", CHATS_URL, {"chat": chat})
         ]

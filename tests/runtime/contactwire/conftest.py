@@ -15,7 +15,7 @@ from band.runtime.contact_tools import ContactTools
 from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 from tests.identifiers import AGENT_ID
 from tests.runtime.contactwire.kit import (
-    AGENT_API_URL,
+    CHATS_URL,
     HUB_ROOM_CREATED,
     REST_URL,
     HubRoom,
@@ -49,7 +49,7 @@ async def hub_handler(
     """A HUB_ROOM handler whose hub room the platform created and is ready."""
     httpx_mock.add_response(
         method="POST",
-        url=f"{AGENT_API_URL}/chats",
+        url=CHATS_URL,
         json=HUB_ROOM_CREATED,
     )
     handler = ContactEventHandler(

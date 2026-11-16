@@ -9,14 +9,14 @@ from band.core.types import MessageType
 from band.platform.event import ContactRequestReceivedEvent
 from band.runtime.contact_handler import ContactEventHandler
 from tests.runtime.contactwire.kit import (
-    AGENT_API_URL,
+    CHATS_URL,
     HUB_ROOM_ID,
     STAMP,
     HubRoom,
     sent,
 )
 
-EVENTS_URL = f"{AGENT_API_URL}/chats/{HUB_ROOM_ID}/events"
+EVENTS_URL = f"{CHATS_URL}/{HUB_ROOM_ID}/events"
 REQUEST = ContactRequestReceivedEvent(
     payload=ContactRequestReceivedPayload(
         id="request-1",
@@ -32,7 +32,7 @@ REQUEST_TEXT = (
     'Message: "Let\'s work together"\n'
     "Request ID: request-1"
 )
-CREATE_HUB_ROOM = ("POST", f"{AGENT_API_URL}/chats", {"chat": {}})
+CREATE_HUB_ROOM = ("POST", CHATS_URL, {"chat": {}})
 POST_TASK_EVENT = (
     "POST",
     EVENTS_URL,

@@ -86,8 +86,8 @@ async def aclose_rest_client(client: AsyncRestClient) -> None:
 def chat_room_request(task_id: str | None = None) -> ChatRoomRequest:
     """Build a chat-creation body, omitting ``task_id`` when it is unset.
 
-    The Fern client sends an explicit ``None`` as ``null``, which the
-    platform's REST rules forbid.
+    The Fern client sends an explicit ``None`` as ``null``; the SDK omits
+    optional fields instead of sending null.
     """
     return ChatRoomRequest(task_id=task_id) if task_id else ChatRoomRequest()
 
@@ -95,9 +95,9 @@ def chat_room_request(task_id: str | None = None) -> ChatRoomRequest:
 def api_error_message(body: object) -> str | None:
     """Return the platform's ``error.message`` from a Fern ``ApiError`` body.
 
-    Fern parses the body into a model only for the statuses an endpoint
-    declares; any other status (422 on most endpoints) leaves the decoded
-    JSON as a plain dict.
+    Fern parses declared 401/403/404 bodies into its ``Error`` model, but
+    types declared 422 bodies as ``Any`` and raises undeclared statuses as a
+    bare ``ApiError``, so those bodies stay decoded JSON dicts.
     """
     if isinstance(body, dict):
         inner = body.get("error")
