@@ -156,6 +156,10 @@ class NativeTurn:
     def lost(self) -> bool:
         return self.loss is not None
 
+    def started(self, identity: tuple[str, str, str]) -> bool:
+        """Whether the item ``identity`` names began in this native turn."""
+        return identity[:2] == (self.thread_id, self.turn_id)
+
     def owns(self, event: RpcEvent) -> bool:
         # Every event a turn handles names its turn; thread-scoped ones do not.
         if event_turn_id(event) == self.turn_id:

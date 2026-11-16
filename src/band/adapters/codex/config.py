@@ -149,9 +149,17 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # The same holds for a retry: an ``error`` that Codex will retry restarts
     # this clock and is not reported, so a backoff longer than the limit stops
     # the turn as silence.
-    # A sub-agent's notifications name its own turn and do not restart this
-    # clock.
+    # Work the turn delegates is seen only through the turn's own collab item,
+    # which earns ``turn_tool_idle_timeout_s`` while it is open: a sub-agent's
+    # notifications name its own turn and do not restart this clock.
     turn_idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    # The silence allowed instead while an item the turn started is still open:
+    # a command, a tool call or a context compaction. Each can run for long and
+    # send no event until it ends, and its open item shows the turn is working.
+    # None gives such a turn ``turn_idle_timeout_s`` like any other.
+    turn_tool_idle_timeout_s: float | None = Field(
+        default=None, gt=0, allow_inf_nan=False
+    )
     client_name: str = "band_codex_adapter"
     client_title: str = "Band Codex Adapter"
     client_version: str = "0.1.0"
