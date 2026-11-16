@@ -82,7 +82,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
-from band.runtime.turn import declined_turn_refusal, origin_tools
+from band.runtime.turn import calling_as, declined_turn_refusal
 
 try:
     from copilot import (
@@ -989,7 +989,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         """
 
         async def handle(invocation: ToolInvocation) -> ToolResult:
-            with self._callback(room_id):
+            with self._callback(room_id), calling_as(invocation.agent_id):
                 return await self._execute_bridged_tool(room_id, invocation)
 
         return handle
@@ -1013,8 +1013,6 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 result_type="failure",
                 error="room inactive",
             )
-        if invocation.agent_id is not None:
-            room_tools = origin_tools(room_tools, invocation.agent_id)
 
         should_report = Emit.TOOL_CALLS in self.features.emit
         if should_report:

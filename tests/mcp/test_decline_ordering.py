@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 
-from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 
 from band.integrations.mcp.backends import BandMCPBackendSettings
@@ -19,7 +18,7 @@ from band.runtime.tools import (
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
 from tests.framework_conformance.outcomeprobes import ANSWER, REPLY, REPLY_SENT
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_tools
-from tests.mcp.toolresults import mcp_tool_error
+from tests.mcp.toolresults import mcp_text_result, mcp_tool_error
 from tests.mcpclient import in_memory_backend_session
 
 
@@ -63,9 +62,6 @@ class TestDeclineOrdering:
             await decline
             after = await session.call_tool(BandTool.SEND_MESSAGE, reply)
 
-        assert before == CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(REPLY_SENT))],
-            isError=False,
-        )
+        assert before == mcp_text_result(json.dumps(REPLY_SENT))
         assert after == mcp_tool_error(BandTool.SEND_MESSAGE, DECLINED_TURN_REFUSAL)
         assert tools.chat == [ANSWER]

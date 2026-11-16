@@ -19,7 +19,7 @@ from tests.framework_conformance.turnprobes import TurnScript
 from tests.integrations.ompframes import Frame, send, send_host_tool_request
 from tests.integrations.omppeer import announce_ready
 from tests.integrations.omppeers.startup import StartupPeer
-from tests.integrations.ompscenarios import PeerScenario
+from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 
 
 class TurnPeer(StartupPeer):
@@ -119,6 +119,7 @@ class TurnPeer(StartupPeer):
                 | OmpCommandName.NEGOTIATE_PROTOCOL
                 | OmpCommandName.PROMPT
                 | OmpCommandName.ABORT
+                | PeerCommand.CHECKPOINT
             ):
                 super().handle_command(frame)
             case _:

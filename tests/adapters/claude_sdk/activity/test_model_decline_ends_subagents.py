@@ -6,16 +6,16 @@ import asyncio
 
 from band.runtime.tools import BandTool
 from tests.adapters.claude_sdk.activity.kit import (
+    AGENT_CALL,
     REFUSED_SUBAGENT_REPLY,
     SUBAGENT_REPLY,
+    SUBAGENT_TASK,
     native_task_started,
     native_tool_result,
     native_tool_uses,
 )
 from tests.adapters.claude_sdk.helpers import OpenRoom
 from tests.adapters.hold import Hold
-
-AGENT_CALL, SUBAGENT_TASK = "agent-call", "agent-task"
 
 
 class TestModelDeclineEndsSubagents:

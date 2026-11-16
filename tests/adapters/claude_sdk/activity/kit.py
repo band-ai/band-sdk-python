@@ -15,6 +15,8 @@ from tests.mcp.toolresults import content_blocks, mcp_tool_error
 
 BACKGROUND_CALL = "background-call"
 BACKGROUND_TASK = "background-task"
+#: The model's native ``Agent`` call and the subagent task it starts.
+AGENT_CALL, SUBAGENT_TASK = "agent-call", "agent-task"
 
 # The reply's MCP call ends before the CLI streams the Bash call, so the order
 # is fixed.

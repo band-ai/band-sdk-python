@@ -514,7 +514,7 @@ class FakeACPAgent:
                 update_tool_call(
                     tool_call_id,
                     raw_output=result.content,
-                    status="failed" if result.isError else None,
+                    status="failed" if result.isError else "completed",
                 ),
             )
 

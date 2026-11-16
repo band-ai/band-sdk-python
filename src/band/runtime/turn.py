@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import Awaitable, Callable, Hashable
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from collections.abc import Awaitable, Callable, Hashable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any, Protocol
 
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL, turn_effect
 from band.runtime.tools.registry import ToolsClass, agent_tool_methods
@@ -23,21 +25,30 @@ class TurnTools(Protocol):
     turn: Turn
 
 
-T = TypeVar("T")
+_calling_as: ContextVar[Hashable | None] = ContextVar("calling_as", default=None)
+
+
+@contextmanager
+def calling_as(origin: Hashable | None) -> Iterator[None]:
+    """Run a provider call as ``origin``, a subagent the provider names.
+
+    The turn's tools are shared, so the caller rides on the call's context
+    rather than on a copy of them; ``None`` is the turn's own model.
+    """
+    token = _calling_as.set(origin)
+    try:
+        yield
+    finally:
+        _calling_as.reset(token)
 
 
 def _origin(tools: TurnTools) -> Hashable | None:
-    """Who calls through ``tools``; ``None`` for the turn's own model.
+    """Who is calling; ``None`` for the turn's own model.
 
-    Tools without origin views always serve the model.
+    A provider-named caller comes first, then the resource a tools view serves.
     """
-    return getattr(tools, "origin", None)
-
-
-def origin_tools(tools: T, origin: Hashable) -> T:
-    """``tools`` as a provider subagent named ``origin`` calls them."""
-    for_origin = getattr(tools, "for_origin", None)
-    return tools if for_origin is None else for_origin(origin)
+    origin = _calling_as.get()
+    return origin if origin is not None else getattr(tools, "origin", None)
 
 
 def record_effect(tools: TurnTools, effect: TurnEffect) -> None:
@@ -67,7 +78,10 @@ def declined_turn_refusal(tools: TurnTools) -> str | None:
     """
     if not tools.turn.declined(_origin(tools)):
         return None
-    logger.info("Refusing a tool call: its caller already declined to reply")
+    logger.info(
+        "Refusing a tool call from %s: it already declined to reply",
+        _origin(tools) or "the model",
+    )
     return DECLINED_TURN_REFUSAL
 
 

@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 
 from tests.adapters.claude_sdk.activity.kit import (
+    AGENT_CALL,
     REFUSED_SUBAGENT_REPLY,
     SUBAGENT_DECLINE,
     SUBAGENT_REPLY,
+    SUBAGENT_TASK,
     native_task_started,
     native_tool_result,
     native_tool_uses,
@@ -15,7 +17,6 @@ from tests.adapters.claude_sdk.activity.kit import (
 from tests.adapters.claude_sdk.helpers import ClaudeRoom, OpenRoom
 from tests.adapters.hold import Hold
 
-AGENT_CALL, SUBAGENT_TASK = "agent-call", "agent-task"
 OTHER_CALL, OTHER_TASK = "other-call", "other-task"
 MAIN_REPLY = "Here is the answer."
 

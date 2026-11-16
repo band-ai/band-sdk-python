@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Hashable
 from functools import partial
-from typing import Any
 
 from band_sdk_core import AgentFailure
 
@@ -318,9 +318,11 @@ class OmpTurnMixin(OmpAdapterContract):
                 ledger_record = tools.turn.record
                 if builtin_decline:
 
-                    def _defer_decline(effect: TurnEffect, **origin: Any) -> None:
+                    def _defer_decline(
+                        effect: TurnEffect, *, origin: Hashable | None = None
+                    ) -> None:
                         if effect is not TurnEffect.DECLINE:
-                            ledger_record(effect, **origin)
+                            ledger_record(effect, origin=origin)
 
                     tools.turn.record = _defer_decline  # type: ignore[method-assign]
                 try:

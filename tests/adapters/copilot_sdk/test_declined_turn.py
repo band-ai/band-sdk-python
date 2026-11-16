@@ -5,31 +5,24 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
 from band.integrations.copilot_sdk import ASK_USER_ROOM
 from band.integrations.copilot_sdk.room_ask_user import freeform_answer
-from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
-from band.runtime.tools import TurnEffect
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
-from tests.adapters.copilot_sdk.declinekit import (
-    DECLINE,
-    SkipInput,
-    call_tool,
-    refused,
-    skip,
-)
+from tests.adapters.copilot_sdk.declinekit import DECLINE, refused
 from tests.adapters.copilot_sdk.fakes import (
     QUESTION,
     FakeCopilotClient,
     FakeCopilotSession,
     ToolSchemaFakeTools,
+    call_tool,
     make_started_adapter,
     requires_copilot_sdk,
     run_event,
 )
 from tests.framework_conformance.outcomeprobes import REPLY, ToolCall
+from tests.runtime.customtools.kit import DEPLOY, SkipInput, recording_deploy, skip
 
 pytestmark = requires_copilot_sdk
 
@@ -37,25 +30,14 @@ if _COPILOT_SDK_AVAILABLE:
     from copilot import ToolResult
 
 
-class DeployInput(BaseModel):
-    """Deploy the service."""
-
-
-DEPLOY = ToolCall(get_custom_tool_name(DeployInput))
-
-
 class TestDeclinedTurn:
-    @pytest.mark.parametrize("later", [REPLY, DEPLOY], ids=["reply", "custom-act"])
+    @pytest.mark.parametrize(
+        "later", [REPLY, ToolCall(DEPLOY)], ids=["reply", "custom-act"]
+    )
     async def test_a_later_tool_call_is_refused_without_running(
         self, later: ToolCall
     ) -> None:
-        deployed: list[DeployInput] = []
-
-        @declares_turn_effect(TurnEffect.ACT)
-        async def deploy(args: DeployInput) -> str:
-            deployed.append(args)
-            return "deployed"
-
+        deploy, deployed = recording_deploy()
         results: list[ToolResult] = []
 
         async def decline_then_call(session: FakeCopilotSession) -> None:
@@ -64,7 +46,7 @@ class TestDeclinedTurn:
 
         client = FakeCopilotClient(turn_events=[decline_then_call])
         adapter = await make_started_adapter(
-            client, additional_tools=[(SkipInput, skip), (DeployInput, deploy)]
+            client, additional_tools=[(SkipInput, skip), deploy]
         )
         tools = ToolSchemaFakeTools()
 

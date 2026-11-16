@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import uuid
-from collections.abc import Callable, Hashable
+from collections.abc import Callable
 from copy import copy, deepcopy
 from datetime import UTC, datetime
 from types import TracebackType
@@ -338,24 +338,21 @@ class FakeAgentTools:
         self._observers: list[tuple[Callable[[], bool], asyncio.Future[None]]] = []
         self.turn = Turn()
         self._activity_observer: ActivityObserver | None = None
-        self._origin: Hashable | None = None
+        self._resource: TurnTask | None = None
 
     @property
-    def origin(self) -> Hashable | None:
-        """Who calls through this view; ``None`` for the turn's own model."""
-        return self._origin
-
-    def for_origin(self, origin: Hashable) -> FakeAgentTools:
-        """A view calling as ``origin``, as ``AgentTools`` gives one.
-
-        It shares the room's logs, state and turn.
-        """
-        view = copy(self)
-        view._origin = origin
-        return view
+    def origin(self) -> TurnTask | None:
+        """The resource this view calls as; ``None`` for the turn's own model."""
+        return self._resource
 
     def _for_resource(self, owner: TurnTask) -> FakeAgentTools:
-        return self.for_origin(owner)
+        """A resource's view, as ``AgentTools`` gives one.
+
+        It shares the room's logs, state and turn, but calls as ``owner``.
+        """
+        view = copy(self)
+        view._resource = owner
+        return view
 
     @property
     def agent_id(self) -> str | None:
