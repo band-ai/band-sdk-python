@@ -6,7 +6,8 @@ import pytest
 from pytest_httpx import HTTPXMock
 
 from band.runtime.contact_tools import ContactTools
-from tests.runtime.contactwire.kit import AGENT_API_URL, STAMP, sent
+from tests.fakeplatform import AGENT_API_URL, STAMP
+from tests.runtime.contactwire.kit import sent
 
 CONTACTS_URL = f"{AGENT_API_URL}/contacts"
 # ContactTools renders the parsed timestamp with str(datetime).

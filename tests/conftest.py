@@ -37,7 +37,6 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import cache
 from itertools import count
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
@@ -102,8 +101,8 @@ def pytest_configure(config: pytest.Config) -> None:
 
     ``tests/e2e/baseline/settings.py`` calls ``load_dotenv(ENV_TEST_FILE,
     override=False)`` at import time; several subdirectory ``conftest.py``
-    modules (e.g. ``tests/docker/conftest.py``,
-    ``tests/framework_conformance/conftest.py``) import it transitively, at
+    modules (e.g. ``tests/framework_conformance/conftest.py``) import it
+    transitively, at
     whichever indeterminate, collection-order-dependent moment they happen to
     load. Any ``CODEX_``/``LETTA_``/``OPENCODE_`` key it would set is one the
     adapter config classes above now read by default, so a contributor's
@@ -137,7 +136,7 @@ class CollectionGateSettings(BaseSettings):
 
     Field name == env var (case-insensitive). Read via a fresh instance in the
     collection hooks so the current environment is always what decides.
-    ``env_ignore_empty`` treats a set-but-empty gate (``CI=``, as some CI
+    ``env_ignore_empty`` treats a set-but-empty gate (``E2E_TESTS_ENABLED=``, as some CI
     wrappers export) as unset instead of raising a ValidationError that would
     kill the whole run inside a collection hook.
     """
@@ -146,24 +145,9 @@ class CollectionGateSettings(BaseSettings):
         extra="ignore", case_sensitive=False, env_ignore_empty=True
     )
 
-    ci: bool = False  # CI
     e2e_tests_enabled: bool = False  # E2E_TESTS_ENABLED
     docker_tests_enabled: bool = False  # DOCKER_TESTS_ENABLED
     vscode_chat_tests_enabled: bool = False  # VSCODE_CHAT_TESTS_ENABLED
-
-
-def pytest_ignore_collect(collection_path: Path) -> bool | None:
-    """Skip real-API integration tests (tests/integration/) in CI.
-
-    Matches the exact path segment: the substring check it replaces also
-    swallowed tests/integrations/ — the mocked framework-integration unit
-    tests — silently dropping them from every CI run. Returns None (not
-    False) when not ignoring, so other mechanisms like --ignore still
-    apply locally.
-    """
-    if CollectionGateSettings().ci and "integration" in collection_path.parts:
-        return True
-    return None
 
 
 # Opt-in suite gates: marker -> the CollectionGateSettings field that opens it.
@@ -213,6 +197,19 @@ def periodic_wake_after_the_full_interval(monkeypatch: pytest.MonkeyPatch) -> No
     )
 
 
+def is_live_test(request: pytest.FixtureRequest) -> bool:
+    """Whether the test runs against real services: ``e2e``-marked or under ``tests/e2e``.
+
+    Most baseline tests carry no marker (their conftest gates them), so the
+    path still counts; marked live tests elsewhere, such as the Codex ACP one
+    under ``tests/integrations``, need the marker.
+    """
+    return (
+        request.node.get_closest_marker("e2e") is not None
+        or "e2e" in request.node.path.parts
+    )
+
+
 @pytest.fixture(autouse=True)
 def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     """Give every unit test its own single-instance lock dir.
@@ -223,11 +220,11 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     process. The lock dir is minted lazily (per test, on first guard
     construction) so the 3000+ tests that never build a guard pay nothing.
 
-    Live tests (e2e/integration) keep the REAL host-global guard: there,
+    Live tests (e2e) keep the REAL host-global guard: there,
     two same-id agents genuinely corrupt each other, and a loud
     BandConfigError beats silent message stealing.
     """
-    if {"e2e", "integration"} & set(request.node.path.parts):
+    if is_live_test(request):
         yield
         return
 
@@ -255,9 +252,9 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
 def instant_retries(request, monkeypatch):
     """Keep the generated client's retry count but not its multi-second backoff.
 
-    Live tests (e2e/integration) keep the real backoff against a real platform.
+    Live tests (e2e) keep the real backoff against a real platform.
     """
-    if not {"e2e", "integration"} & set(request.node.path.parts):
+    if not is_live_test(request):
         monkeypatch.setattr(http_client, "_retry_timeout", lambda **_: 0.0)
 
 
@@ -270,10 +267,10 @@ def isolated_adapter_config_env(request, monkeypatch):
     directly (``monkeypatch.setenv`` without cleanup, a subprocess, etc.)
     from bleeding into an unrelated later test's "no override" defaults.
 
-    Live tests (e2e/integration) keep the real environment: there, those
+    Live tests (e2e) keep the real environment: there, those
     values are the point.
     """
-    if {"e2e", "integration"} & set(request.node.path.parts):
+    if is_live_test(request):
         yield
         return
 

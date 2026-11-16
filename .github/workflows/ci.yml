@@ -141,7 +141,7 @@ jobs:
       run: |
         uv run --all-packages pytest \
           -n 4 --dist worksteal \
-          --ignore=tests/e2e --ignore=tests/integration --ignore=tests/release/candidates
+          --ignore=tests/e2e --ignore=tests/release/candidates
 
     - name: Run markdown doc tests
       # Linux-only: doc snippets are OS-independent, and this step relies on

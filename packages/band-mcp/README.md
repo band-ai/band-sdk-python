@@ -565,7 +565,7 @@ The hooks run automatically on `git commit`.
 uv run pytest tests/mcp/ -v
 
 # The whole workspace's unit tests
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run pytest tests/ --ignore=tests/e2e/ -v
 
 # Lint / format / typecheck (also repo-wide)
 uv run ruff check .

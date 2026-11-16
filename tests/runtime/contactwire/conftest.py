@@ -13,13 +13,9 @@ from band.platform.link import BandLink
 from band.runtime.contact_handler import ContactEventHandler
 from band.runtime.contact_tools import ContactTools
 from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
+from tests.fakeplatform import CHATS_URL, REST_URL
 from tests.identifiers import AGENT_ID
-from tests.runtime.contactwire.kit import (
-    CHATS_URL,
-    HUB_ROOM_CREATED,
-    REST_URL,
-    HubRoom,
-)
+from tests.runtime.contactwire.kit import HUB_ROOM_CREATED, HubRoom
 
 
 @pytest_asyncio.fixture(loop_scope="function")

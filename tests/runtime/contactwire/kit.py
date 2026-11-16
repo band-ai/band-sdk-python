@@ -7,13 +7,10 @@ from typing import Any
 import httpx
 
 from band.platform.event import MessageEvent
+from tests.fakeplatform import STAMP
 from tests.httpwire import request_json
 
-REST_URL = "https://test.invalid"
-AGENT_API_URL = f"{REST_URL}/api/v1/agent"
-CHATS_URL = f"{AGENT_API_URL}/chats"
 HUB_ROOM_ID = "hub-room-1"
-STAMP = "2026-02-09T10:30:00Z"
 
 
 HUB_ROOM_CREATED = {

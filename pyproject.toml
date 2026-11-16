@@ -416,8 +416,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 # Fail fast on an unregistered marker or an unknown ini key.
 addopts = "-v --strict-markers --strict-config"
-# Global safety net: catch runaway unit tests. Integration and E2E tests
-# override to 120s via pytest_collection_modifyitems in their conftest.
+# Global safety net: catch runaway unit tests. The E2E baseline overrides it
+# per test via pytest_collection_modifyitems in its conftest.
 timeout = 30
 filterwarnings = [
     # AgentTools._attachment_cache's @alru_cache binds to the first asyncio
@@ -429,7 +429,6 @@ filterwarnings = [
     "ignore:alru_cache detected event loop change:async_lru.AlruCacheLoopResetWarning",
 ]
 markers = [
-    "requires_api: marks tests as requiring real API credentials (skipped in CI)",
     "e2e: marks tests as end-to-end (requires live services)",
     "flaky_reason: baseline flakiness taxonomy stamp (kind + reason); see tests/e2e/baseline/flaky.py",
     "docker_build: builds/runs a real Docker image via subprocess (requires a local Docker daemon; skipped unless DOCKER_TESTS_ENABLED=true, an explicit opt-in that CI's docker-kit job sets)",
