@@ -32,7 +32,7 @@ EventT = TypeVar("EventT", bound=ContactEvent)
 
 
 class TurnlessAdapter(SimpleAdapter[Any]):
-    """An adapter for an agent that is never mentioned, so any turn is a test bug."""
+    """An adapter for an agent in no room; a turn would be reported FAILED there."""
 
     async def on_message(
         self,
@@ -96,8 +96,10 @@ async def running_contact_parties(
     """Provision a target and a requester; run the target with a ``ContactInbox``.
 
     The runtime joins ``agent_contacts:<id>`` before startup returns, so a
-    request sent inside the block is delivered. Reaping both agents at teardown
-    deletes any contact relationship the block created.
+    request sent inside the block is delivered. The block runs under one
+    ``E2E_TIMEOUT`` deadline that ends before teardown, so a missing push fails
+    at its ``wait_for`` before the pytest backstop. Reaping both agents at
+    teardown deletes any contact relationship the block created.
     """
     target = await resources.provision_agent("contacttarget")
     requester = await resources.provision_agent("contactrequester")
@@ -106,8 +108,11 @@ async def running_contact_parties(
     config = ContactEventConfig(
         strategy=ContactEventStrategy.CALLBACK, on_event=inbox.on_event
     )
-    async with running_agent_with_handle(
-        target, TurnlessAdapter(), resources.settings, contact_config=config
+    async with (
+        running_agent_with_handle(
+            target, TurnlessAdapter(), resources.settings, contact_config=config
+        ),
+        asyncio.timeout(resources.settings.e2e_timeout),
     ):
         yield ContactParties(
             target_handle=await resources.peer(target).handle(),

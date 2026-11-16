@@ -11,7 +11,6 @@ No adapter runs, so the test is pinned to one lane.
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import ANY
 
 import pytest
@@ -25,7 +24,6 @@ from band.platform.event import (
     ContactRequestUpdatedEvent,
 )
 from tests.e2e.baseline.agents import Lane, lane
-from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
 from tests.e2e.baseline.toolkit.contacts import ContactParties, running_contact_parties
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager
@@ -61,13 +59,9 @@ async def received_request(parties: ContactParties) -> str:
 class TestContactEvents:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_approval_adds_and_removal_deletes_the_contact(
-        self, resource_manager: ResourceManager, baseline_settings: BaselineSettings
+        self, resource_manager: ResourceManager
     ) -> None:
-        async with (
-            running_contact_parties(resource_manager) as parties,
-            # One deadline for every push, so it fires before the pytest backstop.
-            asyncio.timeout(baseline_settings.e2e_timeout),
-        ):
+        async with running_contact_parties(resource_manager) as parties:
             request_id = await received_request(parties)
             await parties.inbox.tools.respond_contact_request(
                 ContactRequestAction.APPROVE, request_id=request_id
@@ -109,13 +103,9 @@ class TestContactEvents:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_rejection_settles_the_request_without_a_contact(
-        self, resource_manager: ResourceManager, baseline_settings: BaselineSettings
+        self, resource_manager: ResourceManager
     ) -> None:
-        async with (
-            running_contact_parties(resource_manager) as parties,
-            # One deadline for every push, so it fires before the pytest backstop.
-            asyncio.timeout(baseline_settings.e2e_timeout),
-        ):
+        async with running_contact_parties(resource_manager) as parties:
             request_id = await received_request(parties)
             await parties.inbox.tools.respond_contact_request(
                 ContactRequestAction.REJECT, request_id=request_id

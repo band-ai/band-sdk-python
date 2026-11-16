@@ -9,7 +9,7 @@ agent's tool calls would run as the wrong Band identity.
 
 Each identity's org is read through an independent client scoped by the public
 ``resolve_org_scoped_headers``, so a mis-scoped adapter cannot vouch for itself.
-Letta Cloud has no org scoping, so the test needs a self-hosted server.
+Letta Cloud has no org scoping, so the test requires a self-hosted server.
 """
 
 from __future__ import annotations
@@ -88,10 +88,9 @@ class TestLettaIdentityIsolation:
     ) -> None:
         first, second = cell.build(), cell.build()
         assert isinstance(first, LettaAdapter) and isinstance(second, LettaAdapter)
-        if is_letta_cloud_url(first.config.base_url):
-            pytest.skip(
-                "Letta Cloud has no org scoping; set a self-hosted LETTA_BASE_URL"
-            )
+        assert not is_letta_cloud_url(first.config.base_url), (
+            "Letta Cloud has no org scoping; set a self-hosted LETTA_BASE_URL"
+        )
         first_identity = await cell.provision(label="letta-iso-a")
         second_identity = await cell.provision(label="letta-iso-b")
         async with AsyncExitStack() as stack:
