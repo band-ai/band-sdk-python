@@ -164,6 +164,14 @@ class OciLayout:
         )
 
 
+def container_ids(name_prefix: str) -> list[str]:
+    """IDs of every container, running or not, whose name starts with ``name_prefix``."""
+    listing = run_cli_subprocess(
+        ["docker", "ps", "-aq", "--filter", f"name=^{name_prefix}"], timeout=30
+    )
+    return listing.stdout.split()
+
+
 @dataclass(frozen=True)
 class Container:
     """A running container, with intent-oriented helpers for driving it.

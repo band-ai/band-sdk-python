@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ from tests.docker.toolkit.docker_cli import (
     Container,
     Image,
     OciLayout,
+    container_ids,
+    run_cli_subprocess,
 )
 from tests.docker.toolkit.live_agent import live_containerized_echo_agent
 
@@ -75,6 +78,17 @@ async def live_containerized_agent(
         label="live-container",
     ) as result:
         yield result
+
+
+@pytest.fixture
+def container_name_prefix() -> Iterator[str]:
+    """A unique container-name prefix; every container under it is reaped."""
+    prefix = f"pytest-docker-{uuid.uuid4().hex[:8]}"
+    yield prefix
+    leaked = container_ids(prefix)
+    if leaked:
+        run_cli_subprocess(["docker", "rm", "-f", *leaked], timeout=30)
+    assert container_ids(prefix) == [], f"containers under {prefix} survived cleanup"
 
 
 @pytest.fixture
