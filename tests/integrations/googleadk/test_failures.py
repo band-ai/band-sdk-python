@@ -12,6 +12,7 @@ from band.adapters.google_adk import GoogleADKAdapter
 from band.core.exceptions import RoomClosingError
 from band.core.types import ToolEventKey
 from band.runtime.custom_tools import declares_turn_effect
+from band.runtime.tools.schema import tool_execution_failure
 from band.runtime.tools.types import BandTool, TurnEffect
 from band.testing import FakeAgentTools, failure_reports
 from tests.adapters.genaikit import text_reply
@@ -88,10 +89,14 @@ class TestFailures:
         tools = FakeAgentTools()
         await adapter.on_event(turn_input(tools))
 
+        rejected = {
+            "ok": False,
+            "error": tool_execution_failure("work", ValueError(WORK_REJECTED)),
+        }
         assert len(google_model.requests) == 2
         assert model_results(google_model.requests[1]) == [
             ("decline", {"result": DECLINED}),
-            ("work", {"ok": False, "error": WORK_REJECTED}),
+            ("work", rejected),
         ]
         assert result_payloads(tools) == [
             {
@@ -102,7 +107,7 @@ class TestFailures:
             },
             {
                 ToolEventKey.NAME: "work",
-                ToolEventKey.OUTPUT: str({"ok": False, "error": WORK_REJECTED}),
+                ToolEventKey.OUTPUT: str(rejected),
                 ToolEventKey.TOOL_CALL_ID: ANY,
                 ToolEventKey.IS_ERROR: True,
             },
@@ -149,21 +154,13 @@ class TestFailures:
         ]
 
     @pytest.mark.parametrize(
-        ("error", "expected_error"),
-        [
-            (
-                RuntimeError(HANDLER_UNAVAILABLE),
-                {"ok": False, "error": f"Error executing work: {HANDLER_UNAVAILABLE}"},
-            ),
-            (ValueError(HANDLER_REJECTED), {"ok": False, "error": HANDLER_REJECTED}),
-        ],
+        "error", [RuntimeError(HANDLER_UNAVAILABLE), ValueError(HANDLER_REJECTED)]
     )
     async def test_exception_before_decline_success_remains_recoverable(
-        self,
-        google_model: GoogleModelPeer,
-        error: Exception,
-        expected_error: dict[str, Any],
+        self, google_model: GoogleModelPeer, error: Exception
     ) -> None:
+        expected_error = {"ok": False, "error": tool_execution_failure("work", error)}
+
         async def fail(args: WorkInput) -> str:
             raise error
 

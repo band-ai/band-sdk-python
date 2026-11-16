@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
-
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
@@ -41,9 +39,7 @@ class TestAcceptForSession:
         await adapter.on_started("Agent", "A coding agent")
 
         # Pre-seed session approval for the exact command
-        adapter._session_approved[ROOM_ID] = OrderedDict(
-            [("commandExecution:npm install", None)]
-        )
+        adapter._approvals.approve_for_session(ROOM_ID, "commandExecution:npm install")
 
         await send_bootstrap(adapter, content="install deps", tools=tools)
 

@@ -29,6 +29,7 @@ from typing import Any
 
 from band_rest import AgentMemory, AsyncRestClient
 
+from band.core.memory_types import memory_page_size_param
 from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
 from tests.e2e.baseline.toolkit.observations.tool_calls import MemoryToolCalls
 
@@ -64,9 +65,11 @@ class Memories(list[AgentMemory]):
         Enum values are coerced to their string form for the wire. ``subject_id``
         is required by the API for a subject-scoped query. ``limit`` caps how many
         records are returned (the first N), named to match the sibling readers
-        (``Events.read``/``ToolCalls.read``); it maps to the API's ``page_size``.
+        (``Events.read``/``ToolCalls.read``); it maps to the API's page-size parameter.
         """
-        kwargs: dict[str, Any] = {"page_size": limit}
+        kwargs: dict[str, Any] = memory_page_size_param(
+            limit, content_query=content_query
+        )
         for key, value in {
             "subject_id": subject_id,
             "scope": scope,

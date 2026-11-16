@@ -5,10 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from band.adapters.codex import (
-    CodexAdapter,
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.runtime.custom_tools import CustomToolDef
 from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,

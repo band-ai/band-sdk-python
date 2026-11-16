@@ -6,9 +6,7 @@ from typing import Any
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex import CodexJsonRpcError
 from band.integrations.codex.types import (
     CodexRequestMethod,

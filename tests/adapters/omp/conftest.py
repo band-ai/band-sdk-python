@@ -18,7 +18,6 @@ from band.adapters.omp import (
     OmpAdapterConfig,
 )
 from band.testing import FakeAgentTools
-from tests.adapters.omp.askkit import room_ask_adapter
 from tests.adapters.omp.completion import (
     HoldInput,
     RefreshClients,
@@ -165,12 +164,6 @@ async def overlapping_selections(
         resolver.release.set()
         runtime.release_rollback.set()
         await adapter.cleanup_all()
-
-
-@pytest.fixture
-def ask_adapter(tmp_path: Path) -> OmpAdapter:
-    """An adapter whose native peer raises a structured ask dialog."""
-    return room_ask_adapter(tmp_path)
 
 
 @pytest.fixture

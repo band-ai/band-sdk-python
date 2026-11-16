@@ -4,8 +4,11 @@ import asyncio
 
 import pytest
 
+from band.core.exceptions import BandError
 from band.core.types import Emit
+from band.runtime.tools.schema import tool_execution_failure
 from tests.adapters.crewai.kit import (
+    SERVICE_UNAVAILABLE,
     CalculatorInput,
     EchoInput,
     calculate,
@@ -13,6 +16,7 @@ from tests.adapters.crewai.kit import (
     failing_tool,
 )
 from tests.crewaicontract import tool_result_data
+from tests.hostcontrol import host_control_errors
 
 
 class TestCustomTools:
@@ -149,9 +153,10 @@ class TestCustomTools:
         with room_context("room-123"):
             result = echo_tool._run(message="test")
 
-        result_data = tool_result_data(result)
-        assert result_data["status"] == "error"
-        assert "Service unavailable" in result_data["message"]
+        assert tool_result_data(result) == {
+            "status": "error",
+            "result": tool_execution_failure("echo", ValueError(SERVICE_UNAVAILABLE)),
+        }
 
     def test_custom_tool_reports_execution_when_enabled(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
@@ -196,3 +201,22 @@ class TestCustomTools:
         result_data = tool_result_data(result)
         assert result_data["status"] == "error"
         assert "No room context available" in result_data["message"]
+
+    @pytest.mark.parametrize("control", host_control_errors(), ids=type)
+    def test_host_control_is_not_returned_as_a_tool_failure(
+        self, CrewAIAdapter, crewai_mocks, room_context, mock_tools, control: BandError
+    ) -> None:
+        async def echo(args: EchoInput) -> str:
+            raise control
+
+        adapter = CrewAIAdapter(additional_tools=[(EchoInput, echo)])
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+        echo_tool = next(
+            tool
+            for tool in crewai_mocks.Agent.call_args.kwargs["tools"]
+            if tool.name == "echo"
+        )
+        with room_context("room-123"), pytest.raises(type(control)) as caught:
+            echo_tool._run(message="hello")
+
+        assert caught.value is control

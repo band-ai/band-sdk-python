@@ -319,6 +319,12 @@ jobs:
     - name: Install dependencies (${{ matrix.extra }})
       run: uv sync --extra ${{ matrix.extra }}
 
+    # After uv sync (pytest/psutil) and setup-omp, before baseline so a live-cell
+    # failure cannot skip this no-inference launch-policy check.
+    - name: Verify native OMP headless capabilities without inference
+      if: matrix.lane == 'backends'
+      run: uv run pytest tests/integrations/ompprocess/test_headless.py -v --no-cov
+
     - name: Restore the Antigravity release archive (antigravity_acp)
       id: antigravity-cache
       if: matrix.lane == 'google'

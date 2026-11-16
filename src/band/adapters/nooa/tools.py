@@ -27,14 +27,14 @@ from nooa.agentdoc.ext import format_type
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from band.core.exceptions import BandToolError
+from band.core.exceptions import HOST_CONTROL_ERRORS, BandToolError
 from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import MessageType, ToolEventKey
 from band.runtime.custom_tools import (
     CustomToolDef,
-    execute_custom_tool,
     get_custom_tool_name,
     reject_conflicting_tool_names,
+    run_custom_tool,
 )
 from band.runtime.tools import (
     ImageContentResult,
@@ -213,18 +213,19 @@ class RoomTools:
             },
         )
         try:
-            value = serialize_tool_result(
-                await self._specs[name].run(binding.tools, arguments)
-            )
+            value = await self._specs[name].run(binding.tools, arguments)
         except asyncio.CancelledError:
             message = f"{name} was cancelled because its turn ended first"
             await self._report_result(binding, name, call_id, message, is_error=True)
+            raise
+        except HOST_CONTROL_ERRORS:
             raise
         except Exception as error:
             message = f"{name} failed: {error}"
             logger.warning("Band tool %s failed: %s", name, error)
             await self._report_result(binding, name, call_id, message, is_error=True)
             raise BandToolError(message) from error
+        value = serialize_tool_result(value)
         if (image_result := image_passthrough_result(name, value)) is not None:
             images = images_from_result(image_result)
             output = image_block_placeholder(len(images))
@@ -434,7 +435,10 @@ def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
     input_model, _ = tool_def
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
-        return await execute_custom_tool(tool_def, arguments, tools=tools)
+        outcome = await run_custom_tool(tool_def, arguments, tools=tools)
+        if not outcome.ok:
+            raise BandToolError(outcome.error_message or str(outcome.value))
+        return outcome.value
 
     name = get_custom_tool_name(input_model)
     return RoomToolSpec(

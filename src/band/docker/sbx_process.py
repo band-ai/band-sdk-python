@@ -14,7 +14,9 @@ here once:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -35,11 +37,13 @@ def run_sbx_subprocess(
     timeout: int,
     input: str | None = None,
     redact: str | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run an `sbx` subprocess; raise RuntimeError naming the command and its
     stderr/stdout on non-zero exit. `redact`, if given (a secret whether
     piped via `input` or embedded in `argv`), is stripped from the raised
-    message should it ever surface in `sbx`'s own output.
+    message should it ever surface in `sbx`'s own output. `env` adds to the
+    inherited environment, keeping secrets out of `argv`.
     """
     try:
         result = subprocess.run(
@@ -49,6 +53,7 @@ def run_sbx_subprocess(
             text=True,
             check=False,
             timeout=timeout,
+            env=None if env is None else {**os.environ, **env},
         )
     except subprocess.TimeoutExpired:
         command = " ".join(argv)

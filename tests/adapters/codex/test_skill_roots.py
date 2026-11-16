@@ -7,10 +7,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from band.adapters.codex import (
-    CodexAdapter,
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import CodexJsonRpcError
 from band.integrations.codex.types import CodexRequestMethod

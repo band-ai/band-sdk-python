@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
 from band.integrations.codex.types import (
     CodexRequestMethod,

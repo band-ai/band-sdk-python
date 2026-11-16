@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexApprovalMethod
 from band.testing import (
     reported_failures,
@@ -105,7 +103,7 @@ class TestApprovalNotificationFailures:
         response_id, payload = fake_client.responses[0]
         assert response_id == 7
         assert payload["decision"] == "decline"
-        assert adapter._open_approval_count(ROOM_ID) == 0
+        assert adapter._approvals.open_count(ROOM_ID) == 0
 
         # The Band-delivery hiccup that caused this auto-decline must itself
         # be reported -- otherwise it's indistinguishable from a genuine

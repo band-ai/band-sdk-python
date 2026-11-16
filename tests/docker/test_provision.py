@@ -78,6 +78,7 @@ class FakeSbx:
         text=True,
         check=False,
         timeout=None,
+        env=None,
     ):
         self.calls.append({"argv": list(argv), "input": input})
         if argv[1:3] == ["secret", "ls"]:

@@ -7,11 +7,15 @@ import asyncio
 import pytest
 from band_sdk_core import AgentFailure
 
-from band.adapters.codex import CODEX_PROVIDER, TRANSPORT_LOST_ERROR, CodexAdapterConfig
+from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex.turnstate import TRANSPORT_LOST_ERROR
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, TURN_FAILURE_PROVIDER
 from band.core.turn_lifecycle import bind_turn_task
 from band.integrations.codex import TRANSPORT_CLOSED, RpcEvent
-from band.integrations.codex.types import CODEX_TRANSPORT_CLOSED_FAILURE_CODE
+from band.integrations.codex.types import (
+    CODEX_PROVIDER,
+    CODEX_TRANSPORT_CLOSED_FAILURE_CODE,
+)
 from band.platform.event import PlatformEvent
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig

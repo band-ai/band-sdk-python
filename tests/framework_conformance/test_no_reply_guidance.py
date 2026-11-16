@@ -55,3 +55,10 @@ class TestNoReplyGuidance:
         description = get_tool_description(BandTool.SEND_MESSAGE)
 
         assert BandTool.NO_REPLY not in description
+
+    def test_turn_completion_guidance_does_not_claim_plain_text_ends_the_turn(
+        self,
+    ) -> None:
+        # CLI continue-nudge stop only; Band settlement stays in COMM.
+        assert "cleanly ends a turn" not in TURN_COMPLETION_GUIDANCE
+        assert "Plain text is not delivered" not in TURN_COMPLETION_GUIDANCE

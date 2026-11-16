@@ -36,5 +36,5 @@ class TestSessionApprovalValidation:
         await room.settled()
 
         assert room.client.responses == [(15, DECLINED)]
-        assert not room.adapter._session_approved.get(ROOM_ID)
+        assert room.adapter._approvals.session_patterns(ROOM_ID) == []
         assert sum("cannot be resolved as session-level" in m for m in room.chat) == 1

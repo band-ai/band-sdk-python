@@ -23,9 +23,8 @@ from band.adapters.omp.toolprotocol import (
 )
 from band.adapters.omp.turnstate import OmpTurn
 from band.converters.omp import OmpMetadataKey
-from band.core import delivery, exceptions
 from band.core.delivery import DeliveryFailedError
-from band.core.exceptions import InvalidToolArgumentsError
+from band.core.exceptions import HOST_CONTROL_ERRORS, InvalidToolArgumentsError
 from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import (
     PERMISSION_CANCELLED,
@@ -33,10 +32,8 @@ from band.core.types import (
     Emit,
     MessageType,
     PermissionEventKey,
-    PlatformMessage,
     ToolEventKey,
 )
-from band.integrations import omproomask
 from band.integrations.omp import (
     OMP_DEVICE_CONTENT_KEY,
     OMP_DEVICE_KIND_EXECUTE,
@@ -55,7 +52,7 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 from band.runtime.activity import retain_request_permission
-from band.runtime.custom_tools import execute_custom_tool, find_custom_tool
+from band.runtime.custom_tools import find_custom_tool, run_custom_tool
 from band.runtime.tools import (
     is_image_passthrough_result,
     iter_tool_definitions,
@@ -78,23 +75,13 @@ class OmpCallbackMixin(OmpAdapterContract):
         try:
             custom = find_custom_tool(self._custom_tools, call.toolName)
             if custom:
-                value = await execute_custom_tool(custom, call.arguments, tools=tools)
+                outcome = await run_custom_tool(custom, call.arguments, tools=tools)
             else:
                 outcome = await tools.execute_tool_call_structured(
                     call.toolName, call.arguments
                 )
-                if not outcome.ok:
-                    return _text_tool_result(
-                        outcome.error_message or str(outcome.value), is_error=True
-                    )
-                value = outcome.value
-            if is_image_passthrough_result(call.toolName, value):
-                return OmpToolResult(
-                    content=[
-                        OmpContent.model_validate(block) for block in value["content"]
-                    ]
-                )
-            return _text_tool_result(tool_result_text(value))
+        except HOST_CONTROL_ERRORS:
+            raise
         except DeliveryFailedError:
             raise
         except InvalidToolArgumentsError as error:
@@ -104,40 +91,16 @@ class OmpCallbackMixin(OmpAdapterContract):
             logger.exception("OMP host tool %s failed", call.toolName)
             return _text_tool_result(str(error), is_error=True)
 
-    async def _ask_room(
-        self,
-        request: OmpUIRequest,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        room_id: str,
-    ) -> OmpUIResponse:
-        """Post the questions as this turn's reply, then defer the actual answer."""
-        mention = {"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}
-        try:
-            sent = await delivery.deliver_reply(
-                tools,
-                omproomask.render_room_questions(request.questions),
-                mentions=[mention],
+        if not outcome.ok:
+            return _text_tool_result(
+                outcome.error_message or str(outcome.value), is_error=True
             )
-        except DeliveryFailedError as error:
-            if (
-                isinstance(error.cause, exceptions.RoomExecutionStoppedError)
-                and error.cause.room_id == room_id
-            ):
-                raise
-            logger.warning(
-                "OMP ask could not be posted (%s)", type(error.cause).__name__
+        value = outcome.value
+        if is_image_passthrough_result(call.toolName, value):
+            return OmpToolResult(
+                content=[OmpContent.model_validate(block) for block in value["content"]]
             )
-            return OmpUIResponse(
-                answers=omproomask.undelivered_answers(request.questions, error.cause)
-            )
-        if sent is None:
-            return OmpUIResponse(
-                answers=omproomask.undelivered_answers(
-                    request.questions, ValueError("the questions were empty")
-                )
-            )
-        return OmpUIResponse(answers=omproomask.delivered_answers(request.questions))
+        return _text_tool_result(tool_result_text(value))
 
     def _project_tool_call(
         self,

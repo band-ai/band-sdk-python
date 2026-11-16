@@ -370,11 +370,9 @@ async def _probe_copilot_sdk() -> bool:
 
 
 async def _probe_codex() -> bool:
-    from band.adapters.codex import (  # noqa: PLC0415 -- codex extra, absent from the standard dev-crewai/dev-parlant lane venvs
-        _image_content_items,
-    )
+    from band.adapters.codex.dynamictools import image_content_items  # noqa: PLC0415 -- codex extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
-    content_items = _image_content_items(_IMAGE_RESULT)
+    content_items = image_content_items(_IMAGE_RESULT)
 
     data_uri = f"data:{_EXPECTED_MIME_TYPE};base64,{_EXPECTED_BASE64}"
     return content_items == [{"type": "inputImage", "imageUrl": data_uri}]

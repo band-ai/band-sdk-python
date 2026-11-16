@@ -80,7 +80,7 @@ def install(
         host.spawned(peer, cwd)
         return peer
 
-    monkeypatch.setattr("band.adapters.codex.CodexStdioClient", child)
+    monkeypatch.setattr("band.adapters.codex.adapter.CodexStdioClient", child)
 
     return LifecycleBridge(
         adapter=adapter,
