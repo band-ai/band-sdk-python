@@ -10,12 +10,8 @@ from pytest_httpx import HTTPXMock
 from band.platform.link import BandLink
 from band.runtime.contact_handler import ContactEventHandler
 from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
-from tests.runtime.contactwire.kit import (
-    CHATS_URL,
-    HUB_ROOM_CREATED,
-    HUB_ROOM_ID,
-    sent,
-)
+from tests.fakeplatform import CHATS_URL
+from tests.runtime.contactwire.kit import HUB_ROOM_CREATED, HUB_ROOM_ID, sent
 
 HUB_TASK_ID = "3b9e6c1a-7f24-4d8e-a5b0-2c4f6e8a0d13"
 

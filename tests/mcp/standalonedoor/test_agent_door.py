@@ -20,6 +20,7 @@ from tests.mcp.standalonedoor.peer import (
 
 # The door's only successful send in each test is the room's first message.
 FIRST_MESSAGE_ID = message_id(0)
+PEER_PAGE_SIZE = 10
 
 
 def unknown_participant(identifier: str) -> str:
@@ -55,7 +56,9 @@ class TestAgentDoor:
                 identifier=f"@{COLLEAGUE.handle}",
             )
 
-            peers = await call(door, "band_lookup_peers", chat_id=room_id)
+            peers = await call(
+                door, "band_lookup_peers", chat_id=room_id, page_size=PEER_PAGE_SIZE
+            )
 
         assert peers == read_as(
             ListAgentPeersResponse,
@@ -63,7 +66,7 @@ class TestAgentDoor:
                 "data": [OWNER.as_peer()],
                 "metadata": {
                     "page": 1,
-                    "page_size": 50,
+                    "page_size": PEER_PAGE_SIZE,
                     "total_count": 1,
                     "total_pages": 1,
                 },

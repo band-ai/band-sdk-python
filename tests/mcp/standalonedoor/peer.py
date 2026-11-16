@@ -75,6 +75,11 @@ class Room:
         return any(p["id"] == participant_id for p in self.participants)
 
 
+def room_id(n: int) -> str:
+    """The id the peer gives the ``n``-th room opened on it (0-based)."""
+    return str(uuid.UUID(int=100 + n))
+
+
 def message_id(n: int) -> str:
     """The id the peer gives a room's ``n``-th message (0-based)."""
     return str(uuid.UUID(int=1000 + n))
@@ -162,7 +167,7 @@ class Platform:
 
     def open_room(self, creator: Identity) -> Room:
         room = Room(
-            str(uuid.UUID(int=100 + len(self.rooms))),
+            room_id(len(self.rooms)),
             [creator.as_participant("owner")],
         )
         self.rooms[room.id] = room

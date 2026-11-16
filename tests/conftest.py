@@ -198,8 +198,16 @@ def periodic_wake_after_the_full_interval(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def is_live_test(request: pytest.FixtureRequest) -> bool:
-    """Whether the test lives under ``tests/e2e``, against the real platform."""
-    return "e2e" in request.node.path.parts
+    """Whether the test runs against real services: ``e2e``-marked or under ``tests/e2e``.
+
+    Most baseline tests carry no marker (their conftest gates them), so the
+    path still counts; marked live tests elsewhere, such as ``tests/docker``,
+    need the marker.
+    """
+    return (
+        request.node.get_closest_marker("e2e") is not None
+        or "e2e" in request.node.path.parts
+    )
 
 
 @pytest.fixture(autouse=True)

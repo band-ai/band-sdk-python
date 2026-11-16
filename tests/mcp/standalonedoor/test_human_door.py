@@ -11,7 +11,9 @@ from band_rest import (
 )
 
 from tests.mcp.standalonedoor.kit import call, read_as, standalone_door
-from tests.mcp.standalonedoor.peer import Platform, room_record
+from tests.mcp.standalonedoor.peer import Platform, room_id, room_record
+
+FIRST_ROOM_ID = room_id(0)
 
 
 @pytest.mark.usefixtures("platform")
@@ -29,17 +31,16 @@ class TestHumanDoor:
     async def test_created_room_is_listed_and_fetched_by_id(self) -> None:
         async with standalone_door() as door:
             created = await call(door, "band_create_my_chat_room")
-            room_id = created["data"]["id"]
             chats = await call(door, "band_list_my_chats")
-            fetched = await call(door, "band_get_my_chat_room", chat_id=room_id)
+            fetched = await call(door, "band_get_my_chat_room", chat_id=FIRST_ROOM_ID)
 
         assert created == read_as(
-            CreateMyChatRoomResponse, {"data": room_record(room_id)}
+            CreateMyChatRoomResponse, {"data": room_record(FIRST_ROOM_ID)}
         )
         assert chats == read_as(
             ListMyChatsResponse,
             {
-                "data": [room_record(room_id)],
+                "data": [room_record(FIRST_ROOM_ID)],
                 "metadata": {
                     "page": 1,
                     "page_size": 1,
@@ -48,4 +49,6 @@ class TestHumanDoor:
                 },
             },
         )
-        assert fetched == read_as(GetMyChatRoomResponse, {"data": room_record(room_id)})
+        assert fetched == read_as(
+            GetMyChatRoomResponse, {"data": room_record(FIRST_ROOM_ID)}
+        )

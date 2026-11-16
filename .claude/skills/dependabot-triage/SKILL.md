@@ -245,8 +245,8 @@ gh pr review <number> --approve --body "$(cat <<'MSG'
 
 Validated in a consolidated batch run: this bump was applied together with the
 other passing Dependabot bumps on a local branch and the full suite (ruff +
-pyrefly, unit, crewai in dev-crewai, and integration/e2e where credentials were
-available) passed with all of them in place — so it's compatible with the rest
+pyrefly, unit, crewai in dev-crewai, and the live e2e baseline where credentials
+were available) passed with all of them in place — so it's compatible with the rest
 of the batch, not just green on its own. Safe to merge.
 MSG
 )"
@@ -333,7 +333,7 @@ merge, know that this repo's setup makes it a **serial grind**, not a batch:
 - **Majors get human sign-off** even when green, especially framework/adapter
   dependencies where a major can change behavior the SDK relies on. Surface them
   in the report rather than approving them unremarked.
-- **Run integration and e2e for real, and attribute every failure** (Step 6)
+- **Run the e2e baseline for real, and attribute every failure** (Step 6)
   before dropping a bump — live-platform/lane/plan/env failures are common and
   are not the bumps. Never call a suite "env-blocked" on assumption.
 - **If you drive merges: re-approve last, never `--admin`-bypass CI, and never

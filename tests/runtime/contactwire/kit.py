@@ -7,10 +7,9 @@ from typing import Any
 import httpx
 
 from band.platform.event import MessageEvent
-from tests.fakeplatform import AGENT_API_URL, STAMP
+from tests.fakeplatform import STAMP
 from tests.httpwire import request_json
 
-CHATS_URL = f"{AGENT_API_URL}/chats"
 HUB_ROOM_ID = "hub-room-1"
 
 
