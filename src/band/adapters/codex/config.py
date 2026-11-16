@@ -137,6 +137,21 @@ class CodexAdapterConfig(EnvAdapterConfig):
     approval_wait_timeout_s: float = 300.0
     approval_timeout_decision: ApprovalDecision = "decline"
     turn_timeout_s: float = 180.0
+    # Stops a turn that receives no event for this long. Answering the turn's own
+    # request -- a Band tool call, a parked approval -- is not silence. None (the
+    # default) never checks. ``turn_timeout_s`` stays the turn's total limit. It
+    # too is checked only while the turn waits for an event, but the time an
+    # answer takes counts toward it: a turn whose approval comes after the total
+    # has run out is stopped as soon as the approval returns.
+    # Set it above the model's longest single step: reasoning without summaries,
+    # the wait for the first output and the writing of a long tool argument send
+    # no event and open no item, and one such step can last most of a minute.
+    # The same holds for a retry: an ``error`` that Codex will retry restarts
+    # this clock and is not reported, so a backoff longer than the limit stops
+    # the turn as silence.
+    # A sub-agent's notifications name its own turn and do not restart this
+    # clock.
+    turn_idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     client_name: str = "band_codex_adapter"
     client_title: str = "Band Codex Adapter"
     client_version: str = "0.1.0"

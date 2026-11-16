@@ -30,6 +30,15 @@ class CodexUnanswered(TimeoutError):
     its process is retired."""
 
 
+class TurnSilent(TimeoutError):
+    """No event reached a turn for as long as ``setting`` allows."""
+
+    def __init__(self, seconds: float, setting: str) -> None:
+        super().__init__(
+            f"Codex turn timed out after {seconds}s of silence ({setting})"
+        )
+
+
 @dataclass(frozen=True)
 class CodexTurn:
     """What interrupting and recovering one room's app-server turn needs.

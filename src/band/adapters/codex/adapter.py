@@ -115,6 +115,7 @@ from band.adapters.codex.turnstate import (
     NativeMessage,
     NativeTurn,
     TurnResult,
+    TurnSilent,
     TurnStart,
     audience_sender_ids,
     undelivered_events,
@@ -869,13 +870,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             result=result,
             turn_start=turn_start,
         )
+        # The loop's clock, which the waits below run on.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.config.turn_timeout_s
         try:
             while True:
-                remaining = max(
-                    0.0,
-                    self.config.turn_timeout_s - (_time.perf_counter() - turn_start),
+                event = await self._next_turn_event(
+                    native, remaining=max(0.0, deadline - loop.time())
                 )
-                event = await asyncio.wait_for(native.events.get(), timeout=remaining)
                 if isinstance(event, Exception):
                     raise event
                 if event.is_request:
@@ -891,12 +893,34 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         except TurnResultAlreadyReported as error:
             await fail(str(error))
             raise
-        except TimeoutError:
+        except TimeoutError as expired:
             # Raised here, this would skip the sibling clause above, so the
             # failed-turn events are emitted before raising.
-            message = await self._time_out_turn(native, tools, ref, result)
+            message = (
+                str(expired)
+                if isinstance(expired, TurnSilent)
+                else f"Codex turn timed out after {self.config.turn_timeout_s}s"
+            )
+            await self._time_out_turn(native, tools, ref, result, message)
             await fail(message)
             raise TurnResultAlreadyReported(message)
+
+    async def _next_turn_event(
+        self, native: NativeTurn, *, remaining: float
+    ) -> RpcEvent | Exception:
+        """Wait for the turn's next event: at most ``remaining`` of its total
+        limit, and no longer than it may stay silent.
+
+        Silence is measured from the start of each wait, so the time the
+        adapter takes to answer the turn's own request never counts.
+        """
+        silence = self.config.turn_idle_timeout_s
+        if silence is None or remaining <= silence:
+            return await asyncio.wait_for(native.events.get(), timeout=remaining)
+        try:
+            return await asyncio.wait_for(native.events.get(), timeout=silence)
+        except TimeoutError:
+            raise TurnSilent(silence, "turn_idle_timeout_s") from None
 
     async def _fail_turn(
         self,
@@ -926,15 +950,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         tools: AgentToolsProtocol,
         ref: TurnRef,
         result: TurnResult,
-    ) -> str:
-        """Interrupt a turn that ran past ``turn_timeout_s`` and report it,
-        unless an earlier ``error`` notification already reported its failure."""
-        logger.error(
-            "Codex turn timed out after %ss (thread=%s, turn=%s)",
-            self.config.turn_timeout_s,
-            ref.thread_id,
-            ref.turn_id,
-        )
+        message: str,
+    ) -> None:
+        """Interrupt an expired turn and report its failure once."""
+        logger.error("%s (thread=%s, turn=%s)", message, ref.thread_id, ref.turn_id)
         timed_out = CodexTurn(
             ref.room_id,
             native.generation,
@@ -953,12 +972,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         # An answered, failed or unanswered interrupt never proves the
         # native work stopped, so the process is replaced either way.
         self._recover_unconfirmed(timed_out)
-        message = f"Codex turn timed out after {self.config.turn_timeout_s}s"
         if not result.failure_reported:
             await tools.send_failure(
                 AgentFailure(CODEX_PROVIDER, message, FAILURE_CODE_TIMEOUT)
             )
-        return message
 
     async def _apply_notification(
         self,
