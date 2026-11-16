@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import shutil
 import subprocess
@@ -24,11 +23,11 @@ from urllib.parse import urlsplit
 import yaml
 
 from band.credentials import PROXY_MANAGED_API_KEY
-from band.docker.launcher.config import PLACEHOLDER_AGENT_ID
 from band.docker.launcher.credentials import CredentialName
 from band.docker.launcher.run import AGENT_UID
 from band.docker.provision import read_agent_id
 from band.docker.provision import run as provision_run
+from band.docker.sbx_process import sbx_json
 from tests.docker.toolkit.docker_cli import Image
 from tests.docker.toolkit.sbx_cli import (
     SBX,
@@ -40,7 +39,7 @@ from tests.docker.toolkit.sbx_cli import (
     sandbox_name,
 )
 from tests.e2e.baseline.settings import BandEndpoints, BaselineSettings
-from tests.e2e.baseline.toolkit.provisioning import ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import ResourceManager, fresh_agent_name
 from tests.paths import KIT_DIR
 from tests.toolkit.tasks import off_loop
 
@@ -51,6 +50,7 @@ BAND_HOST_PATTERN = "**.band.ai"
 # The kit declares PyPI in its network policy; an undeclared host is refused.
 DECLARED_HOST_URL = "https://pypi.org/simple/"
 UNDECLARED_HOST_URL = "https://example.com"
+SELF_REGISTRATION_LABEL = "selfreg"
 # The agent uid, then the declared and undeclared hosts' HTTP status.
 DECLARED_POSTURE = (str(AGENT_UID), "200", "403")
 
@@ -138,7 +138,7 @@ def scoped_secret_present(name: str) -> bool:
     )
     return any(
         secret["placeholder"] == PROXY_MANAGED_API_KEY
-        for secret in json.loads(result.stdout)["custom_secrets"]
+        for secret in sbx_json(result.stdout)["custom_secrets"]
     )
 
 
@@ -184,14 +184,17 @@ async def self_registered_sandbox(
 
     Yields ``(agent_id, room_id, args)`` — ``args`` lets the caller re-invoke
     ``provision.run()`` with the identical configuration to prove the
-    idempotency guard. Cleanup attempts the agent and the scoped secret
-    independently, even when registration fails after persisting the id.
+    idempotency guard. The agent is named under the baseline prefix, so the
+    orphan sweep reclaims it if cleanup never runs. Cleanup attempts the agent
+    and the scoped secret independently, even when registration fails after
+    the platform registered the agent, and even when it is cancelled.
     """
     workspace = prepare_workspace(workdir, endpoints=settings.endpoints)
     name = sandbox_name(prefix="band-selfreg")
+    agent_name = fresh_agent_name(SELF_REGISTRATION_LABEL)
     args = argparse.Namespace(
         name=name,
-        agent_name=None,
+        agent_name=agent_name,
         description="Self-registration live E2E proof agent.",
         workspace=workspace,
         host=BAND_HOST_PATTERN,
@@ -215,32 +218,39 @@ async def self_registered_sandbox(
             yield agent_id, room_id, args
     finally:
         failures: list[Exception] = []
-        # The CLI may persist the id before secret injection or creation fails.
-        known_agent_id = agent_id
-        if known_agent_id is None:
-            try:
-                known_agent_id = read_agent_id(workspace)
-            except Exception as error:
-                logger.exception("Could not recover agent id for sandbox %s", name)
-                error.add_note(f"Could not recover agent id for sandbox {name}")
-                failures.append(error)
-        if known_agent_id and known_agent_id != PLACEHOLDER_AGENT_ID:
-            try:
-                await resource_manager.reap_agent(known_agent_id)
-            except Exception as error:
-                logger.exception("Could not clean up agent %s", known_agent_id)
-                error.add_note(f"Cleanup incomplete for agent {known_agent_id}")
-                failures.append(error)
         try:
-            await asyncio.to_thread(_remove_scoped_secret, name)
+            await _reap_registered_agent(resource_manager, agent_id, agent_name)
         except Exception as error:
-            logger.exception(
-                "Could not confirm scoped secret cleanup for sandbox %s", name
-            )
-            error.add_note(f"Cleanup incomplete for scoped secret in sandbox {name}")
+            logger.exception("Could not clean up agent %s", agent_name)
+            error.add_note(f"Cleanup incomplete for agent {agent_id or agent_name}")
             failures.append(error)
+        finally:
+            try:
+                await asyncio.to_thread(_remove_scoped_secret, name)
+            except Exception as error:
+                logger.exception(
+                    "Could not confirm scoped secret cleanup for sandbox %s", name
+                )
+                error.add_note(
+                    f"Cleanup incomplete for scoped secret in sandbox {name}"
+                )
+                failures.append(error)
         if failures:
             raise ExceptionGroup("Self-registration cleanup incomplete", failures)
+
+
+async def _reap_registered_agent(
+    resource_manager: ResourceManager, agent_id: str | None, agent_name: str
+) -> None:
+    """Reap the agent, found by name when ``provision.run()`` raised first.
+
+    A registration that times out client-side can still succeed on the
+    platform, and ``provision.run()`` then raises without returning or
+    persisting the id.
+    """
+    known_id = agent_id or await resource_manager.find_agent_id(agent_name)
+    if known_id is not None:
+        await resource_manager.reap_agent(known_id)
 
 
 def workload_posture(sandbox: Sandbox) -> tuple[str, str, str]:

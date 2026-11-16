@@ -16,7 +16,6 @@ the proxy cert probe and the pty-attached process lifecycle in
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import selectors
@@ -35,7 +34,7 @@ from typing import Any
 import yaml
 
 from band.credentials import PROXY_MANAGED_API_KEY
-from band.docker.sbx_process import run_sbx_subprocess
+from band.docker.sbx_process import run_sbx_subprocess, sbx_json
 from tests.paths import KIT_DIR
 
 logger = logging.getLogger(__name__)
@@ -228,7 +227,7 @@ def _network_allowed(host: str) -> bool:
         check=False,
         timeout=60,
     )
-    allowed = json.loads(probe.stdout)["allowed"]
+    allowed = sbx_json(probe.stdout)["allowed"]
     if not isinstance(allowed, bool) or probe.returncode != (0 if allowed else 1):
         raise RuntimeError(f"could not inspect network policy for {host}")
     return allowed

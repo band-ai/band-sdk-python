@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import sys
 from collections.abc import AsyncIterator
@@ -51,7 +50,7 @@ from band.docker.launcher.config import (
     PLACEHOLDER_AGENT_ID,
     load_workspace_config,
 )
-from band.docker.sbx_process import run_sbx_subprocess
+from band.docker.sbx_process import run_sbx_subprocess, sbx_json
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +281,7 @@ def sandbox_has_band_secret(name: str, host: str) -> bool:
         [SBX, "secret", "ls", "--sandbox", name, "--json"],
         timeout=SBX_SECRET_TIMEOUT_S,
     )
-    data = json.loads(result.stdout)
+    data = sbx_json(result.stdout)
     return any(
         entry["scope"] == name and host in entry["targets"]
         for entry in data["custom_secrets"]
@@ -324,7 +323,7 @@ def sandbox_exists(name: str) -> bool:
     resources fail independently and must be checked independently.
     """
     result = run_sbx_subprocess([SBX, "ls", "--json"], timeout=SBX_SECRET_TIMEOUT_S)
-    sandboxes = json.loads(result.stdout).get("sandboxes") or []
+    sandboxes = sbx_json(result.stdout).get("sandboxes") or []
     return any(sandbox.get("name") == name for sandbox in sandboxes)
 
 

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import re
 import subprocess
@@ -35,6 +34,7 @@ from pydantic import ValidationError
 
 from band import LogSettings, LogStream
 from band.docker.provision import DEFAULT_BAND_HOST, read_agent_id
+from band.docker.sbx_process import sbx_json
 from tests.docker.toolkit.sandbox_agent import deployment_hosts, prepare_workspace
 from tests.docker.toolkit.sbx_cli import (
     allow_network_for_hosts,
@@ -243,7 +243,7 @@ def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> bool:
             present = name in result.stdout.splitlines()
         else:
             try:
-                secrets = json.loads(result.stdout)["custom_secrets"]
+                secrets = sbx_json(result.stdout)["custom_secrets"]
                 present = any(host in secret["targets"] for secret in secrets)
             except (ValueError, KeyError, TypeError):
                 logger.exception("Invalid secret listing; retaining recovery ledger")

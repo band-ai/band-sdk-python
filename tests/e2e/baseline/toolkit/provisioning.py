@@ -121,6 +121,11 @@ def agent_name(*, token: str, label: str) -> str:
     return f"{NAME_PREFIX}{token}{TOKEN_LABEL_SEPARATOR}{normalized_label(label)}"
 
 
+def fresh_agent_name(label: str) -> str:
+    """A new provisioned name for ``label``, under ``NAME_PREFIX`` for the sweep."""
+    return agent_name(token=name_token(label), label=label)
+
+
 def credential_name(name: str, agent_id: str) -> str:
     """Name the platform stores on the API key created with the agent.
 
@@ -384,7 +389,7 @@ class ResourceManager:
         (default ``E2E baseline test agent ({label})``). Tests that assert on
         passive-roster description surfacing pass a self-sourced marker here.
         """
-        name = agent_name(token=name_token(label), label=label)
+        name = fresh_agent_name(label)
         agent_description = description or f"E2E baseline test agent ({label})"
         response = await self._client.human_api_agents.register_my_agent(
             agent=AgentRegisterRequest(
@@ -459,6 +464,19 @@ class ResourceManager:
         client = agent_rest_client(agent, self._settings)
         response = await client.agent_api_chats.list_agent_chats()
         return {room.id for room in (response.data or [])}
+
+    async def find_agent_id(self, name: str) -> str | None:
+        """The id of this account's agent named exactly ``name``, if any.
+
+        The listing's name filter is a contains-match; a provisioned name embeds
+        a fresh token, so one page holds every row that can match it exactly.
+        """
+        response = await self._client.human_api_agents.list_my_agents(
+            name=name, limit=100
+        )
+        return next(
+            (agent.id for agent in response.data or [] if agent.name == name), None
+        )
 
     async def reap_agent(self, agent_id: str) -> None:
         """Force-delete an agent."""

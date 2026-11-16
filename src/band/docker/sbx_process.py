@@ -9,7 +9,20 @@ directions import the run+redact logic from instead of hand-duplicating it.
 
 from __future__ import annotations
 
+import json
 import subprocess
+from typing import Any
+
+
+def sbx_json(stdout: str) -> Any:
+    """The document an `sbx ... --json` command printed.
+
+    At most once per 24h, when a newer release exists, `sbx` appends a
+    human-readable "Update Available" box to stdout after the document
+    (verified against v0.47.0), so only the leading JSON value is the contract.
+    """
+    document, _ = json.JSONDecoder().raw_decode(stdout.lstrip())
+    return document
 
 
 def run_sbx_subprocess(
