@@ -50,7 +50,7 @@ async def run_opencode(script: TurnScript, tools: FakeAgentTools) -> None:
         steps = [
             event_message_updated(SESSION_ID, MESSAGE_ID),
             *(
-                mcp_calls.band_tool_call(call.name, call.arguments, room_id=ROOM_ID)
+                mcp_calls.band_tool_attempt(call.name, call.arguments, room_id=ROOM_ID)
                 for call in script.tool_calls
             ),
         ]

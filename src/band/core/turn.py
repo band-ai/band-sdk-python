@@ -9,7 +9,7 @@ in core so every SDK judges a turn the same way.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Hashable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -60,11 +60,14 @@ class Turn:
         self.posts_missing_reply = posts_missing_reply
         self.judged = False
         self._detached = False
-        self._declined_by: set[object] = set()
+        self._declined_by: set[Hashable | None] = set()
 
-    def record(self, effect: TurnEffect, *, origin: object = None) -> None:
-        """Record ``effect``, made by ``origin``: ``None`` for the turn's own
-        model, or the resource (a subagent, background work) that made it."""
+    def record(self, effect: TurnEffect, *, origin: Hashable | None = None) -> None:
+        """Record ``effect`` as made by ``origin``.
+
+        ``origin`` is ``None`` for the turn's own model, otherwise the subagent
+        or background work that made the call.
+        """
         self._ledger.record(_core_effect(effect))
         if effect.ends_turn:
             self._declined_by.add(origin)
@@ -85,13 +88,14 @@ class Turn:
     def detached(self) -> bool:
         return self._detached
 
-    def declined(self, origin: object = None) -> bool:
-        """Whether ``origin`` declined to reply, which ends its own work.
+    def declined(self, origin: Hashable | None = None) -> bool:
+        """Whether ``origin``'s work ended in a decline.
 
-        Any decline counts toward the verdict, but a resource's decline leaves
-        the model's own calls, and every other resource's, untouched.
+        The model's decline ends the whole turn's work, every subagent's
+        included. A subagent's decline ends only its own, and any decline
+        counts toward the verdict.
         """
-        return origin in self._declined_by
+        return None in self._declined_by or origin in self._declined_by
 
     @property
     def replied(self) -> bool:

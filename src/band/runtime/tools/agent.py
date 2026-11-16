@@ -13,7 +13,14 @@ import hashlib
 import logging
 import re
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Hashable,
+    Iterator,
+)
 from copy import copy
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -360,6 +367,7 @@ class AgentTools(AgentToolsProtocol):
         self._ctx: ExecutionContext | None = None
         self._scope: TurnScope | None = None
         self._resource: TurnTask | None = None
+        self._origin: Hashable | None = None
         self._activity_observer: ActivityObserver | None = None
         self.turn = Turn()
 
@@ -413,13 +421,19 @@ class AgentTools(AgentToolsProtocol):
                 self._ctx.register_turn_task(self._scope, owner)
 
     @property
-    def resource(self) -> TurnTask | None:
-        """The resource this view serves; ``None`` for the turn's own model."""
-        return self._resource
+    def origin(self) -> Hashable | None:
+        """Who calls through this view; ``None`` for the turn's own model."""
+        return self._origin
+
+    def for_origin(self, origin: Hashable) -> AgentTools:
+        """A view for a provider subagent: its effects and declines are its own."""
+        view = copy(self)
+        view._origin = origin
+        return view
 
     def _for_resource(self, owner: TurnTask) -> AgentTools:
         """An immutable origin view whose effects also require this resource."""
-        view = copy(self)
+        view = self.for_origin(owner)
         view._resource = owner
         if self._ctx is not None:
             view._activity_observer = self._ctx.activity_observer(self._scope, owner)

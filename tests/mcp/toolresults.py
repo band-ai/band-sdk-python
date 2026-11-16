@@ -7,6 +7,11 @@ from typing import Any
 from mcp.types import CallToolResult, TextContent
 
 
+def mcp_text_result(text: str) -> CallToolResult:
+    """A tool's successful result carrying ``text``."""
+    return CallToolResult(content=[TextContent(type="text", text=text)], isError=False)
+
+
 def mcp_tool_error(tool_name: str, message: str) -> CallToolResult:
     """FastMCP's rendering of any exception raised by a tool."""
     return CallToolResult(

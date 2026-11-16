@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
+
 from band.core.types import Emit
 from band.integrations.acp.types import ToolResultRoomEvent
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
+from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
     fake_agent_config,
 )
-from tests.mcp.toolresults import content_blocks, mcp_tool_error
+from tests.mcp.toolresults import content_blocks, mcp_text_result, mcp_tool_error
 
 ANSWER = {"content": "The vault code is 4471-ECHO.", "mentions": ["@pat"]}
 
@@ -43,9 +46,15 @@ class TestDeclinedTurn:
         results = {
             result.tool_call_id: result for result in declined.parsed_tool_results
         }
+        declined_result = await FakeAgentTools().no_reply()
         refusal = mcp_tool_error(BandTool.SEND_MESSAGE, DECLINED_TURN_REFUSAL)
         assert declined.texts == []
-        assert results["tc-decline"].is_error is False
+        assert results["tc-decline"] == ToolResultRoomEvent(
+            name=BandTool.NO_REPLY,
+            output=str(content_blocks(mcp_text_result(json.dumps(declined_result)))),
+            tool_call_id="tc-decline",
+            is_error=False,
+        )
         assert results["tc-late"] == ToolResultRoomEvent(
             name=BandTool.SEND_MESSAGE,
             output=str(content_blocks(refusal)),

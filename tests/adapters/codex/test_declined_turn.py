@@ -11,12 +11,11 @@ from band.adapters.codex.dynamictools import text_tool_result
 from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import TurnEffect
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
+from band.testing.fake_tools import DISPATCHED_TOOL_RESULT
 from tests.adapters.codex.kit import run_codex_turn
 from tests.adapters.codexturns import tool_call_request, turn_completed
 from tests.framework_conformance.outcomeprobes import DECLINE, REPLY
 from tests.framework_conformance.turnprobes import ToolCall
-
-SENT = {"status": "ok"}  # FakeAgentTools' result for any platform tool
 
 
 class DeployInput(BaseModel):
@@ -48,7 +47,7 @@ class TestDeclinedTurn:
         )
 
         assert turn.client.responses == [
-            (1, text_tool_result(json.dumps(SENT), success=True)),
+            (1, text_tool_result(json.dumps(DISPATCHED_TOOL_RESULT), success=True)),
             (2, text_tool_result(DECLINED_TURN_REFUSAL, success=False)),
         ]
         assert turn.tools.tool_calls == [

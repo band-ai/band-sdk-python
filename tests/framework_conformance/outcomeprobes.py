@@ -60,6 +60,12 @@ TURN_OUTCOME_PROBES: dict[str, TurnOutcomeProbe] = {
 ANSWER = "The vault code is 4471-ECHO."
 REPLY = ToolCall(BandTool.SEND_MESSAGE, {"content": ANSWER, "mentions": ["@alice"]})
 DECLINE = ToolCall(BandTool.NO_REPLY, {"reason": "FYI only"})
+#: What ``turn_tools`` answers a turn's first ``REPLY`` with.
+REPLY_SENT = {
+    "id": "msg-0",
+    "recipients": [{"handle": "alice", "id": "alice", "name": None}],
+    "success": True,
+}
 
 
 @dataclass(frozen=True)

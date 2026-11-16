@@ -82,7 +82,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
-from band.runtime.turn import declined_turn_refusal
+from band.runtime.turn import declined_turn_refusal, origin_tools
 
 try:
     from copilot import (
@@ -1013,6 +1013,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 result_type="failure",
                 error="room inactive",
             )
+        if invocation.agent_id is not None:
+            room_tools = origin_tools(room_tools, invocation.agent_id)
 
         should_report = Emit.TOOL_CALLS in self.features.emit
         if should_report:

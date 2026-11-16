@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from mcp.types import CallToolResult
 
 from band.adapters.opencode import OpencodeAdapter
 from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS, TurnState
@@ -33,6 +34,7 @@ from band.runtime.tools import CHAT_ID_FIELD_NAME
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_event, deliver_message
+from tests.mcp.toolresults import result_text
 from tests.mcpbackends import BackendStarts
 from tests.mcpclient import in_memory_backend_session
 
@@ -597,14 +599,41 @@ class BandMCPCalls:
 
     def __init__(self, starts: BackendStarts) -> None:
         self._starts = starts
+        self.results: list[CallToolResult] = []
+
+    async def call(
+        self, tool: str, arguments: dict[str, Any], *, room_id: str = "room-1"
+    ) -> CallToolResult:
+        """Call ``tool`` on the started backend and return its result,
+        refusals included."""
+        assert self._starts.requested, "the adapter never started its backend"
+        async with in_memory_backend_session(self._starts.requested[-1]) as band:
+            result = await band.call_tool(
+                tool, {**arguments, CHAT_ID_FIELD_NAME: room_id}
+            )
+        self.results.append(result)
+        return result
+
+    def band_tool_attempt(
+        self, tool: str, arguments: dict[str, Any], *, room_id: str = "room-1"
+    ) -> ServerStep:
+        """A server step calling ``tool``; its result, success or refusal,
+        lands in ``results``."""
+
+        async def attempt() -> None:
+            await self.call(tool, arguments, room_id=room_id)
+
+        return attempt
 
     def band_tool_call(
         self, tool: str, arguments: dict[str, Any], *, room_id: str = "room-1"
     ) -> ServerStep:
+        """A server step calling ``tool``, which must succeed."""
+
         async def call() -> None:
-            assert self._starts.requested, "the adapter never started its backend"
-            async with in_memory_backend_session(self._starts.requested[-1]) as band:
-                await band.call_tool(tool, {**arguments, CHAT_ID_FIELD_NAME: room_id})
+            result = await self.call(tool, arguments, room_id=room_id)
+            if result.isError:
+                raise AssertionError(result_text(result))
 
         return call
 

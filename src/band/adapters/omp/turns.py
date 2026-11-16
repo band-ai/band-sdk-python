@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from functools import partial
+from typing import Any
 
 from band_sdk_core import AgentFailure
 
@@ -51,7 +52,7 @@ from band.runtime.prompts import (
 from band.runtime.sessionresume import fetch_transcript
 from band.runtime.toolactivity import end_activity, suppress_tool_activity
 from band.runtime.tools import BandTool, TurnEffect
-from band.runtime.turn import declined_turn_refusal
+from band.runtime.turn import declined_turn_refusal, record_effect
 
 logger = logging.getLogger(__name__)
 
@@ -317,11 +318,9 @@ class OmpTurnMixin(OmpAdapterContract):
                 ledger_record = tools.turn.record
                 if builtin_decline:
 
-                    def _defer_decline(
-                        effect: TurnEffect, *, origin: object = None
-                    ) -> None:
+                    def _defer_decline(effect: TurnEffect, **origin: Any) -> None:
                         if effect is not TurnEffect.DECLINE:
-                            ledger_record(effect, origin=origin)
+                            ledger_record(effect, **origin)
 
                     tools.turn.record = _defer_decline  # type: ignore[method-assign]
                 try:
@@ -333,7 +332,7 @@ class OmpTurnMixin(OmpAdapterContract):
                 if builtin_decline and not result.is_error:
                     room.client.arm_stop_after_tool(
                         call,
-                        on_commit=lambda: tools.turn.record(TurnEffect.DECLINE),
+                        on_commit=lambda: record_effect(tools, TurnEffect.DECLINE),
                     )
                 return result
 

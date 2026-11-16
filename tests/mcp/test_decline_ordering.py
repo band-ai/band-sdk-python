@@ -17,22 +17,14 @@ from band.runtime.tools import (
     TurnEffect,
 )
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
-from tests.framework_conformance.outcomeprobes import ANSWER, REPLY
-from tests.framework_conformance.turnprobes import ALICE, ROOM_ID, turn_tools
+from tests.framework_conformance.outcomeprobes import ANSWER, REPLY, REPLY_SENT
+from tests.framework_conformance.turnprobes import ROOM_ID, turn_tools
 from tests.mcp.toolresults import mcp_tool_error
 from tests.mcpclient import in_memory_backend_session
 
 
 class HeldDeclineInput(BaseModel):
     """Decline to reply, once released."""
-
-
-#: What the fake room answers the turn's first reply with.
-SENT = {
-    "id": "msg-0",
-    "recipients": [{"handle": ALICE["handle"], "id": "alice", "name": None}],
-    "success": True,
-}
 
 
 class TestDeclineOrdering:
@@ -72,7 +64,8 @@ class TestDeclineOrdering:
             after = await session.call_tool(BandTool.SEND_MESSAGE, reply)
 
         assert before == CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(SENT))], isError=False
+            content=[TextContent(type="text", text=json.dumps(REPLY_SENT))],
+            isError=False,
         )
         assert after == mcp_tool_error(BandTool.SEND_MESSAGE, DECLINED_TURN_REFUSAL)
         assert tools.chat == [ANSWER]

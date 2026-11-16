@@ -13,6 +13,13 @@ from band.integrations.copilot_sdk.room_ask_user import freeform_answer
 from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import TurnEffect
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
+from tests.adapters.copilot_sdk.declinekit import (
+    DECLINE,
+    SkipInput,
+    call_tool,
+    refused,
+    skip,
+)
 from tests.adapters.copilot_sdk.fakes import (
     QUESTION,
     FakeCopilotClient,
@@ -27,35 +34,14 @@ from tests.framework_conformance.outcomeprobes import REPLY, ToolCall
 pytestmark = requires_copilot_sdk
 
 if _COPILOT_SDK_AVAILABLE:
-    from copilot import ToolInvocation, ToolResult
-
-
-class SkipInput(BaseModel):
-    """Decline to reply to this message."""
+    from copilot import ToolResult
 
 
 class DeployInput(BaseModel):
     """Deploy the service."""
 
 
-@declares_turn_effect(TurnEffect.DECLINE)
-async def skip(args: SkipInput) -> str:
-    return "skipped"
-
-
-DECLINE = ToolCall(get_custom_tool_name(SkipInput))
 DEPLOY = ToolCall(get_custom_tool_name(DeployInput))
-
-
-async def call_tool(session: FakeCopilotSession, call: ToolCall) -> ToolResult:
-    """The model calling ``call`` through the session's registered tool."""
-    return await session.find_tool(call.name).handler(
-        ToolInvocation(
-            tool_call_id=f"call-{call.name}",
-            tool_name=call.name,
-            arguments=call.arguments,
-        )
-    )
 
 
 class TestDeclinedTurn:
@@ -84,13 +70,7 @@ class TestDeclinedTurn:
 
         await run_event(adapter, tools)
 
-        assert results == [
-            ToolResult(
-                text_result_for_llm=DECLINED_TURN_REFUSAL,
-                result_type="failure",
-                error=DECLINED_TURN_REFUSAL,
-            )
-        ]
+        assert results == [refused()]
         assert deployed == []
         assert tools.tool_calls == []
 
