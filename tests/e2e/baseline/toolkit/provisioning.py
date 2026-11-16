@@ -121,11 +121,6 @@ def agent_name(*, token: str, label: str) -> str:
     return f"{NAME_PREFIX}{token}{TOKEN_LABEL_SEPARATOR}{normalized_label(label)}"
 
 
-def fresh_agent_name(label: str) -> str:
-    """A new provisioned name for ``label``, under ``NAME_PREFIX`` for the sweep."""
-    return agent_name(token=name_token(label), label=label)
-
-
 def credential_name(name: str, agent_id: str) -> str:
     """Name the platform stores on the API key created with the agent.
 
@@ -389,7 +384,7 @@ class ResourceManager:
         (default ``E2E baseline test agent ({label})``). Tests that assert on
         passive-roster description surfacing pass a self-sourced marker here.
         """
-        name = fresh_agent_name(label)
+        name = agent_name(token=name_token(label), label=label)
         agent_description = description or f"E2E baseline test agent ({label})"
         response = await self._client.human_api_agents.register_my_agent(
             agent=AgentRegisterRequest(

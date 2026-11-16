@@ -1,17 +1,12 @@
-"""Thin `sbx`-CLI seam for the never-in-VM sandbox E2E.
+"""Thin `sbx`-CLI seam for driving a Docker Sandbox from the host.
 
-Mirrors :class:`tests.docker.toolkit.docker_cli.Container`, but drives the
-**sandbox** flow — `sbx create` / `sbx exec` / `sbx rm` — so requests ride
-the host-side proxy that injects the real credentials. That is what a bare
-`docker run` cannot exercise, and what the never-in-VM proof needs.
-
-The sandbox-driving methods need a Docker-Sandbox-capable host with the `sbx`
-CLI, and run only in the baseline kit lane's smokes
-(``tests/e2e/baseline/smoke/kit/``). The module itself imports cleanly (stdlib +
-yaml), so its pure helpers are unit-tested in CI: scoped secret commands and
-the absence-search command in ``tests/docker/test_nevervm_contracts.py``, and
-the proxy cert probe and the pty-attached process lifecycle in
-``tests/docker/test_sbx_cli.py``.
+``examples/sandbox/self-registration/demo.py`` uses it to wrap the kit image as
+a local workload, network-allow the Band deployment, hold the sandbox's
+foreground session on a real pty, and remove the scoped secret. The module
+imports cleanly (stdlib + yaml), so its pure helpers are unit-tested in CI:
+the kit's network baseline and scoped secret removal in
+``tests/docker/test_nevervm_contracts.py``, and the pty-attached process
+lifecycle in ``tests/docker/test_sbx_cli.py``.
 """
 
 from __future__ import annotations
@@ -20,76 +15,29 @@ import logging
 import os
 import selectors
 import shlex
-import shutil
 import subprocess
 import tempfile
 import threading
 import uuid
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from band.credentials import PROXY_MANAGED_API_KEY
-from band.docker.sbx_process import run_sbx_subprocess, sbx_json
+from band.docker.sbx_process import sbx_json
 from tests.paths import KIT_DIR
 
 logger = logging.getLogger(__name__)
 
 SBX = "sbx"
-# `sbx create` provisions a microVM (image pull + boot); generous like the
-# docker image build ceiling in docker_cli.
-CREATE_TIMEOUT_S = 600
-EXEC_TIMEOUT_S = 120
 # How long _stop_pty_process waits for a process to exit after each signal:
 # once after `terminate()` before escalating to `kill()`, and again after
 # `kill()` before giving up and logging it as still alive.
 ATTACH_STOP_TIMEOUT_S = 10
 ATTACH_READ_POLL_S = 0.1
-
-# The issuer a credential-injected (MITM) TLS connection presents inside a
-# sandbox — the never-in-VM proof asserts the Band host's cert shows this,
-# confirming the request rode the injection path rather than a plain tunnel.
-# Verified live: the injected cert reads `subject: O=Docker Sandboxes; CN=<host>`,
-# `issuer: ... Docker Sandboxes Proxy CA`, so this substring matches either line.
-PROXY_CA_MARKER = "Docker Sandboxes"
-
-# Read the TLS peer cert the sandbox sees for a host *through* HTTPS_PROXY, so an
-# injected (MITM) connection reveals the Docker Sandboxes CA in its issuer. Uses
-# only the stdlib (the kit image has Python). Host is argv[1].
-_CERT_PROBE = r"""
-import os, ssl, socket, sys
-from urllib.parse import urlsplit
-host = sys.argv[1]
-proxy = urlsplit(os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "")
-try:
-    sock = socket.create_connection((proxy.hostname, proxy.port), timeout=15)
-    sock.sendall(("CONNECT %s:443 HTTP/1.1\r\nHost: %s\r\n\r\n" % (host, host)).encode())
-    resp = b""
-    while b"\r\n\r\n" not in resp:  # full CONNECT reply before TLS; TCP may split it
-        chunk = sock.recv(4096)
-        if not chunk:
-            raise RuntimeError("proxy closed before completing CONNECT response")
-        resp += chunk
-    status = resp.split(b"\r\n", 1)[0].split()
-    if len(status) < 2 or not status[1].isdigit() or not 200 <= int(status[1]) < 300:
-        raise RuntimeError("proxy CONNECT refused: %r" % resp.split(b"\r\n", 1)[0])
-    cafile = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
-    ctx = ssl.create_default_context(cafile=cafile) if cafile else ssl.create_default_context()
-    cert = ctx.wrap_socket(sock, server_hostname=host).getpeercert()
-    print("subject:", cert.get("subject"))
-    print("issuer:", cert.get("issuer"))
-except Exception as exc:
-    print("cert-probe-error:", type(exc).__name__, exc)
-"""
-
-
-def sbx_available() -> bool:
-    """True when the `sbx` CLI is on PATH (else the sandbox test skips)."""
-    return shutil.which(SBX) is not None
 
 
 def _kit_spec(kit: Path | str) -> dict[str, Any]:
@@ -136,32 +84,6 @@ def write_local_workload(image: str, directory: Path) -> Path:
     return directory
 
 
-def files_containing_command(secret: str, search_paths: Sequence[str]) -> str:
-    """Shell command listing files under ``search_paths`` that hold ``secret`` literally.
-
-    The flags are chosen for an absence proof, where a *missed* match is a silent
-    hole rather than mere noise:
-
-    - ``-a`` searches every file as text, so a key sitting in an otherwise-binary
-      file (a cache/DB with NUL bytes) is still found. grep's default binary
-      heuristic can skip such a file — verified: merely dropping ``-I`` still
-      missed it under one grep implementation, whereas ``-a`` matched everywhere.
-    - ``-F`` matches the secret literally, so a key with ``.``/``$``/``*`` cannot
-      over- or under-match.
-    - ``-l`` prints only filenames, so the secret itself is never echoed.
-    """
-    paths = " ".join(shlex.quote(path) for path in search_paths)
-    return f"grep -ralF -- {shlex.quote(secret)} {paths} 2>/dev/null || true"
-
-
-def set_custom_secret_command(
-    *, sandbox: str, host: str, env: str, placeholder: str
-) -> list[str]:
-    """`sbx secret set-custom` argv, scoped to one sandbox (never global ``-g``)."""
-    return [SBX, "secret", "set-custom", "--sandbox", sandbox, "--host", host,
-            "--env", env, "--placeholder", placeholder]  # fmt: skip
-
-
 def remove_custom_secret_command(
     *, sandbox: str, placeholder: str = PROXY_MANAGED_API_KEY
 ) -> list[str]:
@@ -176,46 +98,6 @@ def remove_custom_secret_command(
         sandbox,
         "-f",
     ]
-
-
-def run_redacting_secret(argv: list[str], *, secret: str, timeout: int = 60) -> str:
-    """Run a secret-bearing command, redacting ``secret`` from any error.
-
-    A routine failure (daemon down, auth, a dead sandbox) would otherwise spill
-    the credential into the raised error and captured test logs — whether the
-    secret is a whole argument (``--value <secret>``) or embedded inside one (a
-    grep command quoting it). ``run_sbx_subprocess`` does the run-and-redact;
-    this just adapts its stdout-on-success/CompletedProcess shape to the
-    stdout-only return every caller here wants.
-    """
-    return run_sbx_subprocess(argv, timeout=timeout, redact=secret).stdout
-
-
-@contextmanager
-def custom_secret(
-    *, sandbox: str, host: str, env: str, value: str, placeholder: str
-) -> Iterator[None]:
-    """Store a scoped secret on stdin before create, then independently remove it."""
-    run_sbx_subprocess(
-        set_custom_secret_command(
-            sandbox=sandbox, host=host, env=env, placeholder=placeholder
-        ),
-        input=value,
-        redact=value,
-        timeout=60,
-    )
-    try:
-        yield
-    finally:
-        removal = subprocess.run(
-            remove_custom_secret_command(sandbox=sandbox, placeholder=placeholder),
-            capture_output=True, text=True, check=False, timeout=60,
-        )  # fmt: skip
-        if removal.returncode != 0:
-            raise RuntimeError(
-                f"scoped secret cleanup incomplete: sbx secret rm --placeholder {shlex.quote(placeholder)} "
-                f"--sandbox {shlex.quote(sandbox)} -f"
-            )
 
 
 def _network_allowed(host: str) -> bool:
@@ -296,9 +178,8 @@ def _spawn_pty_process(argv: list[str]) -> tuple[subprocess.Popen[bytes], int]:
     pipe or `/dev/null`. `pty` is POSIX-only (no `termios` on Windows) and
     imported here rather than at module level, purely so this module still
     imports cleanly for collection on Windows CI — every actual caller of
-    this function only ever runs on POSIX (real `sbx`-driving callers are
-    gated behind the kit lane's `Dep.SBX` requirement or their own
-    documented prerequisites; the unit tests below are Windows-skipped via
+    this function only ever runs on POSIX (the self-registration demo
+    documents its own prerequisites; the unit tests are Windows-skipped via
     `markers.requires_posix_pty`).
     """
     import pty  # noqa: PLC0415 -- POSIX-only, deferred so this module still collects on Windows
@@ -354,9 +235,8 @@ def attached_run(name: str) -> Iterator[None]:
     The kit's agent runs on `image entrypoint`, which only launches once
     something attaches — `sbx create` alone leaves the sandbox idle, and `sbx`
     v0.43.0 auto-stops an idle, unattached sandbox within ~60-90s regardless of
-    what's running inside it. Both `Sandbox.create` and any caller that drives
-    `sbx create`/`band-kit provision` directly (e.g. a demo script) need to
-    hold this open the same way.
+    what's running inside it, so a caller that drives `sbx create`/`band-kit
+    provision` (e.g. a demo script) holds this open.
     """
     process, controller_fd = _spawn_pty_process([SBX, "run", "--name", name])
     with ExitStack() as ownership:
@@ -395,136 +275,5 @@ NAME_PREFIX = "band-nevervm"
 
 
 def sandbox_name(prefix: str = NAME_PREFIX) -> str:
-    """A unique sandbox name.
-
-    Allocate it up front when a scoped secret must name the sandbox before
-    ``Sandbox.create`` brings it into existence.
-    """
+    """A unique sandbox name, allocated before the sandbox exists."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
-
-
-@dataclass
-class Sandbox:
-    """A running Docker Sandbox, with helpers that read as intent.
-
-    Lifecycle is on the class (``Sandbox.create``); driving it wraps the
-    ``sbx exec`` plumbing so a test reads what it asks the sandbox to do.
-    """
-
-    name: str
-
-    @classmethod
-    @contextmanager
-    def create(
-        cls,
-        *,
-        kit: Path | str,
-        workspace: Path | str,
-        name: str | None = None,
-        attached: bool = True,
-    ) -> Iterator[Sandbox]:
-        """Create a positional workload, own its foreground PTY, then remove it."""
-        name = name or sandbox_name()
-        run_sbx_subprocess(
-            [SBX, "create", "--name", name, str(kit), str(workspace)],
-            timeout=CREATE_TIMEOUT_S,
-        )
-        # `sbx create` above already succeeded, so `sbx rm` must run on any
-        # exception from here on (including one raised while entering
-        # attached_run) — otherwise the created sandbox is orphaned.
-        try:
-            with ExitStack() as stack:
-                if attached:
-                    stack.enter_context(attached_run(name))
-                yield cls(name)
-        finally:
-            run_sbx_subprocess(
-                [SBX, "rm", "-f", name],
-                timeout=60,
-            )
-
-    @contextmanager
-    def owned_run(self) -> Iterator[None]:
-        """Own one foreground session, including its exit status."""
-        with attached_run(self.name):
-            yield
-
-    def stop(self) -> None:
-        """Stop the workload before starting a new foreground owner."""
-        run_sbx_subprocess([SBX, "stop", self.name], timeout=60)
-
-    def exec(
-        self, command: str, *, timeout: int = EXEC_TIMEOUT_S, redact: str | None = None
-    ) -> str:
-        """Run ``command`` via ``bash -lc`` inside the sandbox; return stripped stdout.
-
-        ``-l`` runs a login shell so the sandbox's login profile is sourced,
-        bringing its provisioned PATH and environment into scope (the cert probe,
-        for one, reads the proxy/CA variables from there). This is a deliberate
-        divergence from the docker sibling's ``bash -c`` — don't collapse it to
-        ``-c``.
-
-        Pass ``redact`` when ``command`` embeds a secret: a transport failure then
-        raises with the secret masked instead of a ``CalledProcessError`` that
-        renders the full argv (secret included) into the test output.
-        """
-        argv = [SBX, "exec", self.name, "bash", "-lc", command]
-        if redact is not None:
-            return run_redacting_secret(argv, secret=redact, timeout=timeout).strip()
-        result = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=timeout,
-        )
-        return result.stdout.strip()
-
-    def all_process_environ(self) -> str:
-        """Every readable process environment in the VM, one VAR=value per line.
-
-        Scans all of ``/proc/<pid>/environ`` rather than assuming the agent is a
-        particular pid — in an sbx microVM, pid 1 is the VM init, not the agent,
-        and ``sbx exec`` spawns its own processes too. Entries owned by another
-        user (e.g. root's pid 1) or racing to exit mid-scan are unreadable; the
-        loop's stderr is dropped and it force-exits 0 so those benign
-        per-entry failures don't fail the whole ``exec`` — a real ``sbx exec``
-        transport error still surfaces (sbx exits non-zero around ``bash``). The
-        never-in-VM proof reads this to show the real key is absent from every
-        process it can see while the sentinel is present in the agent's.
-        """
-        # `2>/dev/null` must wrap the *loop* (not each `tr`): the shell's own
-        # open-failure on `< "$e"` for an unreadable entry prints before a
-        # per-command redirect would apply. `|| true` keeps a partial sweep green.
-        return self.exec(
-            'for e in /proc/[0-9]*/environ; do tr "\\0" "\\n" < "$e"; done '
-            "2>/dev/null || true"
-        )
-
-    def band_host_cert(self, host: str) -> str:
-        """The TLS cert subject+issuer the sandbox sees for ``host`` — **through
-        the sandbox proxy**.
-
-        Uses Python (always in a Python kit; the kit image ships Python) to
-        open the connection via ``HTTPS_PROXY``, so it sees the injection MITM
-        cert. Connecting *directly* would bypass the proxy and show the real
-        upstream cert — hiding the injection. Under injection the output contains
-        ``PROXY_CA_MARKER``.
-        """
-        return self.exec(f"python3 -c {shlex.quote(_CERT_PROBE)} {shlex.quote(host)}")
-
-    def shell_env(self) -> str:
-        """The exec shell's own environment (``env``)."""
-        return self.exec("env")
-
-    def files_containing(self, secret: str, *, search_paths: Sequence[str]) -> str:
-        """Files under ``search_paths`` that contain ``secret`` as a literal,
-        newline-joined; ``""`` when none.
-
-        A raw read, not a verdict: the caller pairs this absence check with a
-        positive control (see the never-in-VM test) so an empty result can't
-        pass vacuously. The command's flag rationale lives in
-        ``files_containing_command``. The command embeds ``secret``, so the exec
-        is redacted — a transport failure must not print the key it scans for.
-        """
-        return self.exec(files_containing_command(secret, search_paths), redact=secret)

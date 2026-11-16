@@ -31,7 +31,7 @@ def recording(
         raise enter_error
     try:
         yield RESOURCE
-    except Exception as error:
+    except BaseException as error:
         exits.append(error)
         if not suppress:
             raise
@@ -66,6 +66,23 @@ class TestOffLoop:
                 raise body_error
 
         assert exits == [body_error]
+
+    async def test_cancel_during_body_reaches_exit(self) -> None:
+        exits: list[BaseException | None] = []
+        in_body = asyncio.Event()
+
+        async def use() -> None:
+            async with off_loop(recording(exits)):
+                in_body.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(use())
+        await in_body.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert [type(error) for error in exits] == [asyncio.CancelledError]
 
     @pytest.mark.parametrize(
         ("enter_error", "expected_exits"),

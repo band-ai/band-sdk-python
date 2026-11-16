@@ -33,11 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from pydantic import ValidationError
 
 from band import LogSettings, LogStream
-from band.docker.provision import (
-    DEFAULT_BAND_HOST,
-    ORPHANED_AGENT_ID_LINE,
-    read_agent_id,
-)
+from band.docker.provision import DEFAULT_BAND_HOST, read_agent_id
 from band.docker.sbx_process import sbx_json
 from tests.docker.toolkit.sandbox_agent import deployment_hosts, prepare_workspace
 from tests.docker.toolkit.sbx_cli import (
@@ -56,6 +52,7 @@ from tests.paths import ENV_TEST_FILE, EXAMPLES_ROOT, KIT_DIR
 logger = logging.getLogger(__name__)
 
 AGENT_DESCRIPTION = "examples/sandbox/self-registration demo agent."
+BAND_HOST_PATTERN = DEFAULT_BAND_HOST
 LEDGER_DIR = EXAMPLES_ROOT / "sandbox" / "self-registration" / ".runs"
 DEFAULT_WORKLOAD = "band-python-kit:local"
 RUN_NAME_PREFIX = "band-selfreg-demo"
@@ -104,7 +101,6 @@ def _band_kit_provision(
 
     Shells out rather than calling `band.docker.provision.run()` directly, so
     this demo proves the CLI a customer actually types, not just its internals.
-    A failure that orphaned a registered agent records it for cleanup first.
     """
     argv = [
         "band-kit",
@@ -128,11 +124,6 @@ def _band_kit_provision(
 
     result = subprocess.run(argv, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        for line in result.stderr.splitlines():
-            if line.startswith(ORPHANED_AGENT_ID_LINE):
-                record_resource(
-                    name, "agents", line.removeprefix(ORPHANED_AGENT_ID_LINE)
-                )
         raise RuntimeError(f"band-kit provision failed: {result.stderr.strip()}")
     return result.stdout.strip()
 
@@ -225,7 +216,7 @@ def require_origin_deployment(name: str, rest_url: str) -> None:
         )
 
 
-def _teardown_sbx(name: str, *, host: str = DEFAULT_BAND_HOST) -> bool:
+def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> bool:
     failed = False
     probes = (
         (["sbx", "ls", "-q"], ["sbx", "rm", "-f", name]),

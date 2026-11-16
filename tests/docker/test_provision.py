@@ -24,7 +24,6 @@ from band.client.rest import NO_RETRY_REQUEST_OPTIONS
 from band.docker.launcher.errors import LaunchError
 from band.docker.provision import (
     PLACEHOLDER_AGENT_ID,
-    OrphanedAgentError,
     ProvisionSettings,
     RegistrationTimeoutOutcome,
     _check_registration_after_timeout,
@@ -843,7 +842,7 @@ class TestRun:
         assert "do-not-log-me" not in caplog.text
 
     @pytest.mark.asyncio
-    async def test_key_persist_failure_names_the_orphan_without_secret(
+    async def test_key_persist_failure_logs_recovery_without_secret(
         self, tmp_path, monkeypatch, capsys, caplog
     ):
         workspace = _placeholder_workspace(tmp_path)
@@ -859,37 +858,11 @@ class TestRun:
             MockClient.return_value = _make_mock_client(
                 _register_response(agent_id="agent-1", api_key="unrecoverable-key")
             )
-            with pytest.raises(
-                OrphanedAgentError, match="daemon unreachable"
-            ) as caught:
+            with pytest.raises(RuntimeError, match="daemon unreachable"):
                 await run(args)
 
-        assert caught.value.agent_id == "agent-1"
-        assert "unrecoverable-key" not in (
-            str(caught.value) + capsys.readouterr().err + caplog.text
-        )
-
-    @pytest.mark.asyncio
-    async def test_timeout_that_registered_anyway_names_the_orphan(
-        self, tmp_path, monkeypatch
-    ):
-        workspace = _placeholder_workspace(tmp_path)
-        args = _make_args(workspace.root)
-        fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
-
-        with patch("band.docker.provision.AsyncRestClient") as MockClient:
-            mock_client = _make_mock_client(register_side_effect=TimeoutError)
-            mock_client.human_api_agents.list_my_agents.return_value = _agents_response(
-                SimpleNamespace(id="agent-7", name="my-agent")
-            )
-            MockClient.return_value = mock_client
-
-            with pytest.raises(OrphanedAgentError) as caught:
-                await run(args)
-
-        assert caught.value.agent_id == "agent-7"
-        assert read_agent_id(workspace.root) == PLACEHOLDER_AGENT_ID
+        assert "unrecoverable-key" not in capsys.readouterr().err + caplog.text
+        assert "Agent agent-1 requires recovery" in caplog.text
 
 
 # --- main() ---

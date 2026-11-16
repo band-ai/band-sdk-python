@@ -85,7 +85,7 @@ with `@lane(Lane.X)` (that's a `band-write-e2e-test` concern).
 | `strands` | **dev-strands-nooa** | strands | OPENAI key |
 | `nooa` | **dev-strands-nooa** | nooa | ANTHROPIC key; Python 3.12–3.13 on POSIX; Linux-only in CI |
 | `parlant` | **dev-parlant** | none — a bespoke `@lane(Lane.PARLANT)`-pinned smoke, no matrix adapter | OPENAI key; the smoke runs its own in-process Parlant server |
-| `kit` | dev | none — `@lane(Lane.KIT)`-pinned band-python-kit smokes (`smoke/kit/`); Linux-only in CI | a running Docker daemon, plus a signed-in `sbx` CLI on a KVM/Apple-silicon host for the sandbox smokes |
+| `kit` | dev | none — `@lane(Lane.KIT)`-pinned band-python-kit smokes (`smoke/kit/`); Linux-only in CI | a running Docker daemon |
 
 ## Running — copy-paste
 

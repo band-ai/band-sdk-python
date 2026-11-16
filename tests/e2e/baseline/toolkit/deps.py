@@ -39,7 +39,6 @@ from urllib.parse import urlparse
 
 from band.integrations.acp.cursor import CURSOR_CLI_BINARY
 from band.integrations.omp import OMP_MIN_BUN
-from tests.docker.toolkit.sbx_cli import sbx_available
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.antigravity import (
     antigravity_api_key,
@@ -138,8 +137,8 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     Lane.PARLANT: Extra.DEV_PARLANT,
     Lane.NOOA: Extra.DEV_STRANDS_NOOA,
     Lane.STRANDS: Extra.DEV_STRANDS_NOOA,
-    # The band-python-kit image and its Docker Sandbox: a Docker daemon plus the
-    # `sbx` CLI its job stands up. No adapter lives here; its smokes are `@lane`-pinned.
+    # The band-python-kit image on the runner's Docker daemon. No adapter lives
+    # here; its smokes are `@lane`-pinned.
     Lane.KIT: Extra.DEV,
 }
 
@@ -157,10 +156,8 @@ LANE_EXTRAS: dict[Lane, Extra] = {
 # NOOA imports ``fcntl`` unconditionally, so it cannot be imported on Windows and
 # the ``dev-strands-nooa`` extra does not install it there.
 #
-# The kit image is a Linux image (the Windows runner only runs Windows
-# containers), and Docker Sandboxes needs Windows 11 with the Hypervisor
-# Platform, which the Windows Server runner is not. Every other lane runs on
-# every OS the e2e matrix offers.
+# The kit image is a Linux image, and the Windows runner only runs Windows
+# containers. Every other lane runs on every OS the e2e matrix offers.
 LINUX_ONLY_LANES: frozenset[Lane] = frozenset({Lane.LETTA, Lane.NOOA, Lane.KIT})
 
 
@@ -193,7 +190,6 @@ class Dep(Enum):
     OMP_NATIVE = "omp_native"  # the omp extra and native RPC backend
     SECOND_USER = "second_user"  # BAND_API_KEY_USER_2, a second human in the room
     DOCKER = "docker"  # a reachable Docker daemon (builds and runs the kit image)
-    SBX = "sbx"  # the Docker Sandboxes `sbx` CLI on PATH
 
 
 @dataclass(frozen=True)
@@ -505,11 +501,6 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.DOCKER: DepSpec(
         _docker_daemon_available,
         "no reachable Docker daemon (`docker info` failed)",
-        lane=Lane.KIT,
-    ),
-    Dep.SBX: DepSpec(
-        lambda _s: sbx_available(),
-        "Docker Sandboxes `sbx` CLI not found on PATH",
         lane=Lane.KIT,
     ),
 }
