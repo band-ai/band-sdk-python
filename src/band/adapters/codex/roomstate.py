@@ -76,6 +76,10 @@ class RoomCodexClient:
     seed: SessionSeed = dataclass_field(default_factory=SessionSeed)
     # Band history names the thread: its resume record was posted.
     recorded: bool = False
+    # A thread Band history names whose resume went unanswered. It is not the
+    # room's thread: the room's next turn tries it once more. Binding or
+    # forgetting a thread drops it.
+    unanswered_resume: str | None = None
     # Runtime commits these deltas even when a turn fails; its successor needs them.
     pending_system_context: list[str] = dataclass_field(default_factory=list)
     # Serializes this room's turns, local commands and their preparation; a
@@ -101,6 +105,7 @@ class RoomCodexClient:
         self.seed = seed
         self.restored = False
         self.recorded = False
+        self.unanswered_resume = None
 
     def forget_thread(self) -> None:
         self.bind_thread(

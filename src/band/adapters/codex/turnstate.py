@@ -25,6 +25,11 @@ class CodexContinuityError(RuntimeError):
     """A retained Codex thread cannot continue as it was; its id is kept."""
 
 
+class CodexUnanswered(TimeoutError):
+    """Codex did not answer a request within ``retention.transition_timeout_s``;
+    its process is retired."""
+
+
 @dataclass(frozen=True)
 class CodexTurn:
     """What interrupting and recovering one room's app-server turn needs.

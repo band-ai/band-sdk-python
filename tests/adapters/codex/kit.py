@@ -755,12 +755,16 @@ class HeldTurnClient(CountingCloseClient):
 
 class UnansweredRequestClient(CountingCloseClient):
     """An app-server that leaves its first ``held`` request unanswered until
-    the test releases it; later requests, on any process, answer normally."""
+    the test releases it; later requests, on any process, answer normally.
+
+    ``params_of`` sees the held request only once it is answered;
+    ``unanswered_params`` holds what it asked from its arrival."""
 
     def __init__(self, *, events: list[RpcEvent], held: CodexRequestMethod) -> None:
         super().__init__(events=events)
         self.held = held
         self.unanswered = Hold()
+        self.unanswered_params: dict[str, Any] | None = None
         self._pending = True
 
     async def request(
@@ -772,6 +776,7 @@ class UnansweredRequestClient(CountingCloseClient):
     ) -> dict[str, Any]:
         if method == self.held and self._pending:
             self._pending = False
+            self.unanswered_params = dict(params or {})
             await self.unanswered.wait()
         return await super().request(
             method, params, retry_on_overload=retry_on_overload
