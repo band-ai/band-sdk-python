@@ -22,6 +22,9 @@ TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
 )
 
 
+# A finished tool item's output when Codex reports nothing more telling.
+COMPLETED_OUTPUT = "completed"
+
 # Tools Codex asks the adapter to run (item/tool/call). The adapter reports them
 # there, with the real result, so their item/completed is the same call again.
 REQUESTED_TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
@@ -91,7 +94,11 @@ def tool_item(item_type: str, item: dict[str, Any]) -> CodexToolItem:
         case CodexItemType.COLLAB_AGENT_TOOL_CALL:
             return _collab_agent_tool_call(item)
         case _:
-            return CodexToolItem(item_type, {}, "completed")
+            return CodexToolItem(item_type, {}, COMPLETED_OUTPUT)
+
+
+def _tool_output(*values: Any) -> str:
+    return display_text(*values, default=COMPLETED_OUTPUT, raw_fallback=True)
 
 
 def _command_execution(item: dict[str, Any]) -> CodexToolItem:
@@ -126,14 +133,12 @@ def _mcp_tool_call(item: dict[str, Any]) -> CodexToolItem:
     # Redaction matches the bare tool name (e.g. "band_send_room_file"), not
     # the "mcp:{server}/{tool}" display name.
     mcp_args = redact_tool_call_args(tool, mcp_args)
-    output = display_text(
-        item.get("result"), item.get("error"), default="completed", raw_fallback=True
-    )
+    output = _tool_output(item.get("result"), item.get("error"))
     return CodexToolItem(f"mcp:{item.get('server', '')}/{tool}", mcp_args, output)
 
 
 def _web_search(item: dict[str, Any]) -> CodexToolItem:
-    output = display_text(item.get("action"), default="completed", raw_fallback=True)
+    output = _tool_output(item.get("action"))
     return CodexToolItem("web_search", {"query": item.get("query", "")}, output)
 
 
@@ -151,7 +156,7 @@ def _collab_agent_tool_call(item: dict[str, Any]) -> CodexToolItem:
         collab_args["prompt"] = item["prompt"]
     if item.get("agents"):
         collab_args["agents"] = item["agents"]
-    output = display_text(item.get("result"), default="completed", raw_fallback=True)
+    output = _tool_output(item.get("result"))
     return CodexToolItem(f"collab:{item.get('tool', '')}", collab_args, output)
 
 

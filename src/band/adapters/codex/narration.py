@@ -1,7 +1,7 @@
 """How a Codex turn's activity reads in the room: tool calls, thoughts, tasks.
 
-The adapter decides which of these its ``emit`` features and config allow;
-these functions only render and send them.
+The adapter decides which of these its config allows. Tool-call and thought
+items are also gated here, on the ``emit`` features the adapter passes in.
 """
 
 from __future__ import annotations
