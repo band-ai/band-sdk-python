@@ -95,10 +95,7 @@ def _sdk_symbols() -> dict[str, object]:
             symbols[adapter_name] = adapter_cls
 
     try:
-        from band.adapters.codex import (  # noqa: PLC0415
-            CodexAdapter,
-            CodexAdapterConfig,
-        )
+        from band.adapters.codex import CodexAdapter, CodexAdapterConfig  # noqa: PLC0415
 
         symbols["CodexAdapter"] = CodexAdapter
         symbols["CodexAdapterConfig"] = CodexAdapterConfig

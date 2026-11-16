@@ -349,7 +349,7 @@ class TestItemCompletedForwarding:
         JSON, not collapsed to the generic "completed" status.
 
         Unlike thought extraction, a tool-call result is
-        real data even when it isn't textual — ``_stringify_tool_output`` must
+        real data even when it isn't textual — ``display_text`` must
         use its ``raw_fallback`` mode here so nothing is silently discarded.
         """
         events = [

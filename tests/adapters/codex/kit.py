@@ -14,13 +14,8 @@ from uuid import uuid4
 import pytest_asyncio
 from pydantic import BaseModel
 
-from band.adapters.codex import (
-    ApprovalDecision,
-    CodexAdapter,
-    CodexAdapterConfig,
-    CodexCommand,
-    PendingApproval,
-)
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexCommand
+from band.adapters.codex.approvals import ApprovalDecision, PendingApproval
 from band.client.streaming import ControlMode
 from band.converters.codex import CODEX_RESUME_RECORD
 from band.converters.helpers import HISTORY_REPLAY_HEADING
@@ -375,7 +370,7 @@ class CodexRoom:
 
     @property
     def pending_approval_count(self) -> int:
-        return self.adapter._open_approval_count(ROOM_ID)
+        return self.adapter._approvals.open_count(ROOM_ID)
 
     @property
     def events_sent(self) -> list[dict[str, Any]]:
@@ -503,7 +498,7 @@ class CodexApprovalRoom:
 
     @property
     def pending(self) -> DecisionRegistry[PendingApproval]:
-        return self.adapter._pending_approvals[ROOM_ID]
+        return self.adapter._approvals.pending(ROOM_ID)
 
     @property
     def approval_tokens(self) -> list[str]:

@@ -7,11 +7,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-    PendingApproval,
-)
-from band.runtime.decisions import DecisionRegistry
+from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex.approvals import ApprovalDecision, PendingApproval
 from tests.adapters.codex.kit import (
     ROOM_ID,
     send_bootstrap,
@@ -71,9 +68,9 @@ class TestCleanup:
 
         # Manually inject a pending approval for room-1
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future[str] = loop.create_future()
-        registry: DecisionRegistry[PendingApproval] = DecisionRegistry()
-        registry.register_keyed(
+        fut: asyncio.Future[ApprovalDecision] = loop.create_future()
+        adapter._approvals.register(
+            ROOM_ID,
             PendingApproval(
                 request_id=1,
                 method="item/tool/call",
@@ -81,14 +78,12 @@ class TestCleanup:
                 created_at=datetime.now(UTC),
                 future=fut,
             ),
-            key="tok-1",
         )
-        adapter._pending_approvals[ROOM_ID] = registry
         wire_codex_room(adapter, fake_client, ROOM_ID)
         adapter._room_threads[ROOM_ID] = "thr-1"
 
         await adapter.on_cleanup(ROOM_ID)
 
-        assert adapter._open_approval_count(ROOM_ID) == 0
+        assert adapter._approvals.open_count(ROOM_ID) == 0
         # The future should have been resolved (declined)
         assert fut.done()

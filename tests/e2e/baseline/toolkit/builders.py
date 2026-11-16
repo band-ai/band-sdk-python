@@ -523,10 +523,7 @@ def _build_codex(
     tools: list[ToolSpec] | None = None,
     workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.codex import (  # noqa: PLC0415 -- isolates the codex extra from the other frameworks this file builds
-        CodexAdapter,
-        CodexAdapterConfig,
-    )
+    from band.adapters.codex import CodexAdapter, CodexAdapterConfig  # noqa: PLC0415 -- isolates the codex extra from the other frameworks this file builds
 
     sandbox = InheritedTemporaryDirectory(
         "band-e2e-codex-", parent=s.backends.codex_cwd or None

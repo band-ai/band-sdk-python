@@ -39,7 +39,9 @@ class TestEnrichedApprovals:
         await room.settled()
 
         assert room.client.responses == [(10, {"decision": "acceptForSession"})]
-        assert "commandExecution:npm test" in room.adapter._session_approved[ROOM_ID]
+        assert room.adapter._approvals.is_session_approved(
+            ROOM_ID, "commandExecution:npm test"
+        )
         assert any("session-level" in message for message in room.chat)
 
     @pytest.mark.asyncio

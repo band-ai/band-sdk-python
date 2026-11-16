@@ -7,7 +7,8 @@ import asyncio
 import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter
-from band.adapters.codex import TRANSPORT_LOST_ERROR, CodexAdapterConfig
+from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex.turnstate import TRANSPORT_LOST_ERROR
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.integrations.codex import TRANSPORT_CLOSED, CodexJsonRpcError, RpcEvent
 from band.platform.event import MessageEvent, PlatformEvent

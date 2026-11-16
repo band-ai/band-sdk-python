@@ -9,12 +9,8 @@ from typing import Any
 
 import pytest
 
-from band.adapters.codex import (
-    TRANSPORT_LOST_ERROR,
-    CodexAdapterConfig,
-    CodexCommand,
-    CodexContinuityError,
-)
+from band.adapters.codex import CodexAdapterConfig, CodexCommand
+from band.adapters.codex.turnstate import TRANSPORT_LOST_ERROR, CodexContinuityError
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import (
     DYNAMIC_TOOL_CALL_METHOD,

@@ -8,7 +8,8 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.codex import CodexAdapter, CodexApprovalMethod
+from band.adapters.codex import CodexAdapter
+from band.integrations.codex.types import CodexApprovalMethod
 from band.testing import MISSING_REPLY_FAILURE, failure_reports
 from tests.adapters.codex.kit import DECLINED, ROOM_ID, CodexRoom, parked_on_approval
 from tests.adapters.codexturns import event_request, turn_completed

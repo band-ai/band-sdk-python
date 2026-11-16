@@ -32,7 +32,12 @@ BAND_PYTHON_KIT_DOCKERFILE = KIT_DIR / "spec.yaml"
 # needs to add into its own @pytest.mark.timeout on top of the rest of its
 # body's budget — named so the two can't drift apart again.
 BUILD_TIMEOUT_S = 600
+# pytest-timeout also bounds fixture setup, so a docker_build test's timeout
+# must absorb a cold session image build plus its own fast body.
+BUILD_TEST_TIMEOUT_S = BUILD_TIMEOUT_S + 60
 WORKLOAD_REFERENCE = "band-workload:validation"
+# Default prefix for every tag and container name this toolkit creates.
+NAME_PREFIX = "pytest-docker"
 
 
 @dataclass(frozen=True)
@@ -53,7 +58,7 @@ class Image:
         dockerfile: Path,
         *,
         build_args: dict[str, str] | None = None,
-        tag_prefix: str = "pytest-docker",
+        tag_prefix: str = NAME_PREFIX,
         target: str | None = None,
     ) -> Iterator[Image]:
         """Build ``dockerfile`` against the repo root; yield the image, then remove it."""
@@ -73,15 +78,24 @@ class Image:
         for key, value in (build_args or {}).items():
             command += ["--build-arg", f"{key}={value}"]
         command.append(str(REPO_ROOT))
-        subprocess.run(
-            command, capture_output=True, text=True, check=True, timeout=BUILD_TIMEOUT_S
-        )
+        # Remove the tag even if a timed-out build already loaded it.
         try:
+            run_cli_subprocess(command, timeout=BUILD_TIMEOUT_S)
             yield cls(tag)
         finally:
             subprocess.run(
                 ["docker", "rmi", "-f", tag], capture_output=True, check=False
             )
+
+    def run_entrypoint(self) -> subprocess.CompletedProcess[str]:
+        """Run the image's own entrypoint once (``docker run --rm``) without raising."""
+        return subprocess.run(
+            ["docker", "run", "--rm", self.tag],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
 
 @dataclass(frozen=True)
@@ -101,12 +115,8 @@ class OciLayout:
             archive = destination / "workload.tar"
             project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
             version = project["project"]["version"]
-            revision = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=REPO_ROOT,
-                check=True,
-                capture_output=True,
-                text=True,
+            revision = run_cli_subprocess(
+                ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"], timeout=30
             ).stdout.strip()
             command = [
                 "docker",
@@ -166,6 +176,20 @@ class OciLayout:
         )
 
 
+def container_ids(name_prefix: str) -> list[str]:
+    """IDs of every container, running or not, whose name starts with ``name_prefix``."""
+    listing = run_cli_subprocess(
+        ["docker", "ps", "-aq", "--filter", f"name=^{name_prefix}"], timeout=30
+    )
+    return listing.stdout.split()
+
+
+def remove_containers(name_prefix: str) -> None:
+    """Force-remove every container whose name starts with ``name_prefix``."""
+    if ids := container_ids(name_prefix):
+        run_cli_subprocess(["docker", "rm", "-f", *ids], timeout=30)
+
+
 @dataclass(frozen=True)
 class Container:
     """A running container, with intent-oriented helpers for driving it.
@@ -183,7 +207,7 @@ class Container:
         cls,
         image: Image | str,
         *,
-        name_prefix: str = "pytest-docker",
+        name_prefix: str = NAME_PREFIX,
         env: dict[str, str] | None = None,
         command: list[str] | None = None,
         entrypoint: str | None = "bash",
@@ -199,10 +223,9 @@ class Container:
             run_command += ["--entrypoint", entrypoint]
         run_command.append(tag)
         run_command += command or ["-c", f"sleep {keep_alive_seconds}"]
-        subprocess.run(
-            run_command, capture_output=True, text=True, check=True, timeout=30
-        )
+        # Docker may create the container and then fail to start it.
         try:
+            run_cli_subprocess(run_command, timeout=30)
             yield cls(name)
         finally:
             subprocess.run(
@@ -219,10 +242,7 @@ class Container:
         if user is not None:
             docker_command += ["--user", user]
         docker_command += [self.name, "bash", "-c", command]
-        result = subprocess.run(
-            docker_command, capture_output=True, text=True, check=True, timeout=timeout
-        )
-        return result.stdout.strip()
+        return run_cli_subprocess(docker_command, timeout=timeout).stdout.strip()
 
     def exec_background(self, command: str, *, user: str | None = None) -> None:
         """Start ``command`` detached (``docker exec -d``) inside the container.
@@ -234,9 +254,7 @@ class Container:
         if user is not None:
             docker_command += ["--user", user]
         docker_command += [self.name, "bash", "-c", command]
-        subprocess.run(
-            docker_command, capture_output=True, text=True, check=True, timeout=10
-        )
+        run_cli_subprocess(docker_command, timeout=10)
 
     def run_python(
         self,

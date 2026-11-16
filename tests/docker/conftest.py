@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
@@ -13,9 +15,12 @@ from dotenv import load_dotenv
 from band.client.rest import aclose_rest_client
 from tests.docker.toolkit.docker_cli import (
     BAND_PYTHON_KIT_DOCKERFILE,
+    NAME_PREFIX,
     Container,
     Image,
     OciLayout,
+    container_ids,
+    remove_containers,
 )
 from tests.docker.toolkit.live_agent import live_containerized_echo_agent
 
@@ -74,6 +79,38 @@ async def live_containerized_agent(
         label="live-container",
     ) as result:
         yield result
+
+
+@pytest.fixture
+def container_name_prefix() -> Iterator[str]:
+    """A unique container-name prefix; every container under it is reaped."""
+    prefix = f"{NAME_PREFIX}-{uuid.uuid4().hex[:8]}"
+    yield prefix
+    remove_containers(prefix)
+    assert container_ids(prefix) == [], f"containers under {prefix} survived cleanup"
+
+
+@pytest.fixture
+def failing_docker(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Make every ``docker`` command exit 1 with this stderr diagnostic.
+
+    Only the external Docker CLI is doubled, by a real failing process; every
+    other command still runs for real.
+    """
+    diagnostic = "docker: daemon rejected the request"
+    run = subprocess.run
+
+    def docker_peer(command: list[str], **kwargs: Any) -> Any:
+        if command[0] == "docker":
+            command = [
+                sys.executable,
+                "-c",
+                f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)",
+            ]
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", docker_peer)
+    return diagnostic
 
 
 @pytest.fixture(scope="session")

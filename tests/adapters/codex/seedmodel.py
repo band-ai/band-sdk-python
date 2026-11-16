@@ -14,7 +14,8 @@ from typing import Any
 import pytest
 from hypothesis import strategies as st
 
-from band.adapters.codex import SYSTEM_CONTEXT_PREFIX, CodexAdapter, CodexAdapterConfig
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex.adapter import SYSTEM_CONTEXT_PREFIX
 from band.converters.codex import CODEX_RESUME_RECORD
 from band.converters.helpers import HISTORY_REPLAY_HEADER
 from band.core.protocols import TurnResultAlreadyReported

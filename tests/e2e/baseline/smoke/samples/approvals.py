@@ -43,21 +43,16 @@ from band.adapters.claude_sdk import (
     APPROVAL_TIMED_OUT_TEMPLATE as CLAUDE_TIMED_OUT,
 )
 from band.adapters.codex import (
-    APPROVAL_REQUESTED_TEMPLATE as CODEX_REQUESTED,
-)
-from band.adapters.codex import (
-    APPROVAL_RESOLVED_TEMPLATE as CODEX_RESOLVED,
-)
-from band.adapters.codex import (
-    APPROVAL_TIMED_OUT_TEMPLATE as CODEX_TIMED_OUT,
-)
-from band.adapters.codex import (
-    NO_APPROVALS_TO_RESOLVE_MESSAGE,
     CodexAdapter,
     CodexAdapterConfig,
     CodexCommand,
     CodexSandboxMode,
 )
+from band.adapters.codex.approvals import approval_summary as codex_approval_summary
+from band.adapters.codex.commands import APPROVAL_REQUESTED_TEMPLATE as CODEX_REQUESTED
+from band.adapters.codex.commands import APPROVAL_RESOLVED_TEMPLATE as CODEX_RESOLVED
+from band.adapters.codex.commands import APPROVAL_TIMED_OUT_TEMPLATE as CODEX_TIMED_OUT
+from band.adapters.codex.commands import NO_APPROVALS_TO_RESOLVE_MESSAGE
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.opencode.approvals.commands import PermissionReplyWord
 from band.adapters.opencode.approvals.wording import (
@@ -646,7 +641,7 @@ DIALECTS: dict[Adapter, ApprovalDialect] = {
         notice=_codex_notice,
         late_notice=lambda _request: Notice(NO_APPROVALS_TO_RESOLVE_MESSAGE),
         shell_command=_summary_command(
-            CodexAdapter._approval_summary(
+            codex_approval_summary(
                 CodexApprovalMethod.COMMAND_EXECUTION, {"command": "{command}"}
             )
         ),
