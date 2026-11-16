@@ -8,8 +8,8 @@ from band.adapters.claude_sdk import (
     APPROVAL_REQUESTED_TEMPLATE as CLAUDE_REQUESTED,
 )
 from band.adapters.claude_sdk import ClaudeSDKAdapter
-from band.adapters.codex import APPROVAL_REQUESTED_TEMPLATE as CODEX_REQUESTED
 from band.adapters.codex import CodexAdapter
+from band.adapters.codex.commands import APPROVAL_REQUESTED_TEMPLATE as CODEX_REQUESTED
 from band.adapters.opencode.approvals.wording import APPROVAL_REQUESTED_TEMPLATE
 from band.integrations.acp.cursor import PERMISSION_REQUESTED_TEMPLATE
 from band.integrations.codex.types import CodexApprovalMethod

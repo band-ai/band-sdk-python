@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from band.adapters.codex import (
-    _MESSAGE_ITEM_TYPES,
-    _REQUESTED_TOOL_ITEM_TYPES,
-    _ROUTING_ITEM_TYPES,
-    _THOUGHT_ITEM_TYPES,
-    _TOOL_ITEM_TYPES,
-    CodexAdapter,
-    CodexAdapterConfig,
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex.items import (
+    MESSAGE_ITEM_TYPES,
+    REQUESTED_TOOL_ITEM_TYPES,
+    ROUTING_ITEM_TYPES,
+    THOUGHT_ITEM_TYPES,
+    TOOL_ITEM_TYPES,
 )
 from band.integrations.codex.types import (
     CodexApprovalMethod,
@@ -181,11 +180,11 @@ class TestCodexTypes:
         """
 
         buckets = (
-            _TOOL_ITEM_TYPES,
-            _REQUESTED_TOOL_ITEM_TYPES,
-            _THOUGHT_ITEM_TYPES,
-            _MESSAGE_ITEM_TYPES,
-            _ROUTING_ITEM_TYPES,
+            TOOL_ITEM_TYPES,
+            REQUESTED_TOOL_ITEM_TYPES,
+            THOUGHT_ITEM_TYPES,
+            MESSAGE_ITEM_TYPES,
+            ROUTING_ITEM_TYPES,
         )
 
         assert set().union(*buckets) == set(CodexItemType)

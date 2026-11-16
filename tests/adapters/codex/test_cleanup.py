@@ -7,10 +7,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-    PendingApproval,
-)
+from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex.approvals import PendingApproval
 from band.runtime.decisions import DecisionRegistry
 from tests.adapters.codex.kit import (
     ROOM_ID,

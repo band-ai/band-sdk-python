@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import (
-    _MAX_DIFF_METADATA_BYTES,
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex.adapter import _MAX_DIFF_METADATA_BYTES
 from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,
     send_bootstrap,

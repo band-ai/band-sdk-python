@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapter,
-    CodexCommand,
-)
+from band.adapters.codex import CodexAdapter, CodexCommand
 
 
 class TestSlashCommandExtraction:

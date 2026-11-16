@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapter,
-    CodexCommand,
-    CodexContinuityError,
-    CodexSubcommand,
-)
+from band.adapters.codex import CodexAdapter, CodexCommand
+from band.adapters.codex.commands import CodexSubcommand
+from band.adapters.codex.turnstate import CodexContinuityError
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import CodexJsonRpcError
 from tests.adapters.lifecycle.kit import RetentionHost

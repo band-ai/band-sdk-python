@@ -6,9 +6,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.codex import (
-    CodexCommand,
-)
+from band.adapters.codex import CodexCommand
 from band.runtime.decisions import APPROVAL_NOT_PENDING_TEMPLATE
 from band.testing import events_of_type
 from tests.adapters.codex.kit import (

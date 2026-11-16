@@ -6,7 +6,8 @@ import logging
 
 import pytest
 
-from band.adapters.codex import TRANSPORT_LOST_ERROR, CodexAdapterConfig
+from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex.turnstate import TRANSPORT_LOST_ERROR
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,

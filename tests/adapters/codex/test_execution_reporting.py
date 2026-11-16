@@ -7,9 +7,7 @@ import json
 import pytest
 from pydantic import BaseModel
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 from band.core.types import Emit
 from band.runtime.custom_tools import CustomToolDef
 from band.testing import (

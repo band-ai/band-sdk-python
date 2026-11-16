@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from band.adapters.codex import SYSTEM_CONTEXT_PREFIX
+from band.adapters.codex.adapter import SYSTEM_CONTEXT_PREFIX
 from band.agent import Agent
 from band.converters.codex import CODEX_RESUME_RECORD
 from band.integrations.codex import CodexJsonRpcError

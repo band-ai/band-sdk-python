@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 
-from band.adapters.codex import SYSTEM_CONTEXT_PREFIX, CodexAdapter
+from band.adapters.codex import CodexAdapter
+from band.adapters.codex.adapter import SYSTEM_CONTEXT_PREFIX
 from band.agent import Agent
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.types import AgentInput
