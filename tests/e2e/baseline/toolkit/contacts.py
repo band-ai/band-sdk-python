@@ -69,9 +69,9 @@ class ContactInbox:
             raise RuntimeError("no contact event has been delivered yet")
         return self._tools
 
-    async def wait_for(self, kind: type[EventT], *, deadline_s: float) -> EventT:
-        """Return the first delivered event of ``kind``; raise on the deadline."""
-        async with asyncio.timeout(deadline_s), self._arrived:
+    async def wait_for(self, kind: type[EventT]) -> EventT:
+        """Return the first delivered event of ``kind``, under the caller's deadline."""
+        async with self._arrived:
             return await self._arrived.wait_for(lambda: self._first(kind))
 
     def _first(self, kind: type[EventT]) -> EventT | None:

@@ -21,13 +21,11 @@ from typing import Any
 import pytest
 
 from band.adapters.letta import LettaAdapter
-from band.integrations.letta import SEND_MESSAGE_TOOL_NAMES
 from band.integrations.letta.config import is_letta_cloud_url
 from band.integrations.letta.orgscope import resolve_org_scoped_headers
+from band.runtime.tools import BandTool
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ProvisionedAgent
-
-SEND_MESSAGE_TOOL = SEND_MESSAGE_TOOL_NAMES[0]
 
 
 @asynccontextmanager
@@ -65,10 +63,14 @@ async def create_agent(client: Any, adapter: LettaAdapter) -> str:
 
 async def send_tool_server_id(client: Any) -> object:
     """The MCP server id on the send-tool row ``client``'s org resolves."""
-    rows = [tool async for tool in client.tools.list(name=SEND_MESSAGE_TOOL)]
-    assert len(rows) == 1, f"expected one {SEND_MESSAGE_TOOL!r} row, got {len(rows)}"
+    rows = [tool async for tool in client.tools.list(name=BandTool.SEND_MESSAGE)]
+    assert len(rows) == 1, (
+        f"expected one {BandTool.SEND_MESSAGE!r} row, got {len(rows)}"
+    )
     metadata = rows[0].metadata
-    assert metadata is not None, f"{SEND_MESSAGE_TOOL!r} row carries no MCP metadata"
+    assert metadata is not None, (
+        f"{BandTool.SEND_MESSAGE!r} row carries no MCP metadata"
+    )
     return metadata["mcp"]["server_id"]
 
 
@@ -98,7 +100,8 @@ class TestLettaIdentityIsolation:
             first_org = await stack.enter_async_context(
                 org_client(first, first_identity)
             )
-            # Created before any tools.list, which seeds base tools itself.
+            # Before any test-side tools.list, which would seed base tools itself,
+            # so only on_started's seeding can let this agent be created.
             first_agent = await create_agent(first_org, first)
             stack.push_async_callback(first_org.agents.delete, first_agent)
             first_server_before = await send_tool_server_id(first_org)
