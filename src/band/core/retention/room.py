@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 
 Result = TypeVar("Result")
 
+
+class TransitionBudgetTimeout(TimeoutError):
+    """The caller stopped waiting for a room transition within its budget."""
+
+
 # Circuit breaker. One step joins a transition, waits for leases, or runs one
 # release. Settle allows an in-flight join, a lease wait, that release, a
 # stronger cause recorded during it, a confirming pass, and one spare step.
@@ -212,12 +217,18 @@ class RetainedRoom:
         enrolled.set_result(None)
         return task
 
-    async def wait_owned(self, task: asyncio.Task[Any]) -> None:
+    async def wait_owned(
+        self, task: asyncio.Task[Any], *, timeout: float | None = None
+    ) -> None:
         """Wait for accepted work to settle without consuming its outcome.
 
-        Cancellation leaves the target running. Active accepted dependents
-        share a cleanup requester's exemption until their own operation ends.
-        Read ``task.result()`` explicitly when the outcome is needed.
+        Cancellation or an expired ``timeout`` leaves the target running under
+        this room's ownership. Active accepted dependents share a cleanup
+        requester's exemption until their own operation ends. Read
+        ``task.result()`` explicitly when the outcome is needed.
+
+        Raises:
+            TimeoutError: ``timeout`` passed before the work settled.
         """
         current = asyncio.current_task()
         if current is task:
@@ -228,9 +239,11 @@ class RetainedRoom:
             raise ValueError("Pending waits require work accepted by this room")
         self._waiting[current] = task
         try:
-            await asyncio.wait({task})
+            await asyncio.wait({task}, timeout=timeout)
         finally:
             self._waiting.pop(current, None)
+        if not task.done():
+            raise TimeoutError(f"Room {self.room_id} owned work exceeded {timeout}s")
 
     def _disown(self, task: asyncio.Task[Any]) -> None:
         self._owned.discard(task)
@@ -419,10 +432,10 @@ class RetainedRoom:
         if not done:
             if initiator:
                 self._abandon_acquisition(transition)
-                raise TimeoutError(
+                raise TransitionBudgetTimeout(
                     f"Room {self.room_id} start abandoned after {timeout}s"
                 )
-            raise TimeoutError(
+            raise TransitionBudgetTimeout(
                 f"Room {self.room_id} transition still running after {timeout}s"
             )
         if transition.cancelled():

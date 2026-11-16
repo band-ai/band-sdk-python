@@ -366,22 +366,16 @@ class TestA2AAdapterMessageFlow:
         assert adapter._tasks == {}, "next turn must start a fresh task"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "state",
-        [TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_AUTH_REQUIRED],
-    )
-    async def test_non_retryable_terminal_task_is_acked_after_error_event(
-        self, adapter: A2AAdapter, state: int
+    async def test_canceled_task_is_acked_after_error_event(
+        self, adapter: A2AAdapter
     ) -> None:
         tools = FakeAgentTools()
-        status_message = (
-            "Please authenticate"
-            if state == TaskState.TASK_STATE_AUTH_REQUIRED
-            else "The task was canceled"
-        )
+        status_message = "The task was canceled"
 
         await adapter._handle_event(
-            task_event(make_task(state, status_message=status_message)),
+            task_event(
+                make_task(TaskState.TASK_STATE_CANCELED, status_message=status_message)
+            ),
             tools,
             "room-123",
             "user-456",
@@ -389,10 +383,53 @@ class TestA2AAdapterMessageFlow:
         )
 
         failures = reported_failures(tools)
-        assert failures, "a non-retryable terminal task must produce an error event"
+        assert failures, "a canceled task must produce an error event"
         assert failures[-1]["message"] == status_message
         assert failures[-1]["provider"] == "a2a"
-        assert failures[-1]["code"] == TaskState.Name(state)
+        assert failures[-1]["code"] == TaskState.Name(TaskState.TASK_STATE_CANCELED)
+
+    @pytest.mark.asyncio
+    async def test_auth_required_is_forwarded_and_kept_for_continuation(
+        self, adapter: A2AAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+
+        await adapter._handle_event(
+            task_event(
+                make_task(
+                    TaskState.TASK_STATE_AUTH_REQUIRED,
+                    status_message="Please authenticate",
+                )
+            ),
+            tools,
+            "room-123",
+            "user-456",
+            "Test User",
+        )
+
+        assert tools.messages_sent[-1]["content"] == "Please authenticate"
+        assert tools.events_sent[-1]["metadata"]["a2a_task_state"] == (
+            "TASK_STATE_AUTH_REQUIRED"
+        )
+
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(
+            return_value=stream(task_event(make_task(artifact_text="authenticated")))
+        )
+        await adapter.on_message(
+            make_platform_message("token"),
+            tools,
+            A2ASessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+        request = adapter._client.send_message.call_args.args[0]
+        assert request.message.task_id == "task-123", (
+            "the next turn must continue the auth-required task"
+        )
+        assert tools.messages_sent[-1]["content"] == "authenticated"
 
     @pytest.mark.asyncio
     async def test_input_required_is_forwarded_and_persisted(

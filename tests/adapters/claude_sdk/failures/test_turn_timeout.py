@@ -8,7 +8,7 @@ import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapterConfig, TurnResultAlreadyReported
 from band.client.streaming import ControlMode
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
+from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from tests.adapters.claude_sdk.fakecli import Hold, StreamFails
 from tests.adapters.claude_sdk.helpers import (
@@ -24,9 +24,8 @@ class TestTurnTimeout:
         self,
         claude_room: OpenRoom,
     ) -> None:
-        """The interrupted turn's own result is drained, so the next turn on the
-        same CLI process reads its own answer. The session was seeded first,
-        so the timeout does not drop it."""
+        """The interrupted turn's own result is drained, then the CLI process is
+        replaced. The next turn resumes the seeded session on a fresh process."""
         room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
         room.claude.script(
             [room.model_reply("Hello.")], [Hold()], [room.model_reply("Back again.")]
@@ -40,7 +39,8 @@ class TestTurnTimeout:
         assert [f["code"] for f in room.reported_failures] == ["timeout"]
         assert room.failures == [f"Claude turn timed out after {TURN_TIMEOUT_S}s"]
         assert room.chat == ["Hello.", "Back again."]
-        assert len(room.claude.sessions) == 1
+        assert [session.alive for session in room.claude.sessions] == [False, True]
+        assert room.claude.resumed == [None, "sess-1"]
 
     async def test_a_turn_that_ignores_the_interrupt_is_closed_and_resumed(
         self, claude_room: OpenRoom, monkeypatch: pytest.MonkeyPatch
@@ -133,7 +133,7 @@ class TestTurnTimeout:
                 )
                 with pytest.raises(CleanupIncompleteError):
                     await room.leave()
-                with pytest.raises(InputNotAccepted):
+                with pytest.raises(RoomClosingError):
                     await room.send("overlap")
                 assert room.claude.sessions[0].alive
                 closing.released.set()

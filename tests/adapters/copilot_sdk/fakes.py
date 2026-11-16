@@ -132,11 +132,24 @@ class HeldRestTools(ToolSchemaFakeTools):
         self.hold_context = False
         self.hold_usage = False
         self.parked = asyncio.Event()
+        self.released = asyncio.Event()
+        # While set, a tool call parks at the platform until ``tool_released``.
+        self.hold_tool_calls = False
+        self.tool_started = asyncio.Event()
+        self.tool_released = asyncio.Event()
 
     async def fetch_room_context(self, **kwargs: Any) -> dict[str, Any]:
         if self.hold_context:
             await self._park()
         return await super().fetch_room_context(**kwargs)
+
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> Any:
+        if self.hold_tool_calls:
+            self.tool_started.set()
+            await self.tool_released.wait()
+        return await super().execute_tool_call_structured(tool_name, arguments)
 
     async def send_event(
         self,
@@ -150,7 +163,7 @@ class HeldRestTools(ToolSchemaFakeTools):
 
     async def _park(self) -> None:
         self.parked.set()
-        await asyncio.Event().wait()  # until the turn is interrupted
+        await self.released.wait()
 
 
 def room_with_earlier_message() -> HeldRestTools:
@@ -254,7 +267,7 @@ class FakeCopilotSession:
         if self.send_error:
             raise self.send_error
         for data in self.turn_events:
-            event = SimpleNamespace(data=data)
+            event = SimpleNamespace(data=data, agent_id=None)
             for handler in list(self.handlers):
                 if callable(data):
                     continue
@@ -285,8 +298,12 @@ class FakeCopilotSession:
         self.journal.append("idle")
         self._publish(SessionIdleData(aborted=True))
 
-    def _publish(self, data: Any) -> None:
-        event = SimpleNamespace(data=data)
+    def deliver_subagent_idle(self) -> None:
+        """A subagent's own idle: it says nothing about the top-level turn."""
+        self._publish(SessionIdleData(), agent_id="subagent-1")
+
+    def _publish(self, data: Any, *, agent_id: str | None = None) -> None:
+        event = SimpleNamespace(data=data, agent_id=agent_id)
         for handler in list(self.handlers):
             handler(event)
 
@@ -321,6 +338,9 @@ class FakeCopilotClient:
         self.delete_error: Exception | None = None
         # While set, a delete never gets an answer from the runtime.
         self.hold_delete = False
+        self.deleting = asyncio.Event()
+        self.delete_released = asyncio.Event()
+        self.resist_delete_cancel = False
         # While set, each new session holds its aborts in flight; ``aborting``
         # is set once an abort reaches any of them.
         self.hold_aborts = False
@@ -330,6 +350,10 @@ class FakeCopilotClient:
         self.create_calls: list[str] = []
         self.hold_create = False
         self.creating = asyncio.Event()
+        self.create_released = asyncio.Event()
+        self.hold_resume = False
+        self.resuming = asyncio.Event()
+        self.resume_released = asyncio.Event()
 
     async def start(self) -> None:
         self.started = True
@@ -343,7 +367,7 @@ class FakeCopilotClient:
         if self.hold_create:
             self.hold_create = False
             self.creating.set()
-            await asyncio.Event().wait()  # until the turn is interrupted
+            await self.create_released.wait()
         if self.create_error:
             raise self.create_error
         session = FakeCopilotSession(
@@ -365,13 +389,22 @@ class FakeCopilotClient:
 
     async def delete_session(self, session_id: str) -> None:
         if self.hold_delete:
-            await asyncio.Event().wait()  # until the caller gives up
+            self.deleting.set()
+            try:
+                await self.delete_released.wait()
+            except asyncio.CancelledError:
+                if not self.resist_delete_cancel:
+                    raise
+                await self.delete_released.wait()
         if self.delete_error:
             raise self.delete_error
         self.deleted.append(session_id)
 
     async def resume_session(self, session_id: str, **kwargs: Any) -> Any:
         self.resume_calls.append(session_id)
+        if self.hold_resume:
+            self.resuming.set()
+            await self.resume_released.wait()
         if self.resume_error:
             raise self.resume_error
         session = FakeCopilotSession(

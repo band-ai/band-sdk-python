@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing
@@ -38,6 +39,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
     send_event_safe,
 )
+from band.core.retention.cleanup import await_owned_result
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn_lifecycle import BackendTurns
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
@@ -55,6 +57,12 @@ from band.integrations.a2a.types import A2AAdapterConfig, A2ASessionState
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "a2a"
+# States that pause the remote task for a later Band turn; one map owns both
+# the emit grouping and the status-or-fallback reply text.
+_CONTINUATION_FALLBACKS = {
+    TaskState.TASK_STATE_INPUT_REQUIRED: "Please provide more information.",
+    TaskState.TASK_STATE_AUTH_REQUIRED: "Authentication is required.",
+}
 
 
 @dataclass
@@ -67,6 +75,9 @@ class A2ATaskRun:
     # Set once the remote reports a terminal state: nothing is left to cancel,
     # even while this turn is still delivering that state.
     finished: bool = False
+
+    def owns(self, task: Task) -> bool:
+        return task.id == self.task_id
 
 
 async def _prepended(
@@ -169,7 +180,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         self._contexts: dict[str, str] = {}  # room_id → A2A context_id
         self._tasks: dict[str, str] = {}  # room_id → last task_id
         self._backend_turns = BackendTurns[A2ATaskRun](
-            self._cancel_task, provider=_PROVIDER
+            self._cancel_task, provider=_PROVIDER, requires_confirmation=True
         )
         self._task_cache: dict[tuple[str, str], Task] = {}
         # Track sender per task for mentions: (room_id, task_id) → sender info
@@ -194,7 +205,18 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 streaming=self.config.streaming, httpx_client=self._http_client
             )
         )
-        self._client = await factory.create_from_url(self.config.remote_url)
+        create = asyncio.ensure_future(factory.create_from_url(self.config.remote_url))
+        try:
+            self._client = await await_owned_result(
+                create,
+                timeout=self.config.transition_timeout_s,
+                label="A2A client setup",
+            )
+        except BaseException:
+            # Budget expiry abandons waiting only; close a late client and the
+            # owned HTTP transport so a failed Agent.start cannot leak them.
+            await self._abandon_client_setup(create)
+            raise
 
         logger.info(
             "Connected to A2A agent at %s (streaming=%s, auth=%s)",
@@ -202,6 +224,34 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             self.config.streaming,
             bool(headers),
         )
+
+    async def _abandon_client_setup(self, create: asyncio.Future[Client]) -> None:
+        """Close setup the start budget abandoned, including a late client."""
+        http, self._http_client = self._http_client, None
+
+        async def discard() -> None:
+            client: Client | None = None
+            try:
+                client = await create
+            except BaseException:
+                logger.debug(
+                    "A2A client setup failed after its start budget", exc_info=True
+                )
+            try:
+                if client is not None:
+                    await client.close()
+            finally:
+                if http is not None:
+                    await http.aclose()
+
+        try:
+            await await_owned_result(
+                discard(),
+                timeout=self.config.transition_timeout_s,
+                label="A2A abandoned client setup close",
+            )
+        except TimeoutError:
+            logger.warning("A2A abandoned client setup close exceeded its budget")
 
     @property
     def backend_turns(self) -> BackendTurns[A2ATaskRun]:
@@ -229,11 +279,9 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             history,
         )
 
-        # A pending tasks/cancel deletes the local continuation, then waits
-        # on the remote. Rehydration and the outgoing message must run after
-        # that wait, or a still-nonterminal resubscribe restores the task
-        # the cancel is about to finish.
-        await self.backend_turns.settled(room_id)
+        # A pending tasks/cancel keeps identity until stop-terminal evidence;
+        # rehydration and the outgoing message must wait for that settlement.
+        await self.backend_turns.require_admission(room_id, tools)
         if is_session_bootstrap and history:
             await self._rehydrate_from_history(room_id, history)
 
@@ -255,8 +303,14 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 )
                 run, read = continued, []
                 if run is None:
-                    run = await self.backend_turns.started(
-                        room_id, _reveal_task(self._client, room_id, events, read)
+                    reveal = asyncio.ensure_future(
+                        _reveal_task(self._client, room_id, events, read)
+                    )
+                    run = await self.backend_turns.start_within(
+                        room_id,
+                        reveal,
+                        timeout=self.config.transition_timeout_s,
+                        label=f"A2A task reveal for room {room_id}",
                     )
                 async for event in _prepended(read, events):
                     await self._handle_event(
@@ -296,11 +350,11 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         self._task_senders.setdefault(key, {"id": sender_id, "name": sender_name or ""})
 
         state = task.status.state
-        if run is not None and state in TERMINAL_TASK_STATES:
+        if run is not None and run.owns(task) and state in TERMINAL_TASK_STATES:
             run.finished = True
         try:
             await self._deliver_task_update(task, tools, self._task_senders[key])
-            if state == TaskState.TASK_STATE_INPUT_REQUIRED:
+            if state in _CONTINUATION_FALLBACKS:
                 await self._emit_task_event(tools, task, state)
         finally:
             # A terminal task must be persisted and released even when Band
@@ -319,6 +373,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                         task.id,
                     )
                 self._finalize_task(room_id, task.id)
+                if run is not None and run.owns(task):
+                    self.backend_turns.confirm_stopped(room_id, run)
 
     async def _deliver_message(
         self,
@@ -347,11 +403,33 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         return task
 
     async def _cancel_task(self, run: A2ATaskRun) -> None:
-        """Release the turn's task and cancel it remotely unless it finished;
-        a cancelled task is never continued."""
-        self._finalize_task(run.room_id, run.task_id)
-        if not run.finished:
-            await run.client.cancel_task(CancelTaskRequest(id=run.task_id))
+        """Cancel remotely and confirm only on matching stop-terminal evidence.
+
+        Local task identity stays until a completed/failed/canceled/rejected
+        Task is observed; auth/input-required are not stop proof. Non-terminal
+        or failed cancel evidence latches the room unavailable.
+        """
+        if run.finished:
+            self._finalize_task(run.room_id, run.task_id)
+            self.backend_turns.confirm_stopped(run.room_id, run)
+            return
+        try:
+            task = await run.client.cancel_task(CancelTaskRequest(id=run.task_id))
+        except BaseException:
+            # CancelledError included: cancel_on_timeout may destroy this call
+            # with no terminal task evidence left to confirm the stop.
+            self.backend_turns.mark_unavailable(run.room_id)
+            raise
+        if (
+            task is not None
+            and run.owns(task)
+            and task.status.state in TERMINAL_TASK_STATES
+        ):
+            run.finished = True
+            self._finalize_task(run.room_id, run.task_id)
+            self.backend_turns.confirm_stopped(run.room_id, run)
+            return
+        self.backend_turns.mark_unavailable(run.room_id)
 
     def _remember_task(self, room_id: str, task: Task) -> None:
         """Record task identity needed for subsequent turns and resumption."""
@@ -373,8 +451,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 await send_event_safe(tools, status_text, "thought")
             return
 
-        if state == TaskState.TASK_STATE_INPUT_REQUIRED:
-            text = self._get_status_text(task) or "Please provide more information."
+        if state in _CONTINUATION_FALLBACKS:
+            text = self._get_status_text(task) or _CONTINUATION_FALLBACKS[state]
             await deliver_reply(tools, text, mentions=[sender])
             return
 
@@ -437,7 +515,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up A2A context for room."""
-        await self.backend_turns.settled(room_id)
+        if not await self.backend_turns.ready_to_forget(room_id):
+            return
         self._contexts.pop(room_id, None)
         self._tasks.pop(room_id, None)
         # A resubscribed task may live in the cache without a sender entry,

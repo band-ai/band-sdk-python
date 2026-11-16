@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -9,13 +10,21 @@ from acp import RequestError
 from acp.schema import LoadSessionResponse
 
 from band.core.model_catalog import ModelSelection
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.retention import Residency
+from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.sessions import (
+    ACP_SESSION_LOAD_TIMEOUT_SECONDS,
+    ACPSessionRestoreError,
+)
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
+from tests.core.retention.kit import ManualClock
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
     FakeACPAgent,
     acp_adapter,
     fake_agent_config,
+    released,
 )
 from tests.integrations.acp.roomownership.kit import (
     fails_prompt,
@@ -23,6 +32,14 @@ from tests.integrations.acp.roomownership.kit import (
     models,
     recover,
 )
+from tests.toolkit.tasks import background
+
+PERSISTED_SESSION = "persisted"
+
+
+def persisted_history() -> ACPClientSessionState:
+    """The bootstrap history that names the room's persisted session."""
+    return ACPClientSessionState(room_to_session={DEFAULT_ROOM: PERSISTED_SESSION})
 
 
 class TestRecovery:
@@ -99,6 +116,65 @@ class TestRecovery:
             assert failed.errors == ["Internal error"]
             assert session.runtime() is not first_runtime
         assert len(agent.prompts) == 1
+
+    @pytest.mark.asyncio
+    async def test_an_unanswered_session_load_creates_no_session_on_that_process(
+        self, loop_clock: ManualClock
+    ) -> None:
+        agent = FakeACPAgent(supports_session_load=True).will_say("ok")
+        agent.knows_session(PERSISTED_SESSION)
+        loading = agent.holds_next_session_load()
+        async with (
+            acp_adapter(agent) as session,
+            background(
+                session.send("hello", bootstrap=True, history=persisted_history())
+            ) as first,
+        ):
+            await loading.received.wait()
+            unanswered = session.runtime()
+            await loop_clock.advance(ACP_SESSION_LOAD_TIMEOUT_SECONDS)
+            with pytest.raises(ACPSessionRestoreError, match="no answer"):
+                await first
+            failed = session.last_reply
+            assert agent.sessions == []
+            assert agent.prompts == []
+
+            loading.release.set()
+            served = await session.send("again")
+
+            assert failed.errors == [GENERIC_PROVIDER_FAILURE_MESSAGE]
+            assert unanswered.closed
+            assert session.runtime() is not unanswered
+            assert served.errors == []
+        assert len(agent.sessions) == 1
+
+    @pytest.mark.asyncio
+    async def test_an_abandoned_session_load_retires_its_process_before_a_new_session(
+        self,
+    ) -> None:
+        agent = FakeACPAgent(supports_session_load=True).will_say("ok")
+        agent.knows_session(PERSISTED_SESSION)
+        loading = agent.holds_next_session_load()
+        async with (
+            acp_adapter(agent) as session,
+            background(
+                session.send("hello", bootstrap=True, history=persisted_history())
+            ) as first,
+        ):
+            await loading.received.wait()
+            unanswered = session.runtime()
+            room = session.room()
+            first.cancel()
+            await asyncio.gather(first, return_exceptions=True)
+            await released(room)
+
+            served = await session.send("again")
+
+            assert unanswered.closed
+            assert session.runtime() is not unanswered
+            assert served.errors == []
+        assert agent.session_load_requests == [PERSISTED_SESSION]
+        assert len(agent.sessions) == 1
 
     @pytest.mark.asyncio
     async def test_a_superseded_generation_cannot_recover_its_successor(

@@ -97,23 +97,30 @@ class ACPSessionOperations(ABC):
         session_id: str,
         mcp_servers: list[object],
     ) -> LoadSessionResponse | None:
-        """Load a persisted session, falling back on an unavailable or failed load."""
+        """Load a persisted session; ``None`` only when the agent has no such session.
+
+        ``None`` means the connection does not advertise ``loadSession`` or the
+        agent explicitly rejected the id as missing, so the caller may start a
+        fresh session. Silence or any other refusal raises, because the load may
+        still complete on this process and a replacement beside it is unsafe.
+
+        Raises:
+            ACPSessionRestoreError: The agent did not answer the load or
+                refused it for a reason other than a missing session.
+        """
         try:
             return await self.restore_session_response(
                 cwd=cwd, session_id=session_id, mcp_servers=mcp_servers
             )
         except ACPSessionRestoreError as error:
-            # Any load failure is equally recoverable: the caller falls back to
-            # a fresh session (with history replay) rather than letting a remote
-            # protocol error kill the bootstrap turn.
             match error.__cause__:
                 case None:
-                    pass
+                    return None
                 case RequestError() as cause if self._is_missing_session_error(cause):
                     logger.info("ACP session %s is no longer available", session_id)
+                    return None
                 case _:
-                    logger.warning("%s; using a new session", error)
-            return None
+                    raise
 
     async def restore_session_response(
         self,

@@ -36,6 +36,7 @@ LOOPBACK = "127.0.0.1"
 ENGINE_WAIT_SECONDS = 15.0
 ENGINE_STOPPED = "engine stopped processing the session"
 PREAMBLE_STOPPED = "preamble generation stopped"
+STOP_CONFIRMED = "stop confirmed; the room admits input again"
 TAG_IS_LIVE = "process_session_tag names the engine's running task"
 # Parlant's exact-zero expiry check needs an integral binary-clock budget.
 RESPONSE_TIMEOUT_SECONDS = 5.0
@@ -97,7 +98,7 @@ async def end_running_turn(mode: ControlMode) -> list[str]:
             await created.wait()
             await nlp.generation_started(preamble[0]).wait()
             await end_turn(adapter, turn, ROOM_ID, mode)
-            return stopped_work(engine, preamble, tools)
+            return await stopped_work(adapter, engine, preamble, tools)
 
 
 @asynccontextmanager
@@ -128,12 +129,19 @@ async def captured_preambles() -> AsyncIterator[
             await asyncio.gather(*children, return_exceptions=True)
 
 
-def stopped_work(
-    engine: asyncio.Task[Any], preamble: list[asyncio.Task[Any]], tools: FakeAgentTools
+async def stopped_work(
+    adapter: ParlantAdapter,
+    engine: asyncio.Task[Any],
+    preamble: list[asyncio.Task[Any]],
+    tools: FakeAgentTools,
 ) -> list[str]:
+    reopened = adapter.backend_turns.blocker(ROOM_ID) is None
+    if reopened:
+        await adapter.backend_turns.require_admission(ROOM_ID, tools)
     return [
         *([ENGINE_STOPPED] if engine.done() else []),
         *([PREAMBLE_STOPPED] if preamble and all(t.done() for t in preamble) else []),
+        *([STOP_CONFIRMED] if reopened else []),
         *(f"posted {sent}" for sent in tools.messages_sent),
     ]
 
@@ -171,7 +179,7 @@ async def response_timeout() -> list[str]:
             ):
                 await adapter.on_event(turn_input(tools))
             [engine] = processing
-            return stopped_work(engine, preamble, tools)
+            return await stopped_work(adapter, engine, preamble, tools)
         finally:
             for parent in processing:
                 parent.cancel()
@@ -223,14 +231,14 @@ CASES: dict[str, StopCase] = {
     **{
         f"{mode}-mid-turn": engine_case(
             run=lambda mode=mode: end_running_turn(mode),
-            expected=[ENGINE_STOPPED, PREAMBLE_STOPPED],
+            expected=[ENGINE_STOPPED, PREAMBLE_STOPPED, STOP_CONFIRMED],
         )
         for mode in ENDING_CONTROLS
     },
     "tag-matches-the-engine": engine_case(run=tag_parity, expected=[TAG_IS_LIVE]),
     "response-timeout": engine_case(
         run=response_timeout,
-        expected=[ENGINE_STOPPED, PREAMBLE_STOPPED],
+        expected=[ENGINE_STOPPED, PREAMBLE_STOPPED, STOP_CONFIRMED],
     ),
     "idle-room": engine_case(run=idle, expected=[]),
 }

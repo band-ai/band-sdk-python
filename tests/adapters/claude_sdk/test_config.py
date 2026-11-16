@@ -101,9 +101,8 @@ class TestHostConfig:
     ) -> None:
         """The unanswered approval declines at 60s, inside the 120s turn limit;
         the model then stalls, so the turn limit interrupts it and reports a
-        timeout. The interrupted turn is drained, so the same CLI process answers
-        the next message with its own reply (the session was seeded first, so
-        the timeout does not drop it)."""
+        timeout. The interrupted turn is drained, then its CLI process is replaced:
+        the next message resumes the seeded session on a fresh process."""
         room = await claude_room(
             host_config(
                 tmp_path, turn_timeout_s=120, approvals={"timeout_decision": "decline"}
@@ -128,7 +127,7 @@ class TestHostConfig:
         ]
         assert room.tool_outputs["Bash"] == "Approval timed out, tool use declined"
         assert [failure["code"] for failure in room.reported_failures] == ["timeout"]
-        assert [session.alive for session in room.claude.sessions] == [True]
+        assert [session.alive for session in room.claude.sessions] == [False, True]
 
     @pytest.mark.parametrize(
         ("changes", "error"),

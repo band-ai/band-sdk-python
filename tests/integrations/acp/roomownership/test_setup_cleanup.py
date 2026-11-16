@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from band.core.exceptions import CleanupIncompleteError
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.integrations.acp.session_config import ACPConfigRequest
 from tests.adapters.hold import Hold
 from tests.adapters.waiting import until
@@ -19,9 +20,41 @@ from tests.integrations.acp.acp_toolkit import (
 )
 from tests.integrations.acp.acp_toolkit.mcpresolver import HeldResolver
 from tests.mcpbackends import backends_created_by
+from tests.toolkit.tasks import background
 
 
 class TestSetupCleanup:
+    async def test_a_session_new_that_never_answers_fails_at_the_transition_bound(
+        self, loop_clock: ManualClock
+    ) -> None:
+        agent = FakeACPAgent().will_say("ok")
+        creating = agent.holds_next_new_session()
+        config = fake_agent_config()
+        async with (
+            acp_adapter(agent, config) as acp,
+            background(acp.send("hello")) as first,
+        ):
+            await creating.received.wait()
+            room, unanswered = acp.room(), acp.runtime()
+            setup = room.session_setup
+            assert setup is not None
+            await loop_clock.advance(config.retention.transition_timeout_s)
+            with pytest.raises(TimeoutError):
+                await first
+            failed = acp.last_reply
+            # The failed turn leaves the setup owned by the room, not forgotten.
+            assert room.abandoned_setup is setup
+            assert room.setup_observer is not None and room.setup_observer.abandoned
+            assert agent.sessions == []
+
+            served = await acp.send("again")
+
+            assert failed.errors == [GENERIC_PROVIDER_FAILURE_MESSAGE]
+            assert setup.done() and unanswered.closed
+            assert acp.runtime() is not unanswered
+            assert served.errors == []
+        assert len(agent.sessions) == 1
+
     @pytest.mark.parametrize("cleanup", ["leave", "cleanup_all", "stop"])
     async def test_abandoned_settlement_dependency_survives_callback_cleanup(
         self, cleanup: str

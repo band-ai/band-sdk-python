@@ -23,6 +23,7 @@ from tests.adapters.codexturns import (
     tool_call_request,
     turn_completed,
 )
+from tests.adapters.waiting import until
 from tests.runtime.activityownership.kit import ActivityPlatform
 from tests.runtime.helpers import ALICE
 
@@ -68,7 +69,13 @@ class TestCodexBackgroundCommands:
                 )
                 await client.turn_started.wait()
                 await client.read_by_adapter()
-                assert recorder.activity.detail == tool_call_activity("mcp:docs/search")
+                await until(
+                    lambda: (
+                        recorder.activity.detail
+                        == tool_call_activity("mcp:docs/search")
+                    ),
+                    failure="new turn never showed its activity",
+                )
                 resource.owner.terminate()
                 assert await client.stops.get() == {
                     "threadId": FIRST_THREAD_ID,

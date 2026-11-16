@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic import Field
+from pydantic import Field, PositiveFloat
 
-from band.core.adapterconfig import BaseAdapterConfig
+from band.core.adapterconfig import A2A_TRANSITION_TIMEOUT_S, BaseAdapterConfig
 
 
 class A2AAuth(BaseAdapterConfig):
@@ -54,11 +54,15 @@ class A2AAdapterConfig(BaseAdapterConfig):
         streaming: Whether to use streaming mode (SSE) for responses. Without
             it (or when the remote's card does not advertise it) a new task's
             first event is its final answer, so a STOP cannot cancel that task.
+        transition_timeout_s: Max seconds for setup and first-task-identity
+            gates. Matches the existing transport-gap baseline; expiry abandons
+            waiting only and does not set a total model-turn limit.
     """
 
     remote_url: str
     auth: A2AAuth | None = None
     streaming: bool = True
+    transition_timeout_s: PositiveFloat = A2A_TRANSITION_TIMEOUT_S
 
 
 @dataclass

@@ -118,7 +118,7 @@ class TestSessionSeeding:
         room.claude.script([room.model_reply("hi")], [room.model_reply("back")])
 
         await room.send("hello", history=(said("Alice", FACT),))
-        room.claude.sessions[-1].die()
+        room.claude.sessions[-1].die(closes_output=False)
         with pytest.raises(TurnResultAlreadyReported):
             await room.send("are you there?")
         await room.send("hello again")

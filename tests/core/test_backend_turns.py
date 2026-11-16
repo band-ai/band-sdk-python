@@ -7,7 +7,9 @@ import logging
 
 import pytest
 
+from band.core.exceptions import ProviderUnavailableError
 from band.core.turn_lifecycle import BACKEND_CANCEL_TIMEOUT_SECONDS, BackendTurns
+from band.testing import FakeAgentTools
 from tests.core.recordingcancel import RecordingCancel
 
 ROOM = "room-1"
@@ -191,9 +193,165 @@ class TestBackendTurns:
 
         assert loop.time() - started == BACKEND_CANCEL_TIMEOUT_SECONDS
         assert cancel.finished == []
+        assert not turns.unavailable(ROOM)
+        assert turns.blocker(ROOM) is not None
         assert [(r.levelno, r.exc_info and r.exc_info[0]) for r in caplog.records] == [
             (logging.WARNING, TimeoutError)
         ]
+
+    @pytest.mark.looptime
+    async def test_failed_cancelled_start_confirms_without_unavailable(
+        self, turns: BackendTurns[str], cancel: RecordingCancel
+    ) -> None:
+        refused = asyncio.get_running_loop().create_future()
+        await self.cancel_while_starting(turns, refused)
+        refused.set_exception(RuntimeError("setup failed"))
+        await turns.drain()
+
+        assert cancel.sent == []
+        assert turns.unconfirmed_handle(ROOM) is None
+        assert not turns.unavailable(ROOM)
+        await turns.require_admission(ROOM, FakeAgentTools())
+
+    @pytest.mark.looptime
+    async def test_stop_deadline_keeps_unconfirmed_until_matching_confirm(
+        self, cancel: RecordingCancel
+    ) -> None:
+        cancel.hold()
+        turns = BackendTurns(cancel, provider="test", requires_confirmation=True)
+        async with turns.running(ROOM, HANDLE):
+            turns.cancel(ROOM)
+        await turns.settled(ROOM)
+        assert not turns.unavailable(ROOM)
+        assert turns.blocker(ROOM) is not None
+        turns.confirm_stopped(ROOM, HANDLE)
+        cancel.release.set()
+        await turns.require_admission(ROOM, FakeAgentTools())
+
+    @pytest.mark.looptime
+    async def test_cancel_cancelled_without_evidence_can_latch_unavailable(
+        self,
+    ) -> None:
+        """Cancel callables that own the only evidence latch on CancelledError."""
+        entered = asyncio.Event()
+
+        async def cancel_task(handle: str) -> None:
+            entered.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                turns.mark_unavailable(ROOM)
+                raise
+
+        turns = BackendTurns(cancel_task, provider="test", requires_confirmation=True)
+        async with turns.running(ROOM, HANDLE):
+            turns.cancel(ROOM)
+            await entered.wait()
+        await turns.settled(ROOM)
+        assert turns.unavailable(ROOM)
+        with pytest.raises(ProviderUnavailableError):
+            await turns.require_admission(ROOM, FakeAgentTools())
+
+    @pytest.mark.looptime
+    async def test_start_within_cancel_enrolls_late_cleanup(
+        self, cancel: RecordingCancel
+    ) -> None:
+        turns = BackendTurns(cancel, provider="test", requires_confirmation=True)
+        release = asyncio.Event()
+        prepared = asyncio.Event()
+
+        async def prepare() -> str:
+            prepared.set()
+            await release.wait()
+            return HANDLE
+
+        async def turn() -> None:
+            async with turns.running(ROOM):
+                await turns.start_within(
+                    ROOM, prepare(), timeout=30.0, label=f"setup for {ROOM}"
+                )
+
+        task = asyncio.create_task(turn())
+        await prepared.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert turns.stopping(ROOM)
+        release.set()
+        await turns.drain()
+        assert cancel.sent == [HANDLE]
+        turns.confirm_stopped(ROOM, HANDLE)
+        await turns.require_admission(ROOM, FakeAgentTools())
+
+    @pytest.mark.looptime
+    async def test_start_within_timeout_enrolls_late_cleanup(
+        self, cancel: RecordingCancel
+    ) -> None:
+        turns = BackendTurns(cancel, provider="test", requires_confirmation=True)
+        release = asyncio.Event()
+        prepared = asyncio.Event()
+
+        async def prepare() -> str:
+            prepared.set()
+            await release.wait()
+            return HANDLE
+
+        async def turn() -> None:
+            async with turns.running(ROOM):
+                await turns.start_within(
+                    ROOM, prepare(), timeout=0.05, label=f"setup for {ROOM}"
+                )
+
+        task = asyncio.create_task(turn())
+        await prepared.wait()
+        with pytest.raises(TimeoutError):
+            await task
+        assert not turns.unavailable(ROOM)
+        release.set()
+        await turns.drain()
+        assert cancel.sent == [HANDLE]
+        turns.confirm_stopped(ROOM, HANDLE)
+        await turns.require_admission(ROOM, FakeAgentTools())
+
+    @pytest.mark.looptime
+    async def test_start_within_provider_timeout_does_not_abandon_the_wait(
+        self, cancel: RecordingCancel
+    ) -> None:
+        turns = BackendTurns(cancel, provider="test", requires_confirmation=True)
+
+        async def prepare() -> str:
+            raise TimeoutError("provider refused the start")
+
+        with pytest.raises(TimeoutError, match="provider refused the start"):
+            async with turns.running(ROOM):
+                await turns.start_within(
+                    ROOM, prepare(), timeout=30.0, label=f"setup for {ROOM}"
+                )
+        assert not turns.stopping(ROOM)
+        assert turns.blocker(ROOM) is None
+        assert cancel.sent == []
+        await turns.require_admission(ROOM, FakeAgentTools())
+
+    @pytest.mark.looptime
+    async def test_failed_start_keeps_abandon_start_unavailable(
+        self, cancel: RecordingCancel
+    ) -> None:
+        turns = BackendTurns(cancel, provider="test", requires_confirmation=True)
+        started_prep = asyncio.Event()
+
+        async def prepare() -> str:
+            started_prep.set()
+            await asyncio.sleep(0)
+            turns.abandon_start(ROOM)
+            raise RuntimeError("create failed after possible acceptance")
+
+        prepare_fut = asyncio.ensure_future(prepare())
+        await started_prep.wait()
+        turns.abandon_start_wait(ROOM, prepare_fut)
+        await turns.drain()
+        assert turns.unavailable(ROOM)
+        with pytest.raises(ProviderUnavailableError):
+            await turns.require_admission(ROOM, FakeAgentTools())
 
     @pytest.mark.parametrize("ending", [TimeoutError, RuntimeError, None])
     async def test_a_turn_that_ends_itself_sends_nothing(

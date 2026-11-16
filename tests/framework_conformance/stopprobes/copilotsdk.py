@@ -10,8 +10,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 
+import pytest
+
 from band.adapters.copilot_sdk import CopilotSDKAdapter
 from band.client.streaming import ControlMode
+from band.core.exceptions import InputNotAccepted
 from band.runtime.tools import BandTool
 from band.testing.fake_tools import FakeAgentTools
 from tests.adapters.copilot_sdk.fakes import (
@@ -21,7 +24,6 @@ from tests.adapters.copilot_sdk.fakes import (
     ToolSchemaFakeTools,
     make_started_adapter,
 )
-from tests.adapters.waiting import spin
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     StopCase,
@@ -111,40 +113,35 @@ async def end_seeding_turn() -> list[str]:
 
 
 async def next_message_waits_for_the_abort() -> list[str]:
-    """The next message waits for the abort, then runs on the same session."""
+    """The next message is refused until the abort settles, then runs."""
     adapter, client, hang = await started()
     session = await stop_holding(
         adapter, client, hang, FakeAgentTools(participants=[ALICE]), hold_abort
     )
-    next_turn = asyncio.create_task(
-        adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
-    )
-    # The turn blocks inside the context manager that owns the wait, where
-    # ``waiting_on_stop`` cannot see it; a turn that ignored the abort would
-    # prompt the session within these loop turns.
-    await spin()
+    with pytest.raises(InputNotAccepted) as pending:
+        await adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
+    assert pending.value.ready is not None
+    assert len(session.prompts) == 2
     session.abort_released.set()
-    await next_turn
+    await pending.value.ready
+    await adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
     return journal(client)
 
 
 async def next_message_waits_for_the_aborted_idle() -> list[str]:
-    """The next message waits for the idle that ends the aborted turn: arriving
-    after the abort is acknowledged, it would end that message's prompt with no
-    reply."""
+    """The next message is refused until the idle that ends the aborted turn."""
     adapter, client, hang = await started()
     session = await stop_holding(
         adapter, client, hang, FakeAgentTools(participants=[ALICE]), hold_aborted_idle
     )
-    next_turn = asyncio.create_task(
-        adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
-    )
-    # As in ``next_message_waits_for_the_abort``, the wait is out of
-    # ``waiting_on_stop``'s sight: a turn that ignored the idle would prompt the
-    # session within these loop turns.
-    await spin()
+    with pytest.raises(InputNotAccepted) as pending:
+        await adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
+    assert pending.value.ready is not None
+    assert len(session.prompts) == 2
+    await session.aborting.wait()
     session.deliver_aborted_idle()
-    await next_turn
+    await pending.value.ready
+    await adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
     return journal(client)
 
 
@@ -158,8 +155,9 @@ async def late_tool_call_during_held_abort() -> list[str]:
     adapter, client, hang = await started()
     stopped, replacement = ToolSchemaFakeTools(), ToolSchemaFakeTools()
     session = await stop_holding(adapter, client, hang, stopped, hold_abort)
-    next_turn = asyncio.create_task(adapter.on_event(turn_input(replacement)))
-    await spin()
+    with pytest.raises(InputNotAccepted) as pending:
+        await adapter.on_event(turn_input(replacement))
+    assert pending.value.ready is not None
     await session.find_tool(BandTool.SEND_MESSAGE).handler(
         ToolInvocation(
             tool_call_id="late-call",
@@ -168,7 +166,8 @@ async def late_tool_call_during_held_abort() -> list[str]:
         )
     )
     session.abort_released.set()
-    await next_turn
+    await pending.value.ready
+    await adapter.on_event(turn_input(replacement))
     return [
         *(
             f"stopped turn's tools got {call['tool_name']}"
@@ -274,6 +273,8 @@ CASES: dict[str, StopCase] = {
         run=end_seeding_turn,
         expected=[
             "session 1 prompt",
+            "session 1 abort",
+            "session 1 idle",
             "session 1 abort",
             "session 1 idle",
             "session 1 disconnect",

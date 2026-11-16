@@ -42,10 +42,13 @@ Other developers and agents may be working concurrently. Preserve their
 changes, inspect current local and remote state before integrating or pushing,
 and avoid unrelated edits or destructive Git operations.
 
-Never create a `docs/` directory or files under a `docs/` directory at any depth
-in this repository. Keep necessary documentation in existing `README.md` or
-`AGENTS.md` files, or in code docstrings. Keep task plans in scratch files outside
-the repository, following the planning skill.
+Markdown documentation is forbidden unless the developer explicitly asks for
+it (for example a README). Do not create a `docs/` tree at any depth, coverage
+maps, design notes, HOWTOs, suite guides, or other explanatory `.md` files on
+your own. Put coverage and intent in tests or in the code that owns the
+behavior; keep agent guidance in `AGENTS.md` / skill `SKILL.md` files under
+`.claude/skills/`. Keep task plans in scratch files outside the repository,
+following the planning skill.
 
 ## Core Features
 
@@ -470,6 +473,8 @@ files have failure modes plain examples don't. Follow these:
 ## Markdown Snippet Testing
 
 Tracked Markdown outside `examples/` runs through `pytest-markdown-docs` in CI.
+That gate exercises fences in files that already exist or that a developer
+explicitly requested — it is not permission to add documentation `.md` files.
 Runnable Python fences execute as checks:
 
 ```bash

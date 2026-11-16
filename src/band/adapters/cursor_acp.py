@@ -34,7 +34,6 @@ from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
     ACPPermissionRequest,
-    ACPTurn,
     McpServerResolver,
 )
 from band.integrations.acp.client_profiles import (
@@ -212,17 +211,9 @@ def _detach(turn: CursorTurn) -> None:
 class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     """Band adapter for Cursor's native ACP stdio server."""
 
-    async def _cancel_agent_turn(self, turn: ACPTurn) -> None:
-        try:
-            await super()._cancel_agent_turn(turn)
-        finally:
-            # ACP cancellation alone does not confirm that native tools ended.
-            for room in self._rooms.values():
-                if room.runtime is turn.runtime:
-                    self.backend_turns.recovering(
-                        room.room_id, turn, room.retained, generation=room.generation
-                    )
-                    break
+    # Neither ``session/cancel`` nor an answered prompt confirms that Cursor's
+    # native tools ended, so only the release of the turn's own process does.
+    PROMPT_ANSWER_CONFIRMS_STOP: ClassVar[bool] = False
 
     async def _fetch_replay(
         self,
@@ -515,10 +506,6 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             _close_turn(turn)
         self._cancel_room_decisions(room_id)
         await super().on_cleanup(room_id)
-
-    async def _dispose_room(self, room: ACPRoom) -> None:
-        await super()._dispose_room(room)
-        self.backend_turns.confirm_disposed(room.room_id)
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
         """End the room's accepted turn, starting, prompting or parked.

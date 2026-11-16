@@ -7,6 +7,7 @@ with the Band platform.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -31,7 +32,9 @@ from band.adapters.parlant.responses import relay_agent_response
 from band.adapters.parlant.rooms import RoomSessions
 from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
+from band.core.exceptions import CleanupIncompleteError
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
+from band.core.retention.cleanup import await_owned, await_owned_result, spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
@@ -76,8 +79,14 @@ STOP_REASON = "Band turn stopped"
 
 @dataclass(frozen=True)
 class ParlantSessionTurn:
-    """The engine's background processing of one session's response."""
+    """The engine's background processing of one session's response.
 
+    Identifies the turn to ``BackendTurns``: a stopped turn reopens its room
+    only after the parent task, any late preamble, and every plugin body it
+    started have ended.
+    """
+
+    room_id: str
     background_tasks: BackgroundTaskService
     session_id: SessionId
     origin: EngineOrigin
@@ -201,8 +210,9 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
         self._background_tasks: BackgroundTaskService | None = None
         self._started = False
         self._engine_hooks: Any | None = None
+        self._settlements: set[asyncio.Task[None]] = set()
         self._backend_turns = BackendTurns[ParlantSessionTurn](
-            self._cancel_processing, provider=PROVIDER
+            self._cancel_processing, provider=PROVIDER, requires_confirmation=True
         )
 
     def add_guideline(
@@ -286,7 +296,11 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
             )
 
         try:
-            app = await self._lifecycle.start(prepare)
+            app = await await_owned_result(
+                self._lifecycle.start(prepare),
+                timeout=self.config.transition_timeout_s,
+                label="Parlant server start",
+            )
         except BaseException:
             self._forget_guidelines_if_agent_gone()
             raise
@@ -370,6 +384,7 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
         customer message and relay the response to their senders."""
         message_ids = ids_of(messages)
         await self.backend_turns.settled(room_id)
+        await self.backend_turns.require_admission(room_id, tools)
         logger.debug("Handling messages %s in room %s", message_ids, room_id)
         rooms = self._rooms
         if rooms is None:
@@ -391,11 +406,15 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
                 participants=list(tools.participants),
             )
             if is_session_bootstrap and addressed_history:
-                injected = await inject_history(
-                    app=rooms.app,
-                    session_id=session_id,
-                    history=addressed_history,
-                    agent_name=self.agent_name or FALLBACK_AGENT_NAME,
+                injected = await await_owned_result(
+                    inject_history(
+                        app=rooms.app,
+                        session_id=session_id,
+                        history=addressed_history,
+                        agent_name=self.agent_name or FALLBACK_AGENT_NAME,
+                    ),
+                    timeout=self.config.transition_timeout_s,
+                    label=f"Parlant history inject for room {room_id}",
                 )
                 logger.info(
                     "Room %s: Injected %s messages from history", room_id, injected
@@ -449,7 +468,11 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
         tools: AgentToolsProtocol,
     ) -> SessionId:
         try:
-            return await rooms.session_for(room_id, customer_name=customer_name)
+            return await await_owned_result(
+                rooms.session_for(room_id, customer_name=customer_name),
+                timeout=self.config.transition_timeout_s,
+                label=f"Parlant session for room {room_id}",
+            )
         except Exception as e:
             logger.error("Failed to get/create session for room %s: %s", room_id, e)
             await tools.send_failure(
@@ -476,12 +499,16 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
         handle = (
             None
             if self._background_tasks is None
-            else ParlantSessionTurn(self._background_tasks, session_id, origin)
+            else ParlantSessionTurn(room_id, self._background_tasks, session_id, origin)
         )
         async with self.backend_turns.running(room_id, handle):
             try:
-                offset = await post_user_message(
-                    app=app, session_id=session_id, message=user_message
+                offset = await await_owned_result(
+                    post_user_message(
+                        app=app, session_id=session_id, message=user_message
+                    ),
+                    timeout=self.config.transition_timeout_s,
+                    label=f"Parlant post for room {room_id}",
                 )
                 gave_up = await relay_agent_response(
                     app=app,
@@ -492,47 +519,80 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
                     audience=audience,
                     timeout=self.config.response_timeout,
                     poll=self.config.response_poll,
+                    call_timeout=self.config.transition_timeout_s,
                 )
                 if gave_up:
                     await self.backend_turns.stop(room_id)
                 elif handle is not None:
-                    parent = origin.task or processing_task(
-                        handle.background_tasks, session_id
+                    await await_owned_result(
+                        self._join_finished_processing(handle),
+                        timeout=self.config.transition_timeout_s,
+                        label=f"Parlant drain for room {room_id}",
                     )
-                    if parent is not None:
-                        await await_stopped_task(parent)
-                    await origin.drain()
             except BaseException:
                 origin.revoke()
                 await self.backend_turns.stop(room_id)
                 raise
 
     @staticmethod
-    async def _cancel_processing(turn: ParlantSessionTurn) -> None:
-        """Cancel the session's process-session task and its preamble child.
-
-        Parlant 3.3.2's cancel marks the parent and returns without waiting,
-        and the parent does not cancel the preamble task it already created.
-        Waiting for the parent first is what makes that child visible.
-        """
-        turn.origin.revoke()
-        tag = process_session_tag(turn.session_id)
+    async def _join_finished_processing(turn: ParlantSessionTurn) -> None:
+        """Wait for the parent task and plugin bodies of an answered turn."""
         parent = turn.origin.task or processing_task(
             turn.background_tasks, turn.session_id
         )
-        await turn.background_tasks.cancel(tag=tag, reason=STOP_REASON)
         if parent is not None:
             await await_stopped_task(parent)
-        children = live_preamble_tasks(str(turn.session_id))
-        for child in children:
-            child.cancel()
-        for child in children:
-            await await_stopped_task(child)
         await turn.origin.drain()
+
+    async def _cancel_processing(self, turn: ParlantSessionTurn) -> None:
+        """Start the turn's one settlement and wait for it within the stop bound.
+
+        The settlement outlives this wait: an abandoned caller wait proves
+        nothing, so only the settlement's own confirmation reopens the room.
+        """
+        settlement = spawn_owned(
+            self._settle(turn),
+            label=f"{PROVIDER} stop settlement for room {turn.room_id}",
+        )
+        self._settlements.add(settlement)
+        settlement.add_done_callback(self._settlements.discard)
+        await asyncio.shield(settlement)
+
+    async def _settle(self, turn: ParlantSessionTurn) -> None:
+        """End the session's engine work, then confirm the stop.
+
+        Parlant 3.3.2's cancel marks the parent and returns without waiting,
+        and the parent does not cancel the preamble task it already created.
+        Waiting for the parent first is what makes that child visible. The
+        stop is confirmed only once the parent, the preamble and every plugin
+        body have ended; work that resists cancellation keeps the room closed.
+        Settlement failure latches the room unavailable.
+        """
+        try:
+            turn.origin.revoke()
+            parent = turn.origin.task or processing_task(
+                turn.background_tasks, turn.session_id
+            )
+            await turn.background_tasks.cancel(
+                tag=process_session_tag(turn.session_id), reason=STOP_REASON
+            )
+            if parent is not None:
+                await await_stopped_task(parent)
+            children = live_preamble_tasks(str(turn.session_id))
+            for child in children:
+                child.cancel()
+            for child in children:
+                await await_stopped_task(child)
+            await turn.origin.drain()
+        except Exception:
+            self.backend_turns.mark_unavailable(turn.room_id)
+            raise
+        self.backend_turns.confirm_stopped(turn.room_id, turn)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Forget the room's Parlant session when the agent leaves it."""
-        await self.backend_turns.settled(room_id)
+        if not await self.backend_turns.ready_to_forget(room_id):
+            return
         if self._rooms is not None:
             self._rooms.forget(room_id)
         logger.debug("Room %s: Cleaned up Parlant session", room_id)
@@ -540,6 +600,12 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
     async def cleanup_all(self) -> None:
         """Release all sessions and the owned Parlant server (call on stop)."""
         await self.backend_turns.drain()
+        if self._settlements and not await await_owned(
+            set(self._settlements), self.config.transition_timeout_s
+        ):
+            raise CleanupIncompleteError(
+                "Parlant stop settlements still running after their transition budget"
+            )
         if self._engine_hooks is not None:
             self._engine_hooks.on_acknowledging.remove(capture_engine_origin)
             self._engine_hooks = None

@@ -121,8 +121,12 @@ class SeedRoom:
             case Step.CANCEL:
                 async with backgrounded(self.adapter.on_event(inp)) as sending:
                     await until(
-                        lambda: len(self.prompts()) == self.turn_number,
-                        failure="native turn never started",
+                        lambda: (
+                            len(self.prompts()) == self.turn_number
+                            and self.adapter.backend_turns.active_handle(ROOM_ID)
+                            is not None
+                        ),
+                        failure="native turn never revealed its handle",
                     )
                     sending.cancel()
                     with pytest.raises(asyncio.CancelledError):

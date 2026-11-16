@@ -1,13 +1,15 @@
-"""Stop recovery retains unaccepted input until the existing release owner succeeds."""
+"""Stop recovery retains ownership; failed recovery makes the room unavailable."""
 
 from __future__ import annotations
 
-import pytest
-from band_sdk_core import backend_stop_unconfirmed_message
+import asyncio
 
-from band.core.exceptions import InputNotAccepted
-from band.core.turn_lifecycle import BackendTurns
+import pytest
+
+from band.core.exceptions import InputNotAccepted, ProviderUnavailableError
+from band.core.turn_lifecycle import PROVIDER_UNAVAILABLE_MESSAGE, BackendTurns
 from band.testing import FakeAgentTools, failure_reports
+from tests.adapters.hold import Hold
 from tests.core.recordingcancel import RecordingCancel
 from tests.core.retention.kit import ResidenceHost
 
@@ -60,7 +62,7 @@ class TestBackendRecovery:
         assert turns.blocker("room") is current
         assert current is not None and not current.done()
 
-    async def test_failed_release_reports_once_then_safe_recovery_allows_admission(
+    async def test_failed_release_makes_the_room_unavailable_until_confirmed(
         self, host: ResidenceHost
     ) -> None:
         resident = host.room()
@@ -68,26 +70,53 @@ class TestBackendRecovery:
         resident.fail_close = True
         turns = BackendTurns(RecordingCancel(), provider="test")
         tools = FakeAgentTools()
+        handle = "operation"
         turns.recovering(
             "room",
-            "operation",
+            handle,
             resident.room,
             generation=resident.room.snapshot.generation,
         )
-        with pytest.raises(InputNotAccepted) as first:
+        with pytest.raises(ProviderUnavailableError) as first:
             await turns.require_admission("room", tools)
-        with pytest.raises(InputNotAccepted) as second:
+        with pytest.raises(ProviderUnavailableError):
             await turns.require_admission("room", tools)
-        turns.confirm_disposed("room")
-        assert first.value.ready is second.value.ready
-        assert turns.blocker("room") is first.value.ready
+        assert first.value.failure.message == PROVIDER_UNAVAILABLE_MESSAGE
+        assert turns.unavailable("room")
+        assert turns.blocker("room") is None
         assert resident.live
         assert resident.resume_requests == [False]
-        assert failure_reports(tools) == [("test", backend_stop_unconfirmed_message())]
+        assert failure_reports(tools) == [("test", PROVIDER_UNAVAILABLE_MESSAGE)]
 
         resident.fail_close = False
-        await turns.require_admission("room", tools)
-        assert first.value.ready is not None and first.value.ready.done()
+        await resident.room.wait_released(generation=resident.room.generation)
         assert not resident.live
+        await turns.require_admission("room", tools)
         await resident.turn()
         assert resident.resume_requests == [False, False]
+
+    async def test_held_release_defers_until_evidence_then_admits(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        await resident.turn()
+        resident.closing = Hold()
+        turns = BackendTurns(
+            RecordingCancel(), provider="test", requires_confirmation=True
+        )
+        tools = FakeAgentTools()
+        handle = "operation"
+        turns.recovering(
+            "room",
+            handle,
+            resident.room,
+            generation=resident.room.generation,
+        )
+        attempt = asyncio.create_task(turns.require_admission("room", tools))
+        await resident.closing.arrived()
+        assert not attempt.done()
+        assert failure_reports(tools) == []
+        resident.closing.released.set()
+        await attempt
+        assert not resident.live
+        assert turns.blocker("room") is None

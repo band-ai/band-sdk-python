@@ -27,8 +27,14 @@ class CodexContinuityError(RuntimeError):
 
 @dataclass(frozen=True)
 class CodexTurn:
-    """What interrupting one room's running app-server turn needs."""
+    """What interrupting and recovering one room's app-server turn needs.
 
+    ``generation`` is the process the turn was started on, captured before any
+    wait, so a late answer or a replaced process never recovers its successor.
+    """
+
+    room_id: str
+    generation: int
     client: CodexClientProtocol
     thread_id: str
     turn_id: str

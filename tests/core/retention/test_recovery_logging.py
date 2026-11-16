@@ -6,7 +6,7 @@ import logging
 
 import pytest
 
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import ProviderUnavailableError
 from band.core.turn_lifecycle import BackendTurns
 from tests.core.recordingcancel import RecordingCancel
 from tests.core.retention.kit import ResidenceHost
@@ -32,7 +32,7 @@ class TestRecoveryLogging:
         )
         with (
             caplog.at_level(logging.WARNING, logger="band.core.turn_lifecycle"),
-            pytest.raises(InputNotAccepted),
+            pytest.raises(ProviderUnavailableError),
         ):
             await turns.require_admission(
                 SENSITIVE_RECOVERY_DETAIL, ThrowingFailureTools()
@@ -45,6 +45,19 @@ class TestRecoveryLogging:
         assert [
             (record.levelno, record.getMessage(), record.exc_info) for record in records
         ] == [
-            (logging.WARNING, "Backend recovery remains blocked (RuntimeError)", None),
-            (logging.WARNING, "Could not report blocked backend (RuntimeError)", None),
+            (
+                logging.WARNING,
+                "Backend recovery failed (RuntimeError)",
+                None,
+            ),
+            (
+                logging.WARNING,
+                "Marking test room unavailable until matching recovery evidence",
+                None,
+            ),
+            (
+                logging.WARNING,
+                "Could not report unavailable backend (RuntimeError)",
+                None,
+            ),
         ]

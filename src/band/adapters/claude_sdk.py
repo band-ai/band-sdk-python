@@ -113,6 +113,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
+from band.core.retention.cleanup import await_owned_result
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import detached_turn
 from band.core.turn_lifecycle import (
@@ -571,7 +572,9 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
             whatever config sits on the host.
         turn_timeout_s: Seconds a turn may run before it is interrupted and
             a ``timeout`` failure is posted to the room; ``None`` leaves turns
-            unbounded.
+            unbounded. Every timeout replaces the room's CLI process (the next
+            turn resumes the conversation on a fresh one), which also ends any
+            background task that room's CLI was running.
         send_message_dedup_ttl_seconds: Window in which identical
             ``band_send_message`` calls collapse into one post, absorbing CLI
             or MCP transport retries; ``0`` disables it.
@@ -759,20 +762,6 @@ class PendingApproval:
     future: asyncio.Future[ApprovalReply | None]
 
 
-async def _fail_turn(
-    session: ClaudeRoomSession,
-    tools: AgentToolsProtocol,
-    error: Exception,
-    *,
-    reason: str,
-    forget_session: bool = False,
-) -> NoReturn:
-    """Recover the room's CLI, report the turn's failure, and mark it reported."""
-    session.recover(reason, forget_session=forget_session)
-    await tools.send_failure(_TURN_FAILURE)
-    raise TurnResultAlreadyReported(str(error)) from error
-
-
 def __getattr__(name: str) -> Any:
     if name == "BAND_TOOLS":
         warnings.warn(
@@ -906,8 +895,10 @@ class ClaudeSDKAdapter(
         # The TurnTask cancels it for STOP and interrupts; leaving the
         # room cancels it through the RetainedRoom, which fences admission first.
         self._turn_tasks: dict[str, TurnTask] = {}
+        # A stopped CLI is reusable only once its process is released, so
+        # admission waits for that confirmation (or reports the room unavailable).
         self._backend_turns = BackendTurns[str](
-            self._stop_claude_backend, provider=_PROVIDER
+            self._stop_claude_backend, provider=_PROVIDER, requires_confirmation=True
         )
 
     @property
@@ -1047,6 +1038,7 @@ class ClaudeSDKAdapter(
         if session is None or session.activity is None or not isinstance(call_id, str):
             raise ValueError("Claude MCP request has no proven execution origin")
         tools = session.activity.resolve(call_id).tools
+        session.retain_mcp_request()
         shared = self._mcp_room_tools.get(room_id)
         if isinstance(shared, DedupingAgentTools):
             return cast(AgentToolsProtocol, shared.for_origin(tools))
@@ -1307,18 +1299,34 @@ class ClaudeSDKAdapter(
             if self._turn_tasks.get(session.room_id) is owner:
                 del self._turn_tasks[session.room_id]
 
+    def _recover_cli(
+        self, session: ClaudeRoomSession, reason: str, *, forget_session: bool = False
+    ) -> int:
+        """Retire the room's CLI and keep its release in the admission path.
+
+        The room's next turn is admitted only once this process is confirmed
+        released, so a CLI that was interrupted but not proven stopped is never
+        reused. Returns the retired residency's generation.
+        """
+        generation = session.generation
+        session.recover(reason, forget_session=forget_session)
+        self.backend_turns.recovering(
+            session.room_id, session.room_id, session.retained, generation=generation
+        )
+        return generation
+
     async def _stop_claude_backend(self, room_id: str) -> None:
         """Retire the room's CLI when its backend turn is stopped out of band."""
-        if self._session_manager is None:
-            return
-        session = self._session_manager.session(room_id)
-        if session is None:
-            return
-        generation = session.generation
-        session.recover("Turn stopped before its result")
-        self.backend_turns.recovering(
-            room_id, room_id, session.retained, generation=generation
+        session = (
+            self._session_manager.session(room_id)
+            if self._session_manager is not None
+            else None
         )
+        if session is None:
+            # No process to release: nothing is left to confirm.
+            self.backend_turns.confirm_stopped(room_id, room_id)
+            return
+        generation = self._recover_cli(session, "Turn stopped before its result")
         await session.retained.wait_released(generation=generation)
 
     @asynccontextmanager
@@ -1335,7 +1343,11 @@ class ClaudeSDKAdapter(
         try:
             # Before the lease: a replaced server retires the room's CLI, and
             # that recovery runs only while no operation leases the room.
-            await self._mcp.ensure()
+            await await_owned_result(
+                self._mcp.ensure(),
+                timeout=self.config.retention.transition_timeout_s,
+                label=f"Room {session.room_id} Band MCP server start",
+            )
             session.retire_outdated()
             prepare = partial(self._bind_turn, session, tools, resume_from)
             async with session.using(prepare) as client:
@@ -1389,7 +1401,7 @@ class ClaudeSDKAdapter(
                 session.room_id,
                 e,
             )
-            await _fail_turn(
+            await self._fail_turn(
                 session,
                 tools,
                 e,
@@ -1403,11 +1415,27 @@ class ClaudeSDKAdapter(
                 session.room_id,
                 session.generation,
             )
-            await _fail_turn(session, tools, e, reason="Turn failed before its result")
+            await self._fail_turn(
+                session, tools, e, reason="Turn failed before its result"
+            )
 
         except asyncio.CancelledError:
-            session.recover("Turn cancelled before its result")
+            self._recover_cli(session, "Turn cancelled before its result")
             raise
+
+    async def _fail_turn(
+        self,
+        session: ClaudeRoomSession,
+        tools: AgentToolsProtocol,
+        error: Exception,
+        *,
+        reason: str,
+        forget_session: bool = False,
+    ) -> NoReturn:
+        """Recover the CLI through admission ownership and report the failure."""
+        self._recover_cli(session, reason, forget_session=forget_session)
+        await tools.send_failure(_TURN_FAILURE)
+        raise TurnResultAlreadyReported(str(error)) from error
 
     def _release_turn(
         self, room_id: str, release_future: asyncio.Future[None] | None = None
@@ -1479,10 +1507,14 @@ class ClaudeSDKAdapter(
 
         The interrupted turn still streams a final ResultMessage, which the
         next turn on this client would otherwise read as its own. It is
-        drained here from the same reader. A client whose process died is
-        retired with its session; one that is still running but will not stop
-        is retired keeping its session id, so the next message resumes it on
-        a fresh process.
+        drained here from the same reader, within ``_TIMEOUT_DRAIN_SECONDS``.
+
+        A ResultMessage does not prove the CLI stopped its work, so the
+        process is retired after every timeout and the next turn starts on a
+        fresh one that resumes the conversation. Native background tasks
+        running in this room's CLI die with it. A client whose process died
+        also forgets its session id; one that is still running but will not
+        stop keeps it, so the next message resumes it.
         """
         room_id = session.room_id
         logger.warning(
@@ -1490,6 +1522,8 @@ class ClaudeSDKAdapter(
             room_id,
             self.config.turn_timeout_s,
         )
+        reason = "Timed-out turn's CLI process is replaced"
+        forget_session = False
         try:
             async with owner.timed(_TIMEOUT_DRAIN_SECONDS, cleanup=True):
                 await client.interrupt()
@@ -1503,14 +1537,15 @@ class ClaudeSDKAdapter(
                 room_id,
                 exc_info=True,
             )
-            session.recover("Timed-out turn's CLI is gone", forget_session=True)
+            reason, forget_session = "Timed-out turn's CLI is gone", True
         except Exception:
             logger.warning(
                 "Room %s: timed-out Claude turn did not stop; closing its client",
                 room_id,
                 exc_info=True,
             )
-            session.recover("Timed-out turn did not stop")
+            reason = "Timed-out turn did not stop"
+        self._recover_cli(session, reason, forget_session=forget_session)
         return f"Claude turn timed out after {self.config.turn_timeout_s}s"
 
     async def _bind_mcp_tools(self, room_id: str, tools: AgentToolsProtocol) -> None:

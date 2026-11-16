@@ -145,8 +145,12 @@ class FakeACPAgent:
         # Holds the next initialize, as a process slow to start.
         self._initialize_gate: Gate | None = None
         self._session_load_gate: Gate | None = None
+        self._new_session_gate: Gate | None = None
         self._close_gate: Gate | None = None
         self._new_session_error: RequestError | None = None
+        # When set, the in-process pair makes the client's session/cancel raise
+        # this error so an unsent cancel recovers through the real cancel path.
+        self._cancel_error: BaseException | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
@@ -221,6 +225,11 @@ class FakeACPAgent:
         """Hold the next ``session/load`` until release."""
         self._session_load_gate = Gate()
         return self._session_load_gate
+
+    def holds_next_new_session(self) -> Gate:
+        """Hold the next ``session/new`` until release, before creating it."""
+        self._new_session_gate = Gate()
+        return self._new_session_gate
 
     def advertises_models(
         self,
@@ -298,6 +307,13 @@ class FakeACPAgent:
     def breaks_session_load(self, error: RequestError | None = None) -> FakeACPAgent:
         """Make every ``session/load`` fail with a non-missing-session error."""
         self._session_load_error = error or RequestError.internal_error()
+        return self
+
+    def breaks_cancel(self, error: BaseException | None = None) -> FakeACPAgent:
+        """Make the client's ``session/cancel`` fail as an unsent cancel."""
+        self._cancel_error = (
+            error if error is not None else ConnectionError("session cancel failed")
+        )
         return self
 
     def will_stream(self, *parts: str) -> FakeACPAgent:
@@ -763,6 +779,9 @@ class FakeACPAgent:
         self, cwd: str, mcp_servers: Any = None, **kwargs: Any
     ) -> NewSessionResponse:
         del kwargs
+        if (gate := self._new_session_gate) is not None:
+            self._new_session_gate = None
+            await gate.hold()
         if (error := self._new_session_error) is not None:
             self._new_session_error = None
             raise error

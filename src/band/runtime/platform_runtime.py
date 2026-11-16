@@ -192,6 +192,7 @@ class PlatformRuntime:
         on_execute_batch: BatchExecutionHandler | None = None,
         is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
         | None = None,
+        on_execution_created: Callable[[ExecutionContext], None] | None = None,
     ) -> None:
         """
         Start platform runtime (begin processing messages).
@@ -208,6 +209,7 @@ class PlatformRuntime:
                 required when ``SessionConfig.consume_all_queued`` is set
             is_message_control: Read-only recognition of a delivery the adapter
                 would handle as a control
+            on_execution_created: Bind each default room before it receives input
 
         Raises:
             AgentAlreadyRunningError: When a duplicate start is refused, by the
@@ -238,6 +240,7 @@ class PlatformRuntime:
                 on_control=on_control,
                 on_message_control=on_message_control,
                 on_execute_batch=on_execute_batch,
+                on_execution_created=on_execution_created,
                 is_message_control=is_message_control,
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,

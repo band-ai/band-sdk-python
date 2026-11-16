@@ -48,7 +48,8 @@ class TestCLIConnectionError:
         claude_room: OpenRoom,
     ) -> None:
         """The process crashed between turns: the message that finds it dead
-        fails with a room-visible error, and the one after runs on a new one."""
+        fails with a room-visible error, and the one after runs on a new one.
+        The reader has not seen the crash yet, so the write finds it."""
         room = await claude_room()
         room.claude.script(
             [room.model_reply("Hello.")],
@@ -56,7 +57,7 @@ class TestCLIConnectionError:
         )
 
         await room.send("hi")
-        room.claude.sessions[-1].die()
+        room.claude.sessions[-1].die(closes_output=False)
         with pytest.raises(TurnResultAlreadyReported):
             await room.send("are you there?")
         await room.send("hi again")

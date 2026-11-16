@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from band.core.exceptions import CleanupIncompleteError
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.omp.lifecyclekit import Launches
@@ -61,12 +62,16 @@ class TestDeadlineSettlement:
             cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
             await asyncio.wait_for(resolver.cancel_seen.wait(), 1)
 
-            # Virtual time crosses the original deadline while settlement is held.
+            # Virtual time crosses the original deadline while settlement is held;
+            # the cleanup caller stops waiting at its budget but the settlement
+            # stays owned, so a retry joins it.
             await cross_deadline(deadline_clock, 0.4)
 
-            assert resolver.cancellations == 1 and not cleanup.done()
+            with pytest.raises(CleanupIncompleteError):
+                await asyncio.wait_for(cleanup, 1)
+            assert resolver.cancellations == 1 and not first.done()
             resolver.settle.set()
-            await asyncio.wait_for(cleanup, 1)
+            await asyncio.wait_for(adapter.on_cleanup("room-123"), 1)
             with pytest.raises(asyncio.CancelledError):
                 await first
             assert resolver.cancellations == 1
@@ -90,14 +95,15 @@ class TestDeadlineSettlement:
             await asyncio.wait_for(resolver.cancel_seen.wait(), 1)
             shutdown = await start_cleanup(adapter, shutdown=True)
 
-            # Virtual time crosses the original deadline while settlement is held.
+            # Virtual time crosses the original deadline while settlement is held;
+            # shutdown stops waiting at its budget and a retry joins the settlement.
             await cross_deadline(deadline_clock, 0.4)
 
-            assert (
-                resolver.cancellations == 1 and not first.done() and not shutdown.done()
-            )
+            with pytest.raises(CleanupIncompleteError):
+                await asyncio.wait_for(shutdown, 1)
+            assert resolver.cancellations == 1 and not first.done()
             resolver.settle.set()
-            await asyncio.wait_for(shutdown, 1)
+            await asyncio.wait_for(adapter.cleanup_all(), 1)
             with pytest.raises(asyncio.CancelledError):
                 await first
             assert resolver.cancellations == 1

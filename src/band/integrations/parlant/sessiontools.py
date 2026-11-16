@@ -11,7 +11,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
-from band.core.exceptions import CleanupIncompleteError
 from band.core.protocols import AgentToolsProtocol
 from band.core.turn_lifecycle import (
     TaskRole,
@@ -51,14 +50,13 @@ class EngineOrigin:
             owner.terminate(deadline=deadline)
 
     async def drain(self) -> None:
-        for owner in tuple(self.bodies):
-            if owner.deadline is not None:
-                if not await owner.drain():
-                    raise CleanupIncompleteError(
-                        "Parlant plugin body cleanup is incomplete"
-                    )
-            else:
-                await asyncio.wait({owner.task})
+        """Wait until every plugin body this origin started has ended.
+
+        A body that outlasts its cancellation keeps this wait open; the caller
+        bounds it, since only the body's end proves it stopped.
+        """
+        while pending := {owner.task for owner in self.bodies if not owner.task.done()}:
+            await asyncio.wait(pending)
 
 
 async def capture_engine_origin(

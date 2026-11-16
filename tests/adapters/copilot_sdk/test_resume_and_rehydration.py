@@ -1,11 +1,12 @@
-"""Session resume, history injection fallback, and session-id persistence."""
+"""Confirmed session resume, conservative failure, and session-id persistence."""
 
 from __future__ import annotations
 
 import pytest
 
-from band.adapters.copilot_sdk import HISTORY_HEADING, CopilotSDKAdapterConfig
+from band.adapters.copilot_sdk import HISTORY_HEADING
 from band.converters.copilot_sdk import COPILOT_RESUME_RECORD, CopilotSDKSessionState
+from band.core.exceptions import CleanupIncompleteError, ProviderUnavailableError
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
@@ -45,41 +46,56 @@ class TestResumeAndRehydration:
         # Resumed sessions restore history from disk — no re-injection.
         assert HISTORY_HEADING not in session.prompts[0]
 
-    @pytest.mark.asyncio
-    async def test_resume_failure_creates_fresh_and_injects_history(self):
-        client = FakeCopilotClient(resume_error=RuntimeError("no session state"))
+    @pytest.mark.parametrize("failure", [RuntimeError("setup failed"), TimeoutError()])
+    async def test_disposed_resume_failure_allows_a_fresh_session(
+        self, failure: Exception
+    ) -> None:
+        # inject_history_on_resume_failure is config-compat only for Copilot:
+        # a disposed resume clears the recorded identity; the next turn creates.
+        # TimeoutError must not be treated as a start-budget abandon.
+        client = FakeCopilotClient(resume_error=failure)
         adapter = await make_started_adapter(client)
         tools = ToolSchemaFakeTools()
-
-        await run_message(
-            adapter,
-            tools,
-            history=CopilotSDKSessionState(
-                text="[Alice]: earlier", room_to_session=recorded()
-            ),
+        history = CopilotSDKSessionState(
+            text="[Alice]: earlier", room_to_session=recorded()
         )
-
-        session = client.sessions[0]
+        with pytest.raises(type(failure)):
+            await run_message(adapter, tools, history=history)
+        assert client.deleted == [RECORDED_ID]
+        assert client.create_calls == []
+        assert client.sessions == []
+        client.resume_error = None
+        await run_message(adapter, tools, history=history)
+        assert client.resume_calls == [RECORDED_ID]
+        assert client.deleted == [RECORDED_ID]
+        assert len(client.create_calls) == 1
+        (session,) = client.sessions
         assert not session.resumed
-        assert f"{HISTORY_HEADING}\n[Alice]: earlier" in session.prompts[0]
+        assert len(session.prompts) == 1
 
-    @pytest.mark.asyncio
-    async def test_resume_failure_injection_disabled(self):
-        client = FakeCopilotClient(resume_error=RuntimeError("no session state"))
-        adapter = await make_started_adapter(
-            client, CopilotSDKAdapterConfig(inject_history_on_resume_failure=False)
-        )
+    async def test_undisposed_resume_failure_latches_unavailable(self) -> None:
+        client = FakeCopilotClient(resume_error=RuntimeError("setup failed"))
+        client.delete_error = RuntimeError("delete failed")
+        adapter = await make_started_adapter(client)
         tools = ToolSchemaFakeTools()
-
-        await run_message(
-            adapter,
-            tools,
-            history=CopilotSDKSessionState(
-                text="[Alice]: earlier", room_to_session=recorded()
-            ),
+        history = CopilotSDKSessionState(
+            text="[Alice]: earlier", room_to_session=recorded()
         )
-
-        assert HISTORY_HEADING not in client.sessions[0].prompts[0]
+        with pytest.raises(RuntimeError, match="delete failed"):
+            await run_message(adapter, tools, history=history)
+        client.resume_error = None
+        client.delete_error = None
+        with pytest.raises(ProviderUnavailableError):
+            await run_message(adapter, tools, history=history)
+        assert client.resume_calls == [RECORDED_ID]
+        assert client.create_calls == []
+        assert client.sessions == []
+        with pytest.raises(CleanupIncompleteError):
+            await adapter.on_cleanup("room-1")
+        # CleanupIncompleteError abandons the wait only; the latch stays sticky.
+        with pytest.raises(ProviderUnavailableError):
+            await run_message(adapter, tools, history=history)
+        assert client.create_calls == []
 
     @pytest.mark.asyncio
     async def test_fresh_room_with_history_text_injects_it(self):
@@ -113,21 +129,14 @@ class TestResumeAndRehydration:
     async def test_persist_retried_after_send_failure(self):
         """A transient task-event send failure must be retried next turn."""
 
-        class FlakyEventTools(ToolSchemaFakeTools):
-            fail_once = True
-
-            async def send_event(self, content, message_type, metadata=None):
-                if message_type == "task" and self.fail_once:
-                    self.fail_once = False
-                    raise RuntimeError("transient REST error")
-                return await super().send_event(content, message_type, metadata)
-
         client = FakeCopilotClient()
         adapter = await make_started_adapter(client)
-        tools = FlakyEventTools()
+        tools = ToolSchemaFakeTools()
+        tools.send_event_error = RuntimeError("transient REST error")
 
         await run_message(adapter, tools)
         assert not [e for e in tools.events_sent if e["message_type"] == "task"]
+        tools.send_event_error = None
 
         await run_message(adapter, tools, is_session_bootstrap=False)
         task_events = [e for e in tools.events_sent if e["message_type"] == "task"]
@@ -161,30 +170,8 @@ class TestResumeAndRehydration:
         assert client.resume_calls == []
         assert f"{HISTORY_HEADING}\n[Alice]: earlier" in client.sessions[0].prompts[0]
 
-    async def test_a_failed_seed_after_a_failed_resume_retries_the_record_unreplayed(
-        self,
-    ):
-        client = FakeCopilotClient(
-            resume_error=RuntimeError("no session state"),
-            prompt_errors=[RuntimeError("model unavailable")],
-        )
-        adapter = await make_started_adapter(
-            client, CopilotSDKAdapterConfig(inject_history_on_resume_failure=False)
-        )
-        tools = ToolSchemaFakeTools()
-        history = CopilotSDKSessionState(
-            text="[Alice]: earlier", room_to_session=recorded()
-        )
-        with pytest.raises(RuntimeError, match="model unavailable"):
-            await run_message(adapter, tools, history=history)
-
-        await run_message(adapter, tools, is_session_bootstrap=False)
-
-        assert client.resume_calls == [RECORDED_ID, RECORDED_ID]
-        assert HISTORY_HEADING not in client.sessions[-1].prompts[0]
-
     async def test_a_bootstrap_resumes_the_seeded_session_over_an_older_record(self):
-        client = FakeCopilotClient(resume_error=RuntimeError("transient"))
+        client = FakeCopilotClient()
         adapter = await make_started_adapter(client)
         tools = ToolSchemaFakeTools()
         older = CopilotSDKSessionState(
@@ -192,10 +179,11 @@ class TestResumeAndRehydration:
         )
         tools.send_event_error = ConnectionError("Band REST unavailable")
         # The fresh session seeds, but its record post fails.
-        await run_message(adapter, tools, history=older)
+        await run_message(
+            adapter, tools, history=CopilotSDKSessionState(text=older.text)
+        )
         seeded = client.sessions[0]
         tools.send_event_error = None
-        client.resume_error = None
         seeded.send_error = RuntimeError("broken pipe")
         with pytest.raises(RuntimeError, match="broken pipe"):
             await run_message(adapter, tools, history=older)

@@ -149,6 +149,7 @@ class ClaudeRoomSession:
         self._reader: asyncio.Task[None] | None = None
         self._turn: TurnStream | None = None
         self._forget_session = False
+        self._mcp_requests: set[asyncio.Task[Any]] = set()
         self.activity: SessionActivity | None = None
         self.retained: RetainedRoom = retention.register(
             room_id, acquire=self.acquire, release=self.release, dispose=self.dispose
@@ -169,6 +170,15 @@ class ClaudeRoomSession:
         callback also holds this session object, which a rejoin replaces.
         """
         return self.retained.has_authority(generation)
+
+    def retain_mcp_request(self) -> None:
+        """Keep accepted MCP effects owned until their request actually returns."""
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("Claude MCP requests require an owning task")
+        if task not in self._mcp_requests:
+            self._mcp_requests.add(task)
+            task.add_done_callback(self._mcp_requests.discard)
 
     @asynccontextmanager
     async def using(
@@ -306,6 +316,9 @@ class ClaudeRoomSession:
 
     async def _close(self) -> None:
         """Close the retained CLI; a failure keeps every handle for a retry."""
+        # HTTP tool handlers can survive the CLI and still perform custom effects.
+        if self._mcp_requests:
+            await asyncio.wait(self._mcp_requests)
         if self.client is None or self.transport is None:
             return
         if self.activity is not None:

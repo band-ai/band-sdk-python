@@ -30,6 +30,7 @@ from acp.schema import (
     PermissionOption,
     SetSessionConfigOptionResponse,
     SseMcpServer,
+    StopReason,
 )
 from band_sdk_core import AgentFailure
 from pydantic import (
@@ -69,7 +70,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import await_owned_result, spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn_lifecycle import (
@@ -193,12 +194,25 @@ class SessionMcpServers:
     band_url: str | None
 
 
-@dataclass(frozen=True)
+@dataclass(eq=False)
 class ACPTurn:
-    """What stopping one room's in-flight prompt needs."""
+    """One room's in-flight prompt, and what its stop needs.
+
+    ``generation`` is the residency the prompt started on, captured before any
+    await so a stop bound to this turn never reaches a successor's process.
+    Whether an answered prompt confirms the stop is adapter-specific
+    (``PROMPT_ANSWER_CONFIRMS_STOP``); ``session/cancel`` alone is only a
+    notification.
+    """
 
     runtime: ACPRuntime
     session_id: str
+    room: ACPRoom
+    generation: int
+    cancel_attempted: bool = False
+    prompt_ended: bool = False
+    prompt_answered: bool = False
+    stop_resolved: bool = False
 
 
 class ACPTurnTimeoutError(TimeoutError):
@@ -218,8 +232,9 @@ class ACPMcpServerResolutionError(ValueError):
 
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
 DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
-# One acquisition launches the agent and runs initialize/authenticate, and a
-# wake also reloads its session.
+# One acquisition launches the agent and runs initialize/authenticate, a wake
+# also reloads its session, and one session setup resolves its MCP servers,
+# loads or creates the session, and applies its configuration.
 ACP_TRANSITION_TIMEOUT_S = 30.0
 # How a turn reports a room process that did not start or stop within
 # ``retention.transition_timeout_s``.
@@ -302,8 +317,9 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         command: The agent's launch command; a single string is one argv
             element.
         retention: Residency settings; ``transition_timeout_s``
-            (``ACP_TRANSITION_TIMEOUT_S`` by default) bounds each start, so a
-            slower one fails its turn and its room recovers.
+            (``ACP_TRANSITION_TIMEOUT_S`` by default) bounds each start and
+            each session setup, so a slower one fails its turn and its room
+            recovers.
         env: Extra environment for the agent subprocess.
         cwd: Root under which each room gets its own workspace directory;
             exclusive with the adapter's ``workspace_for_room``.
@@ -405,6 +421,10 @@ class ACPClientAdapter(
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    # Default ACP: an answered prompt settles the stop. Adapters whose native
+    # work can outlive that answer override this to False so only process
+    # release reopens the room.
+    PROMPT_ANSWER_CONFIRMS_STOP: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -470,7 +490,9 @@ class ACPClientAdapter(
         )
         self._rooms: dict[str, ACPRoom] = {}
         self._backend_turns = BackendTurns[ACPTurn](
-            self._cancel_agent_turn, provider=ACP_FAILURE_PROVIDER
+            self._cancel_agent_turn,
+            provider=ACP_FAILURE_PROVIDER,
+            requires_confirmation=True,
         )
         # Outlives the room's sessions; see apply_model_selection.
         self._room_selections: dict[str, ModelSelection] = {}
@@ -771,6 +793,7 @@ class ACPClientAdapter(
         self._workspaces.release(room.room_id)
         if self._rooms.get(room.room_id) is room:
             del self._rooms[room.room_id]
+        self.backend_turns.confirm_disposed(room.room_id)
 
     @asynccontextmanager
     async def _using_room(
@@ -844,7 +867,10 @@ class ACPClientAdapter(
         room_id: str,
     ) -> None:
         room = self._room(room_id)
+        # Park on an in-flight cancel before the unconfirmed/unavailable check so
+        # a successor turn waits for the previous stop send the way settled does.
         await self.backend_turns.settled(room_id)
+        await self.backend_turns.require_admission(room_id, tools)
 
         async def prompt_room() -> None:
             async with self._using_room(room, tools) as runtime:
@@ -936,13 +962,14 @@ class ACPClientAdapter(
                     session_id=session_id,
                 )
                 turn_deadline = asyncio.timeout(self.config.turn_timeout_s)
+                backend_turn = ACPTurn(runtime, session_id, room, generation)
                 async with self.backend_turns.running(
-                    room_id, ACPTurn(runtime, session_id)
+                    room_id, backend_turn, generation=generation
                 ):
                     try:
                         async with turn_deadline:
-                            stop_reason = await runtime.prompt_turn(
-                                session_id=session_id,
+                            stop_reason = await self._run_prompt(
+                                backend_turn,
                                 prompt_text=prompt_text,
                                 sink=emitter,
                             )
@@ -1078,15 +1105,76 @@ class ACPClientAdapter(
                     continue
             raise
 
-    @staticmethod
-    async def _cancel_agent_turn(turn: ACPTurn) -> None:
-        """Tell the agent to stop this room's prompt; best effort."""
+    async def _run_prompt(
+        self, turn: ACPTurn, *, prompt_text: str, sink: RoomTurnEmitter
+    ) -> StopReason:
+        """Run the turn's prompt and record whether the agent answered it."""
+        try:
+            stop_reason = await turn.runtime.prompt_turn(
+                session_id=turn.session_id, prompt_text=prompt_text, sink=sink
+            )
+            turn.prompt_answered = True
+            return stop_reason
+        finally:
+            turn.prompt_ended = True
+            if turn.cancel_attempted:
+                self._resolve_stop(turn)
+
+    async def _cancel_agent_turn(self, turn: ACPTurn) -> None:
+        """Send ``session/cancel`` for this room's prompt, then settle its stop.
+
+        The cancel is only a request. An unsent or unanswered one, including
+        one this wait abandons, leaves the process under recovery.
+        """
+        sent = False
         try:
             await turn.runtime.cancel_turn(turn.session_id)
+            sent = True
+        except asyncio.CancelledError:
+            # Stop budget abandoned this wait after the notification may already
+            # have been sent; treat as a failed cancel so recovery owns the room.
+            turn.cancel_attempted = True
+            self._resolve_stop(turn, cancel_failed=True)
+            raise
         except Exception:
             logger.exception(
                 "ACP turn cancellation failed (session=%s)", turn.session_id
             )
+        finally:
+            if not turn.cancel_attempted:
+                turn.cancel_attempted = True
+                self._resolve_stop(turn, cancel_failed=not sent)
+
+    def _resolve_stop(self, turn: ACPTurn, *, cancel_failed: bool = False) -> None:
+        """Confirm the stop once the agent answered the prompt, or recover the
+        process once nothing more can answer it.
+
+        A cancel that is sent while the prompt's wait is still open waits for
+        that wait's end; the turn deadline bounds it. A backend whose answer
+        does not prove its work ended recovers as soon as the cancel is tried.
+        """
+        if turn.stop_resolved:
+            return
+        confirming = self.PROMPT_ANSWER_CONFIRMS_STOP
+        if confirming and turn.prompt_answered:
+            turn.stop_resolved = True
+            self.backend_turns.confirm_stopped(turn.room.room_id, turn)
+        elif cancel_failed or turn.prompt_ended or not confirming:
+            turn.stop_resolved = True
+            self._recover_stopped_turn(turn)
+
+    def _recover_stopped_turn(self, turn: ACPTurn) -> None:
+        """Keep the room blocked until the process the turn ran on is released.
+
+        Bound to the turn's own residency, so a stop that outlives it never
+        retires a successor.
+        """
+        self.backend_turns.recovering(
+            turn.room.room_id,
+            turn,
+            turn.room.retained,
+            generation=turn.generation,
+        )
 
     def _install_turn_handlers(
         self,
@@ -1380,7 +1468,7 @@ class ACPClientAdapter(
         if setup is not None and (setup is room.abandoned_setup or setup.cancelling()):
             # A callback may still be settling an abandoned setup. Its lease
             # holds the process, and no successor resolves beside it.
-            await room.retained.wait_owned(setup)
+            await self._await_setup(room, setup)
             if room.abandoned_setup is setup:
                 room.abandoned_setup = None
             self._require_current_runtime(room, runtime)
@@ -1398,10 +1486,20 @@ class ACPClientAdapter(
             )
             room.session_setup = setup
             room.setup_observer = SessionSetupObserver(setup)
-        await room.retained.wait_owned(setup)
+        await self._await_setup(room, setup)
         observer = room.setup_observer
         assert observer is not None and observer.task is setup
         return observer.consume()
+
+    async def _await_setup(self, room: ACPRoom, setup: asyncio.Task[str]) -> None:
+        """Wait for the room's session setup within ``transition_timeout_s``.
+
+        An expired wait fails only this turn: the setup stays owned by the room,
+        and the failed turn's recovery retires the process it may still use.
+        """
+        await room.retained.wait_owned(
+            setup, timeout=self.config.retention.transition_timeout_s
+        )
 
     def _require_current_runtime(
         self, room: ACPRoom, runtime: ACPRuntime, *, finishing: bool = False
@@ -1460,7 +1558,12 @@ class ACPClientAdapter(
         retained: bool,
     ) -> RoomSession | None:
         """Reload and configure ``session_id``, or ``None`` when the agent
-        cannot restore it.
+        has no such session.
+
+        Only an explicit missing-session answer (or no ``loadSession``
+        support) yields ``None``. A load the agent left unanswered or refused
+        otherwise may still complete on this process, so no replacement is
+        created beside it: the process is recovered and the error raised.
 
         A refused remembered selection reverts, so only this turn fails. A
         ``retained`` id is still the room's and stays its identity through
@@ -1468,11 +1571,20 @@ class ACPClientAdapter(
         there, and loading it again on the same process is undefined. A
         bootstrap candidate is closed instead.
         """
-        loaded = await runtime.load_session_response(
-            cwd=room.workspace,
-            session_id=session_id,
-            mcp_servers=mcp.servers,
-        )
+        generation = room.generation
+        try:
+            loaded = await runtime.load_session_response(
+                cwd=room.workspace,
+                session_id=session_id,
+                mcp_servers=mcp.servers,
+            )
+        except BaseException as error:
+            # Cancelled or unanswered, the load may still finish on this process.
+            room.retained.recover(
+                generation=generation,
+                reason=f"ACP session {session_id} did not load: {error!r}",
+            )
+            raise
         if loaded is None:
             logger.info(
                 "ACP session %s is unavailable for room %s; using a new session",
@@ -1487,7 +1599,7 @@ class ACPClientAdapter(
         except BaseException as error:
             if retained:
                 room.retained.recover(
-                    generation=room.generation,
+                    generation=generation,
                     reason=f"Reloaded ACP session {session_id} is unconfigured: {error!r}",
                 )
             else:
@@ -1574,11 +1686,16 @@ class ACPClientAdapter(
     async def _close_session(
         self, runtime: ACPRuntime, session_id: str, *, reason: SessionCloseReason
     ) -> None:
-        """Best-effort close of a session no room will use again."""
+        """Best-effort close of a session no room will use again.
+
+        The close stays owned when the wait budget expires; cancelling it would
+        not prove the agent dropped the session.
+        """
         try:
-            await asyncio.wait_for(
+            await await_owned_result(
                 runtime.close_session(session_id),
                 timeout=SESSION_CLOSE_TIMEOUT_SECONDS,
+                label=f"ACP session {session_id} close",
             )
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise

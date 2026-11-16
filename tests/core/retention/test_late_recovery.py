@@ -7,7 +7,7 @@ import weakref
 
 import pytest
 
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import ProviderUnavailableError
 from band.core.retention import Residency
 from band.core.turn_lifecycle import BackendTurns
 from band.testing import FakeAgentTools
@@ -31,10 +31,10 @@ class TestLateRecovery:
             generation = resident.room.generation
             turns.recovering("room", object(), resident.room, generation=generation)
             await resident.closing.arrived()
-            with pytest.raises(InputNotAccepted) as refused:
+            ready = turns.blocker("room")
+            with pytest.raises(ProviderUnavailableError):
                 await turns.require_admission("room", FakeAgentTools())
-            ready = refused.value.ready
-            assert ready is not None and not ready.done()
+            assert ready is not None and ready.done()
             assert resident.live
 
             resident.closing.released.set()
@@ -44,25 +44,26 @@ class TestLateRecovery:
             assert ready.done()
             assert turns.blocker("room") is None
 
-    async def test_failed_release_stays_blocked_until_successful_retry(self) -> None:
+    async def test_failed_release_makes_the_room_unavailable_until_confirmed(
+        self,
+    ) -> None:
         async with ResidenceHost(timeout=None) as host:
             resident = host.room()
             await resident.turn()
             resident.fail_close = True
             turns = BackendTurns(RecordingCancel(), provider="test")
+            handle = object()
             generation = resident.room.generation
-            turns.recovering("room", object(), resident.room, generation=generation)
-            with pytest.raises(InputNotAccepted) as refused:
+            turns.recovering("room", handle, resident.room, generation=generation)
+            with pytest.raises(ProviderUnavailableError):
                 await turns.require_admission("room", FakeAgentTools())
-            ready = refused.value.ready
-            assert ready is not None and not ready.done()
+            assert turns.unavailable("room")
             assert resident.live
 
             resident.fail_close = False
             await resident.room.wait_released(generation=generation)
             assert not resident.live
-            assert ready.done()
-            assert turns.blocker("room") is None
+            await turns.require_admission("room", FakeAgentTools())
 
     async def test_queued_old_release_cannot_confirm_a_replacement_stop(self) -> None:
         async with ResidenceHost(timeout=None) as host:

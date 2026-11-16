@@ -113,6 +113,7 @@ class AgentRuntime:
         on_execute_batch: BatchExecutionHandler | None = None,
         is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
         | None = None,
+        on_execution_created: Callable[[ExecutionContext], None] | None = None,
     ):
         """
         Initialize AgentRuntime.
@@ -135,6 +136,8 @@ class AgentRuntime:
                 originals
             is_message_control: Optional read-only recognition of a delivery
                 the adapter would handle as a control
+            on_execution_created: Bind each room ``ExecutionContext`` before
+                it receives input, including factory-built contexts
 
         Raises:
             BandConfigError: ``consume_all_queued`` with a custom execution
@@ -151,6 +154,7 @@ class AgentRuntime:
             )
         require_batch_execution_handler(self._session_config, on_execute_batch)
         self._on_execute_batch = on_execute_batch
+        self._on_execution_created = on_execution_created
         self._on_session_cleanup = on_session_cleanup
         self._on_control = on_control
         self._on_message_control = on_message_control
@@ -367,12 +371,19 @@ class AgentRuntime:
         if self._execution_factory is None:
             return self._default_execution(room_id)
         try:
-            return self._execution_factory(
+            execution = self._execution_factory(
                 room_id, self.link, hub_room_id=self._hub_room_id
             )
         except TypeError:
             # Legacy factories accept only (room_id, link).
-            return self._execution_factory(room_id, self.link)
+            execution = self._execution_factory(room_id, self.link)
+        # Factories often construct ExecutionContext without the Agent hook;
+        # bind unavailable latching here so custom rooms match the default path.
+        if self._on_execution_created is not None and isinstance(
+            execution, ExecutionContext
+        ):
+            self._on_execution_created(execution)
+        return execution
 
     def _default_execution(self, room_id: str) -> ExecutionContext:
         return ExecutionContext(
@@ -382,6 +393,7 @@ class AgentRuntime:
             on_message_control=self._on_message_control,
             is_message_control=self._is_message_control,
             on_execute_batch=self._on_execute_batch,
+            on_execution_created=self._on_execution_created,
             config=self._session_config,
             agent_id=self.agent_id,
             on_participant_added=self._on_participant_added,

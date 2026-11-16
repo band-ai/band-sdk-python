@@ -710,13 +710,19 @@ def _build_letta_config() -> AdapterConfig:
         LettaAdapterConfig,
         LettaMCPConfig,
     )
+    from band.integrations.letta.config import (  # noqa: PLC0415 -- pin the documented default without collection-time env
+        LETTA_CLOUD_BASE_URL,
+    )
 
     return AdapterConfig(
         framework_id="letta",
         display_name="Letta",
         adapter_factory=_letta_factory,
+        # Explicit base_url so a contributor LETTA_BASE_URL present at
+        # collection cannot bake a self-hosted expected value that the
+        # per-test env isolation later strips from the adapter under test.
         expected_initial_values={
-            "config": LettaAdapterConfig(),
+            "config": LettaAdapterConfig(base_url=LETTA_CLOUD_BASE_URL),
         },
         custom_kwargs={
             "config": LettaAdapterConfig(

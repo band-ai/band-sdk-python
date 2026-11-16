@@ -379,6 +379,7 @@ class Agent:
                 await self._runtime.start(
                     on_execute=self._on_execute,
                     on_execute_batch=self._on_execute_batch,
+                    on_execution_created=self._bind_backend_delivery,
                     is_message_control=self._is_control,
                     on_message_control=self._on_control,
                     on_cleanup=self._adapter.on_cleanup,
@@ -603,6 +604,13 @@ class Agent:
         if not self._started:
             return
         await self._runtime.run_forever(install_signal_handlers=install_signal_handlers)
+
+    def _bind_backend_delivery(self, ctx: ExecutionContext) -> None:
+        """Latch provider-unavailable failures into this room's delivery owner."""
+        if isinstance(self._adapter, SimpleAdapter):
+            turns = self._adapter.backend_turns
+            if turns is not None:
+                ctx.delivery.bind_backend_turns(turns)
 
     async def _on_execute(
         self,

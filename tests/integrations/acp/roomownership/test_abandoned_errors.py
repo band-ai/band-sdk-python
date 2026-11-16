@@ -9,11 +9,17 @@ import pytest
 
 from tests.adapters.hold import Hold
 from tests.adapters.waiting import until
-from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter
+from tests.core.retention.kit import ManualClock
+from tests.integrations.acp.acp_toolkit import (
+    FakeACPAgent,
+    acp_adapter,
+    fake_agent_config,
+)
 from tests.integrations.acp.acp_toolkit.mcpresolver import (
     SECRET,
     FailingResolver,
 )
+from tests.toolkit.tasks import background
 
 
 class TestAbandonedErrors:
@@ -96,6 +102,40 @@ class TestAbandonedErrors:
             assert unhandled == []
         finally:
             loop.set_exception_handler(previous)
+
+    async def test_late_failure_after_an_expired_setup_wait_is_reported_once(
+        self, caplog: pytest.LogCaptureFixture, loop_clock: ManualClock
+    ) -> None:
+        callback = FailingResolver()
+        agent = FakeACPAgent(http=True).will_say("recovered")
+        config = fake_agent_config()
+        async with (
+            acp_adapter(agent, config, resolve_mcp_servers=callback) as acp,
+            background(acp.send("first")) as first,
+        ):
+            await callback.entered.wait()
+            room = acp.room()
+            setup = room.session_setup
+            assert setup is not None
+            await loop_clock.advance(config.retention.transition_timeout_s)
+            with pytest.raises(TimeoutError):
+                await first
+            await callback.settling.wait()
+            assert not setup.done()
+
+            callback.settle.set()
+            await asyncio.gather(setup, return_exceptions=True)
+            served = await acp.send("next")
+
+        assert served.thoughts == ["recovered"]
+        failures = [
+            record
+            for record in caplog.records
+            if record.name == "band.integrations.acp.sessioninit"
+        ]
+        assert len(failures) == 1
+        assert "LookupError" in failures[0].getMessage()
+        assert SECRET not in caplog.text
 
     @pytest.mark.parametrize("successor", [False, True])
     async def test_completion_racing_caller_cancellation_is_reported(

@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
+from band.core.adapterconfig import SHARED_TRANSITION_TIMEOUT_S
 from band.core.delivery import (
     automatic_mentions,
     finish_automatic_reply,
@@ -79,28 +80,36 @@ async def next_agent_events(
     room_id: str,
     offset: int,
     window: float,
+    call_timeout: float = SHARED_TRANSITION_TIMEOUT_S,
 ) -> Sequence[Any] | PollMiss:
-    """The agent message events after *offset*, waiting up to *window*."""
+    """The agent message events after *offset*, waiting up to *window*.
+
+    The wait gives up *call_timeout* after its window and the read after
+    *call_timeout*, so a stuck Parlant store ends the poll as a failed one
+    rather than holding the turn.
+    """
     from parlant.core.async_utils import Timeout  # noqa: PLC0415
     from parlant.core.sessions import EventKind, EventSource  # noqa: PLC0415
 
     try:
-        has_update = await app.sessions.wait_for_more_events(
-            session_id=session_id,
-            min_offset=offset + 1,
-            kinds=[EventKind.MESSAGE],
-            source=EventSource.AI_AGENT,
-            timeout=Timeout(window),
-        )
+        async with asyncio.timeout(window + call_timeout):
+            has_update = await app.sessions.wait_for_more_events(
+                session_id=session_id,
+                min_offset=offset + 1,
+                kinds=[EventKind.MESSAGE],
+                source=EventSource.AI_AGENT,
+                timeout=Timeout(window),
+            )
         if not has_update:
             return PollMiss.NO_UPDATE
-        events = await app.sessions.find_events(
-            session_id=session_id,
-            min_offset=offset + 1,
-            source=EventSource.AI_AGENT,
-            kinds=[EventKind.MESSAGE],
-            trace_id=None,  # Required by Parlant SDK v3.x
-        )
+        async with asyncio.timeout(call_timeout):
+            events = await app.sessions.find_events(
+                session_id=session_id,
+                min_offset=offset + 1,
+                source=EventSource.AI_AGENT,
+                kinds=[EventKind.MESSAGE],
+                trace_id=None,  # Required by Parlant SDK v3.x
+            )
     except Exception:
         logger.exception("Room %s: error waiting for agent events", room_id)
         return PollMiss.FAILED
@@ -122,6 +131,7 @@ async def relay_agent_response(
     audience: Sequence[str],
     timeout: float,
     poll: float,
+    call_timeout: float = SHARED_TRANSITION_TIMEOUT_S,
 ) -> bool:
     """Relay the engine's final reply to the *audience* (sender ids), waiting up
     to *timeout*.
@@ -144,6 +154,7 @@ async def relay_agent_response(
             room_id=room_id,
             offset=offset,
             window=min(poll, remaining),
+            call_timeout=call_timeout,
         )
         match polled:
             case PollMiss.FAILED:

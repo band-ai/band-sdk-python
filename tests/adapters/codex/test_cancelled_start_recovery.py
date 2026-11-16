@@ -14,6 +14,7 @@ from tests.adapters.codex.kit import (
     ROOM_ID,
     CodexRoom,
     CountingCloseClient,
+    residency_of,
     send_bootstrap,
 )
 from tests.adapters.codexturns import (
@@ -36,7 +37,7 @@ from tests.toolkit.tasks import background
 
 
 class TestCancelledStartRecovery:
-    async def test_failed_stop_close_retains_input_without_spending_its_failure_budget(
+    async def test_failed_stop_close_fails_pending_input_until_confirmed_recovery(
         self,
     ) -> None:
         client = CountingCloseClient(
@@ -71,17 +72,31 @@ class TestCancelledStartRecovery:
                 await room.adapter.backend_turns.drain()
                 peer.add_message("pending")
                 event = peer.event("pending")
-                assert await attempt_delivery(ctx, event) is TurnOutcome.NOT_ACCEPTED
-                assert await attempt_delivery(ctx, event) is TurnOutcome.NOT_ACCEPTED
+                # Failed process release latches terminal unavailable failure;
+                # the original is not deferred indefinitely or replayed later.
+                assert await attempt_delivery(ctx, event) is TurnOutcome.ADVANCED
+                assert peer.marked("failed") == ["pending"]
                 assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
-                assert peer.marked("failed") == []
+                assert room.adapter.backend_turns.unavailable(RUNTIME_ROOM_ID)
+                handle = room.adapter.backend_turns.unconfirmed_handle(RUNTIME_ROOM_ID)
+                assert handle is not None
                 client.refuse_close = False
+                retained = residency_of(room.adapter, RUNTIME_ROOM_ID)
+                assert retained is not None
+                generation = handle.generation
+                await retained.wait_released(generation=generation)
+                room.adapter.backend_turns.confirm_stopped(RUNTIME_ROOM_ID, handle)
+                assert not room.adapter.backend_turns.unavailable(RUNTIME_ROOM_ID)
                 client.script(
                     tool_call_request(2, BandTool.NO_REPLY), turn_completed("turn-3")
                 )
-                assert await attempt_delivery(ctx, event) is TurnOutcome.ADVANCED
-                assert peer.marked("processed") == ["seed", "pending"]
-                assert peer.marked("failed") == []
+                peer.add_message("after-recovery")
+                assert (
+                    await attempt_delivery(ctx, peer.event("after-recovery"))
+                    is TurnOutcome.ADVANCED
+                )
+                assert peer.marked("processed") == ["seed", "after-recovery"]
+                assert peer.marked("failed") == ["pending"]
                 assert client.starts == 2
             finally:
                 client.refuse_close = False

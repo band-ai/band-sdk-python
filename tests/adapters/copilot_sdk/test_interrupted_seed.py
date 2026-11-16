@@ -40,9 +40,13 @@ class TestInterruptedSeed:
         )
         await interrupt_when(interrupted, tools.parked)
         tools.hold_context = False
+        tools.released.set()
+        await adapter.backend_turns.settled("room-1")
         await run_message(adapter, tools, is_session_bootstrap=False)
 
-        _, fresh = client.sessions
+        _, abandoned, fresh = client.sessions
+        assert abandoned.prompts == []
+        assert abandoned.disconnected
         assert REPLAYED in fresh.prompts[0]
         assert COPILOT_RESUME_RECORD.candidates(tools.events_sent) == {
             "room-1": fresh.session_id
@@ -63,6 +67,7 @@ class TestInterruptedSeed:
         await adapter.backend_turns.settled("room-1")
         unrecorded = COPILOT_RESUME_RECORD.candidates(tools.events_sent)
 
+        await adapter.backend_turns.settled("room-1")
         await run_message(adapter, tools, is_session_bootstrap=False)
 
         interrupted, fresh = client.sessions
@@ -91,6 +96,7 @@ class TestInterruptedSeed:
             ),
             hold.reached,
         )
+        await adapter.backend_turns.settled("room-1")
         await run_message(adapter, tools, is_session_bootstrap=False)
 
         assert client.sessions == [seeded]
@@ -112,6 +118,7 @@ class TestInterruptedSeed:
         client.hold_aborts = False
         (failed,) = client.sessions
         failed.abort_released.set()
+        await adapter.backend_turns.settled("room-1")
         await run_message(adapter, tools, is_session_bootstrap=False)
 
         assert client.deleted == [failed.session_id]
@@ -131,6 +138,7 @@ class TestInterruptedSeed:
         )
         tools.hold_usage = False
 
+        await adapter.backend_turns.settled("room-1")
         await run_message(adapter, tools, is_session_bootstrap=False)
 
         (session,) = client.sessions

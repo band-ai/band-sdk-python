@@ -7,6 +7,7 @@ from acp import RequestError
 
 from band.converters.helpers import NEW_MESSAGE_MARKER_PREFIX
 from band.integrations.acp.client_adapter import SYSTEM_CONTEXT_HEADER
+from band.integrations.acp.sessions import ACPSessionRestoreError
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
@@ -70,33 +71,33 @@ class TestHistoryReplay:
         )
 
     @pytest.mark.asyncio
-    async def test_replay_injected_when_session_load_errors(
+    async def test_a_load_that_errors_is_not_replaced_on_the_same_process(
         self,
     ) -> None:
         """A remote that errors on session/load (a protocol error, not "not found")
-        must not kill the turn: the failed load counts as a miss, the transcript
-        replay still fires, and the room still gets its reply."""
+        may still be loading: no session is created beside it, the turn fails,
+        and the next turn's session belongs to a fresh process."""
         agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
         agent.breaks_session_load()
         history = rehydration_history(MARCO_REPLAY_LINE, session="wedged-session")
 
         async with acp_adapter(agent) as session:
-            reply = await session.send(
-                "What is my favorite color?", bootstrap=True, history=history
-            )
+            with pytest.raises(ACPSessionRestoreError):
+                await session.send(
+                    "What is my favorite color?", bootstrap=True, history=history
+                )
+            failed = session.last_reply
+            first_runtime = session.runtime()
+            assert agent.sessions == []
 
-        assert agent.session_load_requests == ["wedged-session"], (
-            "the persisted session must be tried before any fallback"
-        )
-        assert len(agent.sessions) == 1, (
-            "a load protocol error must fall back to a fresh session, not kill the turn"
-        )
-        assert REPLAY_HEADER_LINE in agent.prompt_texts()[0], (
-            "an erroring load counts as a miss, so the replay must still fire"
-        )
-        assert reply.thoughts == ["Blue."], (
-            "the turn must complete despite the load error"
-        )
+            retry = await session.send("What is my favorite color?")
+
+            assert session.runtime() is not first_runtime
+
+        assert agent.session_load_requests == ["wedged-session"]
+        assert failed.thoughts == []
+        assert len(agent.sessions) == 1
+        assert retry.thoughts == ["Blue."]
 
     @pytest.mark.asyncio
     async def test_no_replay_when_remote_session_loads(

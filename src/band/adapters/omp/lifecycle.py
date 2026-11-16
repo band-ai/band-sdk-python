@@ -261,12 +261,37 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
         )
         await room.client.request(OmpCommandName.SET_THINKING_LEVEL, level=effort)
 
+    @property
+    def _caller_budget_s(self) -> float:
+        """How long a caller waits on room-owned work; the retention transition
+        budget, which is already the turn budget (``turn_timeout_s``)."""
+        return self._retention.config.transition_timeout_s
+
     async def apply_model_selection(
         self, selection: ModelSelection, *, room_id: str
     ) -> None:
-        await self._exclusive(
-            room_id, partial(self._apply_selection, room_id, selection)
-        )
+        """Apply ``selection``, waiting at most one caller budget.
+
+        A silent native gate must not hold the caller or the room's mailbox
+        (which release queues behind). Expiry cancels the selection job, the
+        same interruption as caller cancellation: ``_select_model`` marks the
+        room retiring and requests recovery, so the uncertain process is
+        replaced only after it exits and its callbacks retire.
+        """
+        budget = self._caller_budget_s
+        deadline = asyncio.timeout(budget)
+        try:
+            async with deadline:
+                await self._exclusive(
+                    room_id, partial(self._apply_selection, room_id, selection)
+                )
+        except TimeoutError as error:
+            if not deadline.expired():
+                raise
+            raise TimeoutError(
+                f"OMP model selection for room {room_id} exceeded {budget}s; "
+                "the room is recovering"
+            ) from error
 
     def _selection_for_room(self, room_id: str) -> ModelSelection:
         return self._room_selections.get(room_id, self.model_selection)
@@ -315,6 +340,14 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
         return await self._mailbox.ask(room_id, run)
 
     async def _recover_room(self, room: OmpRoom) -> None:
+        """Turn an uncertain native session into retention recovery.
+
+        OMP keeps no ``BackendTurns``: this room's retention owner is the
+        authority. Recovery holds admission (``use`` settles the release before
+        any acquire) until ``_release_room`` proves process exit and callback
+        retirement. A release that fails leaves the room unavailable, with that
+        error surfacing to each caller, until a later release succeeds.
+        """
         if room.retiring:
             Context().run(
                 room.retained.recover,
@@ -332,9 +365,15 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
         return room.disposal
 
     async def _join_disposal(self, room: OmpRoom) -> None:
+        """Report the room's disposal within one caller budget.
+
+        Expiry raises ``CleanupIncompleteError`` and leaves the disposal owned:
+        admission stays closed and a retry joins the same attempt, so the bound
+        never proves the process exited or its callbacks retired.
+        """
         if room.disposal is not None:
             try:
-                await report_owned(room.disposal, None)
+                await report_owned(room.disposal, self._caller_budget_s)
             except Exception:
                 logger.exception("OMP failed to close the room after a turn failure")
                 raise
@@ -388,7 +427,7 @@ class OmpRoomLifecycleMixin(OmpAdapterContract):
             and not inside_job
             and not room.retained.enrolls(asyncio.current_task())
         ):
-            await report_owned(attempt, None)
+            await report_owned(attempt, self._caller_budget_s)
 
     def _cleanup_rooms(self) -> Iterable[Awaitable[None]]:
         return (self.on_cleanup(room_id) for room_id in tuple(self._rooms))
