@@ -54,4 +54,6 @@ class TestOptInGates:
         monkeypatch.setenv("E2E_TIMEOUT", "")
         settings = BaselineSettings()
         assert settings.e2e_tests_enabled is False
-        assert settings.e2e_timeout == 120
+        assert (
+            settings.e2e_timeout == BaselineSettings.model_fields["e2e_timeout"].default
+        )

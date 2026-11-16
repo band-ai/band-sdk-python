@@ -416,8 +416,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 # Fail fast on an unregistered marker or an unknown ini key.
 addopts = "-v --strict-markers --strict-config"
-# Global safety net: catch runaway unit tests. Integration and E2E tests
-# override to 120s via pytest_collection_modifyitems in their conftest.
+# Global safety net: catch runaway unit tests. The E2E baseline overrides it
+# per test via pytest_collection_modifyitems in its conftest.
 timeout = 30
 filterwarnings = [
     # AgentTools._attachment_cache's @alru_cache binds to the first asyncio

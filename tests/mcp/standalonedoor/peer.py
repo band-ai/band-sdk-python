@@ -55,6 +55,7 @@ USER_KEY = "user-key"
 # Each REST surface answers only its own credential.
 SURFACE_KEYS = {"agent": AGENT_KEY, "me": USER_KEY}
 MEMBER_ROLE = "member"
+OWNER_ROLE = "owner"
 
 
 def room_record(room_id: str) -> dict[str, Any]:
@@ -168,7 +169,7 @@ class Platform:
     def open_room(self, creator: Identity) -> Room:
         room = Room(
             room_id(len(self.rooms)),
-            [creator.as_participant("owner")],
+            [creator.as_participant(OWNER_ROLE)],
         )
         self.rooms[room.id] = room
         return room
