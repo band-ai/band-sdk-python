@@ -5,8 +5,13 @@ from __future__ import annotations
 import pytest
 from band_sdk_core import TurnVerdict
 
-from band.runtime.tools import BandTool
+from band.runtime.tools import (
+    BandTool,
+    ParticipantAddResult,
+    ParticipantAddStatus,
+)
 from tests.framework_conformance.outcomeprobes import (
+    ANSWER,
     DECLINE,
     REPLY,
     TURN_OUTCOME_PROBES,
@@ -17,6 +22,12 @@ from tests.framework_conformance.outcomeprobes import (
 from tests.framework_conformance.turnprobes import ALICE, ToolCall, TurnScript
 
 ADD_ALICE = ToolCall(BandTool.ADD_PARTICIPANT, {"identifier": ALICE["handle"]})
+ALICE_ADDED = ParticipantAddResult(
+    id=ALICE["id"],
+    name=ALICE["name"],
+    role="member",
+    status=ParticipantAddStatus.ALREADY_IN_ROOM.value,
+)
 
 
 class TestTurnTermination:
@@ -31,4 +42,17 @@ class TestTurnTermination:
 
         assert result == TurnResult(
             TurnVerdict.Complete, messages=[], failures=[], participants_added=[]
+        )
+
+    @pytest.mark.parametrize("probe", provider_loop_probe_params())
+    async def test_without_a_decline_the_same_calls_land(self, probe: str) -> None:
+        result = await run_turn(
+            TURN_OUTCOME_PROBES[probe], TurnScript((ADD_ALICE, REPLY))
+        )
+
+        assert result == TurnResult(
+            TurnVerdict.Complete,
+            messages=[ANSWER],
+            failures=[],
+            participants_added=[ALICE_ADDED],
         )

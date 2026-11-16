@@ -54,6 +54,24 @@ class TestSubagentDecline:
         assert results == [replied()]
         assert tools.chat == [ANSWER]
 
+    async def test_the_roots_final_text_is_relayed_after_a_sub_agent_declines(
+        self,
+    ) -> None:
+        async def sub_agent_declines(session: FakeCopilotSession) -> None:
+            await call_tool(session, CUSTOM_DECLINE, agent_id=SUBAGENT)
+
+        client = FakeCopilotClient(
+            turn_events=[sub_agent_declines], reply_content=ANSWER
+        )
+        adapter = await make_started_adapter(
+            client, additional_tools=[(SkipInput, skip)]
+        )
+        tools = PostingTools()
+
+        await run_event(adapter, tools)
+
+        assert tools.chat == [ANSWER]
+
     async def test_a_declined_sub_agent_is_refused_while_its_sibling_posts(
         self,
     ) -> None:

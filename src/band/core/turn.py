@@ -66,11 +66,14 @@ class Turn:
         """Record ``effect`` as made by ``origin``.
 
         ``origin`` is ``None`` for the turn's own model, otherwise the subagent
-        or background work that made the call.
+        or background work that made the call. A subagent's decline stays out
+        of the ledger, so it never settles the model's own reply.
         """
-        self._ledger.record(_core_effect(effect))
         if effect.ends_turn:
             self._declined_by.add(origin)
+            if origin is not None:
+                return
+        self._ledger.record(_core_effect(effect))
 
     def settle(self) -> None:
         """The adapter ended this turn itself (a control reply, a busy notice)."""
@@ -99,12 +102,12 @@ class Turn:
 
     @property
     def replied(self) -> bool:
-        """The turn replied or declined, so the model's final text is not relayed."""
+        """The turn replied or the model declined, so its final text is not relayed."""
         return self._ledger.reply_settled()
 
     @property
     def complete(self) -> bool:
-        return self._ledger.verdict() == TurnVerdict.Complete
+        return bool(self._declined_by) or self._ledger.verdict() == TurnVerdict.Complete
 
 
 #: What a turn that ended without completing reports to the room.

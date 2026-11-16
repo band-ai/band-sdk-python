@@ -6,8 +6,9 @@ import pytest
 
 from band.adapters.nooa.tools import custom_tool_spec, room_tools_class
 from band.core.exceptions import BandToolError
+from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
 from band.runtime.tools.types import TurnEffect
-from band.runtime.turn import DECLINED_TURN_REFUSAL, record_effect
+from band.runtime.turn import record_effect
 from band.testing import FakeAgentTools
 from tests.adapters.nooa.kit import OrderInput
 
@@ -29,5 +30,5 @@ class TestCustomToolAfterDecline:
             with pytest.raises(BandToolError) as refused:
                 await room.order(arguments={"order_id": "A-1"})
 
-        assert str(refused.value.__cause__) == DECLINED_TURN_REFUSAL
+        assert DECLINED_TURN_REFUSAL in str(refused.value)
         assert ran == []
