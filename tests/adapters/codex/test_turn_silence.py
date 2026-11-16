@@ -28,6 +28,7 @@ from tests.adapters.codex.kit import (
     send_bootstrap,
 )
 from tests.adapters.codex.silentturn import (
+    CEILING_S,
     HEARD_EVERY_S,
     IDLE_S,
     silence_guarded,
@@ -312,6 +313,22 @@ class TestTurnSilence:
 
         assert [(error["loc"], error["type"]) for error in refused.value.errors()] == [
             (("turn_idle_timeout_s",), refusal)
+        ]
+
+    @pytest.mark.parametrize(
+        "idle_s",
+        [CEILING_S, CEILING_S + 1],
+        ids=["equal-to-the-total", "above-the-total"],
+    )
+    async def test_an_idle_limit_that_could_never_apply_is_refused(
+        self, idle_s: float
+    ) -> None:
+        """The total limit would always end the turn first."""
+        with pytest.raises(ValidationError, match="turn_timeout_s") as refused:
+            silence_guarded(turn_idle_timeout_s=idle_s)
+
+        assert [(error["loc"], error["type"]) for error in refused.value.errors()] == [
+            ((), "value_error")
         ]
 
     async def test_the_total_limit_wins_when_both_limits_end_together(

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -243,6 +243,28 @@ class CodexAdapterConfig(EnvAdapterConfig):
         return checked.model_copy(
             update={"transition_timeout_s": CODEX_TRANSITION_TIMEOUT_S}
         )
+
+    @model_validator(mode="after")
+    def _check_silence_limits_can_apply(self) -> Self:
+        idle, tool = self.turn_idle_timeout_s, self.turn_tool_idle_timeout_s
+        if idle is None:
+            if tool is not None:
+                raise ValueError(
+                    "turn_tool_idle_timeout_s only extends turn_idle_timeout_s; "
+                    "set turn_idle_timeout_s too"
+                )
+            return self
+        if idle >= self.turn_timeout_s:
+            raise ValueError(
+                "turn_idle_timeout_s must be below turn_timeout_s; the total "
+                "limit would always end the turn first"
+            )
+        if tool is not None and tool < idle:
+            raise ValueError(
+                "turn_tool_idle_timeout_s must not be below turn_idle_timeout_s; "
+                "it is the longer allowance, for a turn whose tool is running"
+            )
+        return self
 
     @field_validator("codex_command", mode="before")
     @classmethod
