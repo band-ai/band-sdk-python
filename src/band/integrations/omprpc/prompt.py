@@ -7,10 +7,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
+from band.integrations.omprpc.decline import (
+    compose_decline_refusals,
+    decline_backlog_refusal,
+    decline_running_tools_refusal,
+    decline_sibling_callback_refusal,
+    decline_sole_tool_refusal,
+)
 from band.integrations.omprpc.errors import BACKLOG_EXCEEDED, OmpProcessError
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
-    OmpContentKind,
     OmpEvent,
     OmpEventType,
     OmpHostToolCall,
@@ -21,15 +27,8 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from band.runtime.tools import BandTool
 
 EVENT_BACKLOG_LIMIT = 256
-
-BUSY_DECLINE_REFUSAL = (
-    "This turn still has background work, queued results, or other "
-    "tool calls to handle. Wait for and process their results, then call "
-    f"{BandTool.NO_REPLY} separately when no work remains."
-)
 
 
 class OmpCallbackKind(StrEnum):
@@ -74,13 +73,20 @@ class PromptRun:
         self.last_activity_sequence = 0
         self.settled_sequence = 0
         self.last_assistant: OmpMessage | None = None
+        self.assistant_message: OmpMessage | None = None
+        self.running_tools: set[str] = set()
+        # Cursor can finish direct calls before its buffered MESSAGE_START arrives.
+        self.finished_tools: set[str] = set()
         self.rejected = False
         self.callbacks: dict[tuple[OmpCallbackKind, str], PromptCallback] = {}
         self.callback_tasks: set[asyncio.Task[None]] = set()
         self.event_worker: asyncio.Task[None] | None = None
         self.stop_after_tool_id: str | None = None
         self.stop_commit: Callable[[], None] | None = None
-        self.stop_recheck_backlog = False
+        self.stop_tool_call_id: str | None = None
+        self.stop_resolved = asyncio.Event()
+        self.stop_resolved.set()
+        self.stop_aborting = False
         self.stop_task: asyncio.Task[None] | None = None
         self.stopped = False
         self.result_owed = True
@@ -93,19 +99,21 @@ class PromptRun:
         call_id: str,
         *,
         on_commit: Callable[[], None] | None = None,
-        recheck_backlog: bool = False,
+        tool_call_id: str | None = None,
     ) -> None:
         if self.stop_after_tool_id is None:
             self.stop_after_tool_id = call_id
             self.stop_commit = on_commit
-            self.stop_recheck_backlog = recheck_backlog
+            self.stop_tool_call_id = tool_call_id
+            self.stop_resolved.clear()
 
     def clear_stop(self, call_id: str, *, cancel_task: bool = True) -> None:
         if self.stop_after_tool_id != call_id:
             return
         self.stop_after_tool_id = None
         self.stop_commit = None
-        self.stop_recheck_backlog = False
+        self.stop_tool_call_id = None
+        self.stop_resolved.set()
         if cancel_task and self.stop_task is not None and not self.stop_task.done():
             self.stop_task.cancel()
 
@@ -125,10 +133,21 @@ class PromptRun:
             return error
         self.last_activity_sequence = sequence
         match event.type:
+            case OmpEventType.MESSAGE_START | OmpEventType.MESSAGE_UPDATE if (
+                event.message is not None and event.message.role == OMP_ASSISTANT_ROLE
+            ):
+                self.assistant_message = event.message
             case OmpEventType.MESSAGE_END if (
                 event.message is not None and event.message.role == OMP_ASSISTANT_ROLE
             ):
                 self.last_assistant = event.message
+                self.assistant_message = event.message
+            case OmpEventType.TOOL_START if event.toolCallId is not None:
+                self.running_tools.add(event.toolCallId)
+                self.finished_tools.discard(event.toolCallId)
+            case OmpEventType.TOOL_END if event.toolCallId is not None:
+                self.running_tools.discard(event.toolCallId)
+                self.finished_tools.add(event.toolCallId)
             case OmpEventType.AGENT_END:
                 self.terminal_seen = self.terminal_seen or event.isTerminal is True
                 self.awaiting_async = event.awaitingAsyncWork is True
@@ -189,14 +208,40 @@ class PromptRun:
     def boundary_reached(self) -> bool:
         return self.result.done() or self.terminal_seen or self.settled_proven()
 
-    def is_single_tool_call(self, tool_call_id: str) -> bool:
-        message = self.last_assistant
-        if message is None or isinstance(message.content, str):
-            return False
-        calls = [
-            block for block in message.content if block.type == OmpContentKind.TOOL_CALL
-        ]
-        return len(calls) == 1 and calls[0].id == tool_call_id
+    def sole_pending_refusal(self, tool_call_id: str, host_call_id: str) -> str | None:
+        """Refuse unless this call is the only unfinished tool, including live execution."""
+        if (
+            reason := decline_running_tools_refusal(tool_call_id, self.running_tools)
+        ) is not None:
+            return reason
+        if (
+            reason := decline_sibling_callback_refusal(
+                tool_call_id,
+                has_sibling_callbacks=any(
+                    key != (OmpCallbackKind.TOOL, host_call_id)
+                    for key in self.callbacks
+                ),
+            )
+        ) is not None:
+            return reason
+        message = (
+            self.assistant_message
+            if self.assistant_message is not None
+            else self.last_assistant
+        )
+        return decline_sole_tool_refusal(
+            message, tool_call_id, finished_tools=self.finished_tools
+        )
+
+    def composed_decline_refusal(
+        self, state: OmpState, tool_call_id: str, host_call_id: str
+    ) -> str | None:
+        """Compose backlog and sole-pending refusals for one decline check."""
+        sole = self.sole_pending_refusal(tool_call_id, host_call_id)
+        return compose_decline_refusals(
+            backlog=decline_backlog_refusal(state, allow_yield=sole is None),
+            sole=sole,
+        )
 
     def has_pending_native_work(self) -> bool:
         event_claims_pending_work = (

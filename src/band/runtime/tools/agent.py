@@ -45,6 +45,7 @@ from band.core.memory_types import (
     MemoryListScope,
     MemoryStoreScope,
     is_organization_scope_rejection,
+    memory_page_size_param,
     organization_scope_rejected_message,
     validate_subject_scope,
 )
@@ -83,6 +84,7 @@ from band.runtime.tools.registry import (
 from band.runtime.tools.schema import (
     ToolCallOutcome,
     serialize_tool_result,
+    tool_execution_failure,
     validate_tool_arguments,
 )
 from band.runtime.turn import records_turn_effects
@@ -1086,7 +1088,9 @@ class AgentTools(AgentToolsProtocol):
             scope,
             system,
         )
-        kwargs: dict[str, Any] = {"page_size": page_size}
+        kwargs: dict[str, Any] = memory_page_size_param(
+            page_size, content_query=content_query
+        )
         optional_filters = {
             "subject_id": subject_id,
             "scope": scope,
@@ -2089,5 +2093,5 @@ class AgentTools(AgentToolsProtocol):
             # Stopped execution must escape ordinary tool-error conversion.
             raise
         except Exception as e:  # noqa: BLE001 -- BandToolError already re-raised above; this converts any other exception into a structured ToolCallOutcome(ok=False)
-            msg = f"Error executing {tool_name}: {e}"
+            msg = tool_execution_failure(tool_name, e)
             return ToolCallOutcome(value=msg, ok=False, error_message=msg)

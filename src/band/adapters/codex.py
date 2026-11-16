@@ -50,6 +50,7 @@ from band.core.delivery import (
     reraise_delivery_cause,
 )
 from band.core.exceptions import (
+    HOST_CONTROL_ERRORS,
     CleanupIncompleteError,
     InputNotAccepted,
     ProviderRunError,
@@ -127,9 +128,9 @@ from band.runtime.activity import permission_wait
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_to_openai_schema,
-    execute_custom_tool,
     find_custom_tool,
     format_validation_error,
+    run_custom_tool,
 )
 from band.runtime.decisions import (
     APPROVAL_NOT_PENDING_TEMPLATE,
@@ -1551,11 +1552,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     thread_id=thread_id,
                     turn_start=turn_start,
                 )
-            except (TurnResultAlreadyReported, TerminalProviderFailure):
-                # A nested handler (e.g. the turn-timeout branch) already
-                # reported this failure via send_failure; propagate it
-                # without emitting a friendly _emit_turn_outcome reply or
-                # a generic "Internal error" fallback.
+            except (TurnResultAlreadyReported, *HOST_CONTROL_ERRORS):
+                # Host control and already-reported failures belong to the
+                # runtime, not to the provider-failure fallback.
                 raise
             except CodexJsonRpcError as error:
                 await self._emit_failed_turn_outcome(
@@ -3009,44 +3008,17 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
+                # Structured: either kind of tool can fail without raising (bad
+                # args, API error, a failure value) via ok=False, which must reach
+                # Codex as a failed call.
                 if custom_tool:
-                    result = await execute_custom_tool(
-                        custom_tool, arguments, tools=tools
-                    )
-                    success = True
+                    outcome = await run_custom_tool(custom_tool, arguments, tools=tools)
                 else:
-                    # Structured: a base tool (e.g. band_send_message) can fail without
-                    # raising (bad args, API error) via ok=False; the plain variant would
-                    # report that failure to Codex as success.
                     outcome = await tools.execute_tool_call_structured(
                         tool_name, arguments
                     )
-                    result = outcome.value
-                    success = outcome.ok
-                if success and is_image_passthrough_result(tool_name, result):
-                    content_items = _image_content_items(result)
-                    text_result = image_block_placeholder(len(content_items))
-                else:
-                    text_result = (
-                        result
-                        if isinstance(result, str)
-                        else json.dumps(result, default=str)
-                    )
-                    content_items = [_text_item(text_result)]
-                await client.respond(
-                    event.id, _tool_response(content_items, success=success)
-                )
-                if should_report:
-                    await tools.send_event(
-                        content=json.dumps(
-                            {
-                                ToolEventKey.NAME: tool_name,
-                                ToolEventKey.OUTPUT: text_result,
-                                ToolEventKey.TOOL_CALL_ID: call_id,
-                            }
-                        ),
-                        message_type="tool_result",
-                    )
+            except HOST_CONTROL_ERRORS:
+                raise
             except ValidationError as exc:
                 errors = format_validation_error(exc)
                 error_text = f"Invalid arguments for {tool_name}: {errors}"
@@ -3063,6 +3035,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         ),
                         message_type="tool_result",
                     )
+                return
             except Exception as exc:
                 error_text = f"Error: {exc}"
                 logger.exception("Tool execution failed for %s", tool_name)
@@ -3078,6 +3051,34 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         ),
                         message_type="tool_result",
                     )
+
+                return
+
+            result, success = outcome.value, outcome.ok
+            if success and is_image_passthrough_result(tool_name, result):
+                content_items = _image_content_items(result)
+                text_result = image_block_placeholder(len(content_items))
+            else:
+                text_result = (
+                    result
+                    if isinstance(result, str)
+                    else json.dumps(result, default=str)
+                )
+                content_items = [_text_item(text_result)]
+            await client.respond(
+                event.id, _tool_response(content_items, success=success)
+            )
+            if should_report:
+                await tools.send_event(
+                    content=json.dumps(
+                        {
+                            ToolEventKey.NAME: tool_name,
+                            ToolEventKey.OUTPUT: text_result,
+                            ToolEventKey.TOOL_CALL_ID: call_id,
+                        }
+                    ),
+                    message_type="tool_result",
+                )
 
             return
 

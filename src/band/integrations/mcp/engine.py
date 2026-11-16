@@ -46,8 +46,8 @@ from band.core.types import Capability, EventMessageType, MessageType
 from band.integrations.mcp.request import request_context
 from band.runtime.custom_tools import (
     CustomToolDef,
-    execute_custom_tool,
     get_custom_tool_name,
+    run_custom_tool,
 )
 from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
@@ -594,7 +594,7 @@ def build_custom_tool_registration(
     """Build a registration for a user-provided custom tool.
 
     Embedded-door only (divergence-matrix row 12: not exposed on the CLI).
-    Dispatches straight through ``execute_custom_tool`` -- there is no
+    Dispatches straight through ``run_custom_tool`` -- there is no
     ``AgentTools``/``HumanTools`` method behind a custom tool. With
     ``get_tools`` the tool is room-bound: that room's turn records its declared
     effect and shows it as running until it returns. The room comes from a
@@ -615,10 +615,14 @@ def build_custom_tool_registration(
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
         chat_id = kwargs.pop(CHAT_ID_FIELD_NAME, None)
-        result = await execute_custom_tool(
+        outcome = await run_custom_tool(
             tool_def, kwargs, tools=room_tools(get_tools, chat_id)
         )
-        return tool_result_text(result)
+        if not outcome.ok:
+            raise BandToolError(
+                outcome.error_message or tool_result_text(outcome.value)
+            )
+        return tool_result_text(outcome.value)
 
     return MCPToolRegistration(
         name=tool_name,

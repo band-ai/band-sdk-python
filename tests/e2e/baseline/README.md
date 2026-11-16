@@ -521,18 +521,27 @@ Each message carries a per-recipient delivery state, exposed as
 DELIVERED -> PROCESSING -> PROCESSED | FAILED
 ```
 
-`FAILED` is **not** terminal — the platform's `/next` serves a failed message again,
+`FAILED` is **not** terminal on the platform — `/next` serves a failed message again,
 so a new agent process (or execution context) may cycle it `FAILED -> PROCESSING`
 before `PROCESSED`. The running agent skips a message once it has failed
 `max_message_retries` times (default 1), so it does not retry the message itself.
 `PROCESSED` is the only success terminal.
 
+`wait_for_processed` and `wait_for_reply` therefore raise `DeliveryFailedError` as
+soon as a message fails, instead of waiting out the deadline. A test whose agent is
+configured to retry passes `retries=` (its `max_message_retries - 1`) to wait
+through that many failures.
+
 ```python notest
 mid = await user_ops.send_message(room_id, "...", mention_id=a.id, mention_name=a.name)
 
-# Success barrier (the common case): wait until PROCESSED. Waits through any
-# transient FAILED; on timeout it reports the last status + attempt error.
+# Success barrier (the common case): wait until PROCESSED. A FAILED message
+# raises DeliveryFailedError at once; on timeout it reports the last status +
+# attempt error.
 await capture.wait_for_processed(mid, a.id)
+
+# An agent configured to retry once (max_message_retries=2):
+await capture.wait_for_processed(mid, a.id, retries=1)
 
 # Any specific state(s): the general waiter, returns the DeliveryStatus reached.
 reached = await capture.wait_for_delivery(mid, a.id, until={DeliveryStatus.FAILED})

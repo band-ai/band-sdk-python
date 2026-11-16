@@ -26,6 +26,8 @@ from tests.integrations.omppeers.base import FOLLOW_UP_PROMPT, RpcPeer
 
 DECLINE_CALL = "decline"
 SECOND_DECLINE_CALL = "decline-concurrent"
+DECLINE_RETRY = "decline-retry"
+LATE_CALL = "late-observation"
 STOP_CHECKPOINT = "stop-checkpoint"
 ADMIT_SECOND_DECLINE = "admit-second-decline"
 DECLINE_TRANSCRIPT = "frames.jsonl"
@@ -43,14 +45,42 @@ class DeclineScenario(StrEnum):
     HELD_STOP = "held-stop"
     BACKGROUND_PENDING = "background-pending"
     BACKGROUND_QUEUED = "background-queued"
+    BACKGROUND_BOTH = "background-both"
+    BACKGROUND_MIXED = "background-mixed"
     BACKGROUND_COMPLETING = "background-completing"
     MIXED_BATCH = "mixed-batch"
     MISSING_BATCH = "missing-batch"
     STRING_CONTENT = "string-content"
     MISMATCHED_ID = "mismatched-id"
     POST_CHECK_PENDING = "post-check-pending"
+    POST_CHECK_QUEUED = "post-check-queued"
+    RECOVER_THEN_DECLINE = "recover-then-decline"
     CANCEL_SNAPSHOT = "cancel-snapshot"
     CANCEL_AFTER_ABORT = "cancel-after-abort"
+    CURSOR_FIRST = "cursor-first"
+    CURSOR_AFTER_TOOL = "cursor-after-tool"
+    CURSOR_LATE_START = "cursor-late-start"
+    CURSOR_PENDING = "cursor-pending"
+    CURSOR_QUEUED = "cursor-queued"
+    CURSOR_CONCURRENT = "cursor-concurrent"
+    CURSOR_UNSTARTED = "cursor-unstarted"
+    CURSOR_POST_CHECK_CONCURRENT = "cursor-post-check-concurrent"
+    CURSOR_POST_CHECK_HOST = "cursor-post-check-host"
+
+
+CURSOR_SCENARIOS = frozenset(
+    {
+        DeclineScenario.CURSOR_FIRST,
+        DeclineScenario.CURSOR_AFTER_TOOL,
+        DeclineScenario.CURSOR_LATE_START,
+        DeclineScenario.CURSOR_PENDING,
+        DeclineScenario.CURSOR_QUEUED,
+        DeclineScenario.CURSOR_CONCURRENT,
+        DeclineScenario.CURSOR_UNSTARTED,
+        DeclineScenario.CURSOR_POST_CHECK_CONCURRENT,
+        DeclineScenario.CURSOR_POST_CHECK_HOST,
+    }
+)
 
 
 class DeclinePeer(RpcPeer):
@@ -63,7 +93,7 @@ class DeclinePeer(RpcPeer):
             if "--plugin-dir" in sys.argv
             else None
         )
-        self.current_tool = BandTool.NO_REPLY
+        self.tool_names: dict[str, str] = {}
         self.stop_pending = False
         self.stop_checkpoint: Frame | None = None
         self.background_pending = False
@@ -75,9 +105,12 @@ class DeclinePeer(RpcPeer):
     def call(
         self, name: BandTool, arguments: dict[str, JsonValue], call_id: str
     ) -> None:
-        self.current_tool = name
+        self.tool_names[call_id] = name
         if not (
-            self.scenario_name == DeclineScenario.MISSING_BATCH
+            (
+                self.scenario_name == DeclineScenario.MISSING_BATCH
+                or self.scenario_name in CURSOR_SCENARIOS
+            )
             and call_id == DECLINE_CALL
         ):
             if (
@@ -103,7 +136,11 @@ class DeclinePeer(RpcPeer):
                     }
                 ]
                 if (
-                    self.scenario_name == DeclineScenario.MIXED_BATCH
+                    self.scenario_name
+                    in {
+                        DeclineScenario.MIXED_BATCH,
+                        DeclineScenario.BACKGROUND_MIXED,
+                    }
                     and call_id == DECLINE_CALL
                 ):
                     content.append(
@@ -140,6 +177,84 @@ class DeclinePeer(RpcPeer):
             handle.write(json.dumps(request) + "\n")
         send(request)
 
+    def cursor_turn(self) -> None:
+        """Cursor executes calls before ending their cumulative assistant message."""
+        content: list[JsonValue] = []
+        message_start: dict[str, JsonValue] = {
+            "type": OmpEventType.MESSAGE_START,
+            "message": {"role": "assistant", "content": content},
+        }
+        if self.scenario_name != DeclineScenario.CURSOR_LATE_START:
+            send(message_start)
+        if self.scenario_name != DeclineScenario.CURSOR_FIRST:
+            content.append(
+                {
+                    "type": OmpContentKind.TOOL_CALL,
+                    "id": "earlier-read",
+                    "name": "read",
+                    "arguments": {},
+                }
+            )
+            send(
+                {
+                    "type": OmpEventType.TOOL_START,
+                    "toolCallId": "earlier-read",
+                    "toolName": "read",
+                    "args": {},
+                }
+            )
+            send(
+                {
+                    "type": OmpEventType.TOOL_END,
+                    "toolCallId": "earlier-read",
+                    "toolName": "read",
+                    "result": {"content": []},
+                    "isError": self.scenario_name == DeclineScenario.CURSOR_LATE_START,
+                }
+            )
+        if self.scenario_name == DeclineScenario.CURSOR_LATE_START:
+            send(message_start)
+        if self.scenario_name in {
+            DeclineScenario.CURSOR_CONCURRENT,
+            DeclineScenario.CURSOR_UNSTARTED,
+        }:
+            content.append(
+                {
+                    "type": OmpContentKind.TOOL_CALL,
+                    "id": "sibling",
+                    "name": "bash",
+                    "arguments": {},
+                }
+            )
+        if self.scenario_name == DeclineScenario.CURSOR_CONCURRENT:
+            self.start_sibling()
+        content.append(
+            {
+                "type": OmpContentKind.TOOL_CALL,
+                "id": DECLINE_CALL,
+                "name": BandTool.NO_REPLY,
+                "arguments": {},
+            }
+        )
+        send(
+            {
+                "type": OmpEventType.MESSAGE_UPDATE,
+                "message": {"role": "assistant", "content": content},
+                "assistantMessageEvent": {"type": "toolcall_end"},
+            }
+        )
+
+    @staticmethod
+    def start_sibling() -> None:
+        send(
+            {
+                "type": OmpEventType.TOOL_START,
+                "toolCallId": "sibling",
+                "toolName": "bash",
+                "args": {},
+            }
+        )
+
     def reply(self) -> None:
         self.call(
             BandTool.SEND_MESSAGE,
@@ -166,6 +281,9 @@ class DeclinePeer(RpcPeer):
         self.prompt_count += 1
         send({"type": OmpEventType.AGENT_START})
         if self.prompt_count > 1:
+            if self.scenario_name == DeclineScenario.RECOVER_THEN_DECLINE:
+                self.call(BandTool.NO_REPLY, {}, DECLINE_RETRY)
+                return
             self.reply()
             return
         if self.scenario_name == DeclineScenario.ABORTED:
@@ -174,13 +292,23 @@ class DeclinePeer(RpcPeer):
         self.background_pending = self.scenario_name in {
             DeclineScenario.BACKGROUND_PENDING,
             DeclineScenario.BACKGROUND_COMPLETING,
+            DeclineScenario.BACKGROUND_BOTH,
+            DeclineScenario.BACKGROUND_MIXED,
+            DeclineScenario.RECOVER_THEN_DECLINE,
+            DeclineScenario.CURSOR_PENDING,
         }
-        self.background_queued = self.scenario_name == DeclineScenario.BACKGROUND_QUEUED
+        self.background_queued = self.scenario_name in {
+            DeclineScenario.BACKGROUND_QUEUED,
+            DeclineScenario.BACKGROUND_BOTH,
+            DeclineScenario.CURSOR_QUEUED,
+        }
         self.cancel_snapshot_pending = (
             self.scenario_name == DeclineScenario.CANCEL_SNAPSHOT
         )
         self.post_check_pending = False
         self.stop_check_seen = False
+        if self.scenario_name in CURSOR_SCENARIOS:
+            self.cursor_turn()
         name = (
             BandTool.GET_PARTICIPANTS
             if self.scenario_name == DeclineScenario.ORDINARY
@@ -212,11 +340,34 @@ class DeclinePeer(RpcPeer):
                 self.call(BandTool.NO_REPLY, {}, SECOND_DECLINE_CALL)
                 self.respond(frame)
             case OmpCommandName.GET_STATE:
-                if self.scenario_name == DeclineScenario.POST_CHECK_PENDING:
+                if (
+                    self.scenario_name
+                    in {
+                        DeclineScenario.CURSOR_POST_CHECK_CONCURRENT,
+                        DeclineScenario.CURSOR_POST_CHECK_HOST,
+                    }
+                    and self.prompt_count == 1
+                    and not self.settled
+                ):
+                    if self.stop_check_seen:
+                        if self.scenario_name == DeclineScenario.CURSOR_POST_CHECK_HOST:
+                            self.call(BandTool.GET_PARTICIPANTS, {}, LATE_CALL)
+                        else:
+                            self.start_sibling()
+                    self.stop_check_seen = True
+                    self.respond_with_state(frame)
+                    return
+                if self.scenario_name in {
+                    DeclineScenario.POST_CHECK_PENDING,
+                    DeclineScenario.POST_CHECK_QUEUED,
+                }:
                     self.respond_with_state(frame)
                     if not self.stop_check_seen:
                         self.stop_check_seen = True
-                        self.post_check_pending = True
+                        if self.scenario_name == DeclineScenario.POST_CHECK_PENDING:
+                            self.post_check_pending = True
+                        else:
+                            self.background_queued = True
                     return
                 if self.cancel_snapshot_pending:
                     self.cancel_snapshot_pending = False
@@ -254,15 +405,31 @@ class DeclinePeer(RpcPeer):
                     {
                         "type": OmpEventType.TOOL_END,
                         "toolCallId": frame.id,
-                        "toolName": self.current_tool,
+                        "toolName": self.tool_names.get(frame.id or "", ""),
                         "isError": bool(frame.isError),
                         "result": frame.result,
                     }
                 )
-                if frame.id in {DECLINE_CALL, SECOND_DECLINE_CALL}:
+                if frame.id in {DECLINE_CALL, SECOND_DECLINE_CALL, DECLINE_RETRY}:
                     self.background_pending = False
                     self.background_queued = False
                     self.post_check_pending = False
+                    if frame.id == DECLINE_RETRY:
+                        self.emit_assistant_turn("")
+                        self.send_prompt_result(settled=True)
+                        self.settle_session()
+                        return
+                    if (
+                        self.scenario_name
+                        in {
+                            DeclineScenario.CONCURRENT,
+                            DeclineScenario.CURSOR_POST_CHECK_HOST,
+                        }
+                        and frame.id == DECLINE_CALL
+                    ):
+                        return
+                    self.reply()
+                elif frame.id == LATE_CALL:
                     self.reply()
                 else:
                     self.emit_assistant_turn("")

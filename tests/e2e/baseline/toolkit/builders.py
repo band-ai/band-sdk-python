@@ -247,24 +247,16 @@ def _build_pydantic_ai(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file builds
-        RunContext,
-    )
-
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file builds
         PydanticAIAdapter,
         PydanticAIAdapterConfig,
     )
 
-    # pydantic-ai takes native callables with a RunContext-first signature.
-    native = (
-        [t.as_callable(ctx_annotation=RunContext) for t in tools] if tools else None
-    )
     return PydanticAIAdapter(
         PydanticAIAdapterConfig(
             model=f"openai:{s.llm_models.openai_model}", custom_section=prompt
         ),
-        additional_tools=native,
+        additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -9,9 +10,39 @@ from band.client.rest import DEFAULT_REQUEST_OPTIONS, UnprocessableEntityError
 from band.core.exceptions import BandToolError
 from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.runtime.tools import AgentTools, StoreMemoryInput
+from tests.runtime.helpers import rest_client_over
 
 
 class TestMemoryTools:
+    @pytest.mark.parametrize(
+        ("content_query", "expected_params"),
+        [
+            (None, {"limit": "25"}),
+            ("coffee", {"page_size": "25", "content_query": "coffee"}),
+        ],
+        ids=["listing-pages-by-cursor-family", "search-keeps-offset-family"],
+    )
+    async def test_list_memories_caps_the_page_in_the_family_the_platform_accepts(
+        self, content_query: str | None, expected_params: dict[str, str]
+    ) -> None:
+        requests: list[httpx.Request] = []
+
+        def answer(request: httpx.Request) -> httpx.Response:
+            assert (request.method, request.url.path) == (
+                "GET",
+                "/api/v1/agent/memories",
+            )
+            requests.append(request)
+            return httpx.Response(200, json={"data": []})
+
+        async with rest_client_over(answer) as rest:
+            await AgentTools("room-123", rest).list_memories(
+                page_size=25, content_query=content_query
+            )
+
+        [request] = requests
+        assert dict(request.url.params) == expected_params
+
     @pytest.mark.asyncio
     async def test_list_memories_omits_none_filters(
         self, mock_rest_client: MagicMock
@@ -26,7 +57,7 @@ class TestMemoryTools:
         await tools.list_memories(page_size=25)
 
         mock_rest_client.agent_api_memories.list_agent_memories.assert_awaited_once_with(
-            page_size=25,
+            limit=25,
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
 
@@ -103,7 +134,7 @@ class TestMemoryTools:
         await tools.list_memories(scope="agent")
 
         mock_rest_client.agent_api_memories.list_agent_memories.assert_awaited_once_with(
-            page_size=50,
+            limit=50,
             scope="agent",
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
