@@ -1497,16 +1497,24 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     ) -> dict[str, Any]:
         """Answer one provider request within ``retention.transition_timeout_s``.
 
-        Budget expiry abandons the wait only: the request stays owned, so a
-        late answer is never published, and the process ``unproven`` names is
-        retired. A ``TimeoutError`` raised by the request itself is a finished
-        failure and must not retire that process.
+        Budget expiry or a stop abandons the wait only: the request stays
+        owned, so a late answer is never published, and the process
+        ``unproven`` names is retired, so the room's next turn does not wait
+        on it again. A ``TimeoutError`` raised by the request itself is a
+        finished failure and must not retire that process.
         """
         request = spawn_owned(
             unproven.client.request(method, params),
             label=f"Codex {method}",
         )
-        if await await_owned({request}, self.config.retention.transition_timeout_s):
+        try:
+            answered = await await_owned(
+                {request}, self.config.retention.transition_timeout_s
+            )
+        except asyncio.CancelledError:
+            self._recover_unconfirmed(unproven)
+            raise
+        if answered:
             return request.result()
         self._recover_unconfirmed(unproven)
         raise TimeoutError(f"Codex {method} exceeded its budget")
