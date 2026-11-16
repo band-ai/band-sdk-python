@@ -34,17 +34,21 @@ def pending_request(request_id: int, native_key: str) -> PendingApproval:
     )
 
 
+def record_accept(state: CodexApprovals, request_id: str) -> None:
+    state.record(
+        ROOM_ID,
+        request_id=request_id,
+        method=CodexApprovalMethod.COMMAND_EXECUTION,
+        decision="accept",
+        decided_by="tester",
+    )
+
+
 class TestCodexApprovals:
     def test_audit_keeps_the_most_recent_decisions(self) -> None:
         state = approvals(max_audit=5)
         for i in range(10):
-            state.record(
-                ROOM_ID,
-                request_id=str(i),
-                method=CodexApprovalMethod.COMMAND_EXECUTION,
-                decision="accept",
-                decided_by="tester",
-            )
+            record_accept(state, str(i))
         assert [entry.request_id for entry in state.audit(ROOM_ID)] == [
             "5",
             "6",
@@ -68,7 +72,7 @@ class TestCodexApprovals:
 
     def test_an_empty_key_is_never_session_approved(self) -> None:
         state = approvals()
-        state.approve_for_session(ROOM_ID, "commandExecution:npm")
+        state.approve_for_session(ROOM_ID, "")
         assert not state.is_session_approved(ROOM_ID, "")
 
     @pytest.mark.asyncio
@@ -81,6 +85,21 @@ class TestCodexApprovals:
         assert state.open_count(ROOM_ID) == 1
 
     @pytest.mark.asyncio
+    async def test_declining_all_keeps_the_rooms_session_and_audit(self) -> None:
+        state = approvals()
+        request = pending_request(1, "item-1")
+        state.register(ROOM_ID, request)
+        state.approve_for_session(ROOM_ID, "commandExecution:npm")
+        record_accept(state, "1")
+
+        state.decline_all(ROOM_ID)
+
+        assert request.future.result() == "decline"
+        assert state.open_count(ROOM_ID) == 0
+        assert state.session_patterns(ROOM_ID) == ["commandExecution:npm"]
+        assert [entry.request_id for entry in state.audit(ROOM_ID)] == ["1"]
+
+    @pytest.mark.asyncio
     async def test_forgetting_a_room_declines_its_requests_and_spends_tokens(
         self,
     ) -> None:
@@ -88,13 +107,7 @@ class TestCodexApprovals:
         request = pending_request(1, "item-1")
         first = state.register(ROOM_ID, request)
         state.approve_for_session(ROOM_ID, "commandExecution:npm")
-        state.record(
-            ROOM_ID,
-            request_id="1",
-            method=CodexApprovalMethod.COMMAND_EXECUTION,
-            decision="accept",
-            decided_by="tester",
-        )
+        record_accept(state, "1")
 
         state.forget_room(ROOM_ID)
 

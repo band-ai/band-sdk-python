@@ -6,7 +6,7 @@ import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from band.integrations.codex.types import (
     ApprovalAuditEntry,
@@ -17,11 +17,7 @@ from band.runtime.decisions import DecisionEntry, DecisionRegistry, Registration
 
 ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
 SessionApprovalGranularity = Literal["binary", "full_command"]
-APPROVAL_OPTIONS: tuple[ApprovalDecision, ...] = (
-    "accept",
-    "acceptForSession",
-    "decline",
-)
+APPROVAL_OPTIONS: tuple[ApprovalDecision, ...] = get_args(ApprovalDecision)
 
 
 def approval_response(decision: ApprovalDecision) -> dict[str, Any]:
@@ -128,7 +124,8 @@ class CodexApprovals:
     """Each room's pending approvals, session-level approvals and audit trail.
 
     Callers mutate a room's state only from that room's turn or approval
-    command, so no lock is needed.
+    command, so no lock is needed. The caps and granularity are fixed when the
+    adapter is built, like the rest of its frozen config.
     """
 
     max_pending: int

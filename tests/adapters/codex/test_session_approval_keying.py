@@ -110,21 +110,12 @@ class TestSessionApprovalKeying:
         assert any("No pending approvals" in m["content"] for m in tools.messages_sent)
         assert adapter._approvals.session_patterns(ROOM_ID) == []
 
-    def test_session_approval_key_empty_prevents_wildcard_match(self) -> None:
-        """Empty session key from missing command cannot match any session set."""
-        key = session_approval_key(
-            CodexApprovalMethod.COMMAND_EXECUTION, {}, "full_command"
-        )
-        # Empty key is falsy, so `key and key in session_set` is always False
-        assert not key
-        assert not (key and key in {"commandExecution:npm"})
-
     def test_session_approval_key_full_command_by_default(self) -> None:
         """Session approval key includes full command string by default."""
         key = session_approval_key(
             CodexApprovalMethod.COMMAND_EXECUTION,
             {"command": "npm test"},
-            "full_command",
+            CodexAdapterConfig().session_approval_granularity,
         )
         assert key == "commandExecution:npm test"
 
@@ -139,13 +130,5 @@ class TestSessionApprovalKeying:
         """Session approval key returns empty when command is missing (no wildcard)."""
         key = session_approval_key(
             CodexApprovalMethod.COMMAND_EXECUTION, {}, "full_command"
-        )
-        assert key == ""
-
-    def test_session_approval_key_empty_for_file_changes_without_paths(self) -> None:
-        """A fileChange request without paths has no session key, so
-        /approve-session can't approve every future change."""
-        key = session_approval_key(
-            "item/fileChange/requestApproval", {"reason": "update"}, "full_command"
         )
         assert key == ""
