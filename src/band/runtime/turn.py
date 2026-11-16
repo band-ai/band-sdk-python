@@ -76,12 +76,11 @@ def declined_turn_refusal(tools: TurnTools) -> str | None:
     refuses only its own. SDK-driven loops stop calling the model instead and
     never consult this.
     """
-    if not tools.turn.declined(_origin(tools)):
+    origin = _origin(tools)
+    if not tools.turn.declined(origin):
         return None
-    logger.info(
-        "Refusing a tool call from %s: it already declined to reply",
-        _origin(tools) or "the model",
-    )
+    caller = "the model" if origin is None else type(origin).__name__
+    logger.info("Refusing a tool call from %s: its turn ended in a decline", caller)
     return DECLINED_TURN_REFUSAL
 
 

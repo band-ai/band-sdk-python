@@ -4,9 +4,12 @@ it receives for refused and posted calls, and room tools that post."""
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
+from band.core.types import MessageType
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
+from band.testing import FakeAgentTools
 from tests.adapters.copilot_sdk.fakes import ToolSchemaFakeTools
 from tests.framework_conformance.outcomeprobes import REPLY_SENT
 from tests.framework_conformance.turnprobes import DispatchingFakeTools, ToolCall
@@ -36,3 +39,12 @@ def replied() -> ToolResult:
 
 class PostingTools(DispatchingFakeTools, ToolSchemaFakeTools):
     """Room tools advertising the Band reply tool, whose dispatched calls post."""
+
+
+def tool_events(tools: FakeAgentTools) -> list[tuple[str, dict[str, Any]]]:
+    """The reported tool calls and results, in order, as ``(type, payload)``."""
+    return [
+        (event["message_type"], json.loads(event["content"]))
+        for event in tools.events_sent
+        if event["message_type"] in {MessageType.TOOL_CALL, MessageType.TOOL_RESULT}
+    ]

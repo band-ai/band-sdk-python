@@ -5,7 +5,13 @@ from __future__ import annotations
 from band_sdk_core import TurnVerdict
 from pydantic import JsonValue
 
-from band.integrations.ompwire import OmpContentKind, OmpFrameType
+from band.integrations.ompwire import (
+    OmpContent,
+    OmpContentKind,
+    OmpFrameType,
+    OmpHostToolResult,
+    OmpToolResult,
+)
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
 from band.testing.fake_tools import FakeAgentTools
 from tests.adapters.omp.mailboxkit import peer_frames
@@ -20,6 +26,7 @@ from tests.framework_conformance.turnprobes import (
     turn_tools,
 )
 from tests.framework_conformance.turnprobes.omp import scripted_omp_adapter
+from tests.framework_conformance.turnprobes.omppeer import host_request_id
 from tests.runtime.customtools.kit import SKIP, SKIPPED, SkipInput, skip
 
 SKIP_THEN_REPLY = TurnScript((ToolCall(SKIP), REPLY))
@@ -32,21 +39,24 @@ async def run_omp_with_skip(script: TurnScript, tools: FakeAgentTools) -> None:
         await adapter.on_event(turn_input(tools))
 
 
-def host_tool_results(frames: list[dict[str, JsonValue]]) -> list[dict[str, JsonValue]]:
+def host_tool_results(frames: list[dict[str, JsonValue]]) -> list[OmpHostToolResult]:
     """The host-tool results the adapter answered the model's calls with."""
-    return [frame for frame in frames if frame["type"] == OmpFrameType.HOST_TOOL_RESULT]
+    return [
+        OmpHostToolResult.model_validate(frame)
+        for frame in frames
+        if frame["type"] == OmpFrameType.HOST_TOOL_RESULT
+    ]
 
 
-def host_tool_result(
-    request: str, text: str, *, is_error: bool
-) -> dict[str, JsonValue]:
-    """The host-tool result frame answering ``request`` with ``text``."""
-    return {
-        "type": OmpFrameType.HOST_TOOL_RESULT,
-        "id": request,
-        "result": {"content": [{"type": OmpContentKind.TEXT, "text": text}]},
-        "isError": is_error,
-    }
+def text_result(call: int, text: str, *, is_error: bool) -> OmpHostToolResult:
+    """The host-tool result answering the script's ``call``-th call with ``text``."""
+    return OmpHostToolResult.from_tool(
+        host_request_id(call),
+        OmpToolResult(
+            content=[OmpContent(type=OmpContentKind.TEXT, text=text)],
+            is_error=is_error,
+        ),
+    )
 
 
 class TestCustomDeclineRefusal:
@@ -67,6 +77,6 @@ class TestCustomDeclineRefusal:
             frames = await peer_frames(adapter, ROOM_ID)
 
         assert host_tool_results(frames) == [
-            host_tool_result("request-0", SKIPPED, is_error=False),
-            host_tool_result("request-1", DECLINED_TURN_REFUSAL, is_error=True),
+            text_result(0, SKIPPED, is_error=False),
+            text_result(1, DECLINED_TURN_REFUSAL, is_error=True),
         ]

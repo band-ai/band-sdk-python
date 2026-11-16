@@ -79,6 +79,10 @@ async def skip(args: SkipInput) -> str:
     return SKIPPED
 
 
+class HeldDeclineInput(BaseModel):
+    """Decline to reply, once released."""
+
+
 class DeployInput(BaseModel):
     """Deploy the service."""
 

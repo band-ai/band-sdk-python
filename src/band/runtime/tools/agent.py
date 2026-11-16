@@ -13,13 +13,7 @@ import hashlib
 import logging
 import re
 import warnings
-from collections.abc import (
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Collection,
-    Iterator,
-)
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from copy import copy
 from datetime import UTC, datetime
 from enum import StrEnum

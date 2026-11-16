@@ -984,7 +984,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
     def _make_tool_handler(self, room_id: str) -> Callable[[ToolInvocation], Any]:
         """Build the per-room tool handler Copilot invokes for bridged tools.
 
-        A closure only to bind ``room_id``; the logic lives in
+        Binds ``room_id`` and runs each call as the sub-agent that issued it
+        (``None`` for the root agent); the logic lives in
         :meth:`_execute_bridged_tool`.
         """
 

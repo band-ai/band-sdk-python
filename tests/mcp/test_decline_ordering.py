@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 
-from pydantic import BaseModel
-
 from band.integrations.mcp.backends import BandMCPBackendSettings
 from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import (
@@ -20,10 +18,7 @@ from tests.framework_conformance.outcomeprobes import ANSWER, REPLY, REPLY_SENT
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_tools
 from tests.mcp.toolresults import mcp_text_result, mcp_tool_error
 from tests.mcpclient import in_memory_backend_session
-
-
-class HeldDeclineInput(BaseModel):
-    """Decline to reply, once released."""
+from tests.runtime.customtools.kit import HeldDeclineInput
 
 
 class TestDeclineOrdering:

@@ -22,6 +22,11 @@ from tests.integrations.omppeers.startup import StartupPeer
 from tests.integrations.ompscenarios import PeerCommand, PeerScenario
 
 
+def host_request_id(index: int) -> str:
+    """The id of the host-tool request for the script's ``index``-th call."""
+    return f"request-{index}"
+
+
 class TurnPeer(StartupPeer):
     def __init__(self, script: TurnScript, plugin: Path) -> None:
         super().__init__(plugin)
@@ -43,7 +48,7 @@ class TurnPeer(StartupPeer):
             self.complete_agent_turn(self.script.final_text)
             return
         index, call = action
-        self.pending_call = f"request-{index}"
+        self.pending_call = host_request_id(index)
         call_id = f"tool-{index}"
         self.pending_tool = (call_id, call.name)
         send(

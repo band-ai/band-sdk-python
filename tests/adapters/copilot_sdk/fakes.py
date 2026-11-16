@@ -470,6 +470,11 @@ async def run_event(
     )
 
 
+def tool_call_id(call: ToolCall) -> str:
+    """The id ``call_tool`` gives the model's ``call``."""
+    return f"call-{call.name}"
+
+
 async def call_tool(
     session: FakeCopilotSession, call: ToolCall, *, agent_id: str | None = None
 ) -> ToolResult:
@@ -477,7 +482,7 @@ async def call_tool(
     session's registered tool."""
     return await session.find_tool(call.name).handler(
         ToolInvocation(
-            tool_call_id=f"call-{call.name}",
+            tool_call_id=tool_call_id(call),
             tool_name=call.name,
             arguments=call.arguments,
             agent_id=agent_id,
