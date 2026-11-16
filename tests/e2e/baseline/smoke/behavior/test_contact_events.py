@@ -20,6 +20,7 @@ from band.client.streaming import (
     ContactRequestReceivedPayload,
     ContactRequestUpdatedPayload,
 )
+from band.core.types import ContactRequestAction, ContactRequestStatus
 from band.platform.event import (
     ContactAddedEvent,
     ContactRequestReceivedEvent,
@@ -31,9 +32,6 @@ from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
 from tests.e2e.baseline.toolkit.contacts import ContactInbox, running_contact_listener
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 
-PENDING = "pending"
-APPROVED = "approved"
-APPROVE = "approve"
 AGENT_CONTACT_TYPE = "Agent"
 
 
@@ -66,16 +64,27 @@ class TestContactEvents:
                 received.payload.from_name,
                 received.payload.message,
                 received.payload.status,
-            ) == (request_id, requester_handle, requester.name, note, PENDING)
+            ) == (
+                request_id,
+                requester_handle,
+                requester.name,
+                note,
+                ContactRequestStatus.PENDING,
+            )
 
-            await inbox.tools.respond_contact_request(APPROVE, request_id=request_id)
+            await inbox.tools.respond_contact_request(
+                ContactRequestAction.APPROVE, request_id=request_id
+            )
             updated = await inbox.wait_for(
                 ContactRequestUpdatedEvent, deadline_s=deadline_s
             )
             added = await inbox.wait_for(ContactAddedEvent, deadline_s=deadline_s)
 
         assert isinstance(updated.payload, ContactRequestUpdatedPayload)
-        assert (updated.payload.id, updated.payload.status) == (request_id, APPROVED)
+        assert (updated.payload.id, updated.payload.status) == (
+            request_id,
+            ContactRequestStatus.APPROVED,
+        )
         assert isinstance(added.payload, ContactAddedPayload)
         assert (
             added.payload.handle,

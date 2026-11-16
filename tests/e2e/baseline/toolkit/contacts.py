@@ -9,7 +9,7 @@ lets a test await each event type the platform pushes.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
@@ -44,19 +44,6 @@ class TurnlessAdapter(SimpleAdapter[Any]):
     ) -> None:
         raise RuntimeError(f"contact listener was handed message {msg.id}")
 
-    async def on_turn(
-        self,
-        messages: Sequence[PlatformMessage],
-        tools: AgentToolsProtocol,
-        history: Any,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        raise RuntimeError(f"contact listener was handed {len(messages)} message(s)")
-
 
 class ContactInbox:
     """The ``CALLBACK`` handler: records each contact event and the tools it got."""
@@ -82,10 +69,7 @@ class ContactInbox:
     async def wait_for(self, kind: type[EventT], *, deadline_s: float) -> EventT:
         """Return the first delivered event of ``kind``; raise on the deadline."""
         async with asyncio.timeout(deadline_s), self._arrived:
-            await self._arrived.wait_for(lambda: self._first(kind) is not None)
-        event = self._first(kind)
-        assert event is not None
-        return event
+            return await self._arrived.wait_for(lambda: self._first(kind))
 
     def _first(self, kind: type[EventT]) -> EventT | None:
         return next((e for e in self._events if isinstance(e, kind)), None)
