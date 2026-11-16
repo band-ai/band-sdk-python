@@ -73,8 +73,12 @@ def ci_lanes() -> tuple[CILane, ...]:
     # matrix adapter (see smoke/adapters/test_parlant.py's own docstring), so no
     # adapter's `requires` will ever place it here — without this seed the lane
     # would never appear, and its manually `@lane`-pinned smoke would have nowhere
-    # to run.
-    by_lane: dict[Lane, list[Adapter]] = {DEFAULT_LANE: [], Lane.PARLANT: []}
+    # to run. Lane.KIT likewise has no adapter: it hosts the kit image smokes.
+    by_lane: dict[Lane, list[Adapter]] = {
+        DEFAULT_LANE: [],
+        Lane.PARLANT: [],
+        Lane.KIT: [],
+    }
     for spec in specs(include_pending=True):  # stable id order
         by_lane.setdefault(adapter_lane(spec), []).append(spec.id)
     return tuple(

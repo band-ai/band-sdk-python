@@ -23,6 +23,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from band import Agent
 from band.core.simple_adapter import SimpleAdapter
 
+# Every reply is this prefix followed by the message it answers.
+ECHO_PREFIX = "echo: "
+
 
 class EchoAgentSettings(BaseSettings):
     """Container-injected config. pydantic-settings is a core band-sdk
@@ -49,7 +52,9 @@ class EchoAdapter(SimpleAdapter[str]):
         is_session_bootstrap,
         room_id,
     ):
-        await tools.send_message(f"echo: {msg.content}", mentions=[msg.sender_id])
+        await tools.send_message(
+            f"{ECHO_PREFIX}{msg.content}", mentions=[msg.sender_id]
+        )
 
 
 async def main() -> None:

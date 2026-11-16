@@ -155,19 +155,17 @@ Step 6. It goes to Step 8 as an excluded bump.
 ## Step 5 — Run the full suite
 
 Prove the consolidated set. The lint/type gate and unit tests are the floor;
-integration and e2e run when their credentials are present (see AGENTS.md's
-Environment Variables — they need Band + LLM keys, and e2e needs
-`E2E_TESTS_ENABLED=true`).
+the live e2e baseline runs when its credentials are present (see AGENTS.md's
+Environment Variables — it needs Band + LLM keys and `E2E_TESTS_ENABLED=true`).
 
 ```bash
 uv sync --extra dev
 uv run pre-commit run --all-files                                     # ruff + pyrefly gate
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/  # unit
-uv run pytest tests/integration/ -v -s --no-cov                       # needs BAND_API_KEY_USER
+uv run pytest tests/ --ignore=tests/e2e/                              # unit
 E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov  # needs live platform + LLM keys
 ```
 
-**Actually run integration and e2e — don't pre-declare them "env-blocked."** If
+**Actually run e2e — don't pre-declare them "env-blocked."** If
 they fail, isolate the cause (Step 6) rather than assuming; a real config bug
 hides behind that assumption. The e2e baseline provisions its own agents (only
 needs `BAND_API_KEY_USER`) and can take a while.
@@ -213,13 +211,13 @@ without it, then re-test:
 # current version), then re-run Step 5. Repeat until green.
 ```
 
-**Attribute each failure before dropping a bump — most integration/e2e failures
+**Attribute each failure before dropping a bump — most e2e failures
 are environmental, not the bumps.** These run against a live platform and a
 multi-lane matrix, so isolate with a minimal probe before blaming a package.
 Signatures seen in practice that are **not** bump regressions:
 
 - WebSocket `403` on connect **plus** a `422` "Expected :uuid" on a mention ⇒ a
-  stale `TEST_AGENT_ID` / `BAND_AGENT_ID` in the test env that doesn't match the
+  stale `BAND_AGENT_ID` in the test env that doesn't match the
   agent `BAND_API_KEY` owns. The SDK appends `&agent_id=` to the socket URL and
   the platform rejects an unauthorized pairing. Confirm by connecting the WS with
   vs. without `&agent_id=`; fix the env, don't drop a bump.
@@ -247,8 +245,8 @@ gh pr review <number> --approve --body "$(cat <<'MSG'
 
 Validated in a consolidated batch run: this bump was applied together with the
 other passing Dependabot bumps on a local branch and the full suite (ruff +
-pyrefly, unit, crewai in dev-crewai, and integration/e2e where credentials were
-available) passed with all of them in place — so it's compatible with the rest
+pyrefly, unit, crewai in dev-crewai, and the live e2e baseline where credentials
+were available) passed with all of them in place — so it's compatible with the rest
 of the batch, not just green on its own. Safe to merge.
 MSG
 )"
@@ -335,7 +333,7 @@ merge, know that this repo's setup makes it a **serial grind**, not a batch:
 - **Majors get human sign-off** even when green, especially framework/adapter
   dependencies where a major can change behavior the SDK relies on. Surface them
   in the report rather than approving them unremarked.
-- **Run integration and e2e for real, and attribute every failure** (Step 6)
+- **Run the e2e baseline for real, and attribute every failure** (Step 6)
   before dropping a bump — live-platform/lane/plan/env failures are common and
   are not the bumps. Never call a suite "env-blocked" on assumption.
 - **If you drive merges: re-approve last, never `--admin`-bypass CI, and never

@@ -13,7 +13,7 @@ helpers, and no mixed-concern files. This skill is the extra bar for tests.
 Live E2E authoring follows `band-write-e2e-test` on top of this skill.
 
 Rules marked **(non-live)** apply to tests that run in the CI unit job
-(everything outside `tests/e2e/` and `tests/integration/`). All other rules
+(everything outside `tests/e2e/`). All other rules
 apply to every test.
 
 ## Before writing

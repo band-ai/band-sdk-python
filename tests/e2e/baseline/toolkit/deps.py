@@ -92,6 +92,7 @@ class Lane(StrEnum):
     NOOA = "nooa"
     STRANDS = "strands"
     PARLANT = "parlant"
+    KIT = "kit"
 
 
 # The shared default lane: every provider-key adapter with no special isolation
@@ -136,6 +137,9 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     Lane.PARLANT: Extra.DEV_PARLANT,
     Lane.NOOA: Extra.DEV_STRANDS_NOOA,
     Lane.STRANDS: Extra.DEV_STRANDS_NOOA,
+    # The band-python-kit image on the runner's Docker daemon. No adapter lives
+    # here; its smokes are `@lane`-pinned.
+    Lane.KIT: Extra.DEV,
 }
 
 
@@ -150,9 +154,11 @@ LANE_EXTRAS: dict[Lane, Extra] = {
 # (https://docs.letta.com/guides/server/source).
 #
 # NOOA imports ``fcntl`` unconditionally, so it cannot be imported on Windows and
-# the ``dev-strands-nooa`` extra does not install it there. Every other lane runs on every OS
-# the e2e matrix offers.
-LINUX_ONLY_LANES: frozenset[Lane] = frozenset({Lane.LETTA, Lane.NOOA})
+# the ``dev-strands-nooa`` extra does not install it there.
+#
+# The kit image is a Linux image, and the Windows runner only runs Windows
+# containers. Every other lane runs on every OS the e2e matrix offers.
+LINUX_ONLY_LANES: frozenset[Lane] = frozenset({Lane.LETTA, Lane.NOOA, Lane.KIT})
 
 
 class Dep(Enum):
@@ -183,6 +189,7 @@ class Dep(Enum):
     OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
     OMP_NATIVE = "omp_native"  # the omp extra and native RPC backend
     SECOND_USER = "second_user"  # BAND_API_KEY_USER_2, a second human in the room
+    DOCKER = "docker"  # a reachable Docker daemon (builds and runs the kit image)
 
 
 @dataclass(frozen=True)
@@ -263,12 +270,15 @@ def _omp_cli_responds(settings: BaselineSettings) -> bool:
     return _cli_responds(omp_command(settings))
 
 
-def _cli_responds(command: tuple[str, ...]) -> bool:
+def _cli_responds(
+    command: tuple[str, ...], *, args: tuple[str, ...] = ("--help",)
+) -> bool:
+    """``command`` is on PATH and ``command *args`` exits 0."""
     if shutil.which(command[0]) is None:
         return False
     try:
         completed = subprocess.run(
-            [*command, "--help"],
+            [*command, *args],
             check=False,
             capture_output=True,
             text=True,
@@ -342,6 +352,11 @@ def _codex_cwd_available(settings: BaselineSettings) -> bool:
     if not path.is_dir():
         return False
     return path != REPO_ROOT and REPO_ROOT not in path.parents
+
+
+def _docker_daemon_available(_settings: BaselineSettings) -> bool:
+    """``docker info`` reaches a daemon (the CLI alone cannot build or run)."""
+    return _cli_responds(("docker",), args=("info",))
 
 
 def _letta_llm_provider_available(settings: BaselineSettings) -> bool:
@@ -476,6 +491,11 @@ _DEPS: dict[Dep, DepSpec] = {
         "nooa is not importable (dev-strands-nooa installs it on Python 3.12-3.13, "
         "off Windows)",
         lane=Lane.NOOA,
+    ),
+    Dep.DOCKER: DepSpec(
+        _docker_daemon_available,
+        "no reachable Docker daemon (`docker info` failed)",
+        lane=Lane.KIT,
     ),
 }
 

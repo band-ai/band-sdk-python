@@ -1,38 +1,50 @@
+"""create_chatroom sends the chat body the platform accepts and returns the new room."""
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, Mock
+from typing import Any
+
+import httpx
+import pytest
 
 from band.runtime.tools import AgentTools
+from tests.httpwire import request_json
+from tests.identifiers import UUID_ID
+from tests.runtime.helpers import rest_client_over
+
+ROOM_ID = "room-123"
+STAMP = "2026-01-01T00:00:00Z"
+CREATE_CHAT = ("POST", "/api/v1/agent/chats")
 
 
 class TestAgentToolsCreateChatroom:
-    """Test create_chatroom tool."""
-
-    async def test_create_chatroom_success(self, mock_rest_client: MagicMock) -> None:
-        """create_chatroom() should call REST API and return room ID."""
-        mock_response = Mock()
-        mock_response.data.id = "room-123"
-        mock_rest_client.agent_api_chats.create_agent_chat = AsyncMock(
-            return_value=mock_response
-        )
-
-        tools = AgentTools("room-456", mock_rest_client)
-        result = await tools.create_chatroom(task_id="task-789")
-
-        assert result == "room-123"
-        mock_rest_client.agent_api_chats.create_agent_chat.assert_called_once()
-
-    async def test_create_chatroom_without_task_id(
-        self, mock_rest_client: MagicMock
+    @pytest.mark.parametrize(
+        ("task_id", "chat"),
+        [
+            pytest.param(None, {}, id="no-task"),
+            pytest.param(UUID_ID, {"task_id": UUID_ID}, id="task"),
+        ],
+    )
+    async def test_creates_the_room_with_the_given_task(
+        self, task_id: str | None, chat: dict[str, Any]
     ) -> None:
-        """create_chatroom() should work without task_id."""
-        mock_response = Mock()
-        mock_response.data.id = "room-abc"
-        mock_rest_client.agent_api_chats.create_agent_chat = AsyncMock(
-            return_value=mock_response
-        )
+        sent: list[tuple[str, str, Any]] = []
 
-        tools = AgentTools("room-456", mock_rest_client)
-        result = await tools.create_chatroom()
+        def platform(request: httpx.Request) -> httpx.Response:
+            sent.append((request.method, request.url.path, request_json(request)))
+            if (request.method, request.url.path) != CREATE_CHAT:
+                return httpx.Response(404)
+            return httpx.Response(
+                200,
+                json={
+                    "data": {"id": ROOM_ID, "inserted_at": STAMP, "updated_at": STAMP}
+                },
+            )
 
-        assert result == "room-abc"
+        async with rest_client_over(platform) as rest:
+            room_id = await AgentTools("room-456", rest).create_chatroom(
+                task_id=task_id
+            )
+
+        assert room_id == ROOM_ID
+        assert sent == [(*CREATE_CHAT, {"chat": chat})]

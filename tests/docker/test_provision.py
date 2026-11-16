@@ -44,6 +44,7 @@ from tests.docker.launcher.fakes import (
     make_workspace,
     write_config,
 )
+from tests.docker.sbx_banner import UPDATE_BANNER
 
 # --- Helpers ---
 
@@ -77,6 +78,7 @@ class FakeSbx:
         text=True,
         check=False,
         timeout=None,
+        env=None,
     ):
         self.calls.append({"argv": list(argv), "input": input})
         if argv[1:3] == ["secret", "ls"]:
@@ -377,7 +379,10 @@ class TestAgentIdRoundTrip:
 
 class TestSandboxHasBandSecret:
     def test_true_when_present(self, monkeypatch):
-        fake = FakeSbx(ls_output=_ls_table(scope="my-agent", host="**.band.ai"))
+        # sbx's once-daily update banner trails the document on some runs.
+        fake = FakeSbx(
+            ls_output=_ls_table(scope="my-agent", host="**.band.ai") + UPDATE_BANNER
+        )
         monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake)
         assert sandbox_has_band_secret("my-agent", "**.band.ai") is True
 
@@ -397,7 +402,9 @@ class TestSandboxHasBandSecret:
 
 class TestSandboxExists:
     def test_true_when_present(self, monkeypatch):
-        fake = FakeSbx(sandbox_ls_json='{"sandboxes": [{"name": "my-agent"}]}')
+        fake = FakeSbx(
+            sandbox_ls_json='{"sandboxes": [{"name": "my-agent"}]}' + UPDATE_BANNER
+        )
         monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake)
         assert sandbox_exists("my-agent") is True
 

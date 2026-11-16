@@ -286,12 +286,18 @@ tests/
 ├── converters/     # Unit tests per converter
 ├── core/           # Core logic tests
 ├── runtime/        # Runtime tests
-├── integration/    # Real API tests (skipped in CI)
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
 │   └── baseline/   # The only E2E suite: reusable toolkit + smokes (see baseline/README.md)
 ├── skills/         # Tests for .claude/skills scripts (paths via tests/paths.py anchors)
 └── conftest.py     # Shared fixtures
 ```
+
+Every test must run either in PR CI or in the nightly E2E workflow
+(`.github/workflows/e2e.yml`, mainly the live baseline in `tests/e2e/baseline`).
+A test that needs the real platform belongs in the baseline; anything else runs
+offline in CI against local peers. Do not add a suite that neither runs. Known
+exception: no workflow yet opens the `docker_build`, `sandbox` or `vscode_chat`
+gates.
 
 `testpaths = ["tests"]`, so **every** test lives here — including tests for code
 outside `src/band` (`band-bridge` -> `tests/bridge`, `docker/band_python_kit` ->
@@ -355,19 +361,16 @@ uv sync --all-packages --locked --extra dev-strands-nooa
 uv sync --all-packages --locked --extra dev-parlant
 
 # Run unit tests (serial; use this for --pdb and whenever live gates are on)
-uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run --all-packages pytest tests/ --ignore=tests/e2e/ -v
 
 # Run unit tests the way CI does (xdist worksteal; never with --pdb or live gates)
-uv run --all-packages pytest -n 4 --dist worksteal --ignore=tests/e2e --ignore=tests/integration -q
+uv run --all-packages pytest -n 4 --dist worksteal --ignore=tests/e2e -q
 
 # Run single test
 uv run --all-packages pytest tests/ -k "test_name"
 
 # Run with coverage
-uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src/band
-
-# Run integration tests (requires API key)
-uv run --all-packages pytest tests/integration/ -v -s --no-cov
+uv run --all-packages pytest tests/ --ignore=tests/e2e/ --cov=src/band
 
 # Run E2E tests (requires live platform + LLM API keys)
 E2E_TESTS_ENABLED=true uv run --all-packages pytest tests/e2e/ -v -s --no-cov
@@ -433,7 +436,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, copilot_acp, cursor_acp, and omp_acp coding agents), `opencode` (opencode against a local `opencode serve` on Anthropic), `letta` (self-hosted letta server), `strands` (`dev-strands-nooa` extra), `nooa` (same `dev-strands-nooa` extra, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, copilot_acp, cursor_acp, and omp_acp coding agents), `opencode` (opencode against a local `opencode serve` on Anthropic), `letta` (self-hosted letta server), `strands` (`dev-strands-nooa` extra), `nooa` (same `dev-strands-nooa` extra, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only), `kit` (`dev` extra, Linux-only: the band-python-kit image smokes, needing a Docker daemon). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
@@ -558,7 +561,7 @@ Full Python gate (commands are a toolbox, not a requirement for prose changes):
 uv run --all-packages ruff check .
 uv run --all-packages ruff format --check .
 uv run --all-packages pyrefly check
-uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -q
+uv run --all-packages pytest tests/ --ignore=tests/e2e/ -q
 ```
 
 ## Git Workflow

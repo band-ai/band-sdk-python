@@ -158,6 +158,9 @@ smoke/adapters/test_letta.py:
     pass: [letta]
   test_self_hosted_mcp_registration_health:
     pass: [letta]
+smoke/adapters/test_letta_isolation.py::TestLettaIdentityIsolation:
+  test_two_identities_keep_separate_orgs_tools_and_agents:
+    pass: [letta]
 smoke/adapters/test_nooa.py::TestNooaValidationAliases:
   test_aliased_payload_round_trips: nooa
 smoke/adapters/test_omp_acp.py:
@@ -219,6 +222,9 @@ smoke/behavior/cursorworkflows/test_restart_recovery.py::TestCursorRestartRecove
     pass: [cursor_acp]
 smoke/behavior/test_agent_scenarios.py:
   test_two_agents_greet_each_other: core
+smoke/behavior/test_contact_events.py::TestContactEvents:
+  test_approval_adds_and_removal_deletes_the_contact: core
+  test_rejection_settles_the_request_without_a_contact: core
 smoke/behavior/test_delivery_status.py:
   test_failing_agent_reaches_failed_state: all
   test_healthy_message_reaches_processed_via_processing: core
@@ -359,6 +365,8 @@ smoke/inspection/test_usage.py:
       adapters: [omp]
     - reason: usage lives in user-supplied flow internals
       adapters: [crewai_flow]
+smoke/kit/test_containerized_echo.py::TestContainerizedEcho:
+  test_containerized_agent_replies_over_live_platform: kit
 smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle:
   test_old_room_cleanup_preserves_a_fresh_followup:
     pass: [agno, anthropic, claude_sdk, copilot_sdk, crewai, gemini, google_adk, langgraph, nooa, pydantic_ai, strands]

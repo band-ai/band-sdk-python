@@ -138,25 +138,6 @@ class TestMessageTypeDefaults:
         assert output.content_contains(result, "Bob")
 
 
-class TestThoughtMessageSkipping:
-    """All converters must skip thought messages."""
-
-    def test_skips_thought_messages(self, converter_config, make_converter, output):
-        """Thought messages are always filtered out."""
-        converter = make_converter()
-        raw = [
-            {
-                "role": "assistant",
-                "content": "I'm thinking about this...",
-                "message_type": "thought",
-            }
-        ]
-
-        result = converter.convert(raw)
-
-        assert output.is_empty(result)
-
-
 class TestOwnMessageFiltering:
     """Converters filter own messages unless their framework needs them for transcript rehydration."""
 

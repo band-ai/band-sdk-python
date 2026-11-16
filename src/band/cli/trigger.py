@@ -36,6 +36,7 @@ import asyncio
 import logging
 import os
 import sys
+from enum import StrEnum
 from typing import Final
 
 from band_rest import (
@@ -52,7 +53,7 @@ from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
 )
 
 from band import LogSettings, LogStream
-from band.client.rest import aclose_rest_client
+from band.client.rest import aclose_rest_client, api_error_message
 from band.runtime.handles import normalize_handle
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_REST_URL = "https://app.band.ai/"
 DEFAULT_REQUEST_OPTIONS: Final[RequestOptions] = {"max_retries": 3}
 DEFAULT_TIMEOUT: Final[int] = 120
+PEERS_PAGE_SIZE: Final[int] = 100
+
+
+class AuthMode(StrEnum):
+    """The ``--auth-mode`` choices: which API surface the key belongs to."""
+
+    AGENT = "agent"
+    USER = "user"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,9 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--auth-mode",
-        choices=["agent", "user"],
-        default=os.environ.get("BAND_AUTH_MODE", "agent"),
-        help="Authentication mode: 'agent' or 'user' (env: BAND_AUTH_MODE, default: agent)",
+        type=AuthMode,
+        choices=list(AuthMode),
+        default=os.environ.get("BAND_AUTH_MODE", AuthMode.AGENT),
+        help=f"Authentication mode: {' or '.join(AuthMode)} (env: BAND_AUTH_MODE, default: {AuthMode.AGENT})",
     )
     parser.add_argument(
         "--target-handle",
@@ -111,9 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _format_api_error(err: ApiError, action: str) -> str:
     """Extract a human-readable message from a Fern ApiError."""
-    body = getattr(err, "body", None)
-    error_obj = getattr(body, "error", None)
-    message = getattr(error_obj, "message", None)
+    message = api_error_message(err.body)
     if message:
         return f"Failed to {action}: {message}"
     return f"Failed to {action}: HTTP {err.status_code}"
@@ -122,7 +130,7 @@ def _format_api_error(err: ApiError, action: str) -> str:
 async def find_peer_by_handle(
     client: AsyncRestClient,
     handle: str,
-    auth_mode: str,
+    auth_mode: AuthMode,
 ) -> dict[str, str] | None:
     """
     Paginate through peers to find one matching the given handle.
@@ -132,16 +140,16 @@ async def find_peer_by_handle(
     normalized = (normalize_handle(handle) or "").lower()
     page = 1
     while True:
-        if auth_mode == "agent":
+        if auth_mode == AuthMode.AGENT:
             response = await client.agent_api_peers.list_agent_peers(
                 page=page,
-                page_size=100,
+                page_size=PEERS_PAGE_SIZE,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
         else:
             response = await client.human_api_peers.list_my_peers(
                 page=page,
-                page_size=100,
+                page_size=PEERS_PAGE_SIZE,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
 
@@ -198,7 +206,10 @@ async def run(args: argparse.Namespace) -> str:
     try:
         # Step 1: Look up the target peer by handle
         logger.info("Looking up peer with handle: %s", args.target_handle)
-        peer = await find_peer_by_handle(client, args.target_handle, args.auth_mode)
+        try:
+            peer = await find_peer_by_handle(client, args.target_handle, args.auth_mode)
+        except ApiError as e:
+            raise RuntimeError(_format_api_error(e, "look up peer")) from e
         if not peer:
             raise ValueError(
                 f"Target agent with handle '{args.target_handle}' not found. "
@@ -209,7 +220,7 @@ async def run(args: argparse.Namespace) -> str:
         # Step 2: Create a new chatroom
         logger.info("Creating chatroom...")
         try:
-            if args.auth_mode == "agent":
+            if args.auth_mode == AuthMode.AGENT:
                 chat_response = await client.agent_api_chats.create_agent_chat(
                     chat=ChatRoomRequest(),
                     request_options=DEFAULT_REQUEST_OPTIONS,
@@ -229,7 +240,7 @@ async def run(args: argparse.Namespace) -> str:
         # Wrapped in try/except so we log the orphan room ID on partial failure.
         try:
             logger.info("Adding %s to chatroom...", peer["name"])
-            if args.auth_mode == "agent":
+            if args.auth_mode == AuthMode.AGENT:
                 await client.agent_api_participants.add_agent_chat_participant(
                     chat_id=room_id,
                     participant=ParticipantRequest(participant_id=peer["id"]),
@@ -252,7 +263,7 @@ async def run(args: argparse.Namespace) -> str:
                 content=args.message,
                 mentions=[mention],
             )
-            if args.auth_mode == "agent":
+            if args.auth_mode == AuthMode.AGENT:
                 await client.agent_api_messages.create_agent_chat_message(
                     chat_id=room_id,
                     message=message_request,

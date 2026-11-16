@@ -83,6 +83,30 @@ async def aclose_rest_client(client: AsyncRestClient) -> None:
     await client._client_wrapper.httpx_client.httpx_client.aclose()
 
 
+def chat_room_request(task_id: str | None = None) -> ChatRoomRequest:
+    """Build a chat-creation body, omitting ``task_id`` when it is unset.
+
+    The Fern client sends an explicit ``None`` as ``null``; the SDK omits
+    optional fields instead of sending null.
+    """
+    return ChatRoomRequest(task_id=task_id) if task_id else ChatRoomRequest()
+
+
+def api_error_message(body: object) -> str | None:
+    """Return the platform's ``error.message`` from a Fern ``ApiError`` body.
+
+    Fern parses declared 401/403/404 bodies into its ``Error`` model, but
+    types declared 422 bodies as ``Any`` and raises undeclared statuses as a
+    bare ``ApiError``, so those bodies stay decoded JSON dicts.
+    """
+    if isinstance(body, dict):
+        inner = body.get("error")
+        message = inner.get("message") if isinstance(inner, dict) else None
+    else:
+        message = getattr(getattr(body, "error", None), "message", None)
+    return message if isinstance(message, str) else None
+
+
 __all__ = [
     "DEFAULT_REQUEST_OPTIONS",
     "AddAgentContactResponseData",
@@ -132,4 +156,6 @@ __all__ = [
     "UnauthorizedError",
     "UnprocessableEntityError",
     "aclose_rest_client",
+    "api_error_message",
+    "chat_room_request",
 ]

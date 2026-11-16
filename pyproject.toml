@@ -104,7 +104,7 @@ parlant = [
     "werkzeug>=3.1.6",
 ]
 crewai = [
-    "crewai==1.15.36",
+    "crewai==1.15.41",
     "openai>=2.0.0,<3",  # CrewAI requires the legacy OpenAI client
     "nest-asyncio>=1.6.0",  # Required for sync-to-async bridging in CrewAI tools
     "pillow>=12.1.1",
@@ -204,7 +204,7 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
-    "pytest-randomly==5.0.0",
+    "pytest-randomly==5.1.0",
     "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
@@ -288,7 +288,7 @@ dev-crewai = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
-    "pytest-randomly==5.0.0",
+    "pytest-randomly==5.1.0",
     "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
@@ -299,7 +299,7 @@ dev-crewai = [
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
-    "crewai==1.15.36",
+    "crewai==1.15.41",
     "openai>=2.0.0,<3",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
@@ -324,7 +324,7 @@ dev-parlant = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
-    "pytest-randomly==5.0.0",
+    "pytest-randomly==5.1.0",
     "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
@@ -358,7 +358,7 @@ dev-strands-nooa = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
-    "pytest-randomly==5.0.0",
+    "pytest-randomly==5.1.0",
     "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
@@ -416,8 +416,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 # Fail fast on an unregistered marker or an unknown ini key.
 addopts = "-v --strict-markers --strict-config"
-# Global safety net: catch runaway unit tests. Integration and E2E tests
-# override to 120s via pytest_collection_modifyitems in their conftest.
+# Global safety net: catch runaway unit tests. The E2E baseline overrides it
+# per test via pytest_collection_modifyitems in its conftest.
 timeout = 30
 filterwarnings = [
     # AgentTools._attachment_cache's @alru_cache binds to the first asyncio
@@ -429,11 +429,9 @@ filterwarnings = [
     "ignore:alru_cache detected event loop change:async_lru.AlruCacheLoopResetWarning",
 ]
 markers = [
-    "requires_api: marks tests as requiring real API credentials (skipped in CI)",
     "e2e: marks tests as end-to-end (requires live services)",
     "flaky_reason: baseline flakiness taxonomy stamp (kind + reason); see tests/e2e/baseline/flaky.py",
     "docker_build: builds/runs a real Docker image via subprocess (requires a local Docker daemon; skipped unless DOCKER_TESTS_ENABLED=true, an explicit opt-in that CI's docker-kit job sets)",
-    "sandbox: drives a Docker Sandbox via the sbx CLI (needs sbx + a nested-virtualization-capable host + live Band; skipped unless SANDBOX_TESTS_ENABLED=true — CI has neither the CLI nor nested virt)",
     "vscode_chat: drives a real signed-in VS Code window via the code chat CLI (GUI + interactive Copilot sign-in; skipped unless VSCODE_CHAT_TESTS_ENABLED=true — can never run in CI)",
     "requires_deps(deps): declare a baseline test's optional dependencies; the E2E + Band-key gate is always applied. See tests/e2e/baseline/requires.py",
     "with_adapters(request): set by @with_adapters to declare the adapters a test runs; resolved by the agent/agents fixtures. See tests/e2e/baseline/agents.py",

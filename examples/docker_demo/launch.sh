@@ -139,9 +139,10 @@ provision() {
 allow_global() {
   local host="$1" decision status=0 allowed
   decision="$(sbx policy check network "$host" --json)" || status=$?
-  allowed="$(printf '%s' "$decision" | uv run --no-project python -c '
-import json, sys
-state = json.load(sys.stdin)
+  allowed="$(printf '%s' "$decision" | uv run --project "$ROOT" python -c '
+import sys
+from band.docker.sbx_process import sbx_json
+state = sbx_json(sys.stdin.read())
 allowed = state["allowed"]
 status = int(sys.argv[1])
 if not isinstance(allowed, bool) or status != (0 if allowed else 1):
@@ -154,9 +155,10 @@ print("true" if allowed else "false")
 }
 
 owned_policy_resources() {
-  sbx policy ls --source local --type network --decision allow --json | uv run --no-project python -c '
-import json, sys
-rules = json.load(sys.stdin)["rules"]
+  sbx policy ls --source local --type network --decision allow --json | uv run --project "$ROOT" python -c '
+import sys
+from band.docker.sbx_process import sbx_json
+rules = sbx_json(sys.stdin.read())["rules"]
 if not isinstance(rules, list):
     raise ValueError("Invalid policy rule listing")
 for rule in rules:
