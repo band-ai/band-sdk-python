@@ -891,7 +891,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         except TimeoutError:
             # Raised here, this would skip the sibling clause above, so the
             # failed-turn events are emitted before raising.
-            message = await self._time_out_turn(native, tools, ref)
+            message = await self._time_out_turn(native, tools, ref, result)
             await fail(message)
             raise TurnResultAlreadyReported(message)
 
@@ -918,9 +918,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         )
 
     async def _time_out_turn(
-        self, native: NativeTurn, tools: AgentToolsProtocol, ref: TurnRef
+        self,
+        native: NativeTurn,
+        tools: AgentToolsProtocol,
+        ref: TurnRef,
+        result: TurnResult,
     ) -> str:
-        """Interrupt a turn that ran past ``turn_timeout_s`` and report it."""
+        """Interrupt a turn that ran past ``turn_timeout_s`` and report it,
+        unless an earlier ``error`` notification already reported its failure."""
         logger.error(
             "Codex turn timed out after %ss (thread=%s, turn=%s)",
             self.config.turn_timeout_s,
@@ -946,9 +951,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         # native work stopped, so the process is replaced either way.
         self._recover_unconfirmed(timed_out)
         message = f"Codex turn timed out after {self.config.turn_timeout_s}s"
-        await tools.send_failure(
-            AgentFailure(CODEX_PROVIDER, message, FAILURE_CODE_TIMEOUT)
-        )
+        if not result.failure_reported:
+            await tools.send_failure(
+                AgentFailure(CODEX_PROVIDER, message, FAILURE_CODE_TIMEOUT)
+            )
         return message
 
     async def _apply_notification(
