@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient, ChatRoomRequest
+from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
+    AsyncRestClient,
+    chat_room_request,
+)
 from band.integrations.desktop_app.attention import RoomSession
 from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBroker
 from band.integrations.desktop_app.prompts import (
@@ -86,9 +90,8 @@ class AgentTranscriptTools:
         return serialized.get("data") or serialized
 
     async def create_room(self, task_id: str | None = None) -> str:
-        chat = ChatRoomRequest(task_id=task_id) if task_id else ChatRoomRequest()
         response = await self._rest.agent_api_chats.create_agent_chat(
-            chat=chat,
+            chat=chat_room_request(task_id),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         return str(response.data.id)

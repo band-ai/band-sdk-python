@@ -20,7 +20,7 @@ from band_rest.core.parse_error import ParsingError
 from band_rest.errors import ForbiddenError, UnprocessableEntityError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.rest import DEFAULT_REQUEST_OPTIONS, api_error_message
 from band.core.content import has_visible_content
 from band.core.exceptions import (
     MessagePostError,
@@ -71,13 +71,7 @@ def _error_message(body: object) -> str | None:
     """The platform error message, whether the body parsed or stayed raw."""
     if isinstance(body, str):
         return body
-    if isinstance(body, dict):
-        inner = body.get("error")
-        message = inner.get("message") if isinstance(inner, dict) else None
-    else:
-        inner = getattr(body, "error", None)
-        message = getattr(inner, "message", None)
-    return message if isinstance(message, str) else None
+    return api_error_message(body)
 
 
 def _is_execution_stopped_rejection(error: ForbiddenError) -> bool:

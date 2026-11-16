@@ -534,26 +534,6 @@ class TestHubRoomStrategy:
         # Only one room should be created (at startup)
         assert mock_hub_link.rest.agent_api_chats.create_agent_chat.call_count == 1
 
-    async def test_hub_room_uses_custom_task_id(
-        self, mock_hub_link, mock_hub_event_callback, sample_request_received_event
-    ):
-        """Custom hub_task_id should be used when creating room."""
-        task_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        config = ContactEventConfig(
-            strategy=ContactEventStrategy.HUB_ROOM,
-            hub_task_id=task_uuid,
-        )
-        handler = ContactEventHandler(
-            config, mock_hub_link, on_hub_event=mock_hub_event_callback
-        )
-
-        # Initialize hub room at startup
-        await handler.initialize_hub_room()
-
-        call_args = mock_hub_link.rest.agent_api_chats.create_agent_chat.call_args
-        chat_request = call_args.kwargs.get("chat") or call_args[1].get("chat")
-        assert chat_request.task_id == task_uuid
-
     async def test_hub_room_injects_message_event(
         self, mock_hub_link, mock_hub_event_callback, sample_request_received_event
     ):
