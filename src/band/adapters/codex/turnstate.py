@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from typing import Any, NamedTuple
 
 from band.adapters.codex.rpc import (
     CodexClientProtocol,
@@ -16,7 +17,8 @@ from band.adapters.codex.rpc import (
 from band.core.protocols import AgentToolsProtocol
 from band.core.turn_lifecycle import TurnTask
 from band.integrations.codex import RpcEvent
-from band.integrations.codex.types import CodexTurnStatus
+from band.integrations.codex.types import CodexItemType, CodexTurnStatus
+from band.runtime.sessionresume import SessionSeed
 
 
 class CodexContinuityError(RuntimeError):
@@ -68,6 +70,9 @@ class TurnResult:
     native_messages: dict[str, NativeMessage] = dataclass_field(default_factory=dict)
     turn_status: str = CodexTurnStatus.FAILED
     turn_error: str = ""
+    # An "error" notification already reported this turn's failure, so a
+    # later failed turn/completed or transport loss does not report it twice.
+    failure_reported: bool = False
 
     @property
     def completed(self) -> bool:
@@ -76,6 +81,22 @@ class TurnResult:
         An interrupted seed is abandoned like a failed one.
         """
         return self.turn_status == CodexTurnStatus.COMPLETED
+
+    def message_started(self, item: Any) -> None:
+        if isinstance(item, dict) and item.get("type") == CodexItemType.AGENT_MESSAGE:
+            self.native_messages[str(item["id"])] = NativeMessage(
+                phase=item.get("phase")
+            )
+
+    def message_completed(self, item: dict[str, Any]) -> bool:
+        """Record an agent message's authoritative text; False for other items."""
+        if item.get("type") != CodexItemType.AGENT_MESSAGE:
+            return False
+        message = self.native_messages.setdefault(str(item["id"]), NativeMessage())
+        message.phase = item.get("phase")
+        if isinstance(text := item.get("text"), str):
+            message.completed_text = text
+        return True
 
 
 def audience_sender_ids(audience: Sequence[dict[str, str]]) -> list[str]:
@@ -158,3 +179,13 @@ def undelivered_events(native: NativeTurn) -> list[RpcEvent]:
         *(item for item in queued if isinstance(item, RpcEvent)),
         *native.unattributed,
     ]
+
+
+class TurnStart(NamedTuple):
+    """What a turn starts with: its thread, its turn/start params, the seed
+    the thread had then, and whether its input injects the room's prompt."""
+
+    thread_id: str
+    params: dict[str, Any]
+    seed: SessionSeed
+    injects_prompt: bool

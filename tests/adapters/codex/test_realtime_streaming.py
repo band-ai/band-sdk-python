@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
+from band.core.types import MessageType
+from band.integrations.codex.types import CodexMetadataKey, CodexNotificationMethod
 from band.testing import events_of_type
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     send_bootstrap,
 )
 from tests.adapters.codexturns import (
+    FIRST_THREAD_ID,
     FakeCodexClient,
     agent_message_completed,
     agent_message_delta,
@@ -20,15 +26,39 @@ from tests.adapters.codexturns import (
     turn_completed,
 )
 
+# The room, thread and turn every streamed delta of the first turn names.
+FIRST_TURN = {
+    CodexMetadataKey.ROOM: ROOM_ID,
+    CodexMetadataKey.THREAD: FIRST_THREAD_ID,
+    CodexMetadataKey.TURN: "turn-1",
+}
+
+
+def streamed(tools: ToolSchemaFakeTools) -> list[dict[str, Any]]:
+    """The streamed thought events, in order."""
+    return [
+        event
+        for event in events_of_type(tools, MessageType.THOUGHT)
+        if event["metadata"].get("streaming")
+    ]
+
 
 class TestRealtimeStreaming:
     @pytest.mark.asyncio
-    async def test_reasoning_delta_streamed_as_thought(self) -> None:
-        """item/reasoning/summaryTextDelta forwards as streaming thought."""
+    @pytest.mark.parametrize(
+        "method",
+        [
+            CodexNotificationMethod.REASONING_SUMMARY_DELTA,
+            CodexNotificationMethod.REASONING_TEXT_DELTA,
+        ],
+    )
+    async def test_reasoning_delta_streamed_as_thought(
+        self, method: CodexNotificationMethod
+    ) -> None:
+        """Both reasoning delta kinds forward as streaming thoughts."""
         events = [
             event_notification(
-                "item/reasoning/summaryTextDelta",
-                {"delta": "Analyzing the code...", "itemId": "item-1"},
+                method, {"delta": "Analyzing the code...", "itemId": "item-1"}
             ),
             turn_completed(),
         ]
@@ -41,14 +71,17 @@ class TestRealtimeStreaming:
         await adapter.on_started("Agent", "A coding agent")
         await send_bootstrap(adapter, tools=tools)
 
-        thought_events = [
-            e
-            for e in tools.events_sent
-            if e["message_type"] == "thought" and e["metadata"].get("streaming")
+        assert [(e["content"], e["metadata"]) for e in streamed(tools)] == [
+            (
+                "Analyzing the code...",
+                {
+                    "streaming": True,
+                    CodexMetadataKey.EVENT_TYPE: method,
+                    CodexMetadataKey.ITEM_ID: "item-1",
+                    **FIRST_TURN,
+                },
+            )
         ]
-        assert len(thought_events) == 1
-        assert thought_events[0]["content"] == "Analyzing the code..."
-        assert thought_events[0]["metadata"]["codex_item_id"] == "item-1"
 
     @pytest.mark.asyncio
     async def test_reasoning_delta_ignored_when_disabled(self) -> None:
@@ -69,10 +102,7 @@ class TestRealtimeStreaming:
         await adapter.on_started("Agent", "A coding agent")
         await send_bootstrap(adapter, tools=tools)
 
-        streaming_events = [
-            e for e in tools.events_sent if e["metadata"].get("streaming")
-        ]
-        assert streaming_events == []
+        assert streamed(tools) == []
 
     @pytest.mark.asyncio
     async def test_plan_delta_streamed_as_thought(self) -> None:
@@ -93,13 +123,17 @@ class TestRealtimeStreaming:
         await adapter.on_started("Agent", "A coding agent")
         await send_bootstrap(adapter, tools=tools)
 
-        plan_thoughts = [
-            e
-            for e in tools.events_sent
-            if e["message_type"] == "thought" and e["metadata"].get("subtype") == "plan"
+        assert [(e["content"], e["metadata"]) for e in streamed(tools)] == [
+            (
+                "Step 1: Read the test",
+                {
+                    "streaming": True,
+                    "subtype": "plan",
+                    CodexMetadataKey.ITEM_ID: "plan-1",
+                    **FIRST_TURN,
+                },
+            )
         ]
-        assert len(plan_thoughts) == 1
-        assert plan_thoughts[0]["content"] == "Step 1: Read the test"
 
     @pytest.mark.asyncio
     async def test_commentary_phase_streamed_as_thought(self) -> None:
@@ -126,14 +160,20 @@ class TestRealtimeStreaming:
         await adapter.on_started("Agent", "A coding agent")
         await send_bootstrap(adapter, tools=tools)
 
-        commentary_thoughts = [
-            e for e in tools.events_sent if e["metadata"].get("subtype") == "commentary"
+        assert [(e["content"], e["metadata"]) for e in streamed(tools)] == [
+            (
+                "Let me think about this...",
+                {
+                    "streaming": True,
+                    "subtype": "commentary",
+                    CodexMetadataKey.ITEM_ID: "comment",
+                    **FIRST_TURN,
+                },
+            )
         ]
-        assert len(commentary_thoughts) == 1
-        assert commentary_thoughts[0]["content"] == "Let me think about this..."
 
         assert tools.messages_sent == []
-        assert [e["content"] for e in events_of_type(tools, "thought")] == [
+        assert [e["content"] for e in events_of_type(tools, MessageType.THOUGHT)] == [
             "Let me think about this...",
             "Here is the answer.",
         ]
@@ -162,7 +202,7 @@ class TestRealtimeStreaming:
         await send_bootstrap(adapter, tools=tools)
 
         assert tools.messages_sent == []
-        assert [e["content"] for e in events_of_type(tools, "thought")] == [
+        assert [e["content"] for e in events_of_type(tools, MessageType.THOUGHT)] == [
             "thinking...",
             "real answer",
         ]
@@ -191,7 +231,7 @@ class TestRealtimeStreaming:
         await send_bootstrap(adapter, tools=tools)
 
         assert tools.messages_sent == []
-        assert [e["content"] for e in events_of_type(tools, "thought")] == [
+        assert [e["content"] for e in events_of_type(tools, MessageType.THOUGHT)] == [
             "thinking...",
             "real answer",
         ]
