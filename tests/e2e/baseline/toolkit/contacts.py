@@ -1,9 +1,10 @@
-"""Run a provisioned agent that only handles contact events.
+"""Run two provisioned agents that exchange contact events.
 
 The contact smokes need a real ``Agent`` whose runtime subscribes to
 ``agent_contacts:<id>`` with the ``CALLBACK`` strategy, but no LLM: contact
 events never reach the adapter. :class:`ContactInbox` is the callback, and it
-lets a test await each event type the platform pushes.
+lets a test await each event type the platform pushes. The requester is a
+second agent because the platform refuses a user's request to their own agent.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from band.core.protocols import AgentToolsProtocol
@@ -19,9 +21,10 @@ from band.core.types import PlatformMessage
 from band.platform.event import ContactEvent
 from band.runtime.contact_tools import ContactTools
 from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
-from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import (
+    PeerActor,
     ProvisionedAgent,
+    ResourceManager,
     running_agent_with_handle,
 )
 
@@ -75,19 +78,41 @@ class ContactInbox:
         return next((e for e in self._events if isinstance(e, kind)), None)
 
 
+@dataclass(frozen=True)
+class ContactParties:
+    """A target agent handling contact events, and a peer that can request it."""
+
+    target_handle: str
+    requester: ProvisionedAgent
+    requester_handle: str
+    requester_actor: PeerActor
+    inbox: ContactInbox
+
+
 @asynccontextmanager
-async def running_contact_listener(
-    agent: ProvisionedAgent, inbox: ContactInbox, settings: BaselineSettings
-) -> AsyncGenerator[None, None]:
-    """Run ``agent`` with ``inbox`` as its ``CALLBACK`` contact handler.
+async def running_contact_parties(
+    resources: ResourceManager,
+) -> AsyncGenerator[ContactParties, None]:
+    """Provision a target and a requester; run the target with a ``ContactInbox``.
 
     The runtime joins ``agent_contacts:<id>`` before startup returns, so a
-    request sent inside the block is delivered.
+    request sent inside the block is delivered. Reaping both agents at teardown
+    deletes any contact relationship the block created.
     """
+    target = await resources.provision_agent("contacttarget")
+    requester = await resources.provision_agent("contactrequester")
+    requester_actor = resources.peer(requester)
+    inbox = ContactInbox()
     config = ContactEventConfig(
         strategy=ContactEventStrategy.CALLBACK, on_event=inbox.on_event
     )
     async with running_agent_with_handle(
-        agent, TurnlessAdapter(), settings, contact_config=config
+        target, TurnlessAdapter(), resources.settings, contact_config=config
     ):
-        yield
+        yield ContactParties(
+            target_handle=await resources.peer(target).handle(),
+            requester=requester,
+            requester_handle=await requester_actor.handle(),
+            requester_actor=requester_actor,
+            inbox=inbox,
+        )

@@ -2,92 +2,122 @@
 
 Offline tests hand-write contact payloads; this proves the real platform's
 ``agent_contacts:<id>`` pushes hydrate into the SDK's typed payloads and reach
-``ContactEventConfig(strategy=CALLBACK)``, and that approving through the
-``ContactTools`` the callback receives completes the relationship. The
-requester is a second provisioned agent because the platform refuses a user's
-request to their own agent. Both agents are reaped on teardown, and deleting an
-agent deletes its contacts, so no relationship outlives the run.
+``ContactEventConfig(strategy=CALLBACK)``, and that responding through the
+``ContactTools`` the callback receives settles the request: an approval adds
+the contact (which removing then deletes), a rejection adds nothing.
 
 No adapter runs, so the test is pinned to one lane.
 """
 
 from __future__ import annotations
 
+from unittest.mock import ANY
+
 import pytest
 
-from band.client.streaming import (
-    ContactAddedPayload,
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
-)
+from band.client.streaming.wire import WirePayload
 from band.core.types import ContactRequestAction, ContactRequestStatus
 from band.platform.event import (
     ContactAddedEvent,
+    ContactRemovedEvent,
     ContactRequestReceivedEvent,
     ContactRequestUpdatedEvent,
 )
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
-from tests.e2e.baseline.toolkit.contacts import ContactInbox, running_contact_listener
+from tests.e2e.baseline.toolkit.contacts import ContactParties, running_contact_parties
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 
 AGENT_CONTACT_TYPE = "Agent"
 
 
+def typed_fields(payload: WirePayload | None) -> dict[str, object]:
+    """The payload's declared fields; wire extras (e.g. avatar URLs) are not typed."""
+    assert payload is not None
+    return payload.model_dump(include=set(type(payload).model_fields))
+
+
+async def received_request(parties: ContactParties, *, deadline_s: float) -> str:
+    """Send a contact request to the target; assert its typed push; return its id."""
+    note = unique_marker("contact")
+    request_id = await parties.requester_actor.request_contact(
+        parties.target_handle, message=note
+    )
+    received = await parties.inbox.wait_for(
+        ContactRequestReceivedEvent, deadline_s=deadline_s
+    )
+    assert typed_fields(received.payload) == {
+        "id": request_id,
+        "from_handle": parties.requester_handle,
+        "from_name": parties.requester.name,
+        "message": note,
+        "status": ContactRequestStatus.PENDING,
+        "inserted_at": ANY,
+    }
+    return request_id
+
+
 @lane(Lane.CORE)  # a platform/runtime contract, not a framework's; prove it once
 class TestContactEvents:
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_request_and_approval_arrive_as_typed_contact_events(
+    async def test_approval_adds_and_removal_deletes_the_contact(
         self, resource_manager: ResourceManager, baseline_settings: BaselineSettings
     ) -> None:
         deadline_s = baseline_settings.e2e_timeout
-        target = await resource_manager.provision_agent("contacttarget")
-        requester = await resource_manager.provision_agent("contactrequester")
-        target_actor = resource_manager.peer(target)
-        requester_actor = resource_manager.peer(requester)
-        requester_handle = await requester_actor.handle()
-        note = unique_marker("contact")
-        inbox = ContactInbox()
-
-        async with running_contact_listener(target, inbox, baseline_settings):
-            request_id = await requester_actor.request_contact(
-                await target_actor.handle(), message=note
-            )
-            received = await inbox.wait_for(
-                ContactRequestReceivedEvent, deadline_s=deadline_s
-            )
-            assert isinstance(received.payload, ContactRequestReceivedPayload)
-            assert (
-                received.payload.id,
-                received.payload.from_handle,
-                received.payload.from_name,
-                received.payload.message,
-                received.payload.status,
-            ) == (
-                request_id,
-                requester_handle,
-                requester.name,
-                note,
-                ContactRequestStatus.PENDING,
-            )
-
-            await inbox.tools.respond_contact_request(
+        async with running_contact_parties(resource_manager) as parties:
+            request_id = await received_request(parties, deadline_s=deadline_s)
+            await parties.inbox.tools.respond_contact_request(
                 ContactRequestAction.APPROVE, request_id=request_id
             )
-            updated = await inbox.wait_for(
+            updated = await parties.inbox.wait_for(
                 ContactRequestUpdatedEvent, deadline_s=deadline_s
             )
-            added = await inbox.wait_for(ContactAddedEvent, deadline_s=deadline_s)
+            added = await parties.inbox.wait_for(
+                ContactAddedEvent, deadline_s=deadline_s
+            )
+            await parties.inbox.tools.remove_contact(handle=parties.requester_handle)
+            removed = await parties.inbox.wait_for(
+                ContactRemovedEvent, deadline_s=deadline_s
+            )
 
-        assert isinstance(updated.payload, ContactRequestUpdatedPayload)
-        assert (updated.payload.id, updated.payload.status) == (
-            request_id,
-            ContactRequestStatus.APPROVED,
-        )
-        assert isinstance(added.payload, ContactAddedPayload)
-        assert (
-            added.payload.handle,
-            added.payload.name,
-            added.payload.type,
-        ) == (requester_handle, requester.name, AGENT_CONTACT_TYPE)
+        assert typed_fields(updated.payload) == {
+            "id": request_id,
+            "status": ContactRequestStatus.APPROVED,
+        }
+        assert typed_fields(added.payload) == {
+            "id": ANY,
+            "handle": parties.requester_handle,
+            "name": parties.requester.name,
+            "type": AGENT_CONTACT_TYPE,
+            "description": parties.requester.description,
+            # What the platform reports for a provisioned agent; is_external
+            # is is_remote's legacy alias.
+            "is_remote": True,
+            "is_external": True,
+            "inserted_at": ANY,
+        }
+        assert typed_fields(removed.payload) == {
+            "id": typed_fields(added.payload)["id"]
+        }
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_rejection_settles_the_request_without_a_contact(
+        self, resource_manager: ResourceManager, baseline_settings: BaselineSettings
+    ) -> None:
+        deadline_s = baseline_settings.e2e_timeout
+        async with running_contact_parties(resource_manager) as parties:
+            request_id = await received_request(parties, deadline_s=deadline_s)
+            await parties.inbox.tools.respond_contact_request(
+                ContactRequestAction.REJECT, request_id=request_id
+            )
+            updated = await parties.inbox.wait_for(
+                ContactRequestUpdatedEvent, deadline_s=deadline_s
+            )
+            contacts = await parties.inbox.tools.list_contacts()
+
+        assert typed_fields(updated.payload) == {
+            "id": request_id,
+            "status": ContactRequestStatus.REJECTED,
+        }
+        assert contacts["contacts"] == []

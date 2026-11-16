@@ -223,7 +223,8 @@ smoke/behavior/cursorworkflows/test_restart_recovery.py::TestCursorRestartRecove
 smoke/behavior/test_agent_scenarios.py:
   test_two_agents_greet_each_other: core
 smoke/behavior/test_contact_events.py::TestContactEvents:
-  test_request_and_approval_arrive_as_typed_contact_events: core
+  test_approval_adds_and_removal_deletes_the_contact: core
+  test_rejection_settles_the_request_without_a_contact: core
 smoke/behavior/test_delivery_status.py:
   test_failing_agent_reaches_failed_state: all
   test_healthy_message_reaches_processed_via_processing: core
