@@ -145,7 +145,12 @@ from band.core.protocols import (
     AgentToolsProtocol,
     TurnResultAlreadyReported,
 )
-from band.core.retention import ReleaseCause, ReleaseOutcome, RoomRetention
+from band.core.retention import (
+    ReleaseCause,
+    ReleaseOutcome,
+    RoomRetention,
+    TransitionBudgetTimeout,
+)
 from band.core.retention.cleanup import await_owned, await_owned_result, spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import detached_turn
@@ -552,10 +557,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 raise
             except TimeoutError as timeout:
                 # Budget expiry on a process/thread/turn start recovers the
-                # process and leaves an unconfirmed stop. A provider-raised
-                # TimeoutError finishes its call without that recovery, so it
-                # is an ordinary turn failure on a still-authoritative process.
-                if self.backend_turns.unconfirmed_handle(room.room_id) is None:
+                # process and leaves an unconfirmed stop (or abandons residency
+                # acquisition). A provider-raised TimeoutError finishes its
+                # call without that recovery, so it is an ordinary turn failure
+                # on a still-authoritative process.
+                start_budget = self.backend_turns.unconfirmed_handle(
+                    room.room_id
+                ) is not None or isinstance(timeout, TransitionBudgetTimeout)
+                if not start_budget:
                     logger.exception(
                         "Unexpected error in Codex turn (room=%s)", room.room_id
                     )

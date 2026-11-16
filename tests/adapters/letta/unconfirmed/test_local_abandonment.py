@@ -7,7 +7,6 @@ import asyncio
 import pytest
 
 from band.client.streaming import ControlMode
-from band.core.exceptions import ProviderUnavailableError
 from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
 from band.runtime.tools import CHAT_ID_FIELD_NAME, BandTool
 from band.testing import reported_failures

@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 
 Result = TypeVar("Result")
 
+
+class TransitionBudgetTimeout(TimeoutError):
+    """The caller stopped waiting for a room transition within its budget."""
+
+
 # Circuit breaker. One step joins a transition, waits for leases, or runs one
 # release. Settle allows an in-flight join, a lease wait, that release, a
 # stronger cause recorded during it, a confirming pass, and one spare step.
@@ -427,10 +432,10 @@ class RetainedRoom:
         if not done:
             if initiator:
                 self._abandon_acquisition(transition)
-                raise TimeoutError(
+                raise TransitionBudgetTimeout(
                     f"Room {self.room_id} start abandoned after {timeout}s"
                 )
-            raise TimeoutError(
+            raise TransitionBudgetTimeout(
                 f"Room {self.room_id} transition still running after {timeout}s"
             )
         if transition.cancelled():

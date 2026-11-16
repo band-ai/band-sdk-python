@@ -1157,14 +1157,18 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         return "\n\n".join(parts)
 
     async def _abort_turn(self, live: SessionTurn) -> None:
-        """Request stop; failed-session cleanup stays owned for late confirmation.
+        """Request stop and join owned retirement that confirms the stop.
 
-        Do not await retirement here: a stop budget must not cancel the delete
-        that still owns settlement evidence after abort returns.
+        Abort itself stays under the cancel budget. Failed or unseeded
+        settlement is the owned discard ``_settle`` starts: shield that join
+        so a budget cancel cannot tear down the delete, then re-raise.
         """
         assert self._session_manager is not None
         await self._abort_prompt(live)
         self._settle(live)
+        if live.cleanup is not None:
+            # Shield so a cancel-budget timeout cannot tear the delete down.
+            await asyncio.shield(live.cleanup)
 
     async def _abort_prompt(self, live: SessionTurn) -> None:
         """Abort the prompt and, while one is running, wait for the idle that ends it.

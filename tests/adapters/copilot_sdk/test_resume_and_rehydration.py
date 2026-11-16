@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.copilot_sdk import HISTORY_HEADING, CopilotSDKAdapterConfig
+from band.adapters.copilot_sdk import HISTORY_HEADING
 from band.converters.copilot_sdk import COPILOT_RESUME_RECORD, CopilotSDKSessionState
 from band.core.exceptions import CleanupIncompleteError, ProviderUnavailableError
 from tests.adapters.copilot_sdk.fakes import (

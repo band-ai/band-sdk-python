@@ -9,7 +9,7 @@ from band.core.retention.cleanup import report_owned, task_failure
 from band.core.retention.clock import MonotonicClock, RetentionClock
 from band.core.retention.config import RoomRetentionConfig, require_disabled_retention
 from band.core.retention.owner import RoomRetention
-from band.core.retention.room import RetainedRoom
+from band.core.retention.room import RetainedRoom, TransitionBudgetTimeout
 from band.core.retention.states import (
     BUSY_ACTIVITY_REASON,
     UNKNOWN_ACTIVITY_REASON,
@@ -33,6 +33,7 @@ __all__ = [
     "RetentionSnapshot",
     "RoomRetention",
     "RoomRetentionConfig",
+    "TransitionBudgetTimeout",
     "report_owned",
     "require_disabled_retention",
     "task_failure",
