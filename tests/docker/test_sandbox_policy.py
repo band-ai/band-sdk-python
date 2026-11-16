@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from band.credentials import PROXY_MANAGED_API_KEY
 from tests.docker.toolkit.sbx_cli import (
+    SBX,
     kit_baseline_hosts,
     remove_custom_secret_command,
 )
@@ -13,10 +15,10 @@ class TestSandboxPolicyContracts:
     def test_secret_removal_is_scoped_to_the_sandbox(self) -> None:
         # A global (`-g`) removal could delete an operator's credential.
         name = "band-nevervm-abc123"
-        remove_command = remove_custom_secret_command(sandbox=name)
-
-        assert "-g" not in remove_command and name in remove_command
-        assert remove_command[3:5] == ["--placeholder", "proxy-managed"]
+        assert remove_custom_secret_command(sandbox=name) == [
+            SBX, "secret", "rm", "--placeholder", PROXY_MANAGED_API_KEY,
+            "--sandbox", name, "-f",
+        ]  # fmt: skip
 
     def test_kit_baseline_reaches_only_prod_band(self) -> None:
         # A Band host is granted only when the kit's baseline doesn't already

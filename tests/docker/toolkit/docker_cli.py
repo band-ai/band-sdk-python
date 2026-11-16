@@ -10,6 +10,7 @@ against any other image in docker/ can reuse Image/Container as-is.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 import tarfile
@@ -189,18 +190,27 @@ class Container:
         entrypoint: str | None = "bash",
         keep_alive_seconds: int = 300,
     ) -> Iterator[Container]:
-        """Start ``image`` detached; yield the container, then remove it."""
+        """Start ``image`` detached; yield the container, then remove it.
+
+        ``env`` values reach ``docker run`` through its own environment, never
+        its argv, so a failed start cannot print a secret value.
+        """
         tag = image.tag if isinstance(image, Image) else image
         name = f"{name_prefix}-{uuid.uuid4().hex[:8]}"
         run_command = ["docker", "run", "-d", "--name", name]
-        for key, value in (env or {}).items():
-            run_command += ["-e", f"{key}={value}"]
+        for key in env or {}:
+            run_command += ["-e", key]
         if entrypoint is not None:
             run_command += ["--entrypoint", entrypoint]
         run_command.append(tag)
         run_command += command or ["-c", f"sleep {keep_alive_seconds}"]
         subprocess.run(
-            run_command, capture_output=True, text=True, check=True, timeout=30
+            run_command,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+            env={**os.environ, **(env or {})},
         )
         try:
             yield cls(name)

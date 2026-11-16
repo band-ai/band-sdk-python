@@ -67,6 +67,17 @@ class TestOffLoop:
 
         assert exits == [body_error]
 
+    async def test_failed_enter_is_not_exited(self) -> None:
+        exits: list[BaseException | None] = []
+        enter_error = RuntimeError("enter")
+
+        with pytest.raises(RuntimeError) as caught:
+            async with off_loop(recording(exits, enter_error=enter_error)):
+                pytest.fail("a failed enter must not run the body")
+
+        assert caught.value is enter_error
+        assert exits == []
+
     async def test_cancel_during_body_reaches_exit(self) -> None:
         exits: list[BaseException | None] = []
         in_body = asyncio.Event()

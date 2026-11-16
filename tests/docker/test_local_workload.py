@@ -30,3 +30,4 @@ class TestLocalWorkload:
             )
 
         assert descriptor["build"] == f"FROM {IMAGE}\n"
+        assert "dockerfile" not in descriptor

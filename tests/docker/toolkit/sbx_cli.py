@@ -5,7 +5,7 @@ a local workload, network-allow the Band deployment, hold the sandbox's
 foreground session on a real pty, and remove the scoped secret. The module
 imports cleanly (stdlib + yaml), so its pure helpers are unit-tested in CI:
 the kit's network baseline and scoped secret removal in
-``tests/docker/test_nevervm_contracts.py``, and the pty-attached process
+``tests/docker/test_sandbox_policy.py``, and the pty-attached process
 lifecycle in ``tests/docker/test_sbx_cli.py``.
 """
 

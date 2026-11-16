@@ -15,12 +15,13 @@ from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+from tests.toolkit.timeouts import TIMEOUT_BACKSTOP_MARGIN_S
 
 
 @lane(Lane.KIT)
 @requires(Dep.DOCKER)
 # The session's first kit smoke pays the cold image build.
-@pytest.mark.timeout(extra=BUILD_TIMEOUT_S)
+@pytest.mark.timeout(extra=BUILD_TIMEOUT_S + TIMEOUT_BACKSTOP_MARGIN_S)
 # The session WebSocket observer lives on the session loop.
 @pytest.mark.asyncio(loop_scope="session")
 class TestContainerizedEcho:
