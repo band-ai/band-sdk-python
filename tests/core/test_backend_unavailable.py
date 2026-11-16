@@ -19,6 +19,7 @@ from band.core.turn_lifecycle import (
     BackendTurns,
 )
 from band.testing import FakeAgentTools, failure_reports
+from tests.core.latch import RecordingLatch
 from tests.core.recordingcancel import RecordingCancel
 from tests.core.retention.kit import ResidenceHost
 from tests.runtime.helpers import ROOM_ID
@@ -80,33 +81,6 @@ class TestBackendUnavailable:
             resident.fail_close = False
             await resident.room.wait_released(generation=resident.room.generation)
             assert not resident.live
-            with pytest.raises(ProviderUnavailableError):
-                await turns.require_admission("room", tools)
-            turns.confirm_stopped("room", handle)
-            await turns.require_admission("room", tools)
-
-    async def test_held_effect_blocks_admission_after_process_release(self) -> None:
-        async with ResidenceHost() as host:
-            resident = host.room()
-            await resident.turn()
-            turns = BackendTurns(
-                RecordingCancel(), provider="test", requires_confirmation=True
-            )
-            tools = FakeAgentTools()
-            handle = "operation"
-            turns.recovering(
-                "room",
-                handle,
-                resident.room,
-                generation=resident.room.generation,
-            )
-            retire = turns.track_effect("room", handle)
-            await resident.room.dispose()
-            with pytest.raises(InputNotAccepted) as held:
-                await turns.require_admission("room", tools)
-            assert held.value.ready is not None and not held.value.ready.done()
-            retire()
-            await held.value.ready
             await turns.require_admission("room", tools)
 
     async def test_stale_confirmation_cannot_reopen_a_newer_unavailable_stop(
@@ -194,30 +168,15 @@ class TestBackendUnavailable:
                 RecordingCancel(), provider="test", requires_confirmation=True
             )
             tools = FakeAgentTools()
-            release = resident.room._release
-
-            async def boom(cause: object) -> object:
-                raise CleanupIncompleteError(
-                    "Codex remote commands have not confirmed termination"
-                )
-
-            resident.room._release = boom  # type: ignore[method-assign]
-            try:
-                turns.recovering(
-                    "room",
-                    "operation",
-                    resident.room,
-                    generation=resident.room.snapshot.generation,
-                )
-                with pytest.raises(ProviderUnavailableError):
-                    await turns.require_admission("room", tools)
-                assert turns.unavailable("room")
-                assert failure_reports(tools) == [
-                    ("test", PROVIDER_UNAVAILABLE_MESSAGE),
-                ]
-            finally:
-                resident.room._release = release  # type: ignore[method-assign]
-                turns.clear_unconfirmed("room")
+            resident.fail_close = True
+            resident.close_error = CleanupIncompleteError("Worker has not stopped")
+            turns.recovering(
+                "room", "operation", resident.room, generation=resident.room.generation
+            )
+            with pytest.raises(ProviderUnavailableError):
+                await turns.require_admission("room", tools)
+            assert turns.unavailable("room")
+            assert failure_reports(tools) == [("test", PROVIDER_UNAVAILABLE_MESSAGE)]
 
     async def test_deferred_originals_on_the_stopping_task_latch_on_unavailable(
         self,
@@ -265,33 +224,13 @@ class TestBackendUnavailable:
         assert refused.value.ready is turns.blocker(ROOM_ID)
         assert not refused.value.ready.done()
 
-    async def test_leave_without_recovery_clears_an_unconfirmed_stop(self) -> None:
-        turns = BackendTurns(
-            RecordingCancel(), provider="test", requires_confirmation=True
-        )
-        tools = FakeAgentTools()
-        async with turns.running(ROOM_ID, "backend-turn"):
-            turns.cancel(ROOM_ID)
-        await turns.settled(ROOM_ID)
-        with pytest.raises(InputNotAccepted):
-            await turns.require_admission(ROOM_ID, tools)
-        turns.clear_unconfirmed(ROOM_ID)
-        await turns.require_admission(ROOM_ID, tools)
-
     async def test_latch_of_a_retired_room_is_not_retained_by_the_backend_owner(
         self,
     ) -> None:
-        class Room:
-            def __init__(self) -> None:
-                self.latched: list[frozenset[str]] = []
-
-            def latch(self, _room: str, ids: frozenset[str]) -> None:
-                self.latched.append(ids)
-
         turns = BackendTurns(
             RecordingCancel(), provider="test", requires_confirmation=True
         )
-        live, retired = Room(), Room()
+        live, retired = RecordingLatch(), RecordingLatch()
         turns.add_failure_latch(live.latch)
         turns.add_failure_latch(retired.latch)
         gone = weakref.ref(retired)

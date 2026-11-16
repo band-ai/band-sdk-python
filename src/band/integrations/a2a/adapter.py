@@ -294,7 +294,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         self._task_senders.setdefault(key, {"id": sender_id, "name": sender_name or ""})
 
         state = task.status.state
-        if run is not None and state in TERMINAL_TASK_STATES:
+        if run is not None and task.id == run.task_id and state in TERMINAL_TASK_STATES:
             run.finished = True
         try:
             await self._deliver_task_update(task, tools, self._task_senders[key])
@@ -320,7 +320,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                         task.id,
                     )
                 self._finalize_task(room_id, task.id)
-                if run is not None:
+                if run is not None and task.id == run.task_id:
                     self.backend_turns.confirm_stopped(room_id, run)
 
     async def _deliver_message(
@@ -365,7 +365,11 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         except Exception:
             self.backend_turns.mark_unavailable(run.room_id)
             raise
-        if task is not None and task.status.state in TERMINAL_TASK_STATES:
+        if (
+            task is not None
+            and task.id == run.task_id
+            and task.status.state in TERMINAL_TASK_STATES
+        ):
             run.finished = True
             self._finalize_task(run.room_id, run.task_id)
             self.backend_turns.confirm_stopped(run.room_id, run)
@@ -462,6 +466,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up A2A context for room."""
         await self.backend_turns.settled(room_id)
+        if self.backend_turns.unconfirmed_handle(room_id) is not None:
+            return
         self._contexts.pop(room_id, None)
         self._tasks.pop(room_id, None)
         # A resubscribed task may live in the cache without a sender entry,
@@ -474,8 +480,6 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         for key in stale_keys:
             self._task_senders.pop(key, None)
             self._task_cache.pop(key, None)
-        # Leave retires any unconfirmed stop; A2A has no retained recovery.
-        self.backend_turns.clear_unconfirmed(room_id)
         logger.debug("Cleaned up A2A context for room %s", room_id)
 
     async def cleanup_all(self) -> None:

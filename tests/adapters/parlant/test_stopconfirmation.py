@@ -6,15 +6,15 @@ from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from band_sdk_core import backend_stop_unconfirmed_message
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.adapters.parlant.adapter import PROVIDER
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import ProviderUnavailableError
+from band.core.turn_lifecycle import PROVIDER_UNAVAILABLE_MESSAGE
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.parlant.engine import EngineSession, Holdout
 from tests.adapters.parlant.helpers import SESSION_ID, RecordingBackgroundTasks
-from tests.adapters.waiting import spin
+from tests.framework_conformance.stopprobes import wait_until
 
 pytestmark = [pytest.mark.usefixtures("parlant_sessions"), pytest.mark.looptime]
 
@@ -23,7 +23,7 @@ TEARDOWN_BUDGET_SECONDS = 7.0
 UNCONFIRMED_REPORT = {
     "provider": PROVIDER,
     "code": None,
-    "message": backend_stop_unconfirmed_message(),
+    "message": PROVIDER_UNAVAILABLE_MESSAGE,
     "detail": None,
 }
 
@@ -85,14 +85,18 @@ class TestParlantStopConfirmation:
         await run_turn(adapter)
 
         assert self.stop_unconfirmed(adapter)
-        with pytest.raises(InputNotAccepted) as blocked:
+        with pytest.raises(ProviderUnavailableError):
             await run_turn(adapter)
         assert first_post.await_count == 1
         assert reported_failures(mock_tools) == [UNCONFIRMED_REPORT]
 
+        await adapter.on_cleanup(ROOM_ID)
+        with pytest.raises(ProviderUnavailableError):
+            await run_turn(adapter)
+        assert first_post.await_count == 1
+
         await engine.finish()
-        assert blocked.value.ready is not None
-        await blocked.value.ready
+        await wait_until(lambda: not self.stop_unconfirmed(adapter))
         assert not self.stop_unconfirmed(adapter)
         reopened_post = self.no_engine_work(mock_app)
         await run_turn(adapter)
@@ -120,19 +124,17 @@ class TestParlantStopConfirmation:
 
         engine.parent.release.set()
         await engine.parent_task
-        await spin()
         assert self.stop_unconfirmed(adapter)
 
         # Only after the parent ended could the settlement see its late child.
         await engine.preamble.cancel_seen.wait()
         engine.preamble.release.set()
         await engine.preamble_task
-        await spin()
         assert self.stop_unconfirmed(adapter)
 
         engine.body.release.set()
         await engine.body_task
-        await spin()
+        await wait_until(lambda: not self.stop_unconfirmed(adapter))
         assert not self.stop_unconfirmed(adapter)
 
     async def test_a_drained_stop_reopens_the_room_for_a_new_turn(
@@ -189,5 +191,5 @@ class TestParlantStopConfirmation:
 
         assert self.stop_unconfirmed(adapter)
         await engine.finish()
-        await spin()
+        await wait_until(lambda: not self.stop_unconfirmed(adapter))
         assert not self.stop_unconfirmed(adapter)

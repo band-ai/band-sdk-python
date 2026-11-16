@@ -34,7 +34,6 @@ CONVERSATION_ID = "conversation-1"
 CANCEL_AGENT_RUNS = f"cancel agent {AGENT_ID}"
 CANCEL_CONVERSATION_RUNS = f"cancel conversation {CONVERSATION_ID}"
 SEND_AGENT = f"send agent {AGENT_ID}"
-DELETE_AGENT = f"delete agent {AGENT_ID}"
 FAILURE_POSTED = "failure posted"
 NEXT_TURN_REFUSED = "next turn refused as unavailable"
 LATE_CALL_LANDED = "late call from the stopped run reached a room"
@@ -191,7 +190,7 @@ async def late_mcp_call_during_held_cancel() -> list[str]:
 
 
 async def cleanup_waits_for_the_cancel() -> list[str]:
-    """Leaving the room waits for the run cancel before it deletes the agent."""
+    """Leaving joins cancellation without deleting an agent still executing."""
     adapter, client = held_adapter(delete_agents=True)
     release_cancel = await stop_holding_cancel(
         adapter, client, FakeAgentTools(participants=[ALICE])
@@ -200,7 +199,10 @@ async def cleanup_waits_for_the_cancel() -> list[str]:
     await wait_until(lambda: waiting_on_stop(cleanup_room) or cleanup_room.done())
     release_cancel.set()
     await cleanup_room
-    return effects(client)
+    return [
+        *effects(client),
+        *([NEXT_TURN_REFUSED] if await next_turn_is_refused(adapter) else []),
+    ]
 
 
 async def shutdown_waits_for_the_cancel() -> list[str]:
@@ -264,7 +266,8 @@ CASES: dict[str, StopCase] = {
         expected=[NEXT_TURN_REFUSED],
     ),
     "cleanup-waits-for-the-cancel": StopCase(
-        run=cleanup_waits_for_the_cancel, expected=[CANCEL_AGENT_RUNS, DELETE_AGENT]
+        run=cleanup_waits_for_the_cancel,
+        expected=[CANCEL_AGENT_RUNS, NEXT_TURN_REFUSED],
     ),
     "shutdown-waits-for-the-cancel": StopCase(
         run=shutdown_waits_for_the_cancel,

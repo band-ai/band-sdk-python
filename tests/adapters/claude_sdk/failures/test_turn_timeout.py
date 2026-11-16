@@ -8,7 +8,7 @@ import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapterConfig, TurnResultAlreadyReported
 from band.client.streaming import ControlMode
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
+from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from tests.adapters.claude_sdk.fakecli import Hold, StreamFails
 from tests.adapters.claude_sdk.helpers import (
@@ -133,7 +133,7 @@ class TestTurnTimeout:
                 )
                 with pytest.raises(CleanupIncompleteError):
                     await room.leave()
-                with pytest.raises(InputNotAccepted):
+                with pytest.raises(RoomClosingError):
                     await room.send("overlap")
                 assert room.claude.sessions[0].alive
                 closing.released.set()

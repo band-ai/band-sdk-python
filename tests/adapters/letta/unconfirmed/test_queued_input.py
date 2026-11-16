@@ -45,12 +45,12 @@ class TestQueuedInput:
                 peer.add_message("B")
                 await ctx.on_event(peer.event("B"))
                 client.release.set()
-                await wait_for_condition(lambda: peer.marked("failed") == ["A", "B"])
+                await wait_for_condition(lambda: len(peer.marked("failed")) == 2)
+                assert sorted(peer.marked("failed")) == ["A", "B"]
                 peer.add_message("C")
                 await ctx.on_event(peer.event("C"))
-                await wait_for_condition(
-                    lambda: peer.marked("failed") == ["A", "B", "C"]
-                )
+                await wait_for_condition(lambda: len(peer.marked("failed")) == 3)
+                assert sorted(peer.marked("failed")) == ["A", "B", "C"]
 
         assert client.journal == [mode.sent, mode.cancel]
         assert peer.marked("processed") == []

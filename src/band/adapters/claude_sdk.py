@@ -762,20 +762,6 @@ class PendingApproval:
     future: asyncio.Future[ApprovalReply | None]
 
 
-async def _fail_turn(
-    session: ClaudeRoomSession,
-    tools: AgentToolsProtocol,
-    error: Exception,
-    *,
-    reason: str,
-    forget_session: bool = False,
-) -> NoReturn:
-    """Recover the room's CLI, report the turn's failure, and mark it reported."""
-    session.recover(reason, forget_session=forget_session)
-    await tools.send_failure(_TURN_FAILURE)
-    raise TurnResultAlreadyReported(str(error)) from error
-
-
 def __getattr__(name: str) -> Any:
     if name == "BAND_TOOLS":
         warnings.warn(
@@ -1052,6 +1038,7 @@ class ClaudeSDKAdapter(
         if session is None or session.activity is None or not isinstance(call_id, str):
             raise ValueError("Claude MCP request has no proven execution origin")
         tools = session.activity.resolve(call_id).tools
+        session.retain_mcp_request()
         shared = self._mcp_room_tools.get(room_id)
         if isinstance(shared, DedupingAgentTools):
             return cast(AgentToolsProtocol, shared.for_origin(tools))
@@ -1414,7 +1401,7 @@ class ClaudeSDKAdapter(
                 session.room_id,
                 e,
             )
-            await _fail_turn(
+            await self._fail_turn(
                 session,
                 tools,
                 e,
@@ -1428,11 +1415,27 @@ class ClaudeSDKAdapter(
                 session.room_id,
                 session.generation,
             )
-            await _fail_turn(session, tools, e, reason="Turn failed before its result")
+            await self._fail_turn(
+                session, tools, e, reason="Turn failed before its result"
+            )
 
         except asyncio.CancelledError:
-            session.recover("Turn cancelled before its result")
+            self._recover_cli(session, "Turn cancelled before its result")
             raise
+
+    async def _fail_turn(
+        self,
+        session: ClaudeRoomSession,
+        tools: AgentToolsProtocol,
+        error: Exception,
+        *,
+        reason: str,
+        forget_session: bool = False,
+    ) -> NoReturn:
+        """Recover the CLI through admission ownership and report the failure."""
+        self._recover_cli(session, reason, forget_session=forget_session)
+        await tools.send_failure(_TURN_FAILURE)
+        raise TurnResultAlreadyReported(str(error)) from error
 
     def _release_turn(
         self, room_id: str, release_future: asyncio.Future[None] | None = None

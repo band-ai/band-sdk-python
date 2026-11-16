@@ -127,7 +127,8 @@ class BackendModel:
                 await self.resident.room.wait_released(
                     generation=self.resident.room.generation
                 )
-            self.turns.confirm_stopped("room", self.handle)
+            if not self.recovering:
+                self.turns.confirm_stopped("room", self.handle)
             self.blocked = False
             self.unavailable = False
             self.recovering = False

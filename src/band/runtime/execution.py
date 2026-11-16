@@ -75,6 +75,7 @@ from band.runtime.formatters import build_participants_message, format_history_f
 from band.runtime.originals import delivery_id
 from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.scheduler import ResyncRequest, Scheduler
+from band.runtime.selection import Disposition
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
 from band.runtime.working_state import WorkingStateReporter, project_working
@@ -283,6 +284,7 @@ class ExecutionContext:
         on_platform_stop: Callable[[ExecutionContext, TurnScope], Awaitable[None]]
         | None = None,
         on_execute_batch: BatchExecutionHandler | None = None,
+        on_execution_created: Callable[[ExecutionContext], None] | None = None,
         is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
         | None = None,
     ):
@@ -306,6 +308,7 @@ class ExecutionContext:
                 instance for standalone contexts.
             on_execute_batch: Callback running one turn over several originals.
                 Required when ``config.consume_all_queued`` is set.
+            on_execution_created: Bind lifecycle observers before input can arrive.
             is_message_control: Read-only recognition of a delivery the
                 adapter would handle as a control. Without it controls are
                 handled in ordinary queue order.
@@ -410,6 +413,8 @@ class ExecutionContext:
         self._on_activity_clear: Callable[[], Awaitable[None]] | None = None
 
         self.scheduler = Scheduler(self)
+        if on_execution_created is not None:
+            on_execution_created(self)
 
     @property
     def thread_id(self) -> str:
@@ -586,6 +591,7 @@ class ExecutionContext:
             await self.request_resync()
             return
 
+        self.delivery.receive(event)
         self.queue.put_nowait(event)
         logger.debug("Event %s enqueued for room %s", event.type, self.room_id)
 
@@ -1135,6 +1141,20 @@ class ExecutionContext:
             message_id or "synthetic",
             reason,
         )
+
+    def queued_model_inputs(self) -> frozenset[str]:
+        """Capture ordinary waiting input before provider recovery can wake it."""
+        self.scheduler.absorb()
+        return frozenset(
+            candidate.message_id
+            for candidate in self.scheduler.candidates(())
+            if candidate.disposition is Disposition.RUNNABLE
+        )
+
+    def request_delivery_recovery(self) -> None:
+        """Wake settlement transport after terminal intent is latched mid-pass."""
+        if not self.is_closing:
+            self.scheduler.request_recovery()
 
     def _input_may_be_ready(self, blocker: asyncio.Future[Any]) -> None:
         if not blocker.cancelled():

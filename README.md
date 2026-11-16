@@ -220,6 +220,33 @@ async with GracefulShutdown(agent), agent:
     await agent.run_forever(install_signal_handlers=False)
 ```
 
+### Recovering an unavailable provider
+
+A deadline ends waiting; it does not prove provider work stopped. An unavailable
+room fails queued and new input without replaying it. Matching provider completion
+or confirmed release can reopen the room for newly submitted input. Leaving and
+rejoining a room does not clear unresolved execution.
+
+If automatic recovery cannot establish settlement, the deployment owner must:
+
+1. Stop admission and automatic restarts for every SDK host sharing the affected
+   provider runtime.
+2. Stop the executing worker/runtime and any local callback host. Confirm their
+   exit, including child processes, or obtain an authoritative receipt that the
+   matching execution and callbacks have joined. An accepted cancel, idle HTTP
+   connection, deleted session, or elapsed grace period is insufficient.
+3. Only after that proof, rebuild the adapter/runtime and submit fresh input.
+   Keep automatic host restarts fenced until this procedure completes; an empty
+   in-memory registry after a crash is not settlement evidence.
+
+For Copilot and shared Parlant runtimes this is a coordinated host operation,
+not a per-room reset. For OpenCode and A2A, the remote service owner must confirm
+the executing worker stopped. Letta's cancellation status, stream EOF and DONE
+do not prove worker settlement; its owner must stop and verify the executing
+worker before reconnecting. If a managed deployment provides neither an
+authoritative settlement receipt nor verified worker termination, recovery after
+uncertain cancellation is unsupported. The SDK offers no force-reset bypass.
+
 ### Logging
 
 The SDK uses standard Python loggers and does not configure process-wide handlers unless you opt in. The recommended entry point is `LogSettings`, which reads validated `BAND_LOG_*` environment variables.

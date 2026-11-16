@@ -7,7 +7,11 @@ import asyncio
 import pytest
 
 from band.adapters.copilot_sdk import CopilotSDKAdapter
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import (
+    CleanupIncompleteError,
+    InputNotAccepted,
+    ProviderUnavailableError,
+)
 from band.core.turn_lifecycle import BACKEND_CANCEL_TIMEOUT_SECONDS
 from band.runtime.tools import BandTool
 from tests.adapters.copilot_sdk.fakes import (
@@ -18,6 +22,7 @@ from tests.adapters.copilot_sdk.fakes import (
     ToolSchemaFakeTools,
     make_started_adapter,
     requires_copilot_sdk,
+    run_message,
 )
 from tests.adapters.waiting import spin
 from tests.framework_conformance.stopprobes import cancel_turn, stop_room, wait_until
@@ -29,6 +34,68 @@ pytestmark = requires_copilot_sdk
 class TestStopConfirmation:
     # The session's compaction-activity subscription outlives every turn.
     ACTIVITY_OBSERVER_ONLY = 1
+
+    @pytest.mark.looptime
+    async def test_failed_prompt_cleanup_stays_owned_after_the_stop_budget(
+        self,
+    ) -> None:
+        client = FakeCopilotClient(prompt_errors=[RuntimeError("prompt rejected")])
+        client.hold_delete = True
+        client.resist_delete_cancel = True
+        adapter = await make_started_adapter(client)
+        tools = ToolSchemaFakeTools()
+        turn = asyncio.create_task(run_message(adapter, tools))
+        try:
+            await client.deleting.wait()
+            with pytest.raises(RuntimeError, match="prompt rejected"):
+                await turn
+            with pytest.raises(ProviderUnavailableError):
+                await run_message(adapter, tools)
+            assert len(client.sessions) == 1
+            assert client.deleted == []
+        finally:
+            client.delete_released.set()
+            await wait_until(
+                lambda: adapter.backend_turns.unconfirmed_handle("room-1") is None
+            )
+        client.hold_delete = False
+        await run_message(adapter, tools)
+        assert len(client.sessions) == 2
+        assert len(client.sessions[-1].prompts) == 1
+        await adapter.cleanup_all()
+
+    @pytest.mark.looptime
+    async def test_detaching_a_failed_session_does_not_prove_its_worker_stopped(
+        self,
+    ) -> None:
+        client = FakeCopilotClient()
+        adapter = await make_started_adapter(client)
+        tools = ToolSchemaFakeTools()
+        await run_message(adapter, tools)
+        (session,) = client.sessions
+        session.send_error = RuntimeError("prompt failed before idle")
+        session.holds_aborted_idle = True
+        with pytest.raises(RuntimeError, match="prompt failed before idle"):
+            await run_message(adapter, tools)
+        with pytest.raises(ProviderUnavailableError):
+            await run_message(adapter, tools)
+
+        await session.disconnect()
+        with pytest.raises(CleanupIncompleteError):
+            await adapter.on_cleanup("room-1")
+        assert session.disconnected
+        with pytest.raises(ProviderUnavailableError):
+            await run_message(adapter, tools)
+        assert len(client.sessions) == 1
+
+        session.deliver_aborted_idle()
+        await wait_until(
+            lambda: adapter.backend_turns.unconfirmed_handle("room-1") is None
+        )
+        await run_message(adapter, tools)
+        assert len(client.sessions) == 2
+        assert len(client.sessions[-1].prompts) == 1
+        await adapter.cleanup_all()
 
     @staticmethod
     async def stopped_turn(

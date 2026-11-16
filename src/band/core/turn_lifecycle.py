@@ -31,7 +31,7 @@ from band.core.exceptions import (
 )
 from band.core.protocols import AgentToolsProtocol
 from band.core.retention import Residency, RetainedRoom
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import await_owned, spawn_owned
 from band.core.turn import judge_detached_turn
 
 logger = logging.getLogger(__name__)
@@ -305,17 +305,15 @@ class BackendTurn(Generic[H]):
 class UnconfirmedStop(Generic[H]):
     """Keep admission blocked until matching evidence retires this operation."""
 
-    handle: H
+    handle: H | None
     ready: asyncio.Future[None]
     room_id: str
+    abandonment: asyncio.TimerHandle | None = None
     # One report per distinct notice so a blocked deferral cannot suppress the
     # later terminal unavailable message (or the reverse).
     reported: set[str] = field(default_factory=set)
     recovery: tuple[RetainedRoom, int] | None = None
     release_callback: Callable[[], None] | None = None
-    # Physical process release alone does not reopen when effects remain.
-    process_released: bool = False
-    effects_outstanding: int = 0
     # Latched after one failed recovery attempt; wakes readiness for recheck.
     unavailable: bool = False
     # Originals deferred on this stop; latched terminal before the wake.
@@ -327,10 +325,6 @@ class UnconfirmedStop(Generic[H]):
             retained, _ = self.recovery
             retained.remove_release_callback(self.release_callback)
         self.release_callback = None
-
-    @property
-    def effects_retired(self) -> bool:
-        return self.effects_outstanding == 0
 
 
 class BackendTurns(Generic[H]):
@@ -408,7 +402,7 @@ class BackendTurns(Generic[H]):
             return
         stop.waiting.add(message_id)
         if stop.unavailable:
-            self._latch_waiting(room_id, stop, frozenset({message_id}))
+            self._latch_waiting(room_id, frozenset({message_id}))
 
     def note_waiting_on(self, ready: asyncio.Future[None], message_id: str) -> None:
         """Record a deferred original from its readiness future."""
@@ -417,23 +411,12 @@ class BackendTurns(Generic[H]):
             return
         stop.waiting.add(message_id)
         if stop.unavailable:
-            self._latch_waiting(stop.room_id, stop, frozenset({message_id}))
+            self._latch_waiting(stop.room_id, frozenset({message_id}))
 
-    def track_effect(self, room_id: str, handle: H) -> Callable[[], None]:
-        """Require one effectful callback to retire before admission reopens."""
-        stop = self._unconfirmed_stop(room_id, handle)
-        if stop.handle is not handle:
-            return lambda: None
-        stop.effects_outstanding += 1
-
-        def retire() -> None:
-            if self._unconfirmed.get(room_id) is not stop:
-                return
-            if stop.effects_outstanding > 0:
-                stop.effects_outstanding -= 1
-            self._try_confirm(room_id, stop)
-
-        return retire
+    def abandon_start(self, room_id: str) -> None:
+        """Retain uncertainty when setup failed after possible provider acceptance."""
+        self._unconfirmed_stop(room_id, None)
+        self.mark_unavailable(room_id)
 
     def mark_unavailable(self, room_id: str) -> frozenset[str]:
         """Latch terminal failure for waiting originals, then wake readiness."""
@@ -445,18 +428,19 @@ class BackendTurns(Generic[H]):
             return failed
         stop.unavailable = True
         try:
-            self._latch_waiting(room_id, stop, failed)
+            self._latch_waiting(room_id, failed)
         finally:
             if not stop.ready.done():
-                stop.ready.set_result(None)
+                stop.ready.set_exception(
+                    ProviderUnavailableError(
+                        AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
+                    )
+                )
+                stop.ready.exception()
         return failed
 
-    def _latch_waiting(
-        self, room_id: str, stop: UnconfirmedStop[H], identities: frozenset[str]
-    ) -> None:
+    def _latch_waiting(self, room_id: str, identities: frozenset[str]) -> None:
         """Notify delivery latches; one latch failure must not starve the rest."""
-        if not identities:
-            return
         for latch in self._live_failure_latches():
             try:
                 latch(room_id, identities)
@@ -527,7 +511,12 @@ class BackendTurns(Generic[H]):
         try:
             handle = await asyncio.shield(call)
         except asyncio.CancelledError:
-            self._spawn_stop(room_id, self._stop_when_started(room_id, call))
+            stop = self._unconfirmed_stop(room_id, None)
+            self._spawn_stop(
+                room_id,
+                self._stop_when_started(room_id, call, stop),
+                cancel_on_timeout=False,
+            )
             raise
         if handle is not None:
             self.bind(room_id, handle)
@@ -574,7 +563,7 @@ class BackendTurns(Generic[H]):
         stop = self._unconfirmed.get(room_id)
         return stop.handle if stop is not None else None
 
-    def confirm_stopped(self, room_id: str, handle: H) -> None:
+    def confirm_stopped(self, room_id: str, handle: H | None) -> None:
         """Release only the stop belonging to this concrete provider operation."""
         turn = self._turns.get(room_id)
         if turn is not None and turn.handle is handle:
@@ -582,6 +571,8 @@ class BackendTurns(Generic[H]):
         stop = self._unconfirmed.get(room_id)
         if stop is not None and stop.handle is handle:
             del self._unconfirmed[room_id]
+            if stop.abandonment is not None:
+                stop.abandonment.cancel()
             self._forget_ready(stop)
             stop.detach_release()
             if not stop.ready.done():
@@ -596,7 +587,6 @@ class BackendTurns(Generic[H]):
             return
         stop.detach_release()
         stop.recovery = retained, generation
-        stop.process_released = False
         stop.release_callback = partial(
             self._released, room_id, stop, retained, generation
         )
@@ -614,18 +604,7 @@ class BackendTurns(Generic[H]):
             retained,
             generation,
         ):
-            stop.process_released = True
-            self._try_confirm(room_id, stop)
-
-    def _try_confirm(self, room_id: str, stop: UnconfirmedStop[H]) -> None:
-        """Confirm only after process release and effectful callback retirement."""
-        if stop.unavailable:
-            return
-        if stop.recovery is not None and not stop.process_released:
-            return
-        if not stop.effects_retired:
-            return
-        self.confirm_stopped(room_id, stop.handle)
+            self.confirm_stopped(room_id, stop.handle)
 
     def confirm_disposed(self, room_id: str) -> None:
         """Forget recovery only after its owner confirms the final physical release."""
@@ -636,12 +615,6 @@ class BackendTurns(Generic[H]):
         if retained.snapshot.state in (Residency.DISPOSING, Residency.CLOSED):
             # Final disposal clears admission even after an unavailable latch;
             # deferred originals already carry their terminal delivery outcome.
-            self.confirm_stopped(room_id, stop.handle)
-
-    def clear_unconfirmed(self, room_id: str) -> None:
-        """Retire any unconfirmed stop when the room's provider identity is gone."""
-        stop = self._unconfirmed.get(room_id)
-        if stop is not None:
             self.confirm_stopped(room_id, stop.handle)
 
     async def require_admission(self, room_id: str, tools: AgentToolsProtocol) -> None:
@@ -682,9 +655,7 @@ class BackendTurns(Generic[H]):
                 self.mark_unavailable(room_id)
                 raise await self._unavailable_error(tools, stop) from error
             else:
-                stop.process_released = True
-                if stop.effects_retired:
-                    self.confirm_stopped(room_id, stop.handle)
+                self.confirm_stopped(room_id, stop.handle)
         blocker = self.blocker(room_id)
         stop = self._unconfirmed.get(room_id)
         if blocker is None:
@@ -747,11 +718,17 @@ class BackendTurns(Generic[H]):
             await asyncio.wait(set(self._stopping.values()))
 
     def _stop(self, room_id: str, handle: H) -> None:
-        if self._requires_confirmation:
-            self._unconfirmed_stop(room_id, handle)
-        self._spawn_stop(room_id, self._cancel(handle))
+        stop = self._unconfirmed_stop(room_id, handle)
+        self._spawn_stop(room_id, self._cancel_and_confirm(room_id, handle, stop))
 
-    def _unconfirmed_stop(self, room_id: str, handle: H) -> UnconfirmedStop[H]:
+    async def _cancel_and_confirm(
+        self, room_id: str, handle: H, stop: UnconfirmedStop[H]
+    ) -> None:
+        await self._cancel(handle)
+        if not self._requires_confirmation and self._unconfirmed.get(room_id) is stop:
+            self.confirm_stopped(room_id, handle)
+
+    def _unconfirmed_stop(self, room_id: str, handle: H | None) -> UnconfirmedStop[H]:
         stop = self._unconfirmed.get(room_id)
         if stop is None:
             ready = asyncio.get_running_loop().create_future()
@@ -759,6 +736,11 @@ class BackendTurns(Generic[H]):
                 handle, ready, room_id=room_id
             )
             self._by_ready[ready] = stop
+            stop.abandonment = asyncio.get_running_loop().call_later(
+                BACKEND_CANCEL_TIMEOUT_SECONDS, self.mark_unavailable, room_id
+            )
+        elif stop.handle is None:
+            stop.handle = handle
         return stop
 
     def _forget_ready(self, stop: UnconfirmedStop[H]) -> None:
@@ -768,7 +750,10 @@ class BackendTurns(Generic[H]):
                 self._by_ready.pop(ready, None)
 
     async def _stop_when_started(
-        self, room_id: str, call: asyncio.Future[H | None]
+        self,
+        room_id: str,
+        call: asyncio.Future[H | None],
+        stop: UnconfirmedStop[H],
     ) -> None:
         try:
             handle = await call
@@ -780,52 +765,54 @@ class BackendTurns(Generic[H]):
                 error,
             )
             return
+        if self._unconfirmed.get(room_id) is not stop:
+            return
         if handle is None:
+            self.confirm_stopped(room_id, None)
             return
         # Late identity after abandonment: cleanup only, never publish or rebind.
-        if self._requires_confirmation:
-            self._unconfirmed_stop(room_id, handle)
-        await self._cancel(handle)
+        self._unconfirmed_stop(room_id, handle)
+        await self._cancel_and_confirm(room_id, handle, stop)
 
-    def _spawn_stop(self, room_id: str, stop: Awaitable[None]) -> None:
+    def _spawn_stop(
+        self, room_id: str, stop: Awaitable[None], *, cancel_on_timeout: bool = True
+    ) -> None:
         task = spawn_owned(
-            asyncio.wait_for(stop, BACKEND_CANCEL_TIMEOUT_SECONDS),
-            label=(
-                f"{self._provider} backend stop for room {room_id} "
-                f"(limit {BACKEND_CANCEL_TIMEOUT_SECONDS}s)"
-            ),
+            self._wait_stop(room_id, stop, cancel_on_timeout=cancel_on_timeout),
+            label=f"{self._provider} backend stop for room {room_id}",
         )
-        # Strong reference until the stop finishes; also key deferred originals
-        # that arrive while blocker() still returns this task.
         self._stopping[room_id] = task
         if (unconfirmed := self._unconfirmed.get(room_id)) is not None:
             self._by_ready[task] = unconfirmed
-        task.add_done_callback(lambda done: self._forget_stop(room_id, done))
+        task.add_done_callback(partial(self._forget_stop, room_id))
+
+    async def _wait_stop(
+        self, room_id: str, stop: Awaitable[None], *, cancel_on_timeout: bool
+    ) -> None:
+        async def execute() -> None:
+            await stop
+
+        operation = spawn_owned(
+            execute(), label=f"{self._provider} cancellation for room {room_id}"
+        )
+        try:
+            if await await_owned({operation}, BACKEND_CANCEL_TIMEOUT_SECONDS):
+                operation.result()
+                return
+            if cancel_on_timeout:
+                operation.cancel()
+        except BaseException:
+            recovery = self._unconfirmed.get(room_id)
+            if recovery is None or recovery.recovery is None:
+                self.mark_unavailable(room_id)
+            raise
+        self.mark_unavailable(room_id)
+        raise TimeoutError("Backend stop exceeded its cancellation budget")
 
     def _forget_stop(self, room_id: str, task: asyncio.Task[None]) -> None:
         self._by_ready.pop(task, None)
         if self._stopping.get(room_id) is task:
             del self._stopping[room_id]
-        if not self._requires_confirmation:
-            return
-        stop = self._unconfirmed.get(room_id)
-        if stop is None or stop.ready.done() or stop.unavailable:
-            return
-        # A cancel that raises without confirmation is failed recovery; a
-        # timeout leaves the stop open so late matching evidence can still
-        # confirm (Copilot idle after the cancel budget).
-        if task.cancelled():
-            return
-        error = task.exception()
-        if error is None or isinstance(error, TimeoutError):
-            return
-        logger.warning(
-            "%s backend stop for room %s failed (%s); marking room unavailable",
-            self._provider,
-            room_id,
-            type(error).__name__,
-        )
-        self.mark_unavailable(room_id)
 
 
 class ApprovalInterruptMixin:

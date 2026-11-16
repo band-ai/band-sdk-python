@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from band.adapters.opencode import OpencodeAdapterConfig
+from band.core.exceptions import ProviderUnavailableError
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import reported_failures
@@ -78,11 +79,14 @@ class TestTermination:
             pass
 
         assert "room-1" not in adapter._rooms
-        ready = adapter.backend_turns.blocker("room-1")
-        assert ready is not None and not ready.done()
+        assert adapter.backend_turns.unavailable("room-1")
+        with pytest.raises(ProviderUnavailableError):
+            await adapter.backend_turns.require_admission(
+                "room-1", tools_protocol(tools)
+            )
         await adapter.cleanup_all()
         assert fake_client.closed
-        assert not ready.done()
+        assert adapter.backend_turns.unavailable("room-1")
 
     @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_turn_timeout_aborts_session_and_emits_error(

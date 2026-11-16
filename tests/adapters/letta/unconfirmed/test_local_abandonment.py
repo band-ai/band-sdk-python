@@ -54,6 +54,8 @@ class TestLocalAbandonment:
         client.release.set()
         await adapter.backend_turns.drain()
         await refused_as_unavailable(adapter)
+        await adapter.on_cleanup(ROOM_ID)
+        await refused_as_unavailable(adapter)
 
         assert client.journal == [mode.sent, mode.cancel]
         assert stopped.messages_sent == []

@@ -65,6 +65,9 @@ class RecordingA2AClient:
         self.cancelled: list[str] = []
         self.closed = False
         self.cancel_started = asyncio.Event()
+        self.stream_held = asyncio.Event()
+        self.cancel_state = TaskState.TASK_STATE_CANCELED
+        self.cancel_response_id: str | None = None
         self._cancel_release: asyncio.Event | None = None
         self._cancelled_ids: set[str] = set()
         self._streams: deque[ScriptedStream] = deque()
@@ -92,6 +95,7 @@ class RecordingA2AClient:
         for event in stream.events:
             yield event
         if stream.hold:
+            self.stream_held.set()
             await asyncio.Future[None]()
 
     async def cancel_task(
@@ -100,11 +104,11 @@ class RecordingA2AClient:
         self.cancel_started.set()
         if self._cancel_release is not None:
             await self._cancel_release.wait()
-        self._cancelled_ids.add(request.id)
+        response_id = self.cancel_response_id or request.id
+        if self.cancel_state == TaskState.TASK_STATE_CANCELED:
+            self._cancelled_ids.add(response_id)
         self.cancelled.append(f"{CANCELLED} {request.id}")
-        return Task(
-            id=request.id, status=TaskStatus(state=TaskState.TASK_STATE_CANCELED)
-        )
+        return Task(id=response_id, status=TaskStatus(state=self.cancel_state))
 
     async def subscribe(
         self, request: Any, *, context: Any = None

@@ -103,6 +103,7 @@ class AgentHooks(TypedDict):
     ]
     on_message_control: Callable[[ExecutionContext, PlatformEvent], Awaitable[bool]]
     is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
+    on_execution_created: Callable[[ExecutionContext], None]
 
 
 def agent_hooks(
@@ -117,6 +118,7 @@ def agent_hooks(
         on_execute_batch=agent._on_execute_batch,
         on_message_control=agent._on_control,
         is_message_control=agent._is_control,
+        on_execution_created=agent._bind_backend_delivery,
     )
 
 

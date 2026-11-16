@@ -113,6 +113,7 @@ class AgentRuntime:
         on_execute_batch: BatchExecutionHandler | None = None,
         is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
         | None = None,
+        on_execution_created: Callable[[ExecutionContext], None] | None = None,
     ):
         """
         Initialize AgentRuntime.
@@ -135,6 +136,7 @@ class AgentRuntime:
                 originals
             is_message_control: Optional read-only recognition of a delivery
                 the adapter would handle as a control
+            on_execution_created: Bind each default room before it receives input
 
         Raises:
             BandConfigError: ``consume_all_queued`` with a custom execution
@@ -151,6 +153,7 @@ class AgentRuntime:
             )
         require_batch_execution_handler(self._session_config, on_execute_batch)
         self._on_execute_batch = on_execute_batch
+        self._on_execution_created = on_execution_created
         self._on_session_cleanup = on_session_cleanup
         self._on_control = on_control
         self._on_message_control = on_message_control
@@ -382,6 +385,7 @@ class AgentRuntime:
             on_message_control=self._on_message_control,
             is_message_control=self._is_message_control,
             on_execute_batch=self._on_execute_batch,
+            on_execution_created=self._on_execution_created,
             config=self._session_config,
             agent_id=self.agent_id,
             on_participant_added=self._on_participant_added,

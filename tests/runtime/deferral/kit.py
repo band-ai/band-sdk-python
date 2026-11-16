@@ -3,12 +3,34 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
+import httpx
+
 from band.core.exceptions import InputNotAccepted
-from band.core.simple_adapter import SimpleAdapter
+from band.core.protocols import FailureMetadataKey
+from band.core.simple_adapter import BatchInputAdapter, SimpleAdapter
 from band.core.turn_lifecycle import BackendTurns, bind_turn_task
-from tests.runtime.helpers import ROOM_ID
+from tests.runtime.helpers import ROOM_ID, PostingPlatform
+
+
+class FailureReportGate:
+    """Hold a provider failure's HTTP response without delaying lifecycle events."""
+
+    def __init__(self, peer: PostingPlatform) -> None:
+        self.peer = peer
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def answer(self, request: httpx.Request) -> httpx.Response:
+        response = self.peer.answer(request)
+        if request.method == "POST" and request.url.path.endswith("/events"):
+            metadata = json.loads(request.content)["event"].get("metadata") or {}
+            if metadata.get(FailureMetadataKey.FAILURE):
+                self.entered.set()
+                await self.release.wait()
+        return response
 
 
 def complete_blocker(blocker: asyncio.Future[None]) -> None:
@@ -168,7 +190,7 @@ class GatedRefusalAdapter(SimpleAdapter[Any]):
         raise InputNotAccepted(ready=self.blocker)
 
 
-class RecoveringAdapter(SimpleAdapter[Any]):
+class RecoveringAdapter(BatchInputAdapter[Any]):
     """Admit through the real backend owner before executing the input."""
 
     def __init__(self, turns: BackendTurns[object]) -> None:
@@ -177,13 +199,19 @@ class RecoveringAdapter(SimpleAdapter[Any]):
         self.refused = asyncio.Event()
         self.completed: list[str] = []
 
-    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+    @property
+    def backend_turns(self) -> BackendTurns[object]:
+        return self.turns
+
+    async def on_turn(
+        self, messages: Any, tools: Any, *args: Any, **kwargs: Any
+    ) -> None:
         try:
             await self.turns.require_admission(ROOM_ID, tools)
         except InputNotAccepted:
             self.refused.set()
             raise
-        self.completed.append(msg.id)
+        self.completed.extend(message.id for message in messages)
         tools.turn.settle()
 
 

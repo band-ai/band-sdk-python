@@ -72,6 +72,7 @@ class Resident:
     startup_activity: ProviderActivity = ProviderActivity.QUIESCENT
     busy: bool = False
     fail_close: bool = False
+    close_error: Exception | None = None
     fail_acquire: bool = False
     fail_dispose: bool = False
     resists_cancel: bool = False
@@ -120,7 +121,7 @@ class Resident:
         if self.busy:
             return ReleaseOutcome.BUSY
         if self.fail_close:
-            raise RuntimeError("close refused")
+            raise self.close_error or RuntimeError("close refused")
         self.live = False
         return ReleaseOutcome.RELEASED
 

@@ -138,6 +138,7 @@ async def next_message_waits_for_the_aborted_idle() -> list[str]:
         await adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
     assert pending.value.ready is not None
     assert len(session.prompts) == 2
+    await session.aborting.wait()
     session.deliver_aborted_idle()
     await pending.value.ready
     await adapter.on_event(turn_input(FakeAgentTools(participants=[ALICE])))
@@ -272,6 +273,8 @@ CASES: dict[str, StopCase] = {
         run=end_seeding_turn,
         expected=[
             "session 1 prompt",
+            "session 1 abort",
+            "session 1 idle",
             "session 1 abort",
             "session 1 idle",
             "session 1 disconnect",

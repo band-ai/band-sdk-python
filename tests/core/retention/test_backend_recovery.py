@@ -91,9 +91,6 @@ class TestBackendRecovery:
         resident.fail_close = False
         await resident.room.wait_released(generation=resident.room.generation)
         assert not resident.live
-        with pytest.raises(ProviderUnavailableError):
-            await turns.require_admission("room", tools)
-        turns.confirm_stopped("room", handle)
         await turns.require_admission("room", tools)
         await resident.turn()
         assert resident.resume_requests == [False, False]

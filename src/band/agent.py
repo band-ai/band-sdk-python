@@ -379,6 +379,7 @@ class Agent:
                 await self._runtime.start(
                     on_execute=self._on_execute,
                     on_execute_batch=self._on_execute_batch,
+                    on_execution_created=self._bind_backend_delivery,
                     is_message_control=self._is_control,
                     on_message_control=self._on_control,
                     on_cleanup=self._adapter.on_cleanup,
@@ -616,7 +617,6 @@ class Agent:
         event: PlatformEvent,
     ) -> None:
         """Handle platform event."""
-        self._bind_backend_delivery(ctx)
         # Preprocessor is the single source of truth for event filtering.
         # It returns None for non-MessageEvent types.
         inp = await self._preprocessor.process(
@@ -634,7 +634,6 @@ class Agent:
         self, ctx: ExecutionContext, events: tuple[MessageEvent, ...]
     ) -> None:
         """Run one turn over several originals through the batch entry points."""
-        self._bind_backend_delivery(ctx)
         adapter, preprocessor = self._batch_hosts()
         inp = await preprocessor.process_batch(
             ctx=ctx, events=events, agent_id=self._runtime.agent_id

@@ -1,45 +1,71 @@
-"""Non-terminal cancel evidence latches the room unavailable."""
+"""Unproven task settlement remains unavailable across room leave and rejoin."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
+import asyncio
 
 import pytest
-from a2a.types import TaskState
+from a2a.types import StreamResponse, TaskState
 
+from band.client.streaming import ControlMode
 from band.core.exceptions import ProviderUnavailableError
-from band.core.turn_lifecycle import PROVIDER_UNAVAILABLE_MESSAGE, BackendTurns
-from band.integrations.a2a.adapter import A2AAdapter, A2ATaskRun
+from band.core.turn_lifecycle import PROVIDER_UNAVAILABLE_MESSAGE
+from band.integrations.a2a.adapter import A2AAdapter
+from band.integrations.a2a.types import A2AAdapterConfig
 from band.testing import FakeAgentTools, failure_reports
-from tests.framework_conformance.turnprobes import ROOM_ID
+from tests.framework_conformance.stopprobes import cancel_turn
+from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
+from tests.integrations.a2a.kit import (
+    CANCELED,
+    WORKING,
+    RecordingA2AClient,
+    task_update,
+)
 
 
 class TestNonterminalCancel:
-    async def test_working_cancel_evidence_latches_unavailable(self) -> None:
-        owner = SimpleNamespace()
-        owner._finalize_task = lambda *_args: None
-        owner.backend_turns = BackendTurns(
-            lambda run: A2AAdapter._cancel_task(owner, run),  # type: ignore[arg-type]
-            provider="a2a",
-            requires_confirmation=True,
-        )
-        run = A2ATaskRun(
-            client=SimpleNamespace(
-                cancel_task=AsyncMock(
-                    return_value=SimpleNamespace(
-                        status=SimpleNamespace(state=TaskState.TASK_STATE_WORKING)
-                    )
-                )
+    @pytest.mark.parametrize(
+        "cancel_state,response_id,extra_events",
+        [
+            pytest.param(TaskState.TASK_STATE_WORKING, None, (), id="nonterminal"),
+            pytest.param(
+                TaskState.TASK_STATE_CANCELED, "other-task", (), id="wrong-cancel-task"
             ),
-            room_id=ROOM_ID,
-            task_id="task-1",
-        )
-        tools = FakeAgentTools()
-        async with owner.backend_turns.running(ROOM_ID, run):
-            owner.backend_turns.cancel(ROOM_ID)
-        await owner.backend_turns.settled(ROOM_ID)
-        assert owner.backend_turns.unavailable(ROOM_ID)
-        with pytest.raises(ProviderUnavailableError):
-            await owner.backend_turns.require_admission(ROOM_ID, tools)
-        assert failure_reports(tools) == [("a2a", PROVIDER_UNAVAILABLE_MESSAGE)]
+            pytest.param(
+                TaskState.TASK_STATE_WORKING,
+                None,
+                (task_update("other-task", CANCELED),),
+                id="wrong-stream-task",
+            ),
+        ],
+    )
+    async def test_unproven_settlement_cannot_be_reset_by_leaving(
+        self,
+        cancel_state: TaskState.ValueType,
+        response_id: str | None,
+        extra_events: tuple[StreamResponse, ...],
+    ) -> None:
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://a2a.test"))
+        client = RecordingA2AClient()
+        client.cancel_state = cancel_state
+        client.cancel_response_id = response_id
+        adapter._client = client
+        # Mismatched identities deliberately inject invalid remote evidence.
+        client.script(task_update("task-1", WORKING), *extra_events, hold=True)
+        turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
+        try:
+            await client.stream_held.wait()
+            await cancel_turn(turn)
+            await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
+            await adapter.backend_turns.drain()
+            tools = FakeAgentTools()
+            with pytest.raises(ProviderUnavailableError):
+                await adapter.on_event(turn_input(tools))
+            await adapter.on_cleanup(ROOM_ID)
+            with pytest.raises(ProviderUnavailableError):
+                await adapter.on_event(turn_input(tools))
+            assert client.continued == [""]
+            assert failure_reports(tools) == [("a2a", PROVIDER_UNAVAILABLE_MESSAGE)]
+        finally:
+            await cancel_turn(turn)
+            await adapter.cleanup_all()
