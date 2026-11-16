@@ -45,12 +45,14 @@ class ScriptedStream:
     """One reply stream: these events, then either the end or a held turn.
 
     A ``gate`` keeps the remote silent after it accepted the request, until
-    the gate is set.
+    the gate is set. ``error`` fails the stream before any event, so a
+    provider-raised timeout is distinct from a held silence.
     """
 
     events: tuple[StreamResponse, ...]
     hold: bool = False
     gate: asyncio.Event | None = None
+    error: BaseException | None = None
 
 
 class RecordingA2AClient:
@@ -82,14 +84,17 @@ class RecordingA2AClient:
         *events: StreamResponse,
         hold: bool = False,
         gate: asyncio.Event | None = None,
+        error: BaseException | None = None,
     ) -> None:
-        self._streams.append(ScriptedStream(events, hold, gate))
+        self._streams.append(ScriptedStream(events, hold, gate, error))
 
     async def send_message(
         self, request: SendMessageRequest, *, context: Any = None
     ) -> AsyncIterator[StreamResponse]:
         self.continued.append(request.message.task_id)
         stream = self._streams.popleft()
+        if stream.error is not None:
+            raise stream.error
         if stream.gate is not None:
             await stream.gate.wait()
         for event in stream.events:

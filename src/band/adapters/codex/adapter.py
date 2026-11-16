@@ -146,7 +146,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.retention import ReleaseCause, ReleaseOutcome, RoomRetention
-from band.core.retention.cleanup import await_owned_result, spawn_owned
+from band.core.retention.cleanup import await_owned, await_owned_result, spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import detached_turn
 from band.core.turn_lifecycle import (
@@ -551,9 +551,18 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
                 raise
             except TimeoutError as timeout:
-                # Waiting on the room's process or on an unanswered thread or
-                # turn start raises this; the abandoned wait stays owned until
-                # recovery closes its process.
+                # Budget expiry on a process/thread/turn start recovers the
+                # process and leaves an unconfirmed stop. A provider-raised
+                # TimeoutError finishes its call without that recovery, so it
+                # is an ordinary turn failure on a still-authoritative process.
+                if self.backend_turns.unconfirmed_handle(room.room_id) is None:
+                    logger.exception(
+                        "Unexpected error in Codex turn (room=%s)", room.room_id
+                    )
+                    await tools.send_failure(
+                        AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    )
+                    raise
                 logger.warning(
                     "Room %s: Codex process not ready", room.room_id, exc_info=timeout
                 )
@@ -1479,19 +1488,19 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     ) -> dict[str, Any]:
         """Answer one provider request within ``retention.transition_timeout_s``.
 
-        Expiry abandons the wait only: the request stays owned, so a late
-        answer is never published. What it may have created exists only on the
-        process ``unproven`` names, so that process is retired.
+        Budget expiry abandons the wait only: the request stays owned, so a
+        late answer is never published, and the process ``unproven`` names is
+        retired. A ``TimeoutError`` raised by the request itself is a finished
+        failure and must not retire that process.
         """
-        try:
-            return await await_owned_result(
-                unproven.client.request(method, params),
-                timeout=self.config.retention.transition_timeout_s,
-                label=f"Codex {method}",
-            )
-        except TimeoutError:
-            self._recover_unconfirmed(unproven)
-            raise
+        request = spawn_owned(
+            unproven.client.request(method, params),
+            label=f"Codex {method}",
+        )
+        if await await_owned({request}, self.config.retention.transition_timeout_s):
+            return request.result()
+        self._recover_unconfirmed(unproven)
+        raise TimeoutError(f"Codex {method} exceeded its budget")
 
     def _unproven_request(
         self, room: RoomCodexClient, client: CodexClientProtocol

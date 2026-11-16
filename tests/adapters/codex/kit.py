@@ -686,8 +686,15 @@ class CountingCloseClient(FakeCodexClient):
         events: list[RpcEvent],
         hold: bool = False,
         interrupt_error: Exception | None = None,
+        turn_start_error: Exception | None = None,
+        turn_start_error_once: bool = True,
     ) -> None:
-        super().__init__(events=events, interrupt_error=interrupt_error)
+        super().__init__(
+            events=events,
+            interrupt_error=interrupt_error,
+            turn_start_error=turn_start_error,
+            turn_start_error_once=turn_start_error_once,
+        )
         self.starts = 0
         self.closes = 0
         self.refuse_close = False

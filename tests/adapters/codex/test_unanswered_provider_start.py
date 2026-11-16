@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.codex import PROCESS_NOT_READY_ERROR, CodexAdapterConfig
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.retention import RoomRetentionConfig
 from band.integrations.codex.types import CodexRequestMethod
 from band.runtime.tools import BandTool
@@ -12,6 +13,7 @@ from band.testing import reported_failures
 from tests.adapters.codex.kit import (
     ROOM_ID,
     CodexRoom,
+    CountingCloseClient,
     UnansweredRequestClient,
     thread_of,
 )
@@ -93,3 +95,30 @@ class TestUnansweredProviderStart:
         finally:
             client.unanswered.released.set()
             await room.adapter.on_cleanup(ROOM_ID)
+
+    @pytest.mark.looptime
+    async def test_a_provider_timeout_on_turn_start_keeps_the_process(
+        self,
+    ) -> None:
+        """A finished turn/start TimeoutError is not a start-budget abandon."""
+        client = CountingCloseClient(
+            events=[tool_call_request(1, BandTool.NO_REPLY), turn_completed()],
+            turn_start_error=TimeoutError("rpc timed out"),
+        )
+        adapter = make_codex_adapter(client)
+        await adapter.on_started("Codex Agent", "A coding agent")
+        room = CodexRoom(adapter, client)
+        try:
+            with pytest.raises(TimeoutError, match="rpc timed out"):
+                await room.send("first")
+            assert (client.starts, client.closes) == (1, 0)
+            assert adapter.backend_turns.unconfirmed_handle(ROOM_ID) is None
+            assert [f["message"] for f in reported_failures(room.deliveries[0])] == [
+                GENERIC_PROVIDER_FAILURE_MESSAGE
+            ]
+
+            await room.send("second")
+            assert (client.starts, client.closes) == (1, 0)
+            assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
+        finally:
+            await adapter.on_cleanup(ROOM_ID)

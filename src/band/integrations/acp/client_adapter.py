@@ -70,7 +70,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import await_owned_result, spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn_lifecycle import (
@@ -1686,11 +1686,16 @@ class ACPClientAdapter(
     async def _close_session(
         self, runtime: ACPRuntime, session_id: str, *, reason: SessionCloseReason
     ) -> None:
-        """Best-effort close of a session no room will use again."""
+        """Best-effort close of a session no room will use again.
+
+        The close stays owned when the wait budget expires; cancelling it would
+        not prove the agent dropped the session.
+        """
         try:
-            await asyncio.wait_for(
+            await await_owned_result(
                 runtime.close_session(session_id),
                 timeout=SESSION_CLOSE_TIMEOUT_SECONDS,
+                label=f"ACP session {session_id} close",
             )
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise

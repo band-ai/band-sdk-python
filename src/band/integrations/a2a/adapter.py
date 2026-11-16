@@ -205,11 +205,18 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 streaming=self.config.streaming, httpx_client=self._http_client
             )
         )
-        self._client = await await_owned_result(
-            factory.create_from_url(self.config.remote_url),
-            timeout=self.config.transition_timeout_s,
-            label="A2A client setup",
-        )
+        create = asyncio.ensure_future(factory.create_from_url(self.config.remote_url))
+        try:
+            self._client = await await_owned_result(
+                create,
+                timeout=self.config.transition_timeout_s,
+                label="A2A client setup",
+            )
+        except BaseException:
+            # Budget expiry abandons waiting only; close a late client and the
+            # owned HTTP transport so a failed Agent.start cannot leak them.
+            await self._abandon_client_setup(create)
+            raise
 
         logger.info(
             "Connected to A2A agent at %s (streaming=%s, auth=%s)",
@@ -217,6 +224,34 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             self.config.streaming,
             bool(headers),
         )
+
+    async def _abandon_client_setup(self, create: asyncio.Future[Client]) -> None:
+        """Close setup the start budget abandoned, including a late client."""
+        http, self._http_client = self._http_client, None
+
+        async def discard() -> None:
+            client: Client | None = None
+            try:
+                client = await create
+            except BaseException:
+                logger.debug(
+                    "A2A client setup failed after its start budget", exc_info=True
+                )
+            try:
+                if client is not None:
+                    await client.close()
+            finally:
+                if http is not None:
+                    await http.aclose()
+
+        try:
+            await await_owned_result(
+                discard(),
+                timeout=self.config.transition_timeout_s,
+                label="A2A abandoned client setup close",
+            )
+        except TimeoutError:
+            logger.warning("A2A abandoned client setup close exceeded its budget")
 
     @property
     def backend_turns(self) -> BackendTurns[A2ATaskRun]:
