@@ -39,8 +39,8 @@ def _assert_stopped_and_fd_closed(
     return process.returncode
 
 
+@markers.requires_posix_pty
 class TestAttachedRun:
-    @markers.requires_posix_pty
     def test_spawn_pty_process_returns_a_live_readable_pty(self) -> None:
         process, controller_fd = _spawn_pty_process(
             [sys.executable, "-c", "print('hi')"]
@@ -51,7 +51,6 @@ class TestAttachedRun:
         finally:
             _stop_pty_process(process, controller_fd)
 
-    @markers.requires_posix_pty
     def test_spawn_pty_process_closes_both_fds_when_the_child_fails_to_start(
         self,
     ) -> None:
@@ -64,7 +63,6 @@ class TestAttachedRun:
 
         assert _open_fd_count() == before
 
-    @markers.requires_posix_pty
     def test_stop_pty_process_terminates_a_cooperative_process(self) -> None:
         process, controller_fd = _spawn_pty_process(
             [sys.executable, "-c", "import time; time.sleep(100)"]
@@ -74,7 +72,6 @@ class TestAttachedRun:
 
         _assert_stopped_and_fd_closed(process, controller_fd)
 
-    @markers.requires_posix_pty
     def test_stop_pty_process_escalates_to_sigkill_when_sigterm_is_ignored(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -104,7 +101,6 @@ class TestAttachedRun:
         returncode = _assert_stopped_and_fd_closed(process, controller_fd)
         assert returncode == -signal.SIGKILL  # proves the escalation fired
 
-    @markers.requires_posix_pty
     def test_attached_run_holds_the_child_open_then_releases_it_on_exit(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -125,7 +121,6 @@ class TestAttachedRun:
         _assert_stopped_and_fd_closed(*children[0])
         assert _open_fd_count() == before
 
-    @markers.requires_posix_pty
     @pytest.mark.parametrize("exit_code", [0, 3])
     def test_attached_run_rejects_a_premature_owner_exit(
         self, monkeypatch: pytest.MonkeyPatch, exit_code: int
@@ -146,7 +141,6 @@ class TestAttachedRun:
         ):
             children[0].wait(timeout=5)
 
-    @markers.requires_posix_pty
     def test_owned_session_waits_for_reader_before_releasing_its_pty(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -195,7 +189,6 @@ class TestAttachedRun:
         assert not owner.is_alive()
         assert errors == []
 
-    @markers.requires_posix_pty
     def test_owned_session_drains_output_with_high_descriptor(
         self, tmp_path: Path
     ) -> None:
@@ -242,7 +235,6 @@ print(json.dumps({"output_drained": drained, "owner_stopped": spawned[0].poll() 
             "owner_stopped": True,
         }
 
-    @markers.requires_posix_pty
     def test_reader_start_failure_releases_child_and_pty(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -271,7 +263,6 @@ print(json.dumps({"output_drained": drained, "owner_stopped": spawned[0].poll() 
             if process.poll() is None:
                 _stop_pty_process(process, controller)
 
-    @markers.requires_posix_pty
     @pytest.mark.parametrize("exhausted", [False, True])
     def test_selector_initialization_failure_does_not_yield_broken_session(
         self,

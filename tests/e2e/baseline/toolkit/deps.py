@@ -270,12 +270,15 @@ def _omp_cli_responds(settings: BaselineSettings) -> bool:
     return _cli_responds(omp_command(settings))
 
 
-def _cli_responds(command: tuple[str, ...]) -> bool:
+def _cli_responds(
+    command: tuple[str, ...], *, args: tuple[str, ...] = ("--help",)
+) -> bool:
+    """``command`` is on PATH and ``command *args`` exits 0."""
     if shutil.which(command[0]) is None:
         return False
     try:
         completed = subprocess.run(
-            [*command, "--help"],
+            [*command, *args],
             check=False,
             capture_output=True,
             text=True,
@@ -353,16 +356,7 @@ def _codex_cwd_available(settings: BaselineSettings) -> bool:
 
 def _docker_daemon_available(_settings: BaselineSettings) -> bool:
     """``docker info`` reaches a daemon (the CLI alone cannot build or run)."""
-    try:
-        completed = subprocess.run(
-            ["docker", "info"],
-            check=False,
-            capture_output=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return completed.returncode == 0
+    return _cli_responds(("docker",), args=("info",))
 
 
 def _letta_llm_provider_available(settings: BaselineSettings) -> bool:

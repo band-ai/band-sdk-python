@@ -271,9 +271,6 @@ def attached_run(name: str) -> Iterator[None]:
             raise RuntimeError(f"owned sbx run for {name} exited {process.returncode}")
 
 
-NAME_PREFIX = "band-nevervm"
-
-
-def sandbox_name(prefix: str = NAME_PREFIX) -> str:
+def sandbox_name(prefix: str) -> str:
     """A unique sandbox name, allocated before the sandbox exists."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"

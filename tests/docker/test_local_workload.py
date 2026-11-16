@@ -7,6 +7,7 @@ import re
 import yaml
 
 from tests.docker.toolkit.sbx_cli import local_workload
+from tests.paths import KIT_DIR
 
 IMAGE = "band-python-kit:test"
 # sbx answers `unknown agent ... (built-in agents only)` for a kit directory
@@ -29,5 +30,6 @@ class TestLocalWorkload:
                 (kit / "band-workload.yaml").read_text(encoding="utf-8")
             )
 
-        assert descriptor["build"] == f"FROM {IMAGE}\n"
-        assert "dockerfile" not in descriptor
+        spec = yaml.safe_load((KIT_DIR / "spec.yaml").read_text(encoding="utf-8"))
+        spec.pop("dockerfile")
+        assert descriptor == {**spec, "build": f"FROM {IMAGE}\n"}
