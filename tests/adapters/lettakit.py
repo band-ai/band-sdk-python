@@ -26,11 +26,13 @@ from pytest_httpx import HTTPXMock
 from typing_extensions import Unpack
 
 from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
-from band.core.exceptions import BandToolError
 from band.core.types import FeatureKwargs, PlatformMessage
 from band.integrations.letta.prompts import render_tool_enforcement
+from band.integrations.mcp import BandMCPBackendSettings
 from band.integrations.mcp.backends import backend_tool_registrations
 from band.runtime.tools import CHAT_ID_FIELD_NAME
+from tests.mcp.toolresults import result_text
+from tests.mcpclient import in_memory_backend_session
 
 
 def make_platform_message(
@@ -181,12 +183,17 @@ def ready_letta_adapter(
     return adapter, client
 
 
+def band_mcp_settings(adapter: LettaAdapter) -> BandMCPBackendSettings:
+    """The settings the adapter's Band MCP backend serves its tools with."""
+    return adapter._mcp._backend_settings()
+
+
 def band_mcp_registrations(adapter: LettaAdapter) -> dict[str, Any]:
     """The adapter's real Band MCP tools by name: the path Letta's MCP client
     reaches."""
     return {
         registration.name: registration
-        for registration in backend_tool_registrations(adapter._mcp._backend_settings())
+        for registration in backend_tool_registrations(band_mcp_settings(adapter))
     }
 
 
@@ -199,24 +206,25 @@ def scripted_letta_turn(
 ) -> Callable[..., Awaitable[MagicMock]]:
     """A self-hosted Letta agent's turn, as a ``messages.create`` side effect.
 
-    Each tool call runs through the adapter's real Band MCP registrations (the
-    path Letta's MCP client reaches), then the turn's messages come back as
-    Letta's response.
+    Each tool call goes to the adapter's real Band MCP server (the one Letta's
+    MCP client reaches), then the turn's messages come back as Letta's response.
     """
-    registrations = band_mcp_registrations(adapter)
 
     async def create(**_kwargs: Any) -> MagicMock:
         messages: list[Any] = []
-        for name, arguments in tool_calls:
-            messages.append(make_tool_call_message(name, json.dumps(arguments)))
-            try:
-                result = await registrations[name].execute(
-                    {**arguments, CHAT_ID_FIELD_NAME: room_id}
+        async with in_memory_backend_session(band_mcp_settings(adapter)) as band:
+            for name, arguments in tool_calls:
+                messages.append(make_tool_call_message(name, json.dumps(arguments)))
+                result = await band.call_tool(
+                    name, {**arguments, CHAT_ID_FIELD_NAME: room_id}
                 )
-            except BandToolError as error:  # the MCP server returns it as a tool error
-                messages.append(make_tool_return_message(name, str(error), "error"))
-            else:
-                messages.append(make_tool_return_message(name, result))
+                messages.append(
+                    make_tool_return_message(
+                        name,
+                        result_text(result),
+                        "error" if result.isError else "success",
+                    )
+                )
         if final_text:
             messages.append(make_assistant_message(final_text))
         return make_letta_response(*messages)

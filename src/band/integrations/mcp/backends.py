@@ -141,7 +141,7 @@ def _refusing_after_decline(get_tools: RoomToolResolver) -> RoomToolResolver:
 
     def resolve(room_id: str) -> AgentToolsProtocol | None:
         tools = get_tools(room_id)
-        if tools is not None and (refusal := declined_turn_refusal(tools.turn)):
+        if tools is not None and (refusal := declined_turn_refusal(tools)):
             raise BandToolError(refusal)
         return tools
 

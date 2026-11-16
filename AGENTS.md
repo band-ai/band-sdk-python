@@ -135,13 +135,13 @@ implementation and conformance contract are in
 `src/band/core/simple_adapter.py`, `src/band/core/turn.py`, and
 `tests/framework_conformance/test_turn_outcome.py`.
 
-A decline ends the turn's work. SDK-driven loops stop calling the model after
-the decline's round. A provider-run loop (ACP, Claude SDK, Codex, Copilot SDK,
-OpenCode, Letta) keeps going, so every tool call entering the SDK after the
-decline is refused through `declined_turn_refusal` in `src/band/runtime/turn.py`;
-a new provider-run adapter calls it where the model's calls enter.
-`tests/framework_conformance/test_turn_termination.py` runs every probe whose
-`TurnLoop` is `PROVIDER`.
+A decline ends its declarer's work. SDK-driven loops stop calling the model
+after the decline's round. A provider-run loop keeps going, so every tool call
+entering the SDK after the decline is refused through `declined_turn_refusal`
+in `src/band/runtime/turn.py`; a new provider-run adapter calls it where the
+model's calls enter. A subagent's or background task's decline refuses only its
+own calls. `tests/framework_conformance/test_turn_termination.py` runs every
+probe whose `TurnLoop` is `PROVIDER`.
 
 ## Adapter Constructor Shape
 

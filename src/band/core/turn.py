@@ -60,11 +60,14 @@ class Turn:
         self.posts_missing_reply = posts_missing_reply
         self.judged = False
         self._detached = False
-        self._declined = False
+        self._declined_by: set[object] = set()
 
-    def record(self, effect: TurnEffect) -> None:
+    def record(self, effect: TurnEffect, *, origin: object = None) -> None:
+        """Record ``effect``, made by ``origin``: ``None`` for the turn's own
+        model, or the resource (a subagent, background work) that made it."""
         self._ledger.record(_core_effect(effect))
-        self._declined |= effect.ends_turn
+        if effect.ends_turn:
+            self._declined_by.add(origin)
 
     def settle(self) -> None:
         """The adapter ended this turn itself (a control reply, a busy notice)."""
@@ -82,10 +85,13 @@ class Turn:
     def detached(self) -> bool:
         return self._detached
 
-    @property
-    def declined(self) -> bool:
-        """A recorded call declined to reply, which ends the turn's work."""
-        return self._declined
+    def declined(self, origin: object = None) -> bool:
+        """Whether ``origin`` declined to reply, which ends its own work.
+
+        Any decline counts toward the verdict, but a resource's decline leaves
+        the model's own calls, and every other resource's, untouched.
+        """
+        return origin in self._declined_by
 
     @property
     def replied(self) -> bool:

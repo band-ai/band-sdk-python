@@ -199,7 +199,7 @@ async def _run(
     Either kind of tool can fail without raising (bad args, an API error, a
     failure value) via ``ok=False``, which reaches Codex as a failed call.
     """
-    if refusal := declined_turn_refusal(tools.turn):
+    if refusal := declined_turn_refusal(tools):
         return text_tool_result(refusal, success=False), refusal
     try:
         if custom_tool := find_custom_tool(custom_tools, call.name):

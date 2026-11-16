@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
-from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 
-from band.integrations.mcp.backends import (
-    BandMCPBackendSettings,
-    backend_tool_registrations,
-)
-from band.integrations.mcp.engine import EngineSpec, build_engine
+from band.integrations.mcp.backends import BandMCPBackendSettings
 from band.runtime.custom_tools import declares_turn_effect, get_custom_tool_name
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
@@ -22,20 +18,21 @@ from band.runtime.tools import (
 )
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
 from tests.framework_conformance.outcomeprobes import ANSWER, REPLY
-from tests.framework_conformance.turnprobes import ROOM_ID, turn_tools
+from tests.framework_conformance.turnprobes import ALICE, ROOM_ID, turn_tools
+from tests.mcp.toolresults import mcp_tool_error
+from tests.mcpclient import in_memory_backend_session
 
 
 class HeldDeclineInput(BaseModel):
     """Decline to reply, once released."""
 
 
-def refused(result: CallToolResult) -> bool:
-    return result.isError and result.content == [
-        TextContent(
-            type="text",
-            text=f"Error executing tool {BandTool.SEND_MESSAGE}: {DECLINED_TURN_REFUSAL}",
-        )
-    ]
+#: What the fake room answers the turn's first reply with.
+SENT = {
+    "id": "msg-0",
+    "recipients": [{"handle": ALICE["handle"], "id": "alice", "name": None}],
+    "success": True,
+}
 
 
 class TestDeclineOrdering:
@@ -56,13 +53,10 @@ class TestDeclineOrdering:
             get_tools=lambda _room_id: tools,
             additional_tools=[(HeldDeclineInput, held_decline)],
         )
-        server = build_engine(
-            EngineSpec(name="band", tools=tuple(backend_tool_registrations(settings)))
-        )
         reply = {**REPLY.arguments, CHAT_ID_FIELD_NAME: ROOM_ID}
 
         async with (
-            create_connected_server_and_client_session(server) as session,
+            in_memory_backend_session(settings) as session,
             asyncio.TaskGroup() as group,
         ):
             decline = group.create_task(
@@ -77,5 +71,8 @@ class TestDeclineOrdering:
             await decline
             after = await session.call_tool(BandTool.SEND_MESSAGE, reply)
 
-        assert (before.isError, refused(after)) == (False, True)
+        assert before == CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(SENT))], isError=False
+        )
+        assert after == mcp_tool_error(BandTool.SEND_MESSAGE, DECLINED_TURN_REFUSAL)
         assert tools.chat == [ANSWER]

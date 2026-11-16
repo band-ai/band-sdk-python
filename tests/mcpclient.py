@@ -11,6 +11,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
+from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import Tool
 
 from band.integrations.mcp import (
@@ -19,7 +20,8 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
-from band.integrations.mcp.engine import RoomToolResolver
+from band.integrations.mcp.backends import backend_tool_registrations
+from band.integrations.mcp.engine import EngineSpec, RoomToolResolver, build_engine
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HTTP_PATH,
     LOCAL_MCP_ROOMS_PATH,
@@ -27,7 +29,7 @@ from band.integrations.mcp.local_server import (
     LocalMCPServer,
 )
 from band.runtime.custom_tools import CustomToolDef
-from band.runtime.tools import ToolDefinition
+from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
 
 # A valid band_store_memory call, minus any room.
 STORE_MEMORY_ARGS: dict[str, Any] = {
@@ -129,6 +131,22 @@ async def mcp_session(
         ClientSession(read_stream, write_stream) as session,
     ):
         await session.initialize()
+        yield session
+
+
+@asynccontextmanager
+async def in_memory_backend_session(
+    settings: BandMCPBackendSettings,
+) -> AsyncIterator[ClientSession]:
+    """A session to the Band MCP server a backend started with ``settings``
+    serves, connected in memory instead of over a port."""
+    server = build_engine(
+        EngineSpec(
+            name=BAND_MCP_SERVER_NAME,
+            tools=tuple(backend_tool_registrations(settings)),
+        )
+    )
+    async with create_connected_server_and_client_session(server) as session:
         yield session
 
 

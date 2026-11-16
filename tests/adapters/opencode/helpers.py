@@ -23,7 +23,6 @@ from band.client.rest import MessageSentResponse
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
-from band.integrations.mcp.backends import backend_tool_registrations
 from band.integrations.opencode import (
     ApprovalReply,
     OpencodePermissionRequest,
@@ -35,6 +34,7 @@ from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.mcpbackends import BackendStarts
+from tests.mcpclient import in_memory_backend_session
 
 RawOpencodeEvent: TypeAlias = dict[str, Any]
 # What the fake server does next: stream an SSE event, or act between events
@@ -603,9 +603,8 @@ class BandMCPCalls:
     ) -> ServerStep:
         async def call() -> None:
             assert self._starts.requested, "the adapter never started its backend"
-            registrations = backend_tool_registrations(self._starts.requested[-1])
-            served = {registration.name: registration for registration in registrations}
-            await served[tool].execute({**arguments, CHAT_ID_FIELD_NAME: room_id})
+            async with in_memory_backend_session(self._starts.requested[-1]) as band:
+                await band.call_tool(tool, {**arguments, CHAT_ID_FIELD_NAME: room_id})
 
         return call
 

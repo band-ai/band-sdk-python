@@ -412,6 +412,11 @@ class AgentTools(AgentToolsProtocol):
             else:
                 self._ctx.register_turn_task(self._scope, owner)
 
+    @property
+    def resource(self) -> TurnTask | None:
+        """The resource this view serves; ``None`` for the turn's own model."""
+        return self._resource
+
     def _for_resource(self, owner: TurnTask) -> AgentTools:
         """An immutable origin view whose effects also require this resource."""
         view = copy(self)

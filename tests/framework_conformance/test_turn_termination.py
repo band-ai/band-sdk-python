@@ -29,4 +29,6 @@ class TestTurnTermination:
             TURN_OUTCOME_PROBES[probe], TurnScript((DECLINE, later))
         )
 
-        assert result == TurnResult(TurnVerdict.Complete, messages=[], failures=[])
+        assert result == TurnResult(
+            TurnVerdict.Complete, messages=[], failures=[], participants_added=[]
+        )

@@ -51,6 +51,7 @@ from band.runtime.prompts import (
 from band.runtime.sessionresume import fetch_transcript
 from band.runtime.toolactivity import end_activity, suppress_tool_activity
 from band.runtime.tools import BandTool, TurnEffect
+from band.runtime.turn import declined_turn_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +303,8 @@ class OmpTurnMixin(OmpAdapterContract):
             async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
                 if turn.closed:
                     return _text_tool_result("OMP turn already closed", is_error=True)
+                if refusal := declined_turn_refusal(tools):
+                    return _text_tool_result(refusal, is_error=True)
                 builtin_decline = (
                     call.toolName == BandTool.NO_REPLY
                     and find_custom_tool(self._custom_tools, call.toolName) is None
@@ -314,9 +317,11 @@ class OmpTurnMixin(OmpAdapterContract):
                 ledger_record = tools.turn.record
                 if builtin_decline:
 
-                    def _defer_decline(effect: TurnEffect) -> None:
+                    def _defer_decline(
+                        effect: TurnEffect, *, origin: object = None
+                    ) -> None:
                         if effect is not TurnEffect.DECLINE:
-                            ledger_record(effect)
+                            ledger_record(effect, origin=origin)
 
                     tools.turn.record = _defer_decline  # type: ignore[method-assign]
                 try:

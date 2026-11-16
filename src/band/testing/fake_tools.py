@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import uuid
 from collections.abc import Callable
-from copy import deepcopy
+from copy import copy, deepcopy
 from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any, Literal
@@ -60,6 +60,7 @@ from band.core.task_types import (
     task_ref,
 )
 from band.core.turn import MISSING_REPLY, Turn
+from band.core.turn_lifecycle import TurnTask
 from band.core.types import (
     Capability,
     ContactRequestAction,
@@ -334,6 +335,19 @@ class FakeAgentTools:
         self._observers: list[tuple[Callable[[], bool], asyncio.Future[None]]] = []
         self.turn = Turn()
         self._activity_observer: ActivityObserver | None = None
+        self._resource: TurnTask | None = None
+
+    @property
+    def resource(self) -> TurnTask | None:
+        """The resource this view serves; ``None`` for the turn's own model."""
+        return self._resource
+
+    def _for_resource(self, owner: TurnTask) -> FakeAgentTools:
+        """A resource's view, as ``AgentTools`` gives one: it shares the
+        room's logs and the turn, but calls as ``owner``."""
+        view = copy(self)
+        view._resource = owner
+        return view
 
     @property
     def agent_id(self) -> str | None:
@@ -1136,7 +1150,7 @@ class FakeAgentTools:
         recorded here."""
         self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
         outcome = ToolCallOutcome(value={"status": "ok"}, ok=True)
-        record_tool_result(self.turn, tool_name, outcome.value)
+        record_tool_result(self, tool_name, outcome.value)
         return outcome
 
     # --- Assertion helpers ---

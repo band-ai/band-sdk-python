@@ -46,6 +46,12 @@ if _COPILOT_SDK_AVAILABLE:
 # An earlier room message, and the line it becomes in a replayed transcript.
 EARLIER_MESSAGE = "my name is Alice"
 EARLIER_LINE = f"[Alice]: {EARLIER_MESSAGE}"
+#: The question the model asks the room through ask_user.
+QUESTION = {
+    "question": "Which channel should I deploy to?",
+    "choices": ["stable", "beta", "canary"],
+    "allowFreeform": True,
+}
 
 
 class ObservedCopilotAdapter(CopilotSDKAdapter):

@@ -27,6 +27,7 @@ from band.runtime.tools.schema import (
     tool_result_text,
 )
 from band.runtime.tools.types import TurnEffect
+from band.runtime.turn import record_effect
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +304,7 @@ async def invoke_validated_custom_tool(
         if inspect.isawaitable(result):
             result = await result
     if tools is not None and not is_failed_tool_output(result):
-        tools.turn.record(declared_effect(func) or TurnEffect.OBSERVE)
+        record_effect(tools, declared_effect(func) or TurnEffect.OBSERVE)
     return result
 
 

@@ -60,6 +60,7 @@ from band.integrations.copilot_sdk.room_ask_user import (
     ASK_USER_ROOM,
     ROOM_ASK_USER_GUIDANCE,
     delivery_failed_answer,
+    freeform_answer,
     no_recipients_answer,
     question_delivered_answer,
     render_room_question,
@@ -918,6 +919,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             # A late dispatch after the turn/room ended (the SDK never
             # cancels pending asks) must degrade, not crash the RPC.
             return room_inactive_answer()
+        if refusal := declined_turn_refusal(room_tools):
+            return freeform_answer(refusal)
         rendered = render_room_question(request)
         # The question is the turn's reply, so a "waiting for your answer"
         # wrap-up is not relayed on top of it.
@@ -1014,7 +1017,7 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         should_report = Emit.TOOL_CALLS in self.features.emit
         if should_report:
             await self._report_tool_call(room_tools, invocation, arguments)
-        if refusal := declined_turn_refusal(room_tools.turn):
+        if refusal := declined_turn_refusal(room_tools):
             return await self._fail_tool_call(
                 room_tools, invocation, refusal, report=should_report
             )

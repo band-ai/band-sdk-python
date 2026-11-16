@@ -418,12 +418,17 @@ class Reply:
         ]
 
     @property
-    def tool_result_names(self) -> list[str]:
-        """Narrated tool_result names in order (see ``tool_call_names``)."""
+    def parsed_tool_results(self) -> list[ToolResultRoomEvent]:
+        """Narrated tool_result payloads in order."""
         return [
-            ToolResultRoomEvent.model_validate_json(e["content"]).name
+            ToolResultRoomEvent.model_validate_json(e["content"])
             for e in self.tool_results
         ]
+
+    @property
+    def tool_result_names(self) -> list[str]:
+        """Narrated tool_result names in order (see ``tool_call_names``)."""
+        return [result.name for result in self.parsed_tool_results]
 
     @property
     def plans(self) -> list[str]:

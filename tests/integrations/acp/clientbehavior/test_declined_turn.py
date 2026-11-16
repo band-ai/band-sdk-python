@@ -11,6 +11,7 @@ from tests.integrations.acp.acp_toolkit import (
     acp_adapter,
     fake_agent_config,
 )
+from tests.mcp.toolresults import content_blocks, mcp_tool_error
 
 ANSWER = {"content": "The vault code is 4471-ECHO.", "mentions": ["@pat"]}
 
@@ -40,16 +41,15 @@ class TestDeclinedTurn:
 
             assert session.session_id(session.room().room_id) == declined_session
         results = {
-            result.tool_call_id: result
-            for result in map(
-                ToolResultRoomEvent.model_validate_json,
-                (event["content"] for event in declined.tool_results),
-            )
+            result.tool_call_id: result for result in declined.parsed_tool_results
         }
+        refusal = mcp_tool_error(BandTool.SEND_MESSAGE, DECLINED_TURN_REFUSAL)
         assert declined.texts == []
-        assert {call: result.is_error for call, result in results.items()} == {
-            "tc-decline": False,
-            "tc-late": True,
-        }
-        assert DECLINED_TURN_REFUSAL in results["tc-late"].output
+        assert results["tc-decline"].is_error is False
+        assert results["tc-late"] == ToolResultRoomEvent(
+            name=BandTool.SEND_MESSAGE,
+            output=str(content_blocks(refusal)),
+            tool_call_id="tc-late",
+            is_error=True,
+        )
         assert answered.texts == [ANSWER["content"]]
