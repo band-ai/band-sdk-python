@@ -15,11 +15,12 @@ from dotenv import load_dotenv
 from band.client.rest import aclose_rest_client
 from tests.docker.toolkit.docker_cli import (
     BAND_PYTHON_KIT_DOCKERFILE,
+    NAME_PREFIX,
     Container,
     Image,
     OciLayout,
     container_ids,
-    run_cli_subprocess,
+    remove_containers,
 )
 from tests.docker.toolkit.live_agent import live_containerized_echo_agent
 
@@ -83,11 +84,9 @@ async def live_containerized_agent(
 @pytest.fixture
 def container_name_prefix() -> Iterator[str]:
     """A unique container-name prefix; every container under it is reaped."""
-    prefix = f"pytest-docker-{uuid.uuid4().hex[:8]}"
+    prefix = f"{NAME_PREFIX}-{uuid.uuid4().hex[:8]}"
     yield prefix
-    leaked = container_ids(prefix)
-    if leaked:
-        run_cli_subprocess(["docker", "rm", "-f", *leaked], timeout=30)
+    remove_containers(prefix)
     assert container_ids(prefix) == [], f"containers under {prefix} survived cleanup"
 
 

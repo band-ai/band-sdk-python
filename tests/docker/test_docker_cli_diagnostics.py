@@ -5,6 +5,7 @@ Runs without Docker: the ``failing_docker`` fixture stands in for the CLI.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from contextlib import ExitStack
 
@@ -32,5 +33,8 @@ class TestDockerFailureDiagnostics:
     def test_failure_reports_the_docker_diagnostic(
         self, failing_docker: str, call: Callable[[ExitStack], object]
     ) -> None:
-        with ExitStack() as stack, pytest.raises(RuntimeError, match=failing_docker):
+        with (
+            ExitStack() as stack,
+            pytest.raises(RuntimeError, match=re.escape(failing_docker)),
+        ):
             call(stack)

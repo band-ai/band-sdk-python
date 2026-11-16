@@ -11,8 +11,6 @@ tests/docker/toolkit/ — this file is scenario only.
 
 from __future__ import annotations
 
-import subprocess
-
 import pytest
 
 from tests.docker.toolkit.docker_cli import (
@@ -28,6 +26,9 @@ SDK_UV = "$BAND_SDK_UV"
 # Ancient enough to be a real, meaningful API break against the SDK venv's
 # own httpx (0.28.1 as of writing) — not just a different patch version.
 CONFLICTING_HTTPX_VERSION = "0.13.3"
+
+# The launcher's refusal outside a Docker Sandbox (src/band/docker/launcher/run.py).
+MISSING_WORKSPACE = "WORKSPACE_DIR is not set"
 
 
 @pytest.mark.docker_build
@@ -91,15 +92,9 @@ class TestKitImageRuntimeContract:
         self, band_python_kit_image: Image, band_python_kit_container: Container
     ) -> None:
         assert band_python_kit_container.exec("id -u") == "1000"
-        result = subprocess.run(
-            ["docker", "run", "--rm", band_python_kit_image.tag],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        result = band_python_kit_image.run_entrypoint()
         assert result.returncode != 0
-        assert "WORKSPACE_DIR is not set" in result.stderr
+        assert MISSING_WORKSPACE in result.stderr
 
     def test_cli_workload_retains_agent_identity_and_real_tools(self) -> None:
         with (
@@ -123,12 +118,6 @@ class TestKitImageRuntimeContract:
                 == "/opt/band-custom/venv"
             )
             assert container.exec('"$BAND_SDK_UV" --version').startswith("uv ")
-            result = subprocess.run(
-                ["docker", "run", "--rm", image.tag],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
+            result = image.run_entrypoint()
             assert result.returncode != 0
-            assert "WORKSPACE_DIR is not set" in result.stderr
+            assert MISSING_WORKSPACE in result.stderr

@@ -36,6 +36,8 @@ BUILD_TIMEOUT_S = 600
 # must absorb a cold session image build plus its own fast body.
 BUILD_TEST_TIMEOUT_S = BUILD_TIMEOUT_S + 60
 WORKLOAD_REFERENCE = "band-workload:validation"
+# Default prefix for every tag and container name this toolkit creates.
+NAME_PREFIX = "pytest-docker"
 
 
 @dataclass(frozen=True)
@@ -56,7 +58,7 @@ class Image:
         dockerfile: Path,
         *,
         build_args: dict[str, str] | None = None,
-        tag_prefix: str = "pytest-docker",
+        tag_prefix: str = NAME_PREFIX,
         target: str | None = None,
     ) -> Iterator[Image]:
         """Build ``dockerfile`` against the repo root; yield the image, then remove it."""
@@ -84,6 +86,16 @@ class Image:
             subprocess.run(
                 ["docker", "rmi", "-f", tag], capture_output=True, check=False
             )
+
+    def run_entrypoint(self) -> subprocess.CompletedProcess[str]:
+        """Run the image's own entrypoint once (``docker run --rm``) without raising."""
+        return subprocess.run(
+            ["docker", "run", "--rm", self.tag],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
 
 @dataclass(frozen=True)
@@ -172,6 +184,12 @@ def container_ids(name_prefix: str) -> list[str]:
     return listing.stdout.split()
 
 
+def remove_containers(name_prefix: str) -> None:
+    """Force-remove every container whose name starts with ``name_prefix``."""
+    if ids := container_ids(name_prefix):
+        run_cli_subprocess(["docker", "rm", "-f", *ids], timeout=30)
+
+
 @dataclass(frozen=True)
 class Container:
     """A running container, with intent-oriented helpers for driving it.
@@ -189,7 +207,7 @@ class Container:
         cls,
         image: Image | str,
         *,
-        name_prefix: str = "pytest-docker",
+        name_prefix: str = NAME_PREFIX,
         env: dict[str, str] | None = None,
         command: list[str] | None = None,
         entrypoint: str | None = "bash",
