@@ -9,11 +9,17 @@ from pytest_httpx import HTTPXMock
 
 from band.cli.trigger import AuthMode, run
 from tests.cli.triggerwire.kit import (
+    CHATS,
+    MESSAGES,
+    PARTICIPANTS,
+    PEERS,
     ROOM_ID,
     TARGET,
+    added_participant,
     answer,
     answer_peer_pages,
     created_room,
+    page_params,
     platform_error,
     trigger_args,
     validation_error,
@@ -23,6 +29,8 @@ ROOM_LIMIT = "Chat room limit reached."
 INVALID_CHAT = "Validation failed"
 UNKNOWN_PARTICIPANT = "Participant not found"
 INVALID_PARTICIPANT = "Participant cannot join this room"
+INVALID_KEY = "Invalid API key"
+MESSAGE_FORBIDDEN = "Messaging this agent is not allowed"
 
 # 403/404 parse into Fern's ``Error`` model; an undeclared or ``Any``-typed
 # status such as 422 leaves the body a plain dict. A body without a usable
@@ -60,6 +68,25 @@ PARTICIPANT_REJECTIONS = [
 
 class TestTriggerPlatformErrors:
     @pytest.mark.parametrize("mode", list(AuthMode))
+    async def test_peer_lookup_rejection_reports_the_platform_message(
+        self, httpx_mock: HTTPXMock, mode: AuthMode
+    ) -> None:
+        answer(
+            httpx_mock,
+            mode,
+            "GET",
+            PEERS,
+            platform_error("unauthorized", INVALID_KEY),
+            status=401,
+            params=page_params(1),
+        )
+
+        with pytest.raises(RuntimeError) as caught:
+            await run(trigger_args(mode, target_handle=f"@{TARGET['handle']}"))
+
+        assert str(caught.value) == f"Failed to look up peer: {INVALID_KEY}"
+
+    @pytest.mark.parametrize("mode", list(AuthMode))
     @pytest.mark.parametrize(("status", "body", "reported"), CHAT_REJECTIONS)
     async def test_room_rejection_reports_the_platform_message(
         self,
@@ -70,7 +97,7 @@ class TestTriggerPlatformErrors:
         reported: str,
     ) -> None:
         answer_peer_pages(httpx_mock, mode, [[TARGET]])
-        answer(httpx_mock, mode, "POST", "/chats", body, status=status)
+        answer(httpx_mock, mode, "POST", CHATS, body, status=status)
 
         with pytest.raises(RuntimeError) as caught:
             await run(trigger_args(mode, target_handle=f"@{TARGET['handle']}"))
@@ -90,12 +117,12 @@ class TestTriggerPlatformErrors:
         platform_message: str,
     ) -> None:
         answer_peer_pages(httpx_mock, mode, [[TARGET]])
-        answer(httpx_mock, mode, "POST", "/chats", created_room())
+        answer(httpx_mock, mode, "POST", CHATS, created_room())
         answer(
             httpx_mock,
             mode,
             "POST",
-            f"/chats/{ROOM_ID}/participants",
+            PARTICIPANTS,
             body,
             status=status,
         )
@@ -105,4 +132,27 @@ class TestTriggerPlatformErrors:
 
         assert str(caught.value) == (
             f"Failed to complete trigger: {platform_message} (orphan room: {ROOM_ID})"
+        )
+
+    @pytest.mark.parametrize("mode", list(AuthMode))
+    async def test_message_rejection_reports_the_message_and_orphan_room(
+        self, httpx_mock: HTTPXMock, mode: AuthMode
+    ) -> None:
+        answer_peer_pages(httpx_mock, mode, [[TARGET]])
+        answer(httpx_mock, mode, "POST", CHATS, created_room())
+        answer(httpx_mock, mode, "POST", PARTICIPANTS, added_participant(TARGET))
+        answer(
+            httpx_mock,
+            mode,
+            "POST",
+            MESSAGES,
+            platform_error("forbidden", MESSAGE_FORBIDDEN),
+            status=403,
+        )
+
+        with pytest.raises(RuntimeError) as caught:
+            await run(trigger_args(mode, target_handle=f"@{TARGET['handle']}"))
+
+        assert str(caught.value) == (
+            f"Failed to complete trigger: {MESSAGE_FORBIDDEN} (orphan room: {ROOM_ID})"
         )

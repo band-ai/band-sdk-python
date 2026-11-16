@@ -5,6 +5,7 @@ from __future__ import annotations
 from pytest_httpx import HTTPXMock
 
 from band.client.streaming import ContactRequestReceivedPayload
+from band.core.types import MessageType
 from band.platform.event import ContactRequestReceivedEvent
 from band.runtime.contact_handler import ContactEventHandler
 from tests.runtime.contactwire.kit import (
@@ -38,8 +39,8 @@ POST_TASK_EVENT = (
     {
         "event": {
             "content": REQUEST_TEXT,
-            "message_type": "task",
-            "metadata": {"contact_event_type": "contact_request_received"},
+            "message_type": MessageType.TASK,
+            "metadata": {"contact_event_type": REQUEST.type},
         }
     },
 )
@@ -52,7 +53,13 @@ class TestHubRoomTaskEvent:
         httpx_mock.add_response(
             method="POST",
             url=EVENTS_URL,
-            json={"data": {"id": "event-1", "message_type": "task", "success": True}},
+            json={
+                "data": {
+                    "id": "event-1",
+                    "message_type": MessageType.TASK,
+                    "success": True,
+                }
+            },
         )
 
         await hub_handler.handle(REQUEST)

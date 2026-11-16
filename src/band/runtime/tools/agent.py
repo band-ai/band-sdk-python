@@ -29,10 +29,10 @@ from band.client.rest import (
     ChatEventRequest,
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
-    ChatRoomRequest,
     NotFoundError,
     ParticipantRequest,
     UnprocessableEntityError,
+    chat_room_request,
 )
 from band.config.settings import RuntimeSettings
 from band.core.content import has_visible_content
@@ -613,7 +613,7 @@ class AgentTools(AgentToolsProtocol):
         """
         logger.debug("Creating chatroom with task_id=%s", task_id)
         response = await self.rest.agent_api_chats.create_agent_chat(
-            chat=ChatRoomRequest(task_id=task_id),
+            chat=chat_room_request(task_id),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         return response.data.id

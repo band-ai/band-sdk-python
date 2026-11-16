@@ -37,6 +37,15 @@ API_PREFIX: dict[AuthMode, str] = {
     AuthMode.AGENT: "/api/v1/agent",
     AuthMode.USER: "/api/v1/me",
 }
+PEERS = "/peers"
+CHATS = "/chats"
+PARTICIPANTS = f"{CHATS}/{ROOM_ID}/participants"
+MESSAGES = f"{CHATS}/{ROOM_ID}/messages"
+
+
+def api_path(mode: AuthMode, route: str) -> str:
+    """The URL path ``route`` has under ``mode``'s API surface."""
+    return f"{API_PREFIX[mode]}{route}"
 
 
 class WireCall(NamedTuple):
@@ -59,6 +68,15 @@ def wire_calls(requests: list[httpx.Request]) -> list[WireCall]:
         )
         for request in requests
     ]
+
+
+def api_url(
+    mode: AuthMode, route: str, params: dict[str, str] | None = None
+) -> httpx.URL:
+    """The full URL the platform serves ``route`` at under ``mode``."""
+    return httpx.URL(
+        f"{REST_URL.rstrip('/')}{api_path(mode, route)}", params=params or {}
+    )
 
 
 def trigger_args(mode: AuthMode, target_handle: str) -> argparse.Namespace:
@@ -94,9 +112,7 @@ def answer(
     params: dict[str, str] | None = None,
 ) -> None:
     """Register the platform's one response to ``method`` on ``route``."""
-    url = httpx.URL(
-        f"{REST_URL.rstrip('/')}{API_PREFIX[mode]}{route}", params=params or {}
-    )
+    url = api_url(mode, route, params)
     httpx_mock.add_response(method=method, url=url, status_code=status, json=body)
 
 
@@ -126,7 +142,7 @@ def answer_peer_pages(
             httpx_mock,
             mode,
             "GET",
-            "/peers",
+            PEERS,
             peers_page(peers, page=page, total_pages=len(pages)),
             params=page_params(page),
         )

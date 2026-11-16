@@ -89,9 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--auth-mode",
+        type=AuthMode,
         choices=list(AuthMode),
         default=os.environ.get("BAND_AUTH_MODE", AuthMode.AGENT),
-        help="Authentication mode: 'agent' or 'user' (env: BAND_AUTH_MODE, default: agent)",
+        help=f"Authentication mode: {' or '.join(AuthMode)} (env: BAND_AUTH_MODE, default: {AuthMode.AGENT})",
     )
     parser.add_argument(
         "--target-handle",
@@ -129,7 +130,7 @@ def _format_api_error(err: ApiError, action: str) -> str:
 async def find_peer_by_handle(
     client: AsyncRestClient,
     handle: str,
-    auth_mode: str,
+    auth_mode: AuthMode,
 ) -> dict[str, str] | None:
     """
     Paginate through peers to find one matching the given handle.
@@ -205,7 +206,10 @@ async def run(args: argparse.Namespace) -> str:
     try:
         # Step 1: Look up the target peer by handle
         logger.info("Looking up peer with handle: %s", args.target_handle)
-        peer = await find_peer_by_handle(client, args.target_handle, args.auth_mode)
+        try:
+            peer = await find_peer_by_handle(client, args.target_handle, args.auth_mode)
+        except ApiError as e:
+            raise RuntimeError(_format_api_error(e, "look up peer")) from e
         if not peer:
             raise ValueError(
                 f"Target agent with handle '{args.target_handle}' not found. "

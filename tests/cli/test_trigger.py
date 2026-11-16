@@ -3,35 +3,21 @@ from __future__ import annotations
 import argparse
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from band_rest.core.api_error import ApiError
 
 from band.cli.trigger import (
+    AuthMode,
     _format_api_error,
     build_parser,
-    find_peer_by_handle,
     main,
     run,
 )
 from tests.logsupport import band_log_env, restored_logging
 
 # --- Helpers ---
-
-
-def _make_peer(
-    *,
-    peer_id: str = "peer-1",
-    name: str = "Test Agent",
-    handle: str = "owner/agent",
-):
-    """Create a mock peer object."""
-    peer = MagicMock()
-    peer.id = peer_id
-    peer.name = name
-    peer.handle = handle
-    return peer
 
 
 def _make_args(**overrides) -> argparse.Namespace:
@@ -53,7 +39,7 @@ def _fake_asyncio_run(return_value=None, side_effect=None):
     """Create a fake asyncio.run that closes the coroutine to avoid warnings.
 
     This means main() tests don't exercise the real async path — that's intentional;
-    the async flow is covered separately by TestRun which awaits run() directly.
+    the async flow is covered over the real REST client in tests/cli/triggerwire/.
     """
 
     def _run(coro):
@@ -63,29 +49,6 @@ def _fake_asyncio_run(return_value=None, side_effect=None):
         return return_value
 
     return _run
-
-
-def _make_peers_response(peers, total_pages=1, page=1):
-    """Create a mock list-peers response."""
-    resp = MagicMock()
-    resp.data = peers
-    resp.metadata = SimpleNamespace(total_pages=total_pages, page=page)
-    return resp
-
-
-def _make_chat_response(room_id="room-123"):
-    """Create a mock create-chat response."""
-    resp = MagicMock()
-    resp.data = SimpleNamespace(id=room_id)
-    return resp
-
-
-def _make_mock_client():
-    """Create a mock AsyncRestClient with async-compatible aclose."""
-    mock_client = AsyncMock()
-    # Match the real Fern chain: AsyncClientWrapper → AsyncHttpClient → httpx.AsyncClient
-    mock_client._client_wrapper.httpx_client.httpx_client.aclose = AsyncMock()
-    return mock_client
 
 
 # --- build_parser tests ---
@@ -128,153 +91,15 @@ class TestBuildParser:
         parser = build_parser()
         args = parser.parse_args([])
 
-        assert args.auth_mode == "agent"
+        assert args.auth_mode is AuthMode.AGENT
 
+    def test_rejects_an_unknown_auth_mode_from_env(self, monkeypatch, capsys):
+        monkeypatch.setenv("BAND_AUTH_MODE", "Agent")
 
-# --- find_peer_by_handle tests ---
+        with pytest.raises(SystemExit):
+            build_parser().parse_args([])
 
-
-class TestFindPeerByHandle:
-    @pytest.mark.asyncio
-    async def test_finds_peer_agent_mode(self):
-        peer = _make_peer(handle="owner/agent")
-        client = AsyncMock()
-        client.agent_api_peers.list_agent_peers.return_value = _make_peers_response(
-            [peer]
-        )
-
-        result = await find_peer_by_handle(client, "@owner/agent", "agent")
-
-        assert result is not None
-        assert result["id"] == "peer-1"
-        assert result["handle"] == "owner/agent"
-        client.agent_api_peers.list_agent_peers.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_finds_peer_user_mode(self):
-        peer = _make_peer(handle="owner/agent")
-        client = AsyncMock()
-        client.human_api_peers.list_my_peers.return_value = _make_peers_response([peer])
-
-        result = await find_peer_by_handle(client, "@owner/agent", "user")
-
-        assert result is not None
-        assert result["id"] == "peer-1"
-        client.human_api_peers.list_my_peers.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_case_insensitive_matching(self):
-        peer = _make_peer(handle="Owner/Agent")
-        client = AsyncMock()
-        client.agent_api_peers.list_agent_peers.return_value = _make_peers_response(
-            [peer]
-        )
-
-        result = await find_peer_by_handle(client, "@owner/agent", "agent")
-
-        assert result is not None
-        assert result["handle"] == "Owner/Agent"
-
-    @pytest.mark.asyncio
-    async def test_strips_at_prefix(self):
-        peer = _make_peer(handle="owner/agent")
-        client = AsyncMock()
-        client.agent_api_peers.list_agent_peers.return_value = _make_peers_response(
-            [peer]
-        )
-
-        result = await find_peer_by_handle(client, "@owner/agent", "agent")
-
-        assert result is not None
-
-    @pytest.mark.asyncio
-    async def test_works_without_at_prefix(self):
-        peer = _make_peer(handle="owner/agent")
-        client = AsyncMock()
-        client.agent_api_peers.list_agent_peers.return_value = _make_peers_response(
-            [peer]
-        )
-
-        result = await find_peer_by_handle(client, "owner/agent", "agent")
-
-        assert result is not None
-
-    @pytest.mark.asyncio
-    async def test_matches_when_api_returns_at_prefixed_handle(self):
-        """Regression: backend may return '@owner/agent' instead of 'owner/agent'."""
-        peer = _make_peer(handle="@owner/agent")
-        client = AsyncMock()
-        client.agent_api_peers.list_agent_peers.return_value = _make_peers_response(
-            [peer]
-        )
-
-        result = await find_peer_by_handle(client, "@owner/agent", "agent")
-
-        assert result is not None
-        assert result["id"] == "peer-1"
-
-    @pytest.mark.asyncio
-    async def test_matches_when_api_returns_at_prefix_and_input_has_none(self):
-        """Regression: input without @ should still match API response with @."""
-        peer = _make_peer(handle="@owner/agent")
-        client = AsyncMock()
-        client.agent_api_peers.list_agent_peers.return_value = _make_peers_response(
-            [peer]
-        )
-
-        result = await find_peer_by_handle(client, "owner/agent", "agent")
-
-        assert result is not None
-        assert result["id"] == "peer-1"
-
-    @pytest.mark.asyncio
-    async def test_paginates_to_find_peer(self):
-        other_peer = _make_peer(peer_id="other", name="Other", handle="other/agent")
-        target_peer = _make_peer(peer_id="target", name="Target", handle="owner/target")
-
-        client = AsyncMock()
-        client.agent_api_peers.list_agent_peers.side_effect = [
-            _make_peers_response([other_peer], total_pages=2, page=1),
-            _make_peers_response([target_peer], total_pages=2, page=2),
-        ]
-
-        result = await find_peer_by_handle(client, "@owner/target", "agent")
-
-        assert result is not None
-        assert result["id"] == "target"
-        assert client.agent_api_peers.list_agent_peers.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_not_found(self):
-        peer = _make_peer(handle="other/agent")
-        client = AsyncMock()
-        client.agent_api_peers.list_agent_peers.return_value = _make_peers_response(
-            [peer]
-        )
-
-        result = await find_peer_by_handle(client, "@owner/missing", "agent")
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_on_empty_response(self):
-        client = AsyncMock()
-        client.agent_api_peers.list_agent_peers.return_value = _make_peers_response([])
-
-        result = await find_peer_by_handle(client, "@owner/agent", "agent")
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_data_is_none(self):
-        resp = MagicMock()
-        resp.data = None
-        client = AsyncMock()
-        client.agent_api_peers.list_agent_peers.return_value = resp
-
-        result = await find_peer_by_handle(client, "@owner/agent", "agent")
-
-        assert result is None
+        assert "invalid AuthMode value: 'Agent'" in capsys.readouterr().err
 
 
 # --- run() tests ---
@@ -298,185 +123,6 @@ class TestRun:
         args = _make_args(message=None)
         with pytest.raises(ValueError, match="Message is required"):
             await run(args)
-
-    @pytest.mark.asyncio
-    async def test_peer_not_found_raises(self):
-        args = _make_args()
-
-        with (
-            patch(
-                "band.cli.trigger.find_peer_by_handle",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch("band.cli.trigger.AsyncRestClient") as MockClient,
-        ):
-            MockClient.return_value = _make_mock_client()
-            with pytest.raises(ValueError, match="not found"):
-                await run(args)
-
-    @pytest.mark.asyncio
-    async def test_strips_trailing_slash_from_rest_url(self):
-        args = _make_args(rest_url="https://app.band.ai/")
-        peer = {"id": "peer-1", "name": "Test Agent", "handle": "owner/agent"}
-
-        with (
-            patch(
-                "band.cli.trigger.find_peer_by_handle",
-                new_callable=AsyncMock,
-                return_value=peer,
-            ),
-            patch("band.cli.trigger.AsyncRestClient") as MockClient,
-        ):
-            mock_client = _make_mock_client()
-            MockClient.return_value = mock_client
-            mock_client.agent_api_chats.create_agent_chat.return_value = (
-                _make_chat_response()
-            )
-
-            await run(args)
-
-            MockClient.assert_called_once_with(
-                api_key="test-api-key", base_url="https://app.band.ai"
-            )
-
-    @pytest.mark.asyncio
-    async def test_agent_mode_full_flow(self):
-        args = _make_args(auth_mode="agent")
-        peer = {"id": "peer-1", "name": "Test Agent", "handle": "owner/agent"}
-
-        with (
-            patch(
-                "band.cli.trigger.find_peer_by_handle",
-                new_callable=AsyncMock,
-                return_value=peer,
-            ),
-            patch("band.cli.trigger.AsyncRestClient") as MockClient,
-        ):
-            mock_client = _make_mock_client()
-            MockClient.return_value = mock_client
-            mock_client.agent_api_chats.create_agent_chat.return_value = (
-                _make_chat_response("room-abc")
-            )
-
-            room_id = await run(args)
-
-        assert room_id == "room-abc"
-        mock_client.agent_api_chats.create_agent_chat.assert_called_once()
-        mock_client.agent_api_participants.add_agent_chat_participant.assert_called_once()
-        mock_client.agent_api_messages.create_agent_chat_message.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_user_mode_full_flow(self):
-        args = _make_args(auth_mode="user")
-        peer = {"id": "peer-1", "name": "Test Agent", "handle": "owner/agent"}
-
-        with (
-            patch(
-                "band.cli.trigger.find_peer_by_handle",
-                new_callable=AsyncMock,
-                return_value=peer,
-            ),
-            patch("band.cli.trigger.AsyncRestClient") as MockClient,
-        ):
-            mock_client = _make_mock_client()
-            MockClient.return_value = mock_client
-            mock_client.human_api_chats.create_my_chat_room.return_value = (
-                _make_chat_response("room-xyz")
-            )
-
-            room_id = await run(args)
-
-        assert room_id == "room-xyz"
-        mock_client.human_api_chats.create_my_chat_room.assert_called_once()
-        mock_client.human_api_participants.add_my_chat_participant.assert_called_once()
-        mock_client.human_api_messages.send_my_chat_message.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_partial_failure_logs_orphan_room(self):
-        args = _make_args(auth_mode="agent")
-        peer = {"id": "peer-1", "name": "Test Agent", "handle": "owner/agent"}
-
-        with (
-            patch(
-                "band.cli.trigger.find_peer_by_handle",
-                new_callable=AsyncMock,
-                return_value=peer,
-            ),
-            patch("band.cli.trigger.AsyncRestClient") as MockClient,
-            patch("band.cli.trigger.logger") as mock_logger,
-        ):
-            mock_client = _make_mock_client()
-            MockClient.return_value = mock_client
-            mock_client.agent_api_chats.create_agent_chat.return_value = (
-                _make_chat_response("orphan-room")
-            )
-            mock_client.agent_api_participants.add_agent_chat_participant.side_effect = RuntimeError(
-                "connection failed"
-            )
-
-            with pytest.raises(RuntimeError, match="connection failed"):
-                await run(args)
-
-        mock_logger.warning.assert_called_once_with(
-            "Failed after creating room %s — room may need manual cleanup",
-            "orphan-room",
-        )
-
-    @pytest.mark.asyncio
-    async def test_api_error_on_create_chat_shows_clean_message(self):
-        args = _make_args(auth_mode="agent")
-        peer = {"id": "peer-1", "name": "Test Agent", "handle": "owner/agent"}
-
-        body = SimpleNamespace(
-            error=SimpleNamespace(
-                message="Chat room limit reached. Upgrade to create more."
-            )
-        )
-        api_err = ApiError(status_code=403, body=body)
-
-        with (
-            patch(
-                "band.cli.trigger.find_peer_by_handle",
-                new_callable=AsyncMock,
-                return_value=peer,
-            ),
-            patch("band.cli.trigger.AsyncRestClient") as MockClient,
-        ):
-            mock_client = _make_mock_client()
-            MockClient.return_value = mock_client
-            mock_client.agent_api_chats.create_agent_chat.side_effect = api_err
-
-            with pytest.raises(RuntimeError, match="Chat room limit reached"):
-                await run(args)
-
-    @pytest.mark.asyncio
-    async def test_api_error_on_send_message_shows_clean_message(self):
-        args = _make_args(auth_mode="agent")
-        peer = {"id": "peer-1", "name": "Test Agent", "handle": "owner/agent"}
-
-        body = SimpleNamespace(error=SimpleNamespace(message="Forbidden"))
-        api_err = ApiError(status_code=403, body=body)
-
-        with (
-            patch(
-                "band.cli.trigger.find_peer_by_handle",
-                new_callable=AsyncMock,
-                return_value=peer,
-            ),
-            patch("band.cli.trigger.AsyncRestClient") as MockClient,
-        ):
-            mock_client = _make_mock_client()
-            MockClient.return_value = mock_client
-            mock_client.agent_api_chats.create_agent_chat.return_value = (
-                _make_chat_response("room-abc")
-            )
-            mock_client.agent_api_messages.create_agent_chat_message.side_effect = (
-                api_err
-            )
-
-            with pytest.raises(RuntimeError, match="Forbidden"):
-                await run(args)
 
 
 # --- _format_api_error tests ---

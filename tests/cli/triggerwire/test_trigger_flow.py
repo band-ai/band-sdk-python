@@ -7,15 +7,19 @@ from pytest_httpx import HTTPXMock
 
 from band.cli.trigger import AuthMode, run
 from tests.cli.triggerwire.kit import (
-    API_PREFIX,
     BYSTANDER,
+    CHATS,
     MESSAGE,
+    MESSAGES,
+    PARTICIPANTS,
+    PEERS,
     ROOM_ID,
     TARGET,
     WireCall,
     added_participant,
     answer,
     answer_peer_pages,
+    api_path,
     created_room,
     message_sent,
     page_params,
@@ -29,21 +33,20 @@ class TestTriggerFlow:
     async def test_mentions_the_target_found_on_a_later_page_in_a_new_room(
         self, httpx_mock: HTTPXMock, mode: AuthMode
     ) -> None:
-        prefix = API_PREFIX[mode]
         answer_peer_pages(httpx_mock, mode, [[BYSTANDER], [TARGET]])
-        answer(httpx_mock, mode, "POST", "/chats", created_room())
+        answer(httpx_mock, mode, "POST", CHATS, created_room())
         answer(
             httpx_mock,
             mode,
             "POST",
-            f"/chats/{ROOM_ID}/participants",
+            PARTICIPANTS,
             added_participant(TARGET),
         )
         answer(
             httpx_mock,
             mode,
             "POST",
-            f"/chats/{ROOM_ID}/messages",
+            MESSAGES,
             message_sent(TARGET),
         )
 
@@ -51,18 +54,18 @@ class TestTriggerFlow:
 
         assert room_id == ROOM_ID
         assert wire_calls(httpx_mock.get_requests()) == [
-            WireCall("GET", f"{prefix}/peers", page_params(1), None),
-            WireCall("GET", f"{prefix}/peers", page_params(2), None),
-            WireCall("POST", f"{prefix}/chats", {}, {"chat": {}}),
+            WireCall("GET", api_path(mode, PEERS), page_params(1), None),
+            WireCall("GET", api_path(mode, PEERS), page_params(2), None),
+            WireCall("POST", api_path(mode, CHATS), {}, {"chat": {}}),
             WireCall(
                 "POST",
-                f"{prefix}/chats/{ROOM_ID}/participants",
+                api_path(mode, PARTICIPANTS),
                 {},
                 {"participant": {"participant_id": TARGET["id"]}},
             ),
             WireCall(
                 "POST",
-                f"{prefix}/chats/{ROOM_ID}/messages",
+                api_path(mode, MESSAGES),
                 {},
                 {
                     "message": {
@@ -77,13 +80,12 @@ class TestTriggerFlow:
     async def test_unknown_handle_scans_every_page_and_creates_no_room(
         self, httpx_mock: HTTPXMock, mode: AuthMode
     ) -> None:
-        prefix = API_PREFIX[mode]
         answer_peer_pages(httpx_mock, mode, [[BYSTANDER], [TARGET]])
 
         with pytest.raises(ValueError, match="'@owner/absent' not found"):
             await run(trigger_args(mode, target_handle="@owner/absent"))
 
         assert wire_calls(httpx_mock.get_requests()) == [
-            WireCall("GET", f"{prefix}/peers", page_params(1), None),
-            WireCall("GET", f"{prefix}/peers", page_params(2), None),
+            WireCall("GET", api_path(mode, PEERS), page_params(1), None),
+            WireCall("GET", api_path(mode, PEERS), page_params(2), None),
         ]
