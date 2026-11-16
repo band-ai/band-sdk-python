@@ -101,8 +101,8 @@ def pytest_configure(config: pytest.Config) -> None:
 
     ``tests/e2e/baseline/settings.py`` calls ``load_dotenv(ENV_TEST_FILE,
     override=False)`` at import time; several subdirectory ``conftest.py``
-    modules (e.g. ``tests/docker/conftest.py``,
-    ``tests/framework_conformance/conftest.py``) import it transitively, at
+    modules (e.g. ``tests/framework_conformance/conftest.py``) import it
+    transitively, at
     whichever indeterminate, collection-order-dependent moment they happen to
     load. Any ``CODEX_``/``LETTA_``/``OPENCODE_`` key it would set is one the
     adapter config classes above now read by default, so a contributor's
@@ -201,8 +201,8 @@ def is_live_test(request: pytest.FixtureRequest) -> bool:
     """Whether the test runs against real services: ``e2e``-marked or under ``tests/e2e``.
 
     Most baseline tests carry no marker (their conftest gates them), so the
-    path still counts; marked live tests elsewhere, such as ``tests/docker``,
-    need the marker.
+    path still counts; marked live tests elsewhere, such as the Codex ACP one
+    under ``tests/integrations``, need the marker.
     """
     return (
         request.node.get_closest_marker("e2e") is not None
