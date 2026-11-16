@@ -369,7 +369,7 @@ class CodexRoom:
 
     @property
     def pending_approval_count(self) -> int:
-        return self.adapter._open_approval_count(ROOM_ID)
+        return self.adapter._approvals.open_count(ROOM_ID)
 
     @property
     def events_sent(self) -> list[dict[str, Any]]:
@@ -497,7 +497,7 @@ class CodexApprovalRoom:
 
     @property
     def pending(self) -> DecisionRegistry[PendingApproval]:
-        return self.adapter._pending_approvals[ROOM_ID]
+        return self.adapter._approvals.pending(ROOM_ID)
 
     @property
     def approval_tokens(self) -> list[str]:

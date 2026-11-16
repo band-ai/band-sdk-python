@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
-
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
@@ -43,9 +41,7 @@ class TestSessionAutoApproval:
         await adapter.on_started("Agent", "A coding agent")
 
         # Pre-seed the session-approved set as if /approve-session was used for "npm install"
-        adapter._session_approved[ROOM_ID] = OrderedDict(
-            [("commandExecution:npm install", None)]
-        )
+        adapter._approvals.approve_for_session(ROOM_ID, "commandExecution:npm install")
 
         await send_bootstrap(adapter, content="install deps", tools=tools)
 
@@ -75,9 +71,7 @@ class TestSessionAutoApproval:
         await adapter.on_started("Agent", "A coding agent")
 
         # Pre-seed session approval for "npm install" only
-        adapter._session_approved[ROOM_ID] = OrderedDict(
-            [("commandExecution:npm install", None)]
-        )
+        adapter._approvals.approve_for_session(ROOM_ID, "commandExecution:npm install")
 
         await send_bootstrap(adapter, content="publish package", tools=tools)
 
@@ -107,9 +101,7 @@ class TestSessionAutoApproval:
         await adapter.on_started("Agent", "A coding agent")
 
         # Pre-seed session approval for npm binary
-        adapter._session_approved[ROOM_ID] = OrderedDict(
-            [("commandExecution:npm", None)]
-        )
+        adapter._approvals.approve_for_session(ROOM_ID, "commandExecution:npm")
 
         await send_bootstrap(adapter, content="install deps", tools=tools)
 

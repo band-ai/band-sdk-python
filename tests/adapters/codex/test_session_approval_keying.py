@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex.approvals import session_approval_key
 from band.integrations.codex.types import CodexApprovalMethod, CodexSessionState
 from tests.adapters.codex.kit import (
     ROOM_ID,
@@ -23,45 +24,48 @@ from tests.adapters.dispatch import deliver_message
 
 
 class TestSessionApprovalKeying:
-    """_session_approval_key behaviour across method/param shapes."""
+    """Which requests ``/approve-session`` can match later ones by."""
 
     def test_file_change_session_key_requires_paths(self) -> None:
         """/approve-session must refuse fileChange requests with no paths."""
-        adapter = CodexAdapter(config=CodexAdapterConfig())
-        key = adapter._session_approval_key(
+        key = session_approval_key(
             "item/fileChange/requestApproval",
             {"reason": "something vague"},
+            "full_command",
         )
         assert key == ""
 
     def test_file_change_session_key_uses_paths_when_present(self) -> None:
         """fileChange session key includes sorted path list for stable matching."""
-        adapter = CodexAdapter(config=CodexAdapterConfig())
-        key1 = adapter._session_approval_key(
+        key1 = session_approval_key(
             "item/fileChange/requestApproval",
             {"changes": [{"path": "b.py"}, {"path": "a.py"}]},
+            "full_command",
         )
-        key2 = adapter._session_approval_key(
+        key2 = session_approval_key(
             "item/fileChange/requestApproval",
             {"changes": [{"path": "a.py"}, {"path": "b.py"}]},
+            "full_command",
         )
         assert key1 == key2
         assert key1 == "fileChange:a.py|b.py"
 
     def test_file_change_session_key_handles_top_level_paths(self) -> None:
         """fileChange session key also picks up top-level path/paths fields."""
-        adapter = CodexAdapter(config=CodexAdapterConfig())
-        key = adapter._session_approval_key(
+        key = session_approval_key(
             "item/fileChange/requestApproval",
             {"paths": ["src/foo.py", "src/bar.py"]},
+            "full_command",
         )
         assert "src/foo.py" in key
         assert "src/bar.py" in key
 
     def test_unknown_approval_method_returns_empty_key(self) -> None:
         """Session-level approval refuses unknown methods rather than bucketing them."""
-        adapter = CodexAdapter(config=CodexAdapterConfig())
-        assert adapter._session_approval_key("item/unknown/requestApproval", {}) == ""
+        assert (
+            session_approval_key("item/unknown/requestApproval", {}, "full_command")
+            == ""
+        )
 
     @pytest.mark.asyncio
     async def test_approve_session_refused_for_fileChange_without_paths(self) -> None:
@@ -104,12 +108,27 @@ class TestSessionApprovalKeying:
             room_id=ROOM_ID,
         )
         assert any("No pending approvals" in m["content"] for m in tools.messages_sent)
-        assert ROOM_ID not in adapter._session_approved
+        assert adapter._approvals.session_patterns(ROOM_ID) == []
 
-    def test_session_approval_key_empty_prevents_wildcard_match(self) -> None:
-        """Empty session key from missing command cannot match any session set."""
-        adapter = CodexAdapter(config=CodexAdapterConfig())
-        key = adapter._session_approval_key(CodexApprovalMethod.COMMAND_EXECUTION, {})
-        # Empty key is falsy, so `key and key in session_set` is always False
-        assert not key
-        assert not (key and key in {"commandExecution:npm"})
+    def test_session_approval_key_full_command_by_default(self) -> None:
+        """Session approval key includes full command string by default."""
+        key = session_approval_key(
+            CodexApprovalMethod.COMMAND_EXECUTION,
+            {"command": "npm test"},
+            CodexAdapterConfig().session_approval_granularity,
+        )
+        assert key == "commandExecution:npm test"
+
+    def test_session_approval_key_binary_granularity(self) -> None:
+        """Session approval key includes only binary when granularity is 'binary'."""
+        key = session_approval_key(
+            CodexApprovalMethod.COMMAND_EXECUTION, {"command": "npm test"}, "binary"
+        )
+        assert key == "commandExecution:npm"
+
+    def test_session_approval_key_empty_for_missing_command(self) -> None:
+        """Session approval key returns empty when command is missing (no wildcard)."""
+        key = session_approval_key(
+            CodexApprovalMethod.COMMAND_EXECUTION, {}, "full_command"
+        )
+        assert key == ""

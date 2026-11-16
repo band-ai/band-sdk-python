@@ -12,7 +12,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from band.adapters.codex.approvals import ApprovalDecision
+from band.adapters.codex.approvals import ApprovalDecision, SessionApprovalGranularity
 from band.adapters.codex.sandbox import CodexWindowsSandbox
 from band.core.adapterconfig import EnvAdapterConfig
 from band.core.retention import RoomRetentionConfig, require_disabled_retention
@@ -189,7 +189,7 @@ class CodexAdapterConfig(EnvAdapterConfig):
     #
     # File-change approvals always key on the sorted set of paths being
     # modified, independent of this flag.
-    session_approval_granularity: Literal["binary", "full_command"] = "full_command"
+    session_approval_granularity: SessionApprovalGranularity = "full_command"
     # --- Phase 2: Plan & task lifecycle ---
     stream_plan_events: bool = False
     emit_turn_lifecycle_events: bool = False
