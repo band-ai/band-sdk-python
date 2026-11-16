@@ -1794,6 +1794,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         named = retry
         if named is None and is_session_bootstrap:
             named = history.room_to_thread.get(room_id)
+            if named == room.given_up_resume:
+                named = None
         if named:
             resumed = await self._resume_from_history(
                 room=room,
@@ -1839,8 +1841,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         """Resume the thread Band history names; None falls back to a new one.
 
         An unanswered resume fails the turn. Unless ``last_try``, the room's
-        next turn tries the thread again on the new process; after that a new
-        thread takes its place.
+        next turn tries the thread again on the new process; after that the
+        room gives the thread up, and a new thread takes its place.
         """
         room_id = room.room_id
         try:
@@ -1852,6 +1854,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         except CodexUnanswered:
             if not last_try:
                 room.unanswered_resume = named
+            else:
+                room.given_up_resume = named
+                logger.warning(
+                    "Room %s: giving up Codex thread %s; its resume went "
+                    "unanswered twice",
+                    room_id,
+                    named,
+                )
             raise
         except CodexJsonRpcError as exc:
             logger.warning(

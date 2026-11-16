@@ -80,6 +80,11 @@ class RoomCodexClient:
     # room's thread: the room's next turn tries it once more. Binding or
     # forgetting a thread drops it.
     unanswered_resume: str | None = None
+    # The thread the room gave up when that retry went unanswered too. Band
+    # history keeps naming it until a turn completes, and a host may hand the
+    # room that history with every message, so binding or forgetting a thread
+    # keeps it; the room's disposal ends it.
+    given_up_resume: str | None = None
     # Runtime commits these deltas even when a turn fails; its successor needs them.
     pending_system_context: list[str] = dataclass_field(default_factory=list)
     # Serializes this room's turns, local commands and their preparation; a
