@@ -368,7 +368,7 @@ smoke/kit/test_owned_session.py::TestOwnedSandboxSession:
 smoke/kit/test_proxy_custody.py::TestProxyManagedCustody:
   test_band_host_rides_the_injection_path: kit
   test_real_band_key_never_enters_the_vm: kit
-  test_workload_identity_and_network_policy[False]: kit
+  test_workload_identity_and_network_policy[unattached]: kit
 smoke/kit/test_self_registration.py::TestSelfRegistration:
   test_self_registered_agent_round_trips_with_no_duplicate_on_reprovision: kit
 smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle:

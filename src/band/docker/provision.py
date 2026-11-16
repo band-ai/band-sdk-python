@@ -365,6 +365,22 @@ async def register_agent(
     return response.data.agent.id, response.data.credentials.api_key
 
 
+# The CLI's stderr line naming an orphaned agent, for scripts to recover it.
+ORPHANED_AGENT_ID_LINE = "Orphaned agent id: "
+
+
+class OrphanedAgentError(RuntimeError):
+    """This run registered an agent it could not finish provisioning.
+
+    The agent's one-time key is lost, so the only recovery is deleting the
+    agent `agent_id` names and retrying with a new `--agent-name`.
+    """
+
+    def __init__(self, message: str, *, agent_id: str) -> None:
+        super().__init__(message)
+        self.agent_id = agent_id
+
+
 class RegistrationTimeoutOutcome(StrEnum):
     """What a post-timeout lookup-by-name found."""
 
@@ -373,7 +389,7 @@ class RegistrationTimeoutOutcome(StrEnum):
     UNKNOWN = "unknown"
 
 
-async def find_registered_agent(
+async def _find_registered_agent(
     client: AsyncRestClient, *, agent_name: str
 ) -> str | None:
     """The id of the agent named exactly `agent_name`, paging until it's
@@ -412,7 +428,7 @@ async def _check_registration_after_timeout(
     try:
         async with _rest_client(api_key=api_key, rest_url=rest_url) as client:
             agent_id = await asyncio.wait_for(
-                find_registered_agent(client, agent_name=agent_name),
+                _find_registered_agent(client, agent_name=agent_name),
                 timeout=TIMEOUT_RECOVERY_CHECK_S,
             )
     except Exception:
@@ -532,29 +548,27 @@ async def _ensure_agent_registered(
         outcome, orphaned_id = await _check_registration_after_timeout(
             api_key=api_key, rest_url=rest_url, agent_name=agent_name
         )
-        raise RuntimeError(
-            _describe_registration_timeout(
-                outcome,
-                agent_name=agent_name,
-                agent_id=orphaned_id,
-                timeout=args.timeout,
-            )
-        ) from None
+        message = _describe_registration_timeout(
+            outcome,
+            agent_name=agent_name,
+            agent_id=orphaned_id,
+            timeout=args.timeout,
+        )
+        if orphaned_id is not None:
+            raise OrphanedAgentError(message, agent_id=orphaned_id) from None
+        raise RuntimeError(message) from None
     logger.info("Registered agent: %s", agent_id)
 
     try:
         write_agent_id(workspace, agent_id)
         inject_agent_key(name=args.name, host=args.host, agent_key=agent_key)
-    except Exception:
-        logger.error(
-            "Registered agent %s but failed to persist its key locally", agent_id
-        )
-        logger.error(
-            "Agent %s requires recovery: delete the registered agent and retry "
-            "with a new name; its one-time key cannot be retrieved",
-            agent_id,
-        )
-        raise
+    except Exception as error:
+        raise OrphanedAgentError(
+            f"registered agent {agent_name!r} (id={agent_id}) but could not "
+            f"persist its key: {error}. The key cannot be retrieved -- delete "
+            "the orphaned agent and retry with a new --agent-name.",
+            agent_id=agent_id,
+        ) from error
 
     return agent_id
 
@@ -574,7 +588,11 @@ def _ensure_sandbox_created(args: argparse.Namespace) -> None:
 
 
 async def run(args: argparse.Namespace) -> str:
-    """Execute the provision flow. Returns the agent id on success."""
+    """Execute the provision flow. Returns the agent id on success.
+
+    Raises `OrphanedAgentError`, naming the agent, when this call registered
+    an agent it then could not finish provisioning.
+    """
     settings = ProvisionSettings()
     api_key = args.api_key or settings.band_api_key_user
     if not api_key:
@@ -605,6 +623,9 @@ def main() -> None:
 
     try:
         agent_id = asyncio.run(run(args))
+    except OrphanedAgentError as e:
+        sys.stderr.write(f"Error: {e}\n{ORPHANED_AGENT_ID_LINE}{e.agent_id}\n")
+        sys.exit(1)
     except (ValueError, RuntimeError) as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)

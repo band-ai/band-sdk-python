@@ -36,7 +36,6 @@ from band_rest import (
 
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
-from band.docker.provision import find_registered_agent
 from band.platform.link import BandLink
 from band.runtime.agentconfig import AgentConfig
 from band.runtime.platform_runtime import PlatformRuntime
@@ -465,10 +464,6 @@ class ResourceManager:
         client = agent_rest_client(agent, self._settings)
         response = await client.agent_api_chats.list_agent_chats()
         return {room.id for room in (response.data or [])}
-
-    async def find_agent_id(self, name: str) -> str | None:
-        """The id of this account's agent named exactly ``name``, if any."""
-        return await find_registered_agent(self._client, agent_name=name)
 
     async def reap_agent(self, agent_id: str) -> None:
         """Force-delete an agent."""

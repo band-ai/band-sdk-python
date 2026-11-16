@@ -25,7 +25,11 @@ import yaml
 from band.credentials import PROXY_MANAGED_API_KEY
 from band.docker.launcher.credentials import CredentialName
 from band.docker.launcher.run import AGENT_UID
-from band.docker.provision import DEFAULT_BAND_HOST, read_agent_id
+from band.docker.provision import (
+    DEFAULT_BAND_HOST,
+    OrphanedAgentError,
+    read_agent_id,
+)
 from band.docker.provision import run as provision_run
 from band.docker.sbx_process import sbx_json
 from tests.docker.toolkit.docker_cli import Image
@@ -45,13 +49,9 @@ from tests.toolkit.tasks import off_loop
 
 logger = logging.getLogger(__name__)
 
-# The proxy injects the Band key for every Band host.
-BAND_HOST_PATTERN = DEFAULT_BAND_HOST
 # The kit declares PyPI in its network policy; an undeclared host is refused.
 DECLARED_HOST_URL = "https://pypi.org/simple/"
 UNDECLARED_HOST_URL = "https://example.com"
-# Longer than a mentionable label, so its name gets a full uuid token: cleanup
-# reaps by exact name, which must never match another run's agent.
 SELF_REGISTRATION_LABEL = "self-registration"
 # The agent uid, then the declared and undeclared hosts' HTTP status.
 DECLARED_POSTURE = (str(AGENT_UID), "200", "403")
@@ -117,7 +117,7 @@ def proxy_managed_sandbox(
         stack.enter_context(
             custom_secret(
                 sandbox=name,
-                host=BAND_HOST_PATTERN,
+                host=DEFAULT_BAND_HOST,
                 env=CredentialName.BAND_API_KEY,
                 value=band_key,
                 placeholder=PROXY_MANAGED_API_KEY,
@@ -188,8 +188,8 @@ async def self_registered_sandbox(
     ``provision.run()`` with the identical configuration to prove the
     idempotency guard. The agent is named under the baseline prefix, so the
     orphan sweep reclaims it if cleanup never runs. Cleanup attempts the agent
-    and the scoped secret independently, even when registration fails after
-    the platform registered the agent, and even when it is cancelled.
+    and the scoped secret independently, even when cancelled, and reaps an
+    agent ``provision.run()`` reports as orphaned.
     """
     workspace = prepare_workspace(workdir, endpoints=settings.endpoints)
     name = sandbox_name(prefix="band-selfreg")
@@ -199,7 +199,7 @@ async def self_registered_sandbox(
         agent_name=agent_name,
         description="Self-registration live E2E proof agent.",
         workspace=workspace,
-        host=BAND_HOST_PATTERN,
+        host=DEFAULT_BAND_HOST,
         api_key=settings.credentials.api_key_user,
         rest_url=settings.endpoints.rest_url,
         create=False,  # Sandbox.create (below) owns the VM lifecycle instead.
@@ -210,7 +210,11 @@ async def self_registered_sandbox(
 
     agent_id: str | None = None
     try:
-        agent_id = await provision_run(args)
+        try:
+            agent_id = await provision_run(args)
+        except OrphanedAgentError as error:
+            agent_id = error.agent_id
+            raise
         assert read_agent_id(workspace) == agent_id, (
             "provision wrote a different agent.id than it returned"
         )
@@ -221,10 +225,11 @@ async def self_registered_sandbox(
     finally:
         failures: list[Exception] = []
         try:
-            await _reap_registered_agent(resource_manager, agent_id, agent_name)
+            if agent_id is not None:
+                await resource_manager.reap_agent(agent_id)
         except Exception as error:
-            logger.exception("Could not clean up agent %s", agent_name)
-            error.add_note(f"Cleanup incomplete for agent {agent_id or agent_name}")
+            logger.exception("Could not clean up agent %s", agent_id)
+            error.add_note(f"Cleanup incomplete for agent {agent_id}")
             failures.append(error)
         finally:
             try:
@@ -239,20 +244,6 @@ async def self_registered_sandbox(
                 failures.append(error)
         if failures:
             raise ExceptionGroup("Self-registration cleanup incomplete", failures)
-
-
-async def _reap_registered_agent(
-    resource_manager: ResourceManager, agent_id: str | None, agent_name: str
-) -> None:
-    """Reap the agent, found by name when ``provision.run()`` raised first.
-
-    A registration that times out client-side can still succeed on the
-    platform, and ``provision.run()`` then raises without returning or
-    persisting the id.
-    """
-    known_id = agent_id or await resource_manager.find_agent_id(agent_name)
-    if known_id is not None:
-        await resource_manager.reap_agent(known_id)
 
 
 def workload_posture(sandbox: Sandbox) -> tuple[str, str, str]:

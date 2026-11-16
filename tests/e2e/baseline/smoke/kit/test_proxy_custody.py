@@ -49,7 +49,9 @@ class TestProxyManagedCustody:
         assert "issuer:" in cert, cert
         assert PROXY_CA_MARKER in cert, cert
 
-    @pytest.mark.parametrize("custody_sandbox", [False], indirect=True)
+    @pytest.mark.parametrize(
+        "custody_sandbox", [pytest.param(False, id="unattached")], indirect=True
+    )
     async def test_workload_identity_and_network_policy(
         self, custody_sandbox: tuple[Sandbox, str]
     ) -> None:
