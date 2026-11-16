@@ -46,6 +46,7 @@ from band.runtime.tools import (
     redact_tool_call_args,
     serialize_tool_result,
 )
+from band.runtime.turn import refuse_if_declined
 
 logger = logging.getLogger(__name__)
 
@@ -420,6 +421,7 @@ def platform_tool_spec(definition: ToolDefinition) -> RoomToolSpec:
     """
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
+        refuse_if_declined(tools)
         outcome = await tools.execute_tool_call_structured(definition.name, arguments)
         if not outcome.ok:
             raise BandToolError(outcome.error_message or str(outcome.value))
@@ -435,6 +437,7 @@ def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
     input_model, _ = tool_def
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
+        refuse_if_declined(tools)
         outcome = await run_custom_tool(tool_def, arguments, tools=tools)
         if not outcome.ok:
             raise BandToolError(outcome.error_message or str(outcome.value))

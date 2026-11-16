@@ -44,6 +44,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.turn import declined_turn_refusal
 
 try:
     from agno.models.message import Message
@@ -103,6 +104,9 @@ def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolR
         active = current_tools.get()
         if active is None:
             return f"Error: no active Band context for tool {tool_name}"
+        # Agno runs the model's tool loop itself, past a decline.
+        if refusal := declined_turn_refusal(active):
+            return refusal
         result = await active.execute_tool_call(tool_name, kwargs)
         if is_image_passthrough_result(tool_name, result):
             try:

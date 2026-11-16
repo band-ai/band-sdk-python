@@ -19,6 +19,7 @@ from tests.framework_conformance.turnprobes import (
     TurnScript,
     turn_input,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 
 async def run_strands(script: TurnScript, tools: FakeAgentTools) -> None:
@@ -97,27 +98,22 @@ async def run_pydantic_ai(script: TurnScript, tools: FakeAgentTools) -> None:
 
 async def run_agno(script: TurnScript, tools: FakeAgentTools) -> None:
     pytest.importorskip("agno")
-    from agno.run.agent import (  # noqa: PLC0415 -- agno extra, absent from some lane venvs
-        RunOutput,
+    from agno.agent import (  # noqa: PLC0415 -- agno extra, absent from some lane venvs
+        Agent,
     )
 
     from band.adapters.agno import (  # noqa: PLC0415 -- agno extra, absent from some lane venvs
         AgnoAdapter,
     )
     from tests.adapters.agno.helpers import (  # noqa: PLC0415 -- agno extra, absent from some lane venvs
-        fake_agno_agent,
+        ScriptedToolModel,
     )
 
-    async def model_turn() -> None:
-        # The adapter's Agno entrypoint for a Band tool is exactly this call
-        # on the room's bound tools.
-        for call in script.tool_calls:
-            await tools.execute_tool_call(call.name, call.arguments)
-
-    agent = fake_agno_agent(
-        response=RunOutput(content=script.final_text), model_turn=model_turn
+    model = ScriptedToolModel(
+        [(call.name, call.arguments) for call in script.tool_calls],
+        script.final_text,
     )
-    adapter = AgnoAdapter(agent=agent, emit=())
+    adapter = AgnoAdapter(agent=Agent(model=model, telemetry=False), emit=())
     await adapter.on_started("Agent", "A test agent")
     await adapter.on_event(turn_input(tools))
 
@@ -271,12 +267,12 @@ async def run_google_adk(script: TurnScript, tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "strands": TurnOutcomeProbe(run=run_strands),
-    "nooa": TurnOutcomeProbe(run=run_nooa),
-    "pydantic_ai": TurnOutcomeProbe(run=run_pydantic_ai),
-    "agno": TurnOutcomeProbe(run=run_agno),
-    "langgraph": TurnOutcomeProbe(run=run_langgraph),
-    "anthropic": TurnOutcomeProbe(run=run_anthropic),
-    "gemini": TurnOutcomeProbe(run=run_gemini),
-    "google_adk": TurnOutcomeProbe(run=run_google_adk),
+    "strands": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_strands),
+    "nooa": TurnOutcomeProbe(loop=TurnLoop.PROVIDER, run=run_nooa),
+    "pydantic_ai": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_pydantic_ai),
+    "agno": TurnOutcomeProbe(loop=TurnLoop.PROVIDER, run=run_agno),
+    "langgraph": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_langgraph),
+    "anthropic": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_anthropic),
+    "gemini": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_gemini),
+    "google_adk": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_google_adk),
 }

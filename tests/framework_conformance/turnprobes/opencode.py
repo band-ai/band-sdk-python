@@ -24,6 +24,7 @@ from tests.framework_conformance.turnprobes import (
     turn_tools,
     user_message,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 from tests.mcpbackends import backends_created_by
 
 SESSION_ID = "sess-1"
@@ -49,7 +50,7 @@ async def run_opencode(script: TurnScript, tools: FakeAgentTools) -> None:
         steps = [
             event_message_updated(SESSION_ID, MESSAGE_ID),
             *(
-                mcp_calls.band_tool_call(call.name, call.arguments, room_id=ROOM_ID)
+                mcp_calls.band_tool_attempt(call.name, call.arguments, room_id=ROOM_ID)
                 for call in script.tool_calls
             ),
         ]
@@ -86,5 +87,7 @@ async def settle_opencode(tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "opencode": TurnOutcomeProbe(run=run_opencode, settle=settle_opencode, relays=True),
+    "opencode": TurnOutcomeProbe(
+        loop=TurnLoop.PROVIDER, run=run_opencode, settle=settle_opencode, relays=True
+    ),
 }

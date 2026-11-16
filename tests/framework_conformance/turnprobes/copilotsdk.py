@@ -15,6 +15,7 @@ from tests.framework_conformance.turnprobes import (
     TurnScript,
     turn_input,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 
 async def run_copilot_sdk_turn(script: TurnScript, tools: FakeAgentTools) -> None:
@@ -43,7 +44,11 @@ async def run_copilot_sdk_turn(script: TurnScript, tools: FakeAgentTools) -> Non
 
 
 PROBES: dict[str, TurnOutcomeProbe] = (
-    {"copilot_sdk": TurnOutcomeProbe(run=run_copilot_sdk_turn, relays=True)}
+    {
+        "copilot_sdk": TurnOutcomeProbe(
+            loop=TurnLoop.PROVIDER, run=run_copilot_sdk_turn, relays=True
+        )
+    }
     if _COPILOT_SDK_AVAILABLE
     else {}
 )

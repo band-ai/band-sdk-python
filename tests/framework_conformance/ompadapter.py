@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Unpack
 import pytest
 
 from band.core.types import FeatureKwargs
+from band.runtime.custom_tools import CustomToolDef
 from tests.paths import REPO_ROOT
 
 if TYPE_CHECKING:
@@ -24,9 +25,13 @@ if TYPE_CHECKING:
 
 @asynccontextmanager
 async def started_omp_adapter(
-    peer_module: str, *peer_args: str, **features: Unpack[FeatureKwargs]
+    peer_module: str,
+    *peer_args: str,
+    additional_tools: list[CustomToolDef] | None = None,
+    **features: Unpack[FeatureKwargs],
 ) -> AsyncIterator[OmpAdapter]:
-    """Start an ``OmpAdapter`` running ``peer_module``; clean it up on exit."""
+    """Start an ``OmpAdapter`` running ``peer_module``, serving
+    ``additional_tools``; clean it up on exit."""
     pytest.importorskip("psutil")
     from band.adapters.omp import (  # noqa: PLC0415 -- requires the optional omp extra
         OmpAdapter,
@@ -40,6 +45,7 @@ async def started_omp_adapter(
                 command=(sys.executable, "-u", "-m", peer_module, *peer_args),
                 env={"PYTHONPATH": str(REPO_ROOT)},
             ),
+            additional_tools=additional_tools,
             **features,
         )
         try:

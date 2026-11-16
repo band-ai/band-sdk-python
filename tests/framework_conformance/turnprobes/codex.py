@@ -18,6 +18,7 @@ from tests.framework_conformance.turnprobes import (
     turn_input,
     user_message,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 
 def scripted_events(script: TurnScript) -> list[RpcEvent]:
@@ -48,5 +49,7 @@ async def ask_codex_status(tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "codex": TurnOutcomeProbe(run=run_codex, settle=ask_codex_status, relays=False),
+    "codex": TurnOutcomeProbe(
+        loop=TurnLoop.PROVIDER, run=run_codex, settle=ask_codex_status, relays=False
+    ),
 }

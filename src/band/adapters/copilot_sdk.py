@@ -60,6 +60,7 @@ from band.integrations.copilot_sdk.room_ask_user import (
     ASK_USER_ROOM,
     ROOM_ASK_USER_GUIDANCE,
     delivery_failed_answer,
+    freeform_answer,
     no_recipients_answer,
     question_delivered_answer,
     render_room_question,
@@ -81,6 +82,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.turn import calling_as, declined_turn_refusal
 
 try:
     from copilot import (
@@ -917,6 +919,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             # A late dispatch after the turn/room ended (the SDK never
             # cancels pending asks) must degrade, not crash the RPC.
             return room_inactive_answer()
+        if refusal := declined_turn_refusal(room_tools):
+            return freeform_answer(refusal)
         rendered = render_room_question(request)
         # The question is the turn's reply, so a "waiting for your answer"
         # wrap-up is not relayed on top of it.
@@ -980,12 +984,13 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
     def _make_tool_handler(self, room_id: str) -> Callable[[ToolInvocation], Any]:
         """Build the per-room tool handler Copilot invokes for bridged tools.
 
-        A closure only to bind ``room_id``; the logic lives in
+        Binds ``room_id`` and runs each call as the sub-agent that issued it
+        (``None`` for the root agent); the logic lives in
         :meth:`_execute_bridged_tool`.
         """
 
         async def handle(invocation: ToolInvocation) -> ToolResult:
-            with self._callback(room_id):
+            with self._callback(room_id), calling_as(invocation.agent_id):
                 return await self._execute_bridged_tool(room_id, invocation)
 
         return handle
@@ -1013,6 +1018,10 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         should_report = Emit.TOOL_CALLS in self.features.emit
         if should_report:
             await self._report_tool_call(room_tools, invocation, arguments)
+        if refusal := declined_turn_refusal(room_tools):
+            return await self._fail_tool_call(
+                room_tools, invocation, refusal, report=should_report
+            )
 
         try:
             custom_tool = find_custom_tool(self._custom_tools, tool_name)

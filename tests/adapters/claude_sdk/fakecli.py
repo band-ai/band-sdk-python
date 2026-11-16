@@ -32,6 +32,7 @@ from band.integrations.mcp import BandMCPTransport
 from tests.adapters.hold import Hold
 from tests.adapters.roompeer import dialed_server
 from tests.baseline.decisions import ModelDecision, ToolCall
+from tests.mcp.toolresults import content_blocks
 from tests.mcpclient import mcp_session
 
 MODEL = "claude-fake"
@@ -503,16 +504,25 @@ class FakeCLISession(Transport):
     async def background_tool(
         self, task_id: str, tool_use_id: str, call: ToolCall
     ) -> None:
-        """Send a subagent's real control hook and HTTP MCP request."""
+        """Send a subagent's real control hook and HTTP MCP request, which
+        must succeed."""
+        content, failed = await self.background_tool_result(task_id, tool_use_id, call)
+        if failed:
+            raise AssertionError(content)
+
+    async def background_tool_result(
+        self, task_id: str, tool_use_id: str, call: ToolCall
+    ) -> tuple[Any, bool]:
+        """Send a subagent's real control hook and HTTP MCP request; return
+        what the subagent receives: the result's content and whether it failed."""
         decision = await self._pre_tool_use(tool_use_id, call, agent_id=task_id)
         if decision is not None:
             raise AssertionError(
                 f"Unsupported background permission decision: {decision}"
             )
         content, failed = await self._execute(call, tool_use_id)
-        if failed:
-            raise AssertionError(content)
-        self._tool_result(tool_use_id, content, is_error=False)
+        self._tool_result(tool_use_id, content, is_error=failed)
+        return content, failed
 
     def native_event(self, **message: Any) -> None:
         """Emit a source-ordered native lifecycle frame."""
@@ -572,7 +582,7 @@ class FakeCLISession(Transport):
             result = await session.call_tool(
                 tool, call.arguments, meta={CLAUDE_TOOL_USE_META: tool_use_id}
             )
-        content = [block.model_dump(exclude_none=True) for block in result.content]
+        content = content_blocks(result)
         return content, result.isError
 
     def dialed_server(self, server: str) -> dict[str, Any]:

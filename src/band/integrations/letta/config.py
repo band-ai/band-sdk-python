@@ -61,7 +61,9 @@ class LettaMCPConfig(BaseAdapterConfig):
       starts and stops working when the process exits.
     - ``external``: register a separately-run Band MCP server (e.g. band-mcp)
       at ``server_url``.  Required for Letta Cloud, which cannot reach a
-      laptop-local server.
+      laptop-local server.  That server runs the tools outside the turn, so
+      it cannot refuse the model's tool calls after a decline as self-hosting
+      does.
 
     Attributes:
         mode: ``"self_host"`` or ``"external"`` (see above).

@@ -30,6 +30,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.core.protocols import AgentToolsProtocol
+from band.core.turn import Turn
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.mcp import BandMCPTransport
 from band.integrations.ompwire import OmpHostToolCall
@@ -101,6 +102,9 @@ class ReadRoomFileTools:
     always return the fixed image result -- only what each probe's dispatch
     path calls (MCP-based probes call read_room_file; generic-dispatch probes
     like agno call execute_tool_call)."""
+
+    def __init__(self) -> None:
+        self.turn = Turn()
 
     async def read_room_file(self, file_id: str) -> dict[str, Any]:
         del file_id
@@ -343,7 +347,7 @@ async def _probe_copilot_sdk() -> bool:
         CopilotSDKAdapter,
     )
 
-    room_tools = MagicMock()
+    room_tools = MagicMock(turn=Turn())
     room_tools.execute_tool_call_structured = AsyncMock(
         return_value=ToolCallOutcome(value=_IMAGE_RESULT, ok=True)
     )

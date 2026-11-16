@@ -14,11 +14,11 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import AgentInput, Capability, HistoryProvider, PlatformMessage
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import (
     TOOL_DEFINITIONS,
@@ -26,7 +26,9 @@ from band.runtime.tools import (
     TurnEffect,
     serialize_tool_result,
 )
+from band.runtime.tools.agent import AgentTools
 from band.testing.fake_tools import FakeAgentTools
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 ROOM_ID = "room-turn"
 
@@ -67,21 +69,31 @@ class TurnScript:
     final_text: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class TurnOutcomeProbe:
-    """``run`` drives one scripted turn. ``settle``, for an adapter with a
-    control path, sends a message the adapter answers itself (a status or
-    busy reply) without running the model. ``relays`` marks an adapter that
-    posts the model's final text when no tool replied."""
+    """``run`` drives one scripted turn. ``loop`` says who runs the model's
+    tool loop. ``settle``, for an adapter with a control path, sends a message
+    the adapter answers itself (a status or busy reply) without running the
+    model. ``relays`` marks an adapter that posts the model's final text when
+    no tool replied."""
 
     run: Callable[[TurnScript, FakeAgentTools], Awaitable[None]]
+    loop: TurnLoop
     settle: Callable[[FakeAgentTools], Awaitable[None]] | None = None
     relays: bool = False
 
 
 class DispatchingFakeTools(FakeAgentTools):
     """Runs each dispatched Band tool through the fake's own method, as
-    ``AgentTools`` does, so a scripted ``band_send_message`` really posts."""
+    ``AgentTools`` does, so a scripted ``band_send_message`` really posts.
+    Advertises the real tool schemas, so a framework's own tool loop can
+    call them."""
+
+    def get_openai_tool_schemas(
+        self, *, capabilities: frozenset[Capability] | None = None
+    ) -> list[dict[str, Any]]:
+        schemas = AgentTools(room_id=self.room_id, rest=cast(Any, None))
+        return schemas.get_openai_tool_schemas(capabilities=capabilities)
 
     async def execute_tool_call_structured(
         self, tool_name: str, arguments: dict[str, Any]

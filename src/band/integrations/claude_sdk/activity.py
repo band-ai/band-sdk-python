@@ -251,7 +251,8 @@ class SessionActivity:
             role=TaskRole.RESOURCE,
             request_stop=task.wake.set,
         )
-        tools = resource_tools(origin.tools, task.owner)
+        # A native task is a subagent or background work, not the model itself.
+        tools = resource_tools(origin.tools, task.owner, subagent=True)
         task.origin = Origin(tools, task.owner, origin.audience, origin.release)
         self._tasks[task.task_id] = task
         task.revision = next(self._starts)

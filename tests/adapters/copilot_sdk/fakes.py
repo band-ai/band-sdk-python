@@ -28,7 +28,7 @@ from band.converters.copilot_sdk import CopilotSDKSessionState
 from band.core.types import USAGE_METADATA_KEY, MessageType, PlatformMessage
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
-from tests.framework_conformance.turnprobes import turn_input
+from tests.framework_conformance.turnprobes import ToolCall, turn_input
 from tests.roomhistory import DEFAULT_HISTORY_INSERTED_AT
 
 requires_copilot_sdk = pytest.mark.skipif(
@@ -37,6 +37,7 @@ requires_copilot_sdk = pytest.mark.skipif(
 )
 
 if _COPILOT_SDK_AVAILABLE:
+    from copilot import ToolInvocation, ToolResult
     from copilot.generated.session_events import (
         AssistantUsageData,
         SessionErrorData,
@@ -46,6 +47,12 @@ if _COPILOT_SDK_AVAILABLE:
 # An earlier room message, and the line it becomes in a replayed transcript.
 EARLIER_MESSAGE = "my name is Alice"
 EARLIER_LINE = f"[Alice]: {EARLIER_MESSAGE}"
+#: The question the model asks the room through ask_user.
+QUESTION = {
+    "question": "Which channel should I deploy to?",
+    "choices": ["stable", "beta", "canary"],
+    "allowFreeform": True,
+}
 
 
 class ObservedCopilotAdapter(CopilotSDKAdapter):
@@ -460,4 +467,24 @@ async def run_event(
     """Run one turn through ``on_event``, where the runtime judges it."""
     await adapter.on_event(
         turn_input(tools, msg=make_platform_message(room_id=room_id, content=content))
+    )
+
+
+def tool_call_id(call: ToolCall) -> str:
+    """The id ``call_tool`` gives the model's ``call``."""
+    return f"call-{call.name}"
+
+
+async def call_tool(
+    session: FakeCopilotSession, call: ToolCall, *, agent_id: str | None = None
+) -> ToolResult:
+    """The model, or its sub-agent ``agent_id``, calling ``call`` through the
+    session's registered tool."""
+    return await session.find_tool(call.name).handler(
+        ToolInvocation(
+            tool_call_id=tool_call_id(call),
+            tool_name=call.name,
+            arguments=call.arguments,
+            agent_id=agent_id,
+        )
     )

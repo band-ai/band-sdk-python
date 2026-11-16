@@ -325,7 +325,10 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
             exclusive with the adapter's ``workspace_for_room``.
         mcp_servers: MCP servers passed to each new ACP session.
         inject_band_tools: Serve the Band tools to each session over a
-            loopback MCP server.
+            loopback MCP server. Only served tools refuse the model's calls
+            after it declines; an external Band MCP server cannot. A call
+            names only its room, so a background call that outlives its
+            prompt counts as the room's current prompt, decline included.
         auth_method: ACP auth method to ``authenticate`` with after
             ``initialize``; ``None`` skips authentication.
         custom_section: Extra instructions added to the session's system
