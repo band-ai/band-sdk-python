@@ -1944,7 +1944,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
         ``client`` is the process the request came from; the answer goes back
         there. Concurrency model: this coroutine mutates room-scoped adapter
-        state (``_approvals``, ``_task_titles``) without an explicit lock.
+        state (``_approvals``) without an explicit lock.
         It is safe because it runs only inside a turn, which holds its room's
         ``rpc_lock`` -- and every structure it touches is
         keyed (or routed via ``_active_room``) per room, so a concurrent

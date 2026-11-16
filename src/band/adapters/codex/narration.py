@@ -21,7 +21,7 @@ from band.adapters.codex.items import (
     tool_item,
 )
 from band.core.protocols import AgentToolsProtocol, send_event_safe
-from band.core.types import Emit, ToolEventKey, TurnUsage
+from band.core.types import Emit, MessageType, ToolEventKey, TurnUsage
 from band.integrations.codex.types import (
     ApprovalAuditEntry,
     CodexMetadataKey,
@@ -177,6 +177,32 @@ async def item_completed(
         )
 
 
+# Which payload key carries a tool event's value.
+_TOOL_EVENT_KEYS = {
+    MessageType.TOOL_CALL: ToolEventKey.ARGS,
+    MessageType.TOOL_RESULT: ToolEventKey.OUTPUT,
+}
+
+
+async def tool_event(
+    tools: AgentToolsProtocol,
+    message_type: MessageType,
+    name: str,
+    call_id: str,
+    value: Any,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Send one tool call's arguments or result to the room."""
+    content = {
+        ToolEventKey.NAME: name,
+        _TOOL_EVENT_KEYS[message_type]: value,
+        ToolEventKey.TOOL_CALL_ID: call_id,
+    }
+    await tools.send_event(
+        content=json.dumps(content), message_type=message_type, metadata=metadata
+    )
+
+
 async def _show_item(
     tools: AgentToolsProtocol,
     ref: TurnRef,
@@ -190,20 +216,10 @@ async def _show_item(
         if Emit.TOOL_CALLS not in emit:
             return
         name, args, output = tool_item(item_type, item)
-        for message_type, key, value in (
-            ("tool_call", ToolEventKey.ARGS, args),
-            ("tool_result", ToolEventKey.OUTPUT, output),
-        ):
-            content = {
-                ToolEventKey.NAME: name,
-                key: value,
-                ToolEventKey.TOOL_CALL_ID: item_id,
-            }
-            await tools.send_event(
-                content=json.dumps(content),
-                message_type=message_type,
-                metadata=metadata,
-            )
+        await tool_event(tools, MessageType.TOOL_CALL, name, item_id, args, metadata)
+        await tool_event(
+            tools, MessageType.TOOL_RESULT, name, item_id, output, metadata
+        )
     elif item_type in THOUGHT_ITEM_TYPES:
         # An empty reasoning or plan item says nothing, so it is not shown.
         if Emit.THOUGHTS in emit and (text := thought_text(item_type, item)):

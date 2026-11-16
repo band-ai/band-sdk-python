@@ -10,11 +10,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from band.adapters.codex.rpc import CodexClientProtocol, text_item
+from band.adapters.codex.narration import tool_event
+from band.adapters.codex.rpc import CodexClientProtocol
 from band.core.exceptions import HOST_CONTROL_ERRORS
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
-from band.core.types import AdapterFeatures, ToolEventKey
+from band.core.types import AdapterFeatures, MessageType
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_to_openai_schema,
@@ -49,6 +50,10 @@ def image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
         }
         for block in result["content"]
     ]
+
+
+def text_item(text: str) -> dict[str, Any]:
+    return {"type": "inputText", "text": text}
 
 
 def tool_response(items: list[dict[str, Any]], *, success: bool) -> dict[str, Any]:
@@ -174,26 +179,13 @@ async def answer_tool_call(
     """Run ``call`` and answer Codex, reporting the call to the room if asked."""
     if report:
         args = redact_tool_call_args(call.name, call.arguments)
-        await _report(tools, call, "tool_call", ToolEventKey.ARGS, args)
+        await tool_event(tools, MessageType.TOOL_CALL, call.name, call.call_id, args)
     response, output = await _run(call, tools, custom_tools)
     await client.respond(request_id, response)
     if report:
-        await _report(tools, call, "tool_result", ToolEventKey.OUTPUT, output)
-
-
-async def _report(
-    tools: AgentToolsProtocol,
-    call: DynamicToolCall,
-    message_type: str,
-    key: ToolEventKey,
-    value: Any,
-) -> None:
-    content = {
-        ToolEventKey.NAME: call.name,
-        key: value,
-        ToolEventKey.TOOL_CALL_ID: call.call_id,
-    }
-    await tools.send_event(content=json.dumps(content), message_type=message_type)
+        await tool_event(
+            tools, MessageType.TOOL_RESULT, call.name, call.call_id, output
+        )
 
 
 async def _run(
@@ -231,4 +223,4 @@ async def _run(
         items = image_content_items(result)
         return tool_response(items, success=True), image_block_placeholder(len(items))
     text = result if isinstance(result, str) else json.dumps(result, default=str)
-    return tool_response([text_item(text)], success=success), text
+    return text_tool_result(text, success=success), text

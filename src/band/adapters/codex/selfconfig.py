@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import get_args
 
 from pydantic import BaseModel, Field
 
-from band.adapters.codex.config import CodexAdapterConfig
+from band.adapters.codex.config import CodexAdapterConfig, ReasoningSummary
 from band.adapters.codex.roomstate import RoomCodexClient
-from band.runtime.custom_tools import CustomToolDef
+from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 
-REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
-
-
-# Codex-local slash commands, which surface their outcome in the room themselves.
-SILENT_REPORTING_TOOLS: frozenset[str] = frozenset({"setmodel", "setreasoning"})
+REASONING_SUMMARIES: frozenset[str] = frozenset(get_args(ReasoningSummary))
 
 
 class SetModelInput(BaseModel):
@@ -32,8 +29,15 @@ class SetReasoningInput(BaseModel):
     )
     summary: str | None = Field(
         default=None,
-        description="Reasoning summary detail: auto, concise, detailed, or none. Omit to keep current.",
+        description=f"Reasoning summary detail: {', '.join(get_args(ReasoningSummary))}. Omit to keep current.",
     )
+
+
+SET_MODEL_TOOL = get_custom_tool_name(SetModelInput)
+SET_REASONING_TOOL = get_custom_tool_name(SetReasoningInput)
+
+# Codex-local slash commands, which surface their outcome in the room themselves.
+SILENT_REPORTING_TOOLS: frozenset[str] = frozenset({SET_MODEL_TOOL, SET_REASONING_TOOL})
 
 
 def self_config_tools(
@@ -53,11 +57,11 @@ def self_config_tools(
         return room
 
     def set_model(inp: SetModelInput) -> str:
-        locked_room("setmodel").selected_model = inp.model
+        locked_room(SET_MODEL_TOOL).selected_model = inp.model
         return f"Model changed to {inp.model} for subsequent turns."
 
     def set_reasoning(inp: SetReasoningInput) -> str:
-        room = locked_room("setreasoning")
+        room = locked_room(SET_REASONING_TOOL)
         parts: list[str] = []
         if inp.effort is not None:
             room.reasoning_effort = inp.effort
