@@ -3,27 +3,41 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest import mock
 
 import pytest
 from band_rest import ListAgentPeersResponse
 
 from band.runtime.tools.agent import ParticipantAddStatus
 from tests.mcp.standalonedoor.kit import call, read_as, refusal, standalone_door
-from tests.mcp.standalonedoor.peer import COLLEAGUE, OWNER, Identity, Platform
+from tests.mcp.standalonedoor.peer import (
+    COLLEAGUE,
+    MEMBER_ROLE,
+    OWNER,
+    Identity,
+    Platform,
+    message_id,
+)
+
+# The door's only successful send in each test is the room's first message.
+FIRST_MESSAGE_ID = message_id(0)
+
+
+def unknown_participant(identifier: str) -> str:
+    """The SDK's refusal for a mention it cannot resolve in the room."""
+    return f"Unknown participant '{identifier}'"
 
 
 def delivered_to(who: Identity) -> dict[str, Any]:
     return {
-        "id": mock.ANY,
+        "id": FIRST_MESSAGE_ID,
         "recipients": [{"id": who.id, "handle": who.handle, "name": who.name}],
         "success": True,
     }
 
 
-def mentioning(who: Identity, content: str, message_id: str) -> dict[str, Any]:
+def mentioning(who: Identity, content: str) -> dict[str, Any]:
     return {
-        "id": message_id,
+        "id": FIRST_MESSAGE_ID,
         "content": content,
         "mentions": [{"id": who.id, "handle": who.handle}],
     }
@@ -80,17 +94,15 @@ class TestAgentDoor:
                 mentions=[OWNER.id],
             )
 
-        assert f"Unknown participant '{OWNER.id}'" in rejected
+        assert unknown_participant(OWNER.id) in rejected
         assert added == {
             "id": OWNER.id,
             "name": OWNER.name,
-            "role": "member",
+            "role": MEMBER_ROLE,
             "status": ParticipantAddStatus.ADDED,
         }
         assert sent == delivered_to(OWNER)
-        assert platform.rooms[room_id].messages == [
-            mentioning(OWNER, "welcome", sent["id"])
-        ]
+        assert platform.rooms[room_id].messages == [mentioning(OWNER, "welcome")]
 
     async def test_mentioning_a_member_who_joined_elsewhere_refreshes_the_room(
         self, platform: Platform
@@ -114,8 +126,8 @@ class TestAgentDoor:
                 mentions=[f"@{COLLEAGUE.handle}"],
             )
 
-        assert f"Unknown participant '{COLLEAGUE.handle}'" in rejected
+        assert unknown_participant(COLLEAGUE.handle) in rejected
         assert sent == delivered_to(COLLEAGUE)
         assert platform.rooms[room_id].messages == [
-            mentioning(COLLEAGUE, "review please", sent["id"])
+            mentioning(COLLEAGUE, "review please")
         ]

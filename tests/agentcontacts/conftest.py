@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 from pytest_httpx import HTTPXMock
 
-from tests.agentcontacts.kit import AGENT_API_URL, STAMP, ContactAdapter
+from tests.agentcontacts.kit import ContactAdapter
+from tests.fakeplatform import AGENT_API_URL, STAMP
 from tests.identifiers import AGENT_ID
 
 

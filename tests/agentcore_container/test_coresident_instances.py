@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from http import HTTPStatus
 
 import httpx
 import pytest
@@ -24,13 +25,12 @@ class TestCoresidentInstances:
 
         # The peer answers no identity request until every instance has sent
         # one, so reaching "serving" proves their startups overlapped.
-        await asyncio.gather(*(instance.serving() for instance in instances))
+        urls = await asyncio.gather(*(instance.serving() for instance in instances))
         async with httpx.AsyncClient() as client:
-            pings = await asyncio.gather(
-                *(client.get(instance.ping_url) for instance in instances)
-            )
+            pings = await asyncio.gather(*(client.get(f"{url}/ping") for url in urls))
 
+        assert len(set(urls)) == INSTANCES
         assert [(ping.status_code, ping.json()) for ping in pings] == [
-            (200, {"status": HEALTHY})
+            (HTTPStatus.OK, {"status": HEALTHY})
         ] * INSTANCES
         assert peer.api_keys == [CREDENTIALS["BAND_API_KEY"]] * INSTANCES

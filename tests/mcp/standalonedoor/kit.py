@@ -37,9 +37,7 @@ async def standalone_door() -> AsyncIterator[ClientSession]:
     resolver = build_standalone_resolver(config)
     engine = build_engine(standalone_spec(config, resolver))
     try:
-        async with create_connected_server_and_client_session(
-            engine._mcp_server
-        ) as session:
+        async with create_connected_server_and_client_session(engine) as session:
             yield session
     finally:
         for rest in (resolver.agent_rest, resolver.human_rest):

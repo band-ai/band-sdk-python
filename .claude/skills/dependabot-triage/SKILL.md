@@ -211,13 +211,13 @@ without it, then re-test:
 # current version), then re-run Step 5. Repeat until green.
 ```
 
-**Attribute each failure before dropping a bump — most integration/e2e failures
+**Attribute each failure before dropping a bump — most e2e failures
 are environmental, not the bumps.** These run against a live platform and a
 multi-lane matrix, so isolate with a minimal probe before blaming a package.
 Signatures seen in practice that are **not** bump regressions:
 
 - WebSocket `403` on connect **plus** a `422` "Expected :uuid" on a mention ⇒ a
-  stale `TEST_AGENT_ID` / `BAND_AGENT_ID` in the test env that doesn't match the
+  stale `BAND_AGENT_ID` in the test env that doesn't match the
   agent `BAND_API_KEY` owns. The SDK appends `&agent_id=` to the socket URL and
   the platform rejects an unauthorized pairing. Confirm by connecting the WS with
   vs. without `&agent_id=`; fix the env, don't drop a bump.

@@ -8,10 +8,10 @@ from band.client.streaming import ContactRequestReceivedPayload
 from band.core.types import MessageType
 from band.platform.event import ContactRequestReceivedEvent
 from band.runtime.contact_handler import ContactEventHandler
+from tests.fakeplatform import STAMP
 from tests.runtime.contactwire.kit import (
     CHATS_URL,
     HUB_ROOM_ID,
-    STAMP,
     HubRoom,
     sent,
 )

@@ -8,15 +8,15 @@ from functools import partial
 import pytest
 from band_sdk_core import AgentTopicKind
 
-from band.client.streaming import (
-    ContactAddedPayload,
-    ContactRemovedPayload,
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
-    WebSocketClient,
-)
+from band.client.streaming import WebSocketClient
 from band.client.streaming.client import WireEvent, WirePayload
 from band.testing import fake_phoenix_server
+from tests.conftest import (
+    make_contact_added_event,
+    make_contact_removed_event,
+    make_contact_request_received_event,
+    make_contact_request_updated_event,
+)
 from tests.identifiers import AGENT_ID
 
 CONTACT_TOPIC = AgentTopicKind.Contacts.topic(AGENT_ID)
@@ -30,30 +30,14 @@ class TestContactDispatch:
         [
             (
                 WireEvent.CONTACT_REQUEST_RECEIVED,
-                ContactRequestReceivedPayload(
-                    id="request-1",
-                    from_handle="jane_smith",
-                    from_name="Jane Smith",
-                    message="Let's work together",
-                    status="pending",
-                    inserted_at="2026-02-09T10:30:00Z",
-                ),
+                make_contact_request_received_event().payload,
             ),
             (
                 WireEvent.CONTACT_REQUEST_UPDATED,
-                ContactRequestUpdatedPayload(id="request-1", status="rejected"),
+                make_contact_request_updated_event().payload,
             ),
-            (
-                WireEvent.CONTACT_ADDED,
-                ContactAddedPayload(
-                    id="contact-1",
-                    handle="jane_smith",
-                    name="Jane Smith",
-                    type="User",
-                    inserted_at="2026-02-09T10:35:00Z",
-                ),
-            ),
-            (WireEvent.CONTACT_REMOVED, ContactRemovedPayload(id="contact-1")),
+            (WireEvent.CONTACT_ADDED, make_contact_added_event().payload),
+            (WireEvent.CONTACT_REMOVED, make_contact_removed_event().payload),
         ],
         ids=lambda value: value if isinstance(value, WireEvent) else "",
     )

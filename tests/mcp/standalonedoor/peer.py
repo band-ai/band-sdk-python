@@ -13,8 +13,6 @@ from typing import Any
 
 import httpx
 
-from band.core.exceptions import MessagePostKind
-
 TIMESTAMP = "2026-01-01T00:00:00Z"
 
 
@@ -56,6 +54,7 @@ AGENT_KEY = "agent-key"
 USER_KEY = "user-key"
 # Each REST surface answers only its own credential.
 SURFACE_KEYS = {"agent": AGENT_KEY, "me": USER_KEY}
+MEMBER_ROLE = "member"
 
 
 def room_record(room_id: str) -> dict[str, Any]:
@@ -74,6 +73,11 @@ class Room:
 
     def has_member(self, participant_id: str) -> bool:
         return any(p["id"] == participant_id for p in self.participants)
+
+
+def message_id(n: int) -> str:
+    """The id the peer gives a room's ``n``-th message (0-based)."""
+    return str(uuid.UUID(int=1000 + n))
 
 
 def data(body: Any, status: HTTPStatus = HTTPStatus.OK) -> httpx.Response:
@@ -101,7 +105,7 @@ class Platform:
 
     def join(self, room_id: str, who: Identity) -> None:
         """Add ``who`` to a room outside the door, as another member would."""
-        self.rooms[room_id].participants.append(who.as_participant("member"))
+        self.rooms[room_id].participants.append(who.as_participant(MEMBER_ROLE))
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         route = request.url.path.strip("/").split("/")
@@ -198,19 +202,15 @@ class Platform:
         who = next((i for i in DIRECTORY if i.id == request["participant_id"]), None)
         if who is None:
             return error(HTTPStatus.NOT_FOUND, "Participant not found")
-        participant = who.as_participant(request.get("role", "member"))
+        participant = who.as_participant(request.get("role", MEMBER_ROLE))
         room.participants.append(participant)
         return data(participant, HTTPStatus.CREATED)
 
     def post(self, room: Room, request: dict[str, Any]) -> httpx.Response:
         message = request["message"]
         mentioned = [m["id"] for m in message["mentions"]]
-        if not all(room.has_member(m) for m in mentioned):
-            return error(
-                HTTPStatus.UNPROCESSABLE_ENTITY, MessagePostKind.MENTION_NOT_IN_ROOM
-            )
-        message_id = str(uuid.UUID(int=1000 + len(room.messages)))
-        room.messages.append({"id": message_id, **message})
+        posted_id = message_id(len(room.messages))
+        room.messages.append({"id": posted_id, **message})
         recipients = [
             {"id": p["id"], "handle": p["handle"], "name": p["name"]}
             for p in room.participants
@@ -218,7 +218,7 @@ class Platform:
         ]
         return data(
             {
-                "id": message_id,
+                "id": posted_id,
                 "recipients": recipients,
                 "success": True,
             },

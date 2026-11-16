@@ -197,6 +197,11 @@ def periodic_wake_after_the_full_interval(monkeypatch: pytest.MonkeyPatch) -> No
     )
 
 
+def is_live_test(request: pytest.FixtureRequest) -> bool:
+    """Whether the test lives under ``tests/e2e``, against the real platform."""
+    return "e2e" in request.node.path.parts
+
+
 @pytest.fixture(autouse=True)
 def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     """Give every unit test its own single-instance lock dir.
@@ -207,11 +212,11 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     process. The lock dir is minted lazily (per test, on first guard
     construction) so the 3000+ tests that never build a guard pay nothing.
 
-    Live tests (e2e/integration) keep the REAL host-global guard: there,
+    Live tests (e2e) keep the REAL host-global guard: there,
     two same-id agents genuinely corrupt each other, and a loud
     BandConfigError beats silent message stealing.
     """
-    if {"e2e", "integration"} & set(request.node.path.parts):
+    if is_live_test(request):
         yield
         return
 
@@ -239,9 +244,9 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
 def instant_retries(request, monkeypatch):
     """Keep the generated client's retry count but not its multi-second backoff.
 
-    Live tests (e2e/integration) keep the real backoff against a real platform.
+    Live tests (e2e) keep the real backoff against a real platform.
     """
-    if not {"e2e", "integration"} & set(request.node.path.parts):
+    if not is_live_test(request):
         monkeypatch.setattr(http_client, "_retry_timeout", lambda **_: 0.0)
 
 
@@ -254,10 +259,10 @@ def isolated_adapter_config_env(request, monkeypatch):
     directly (``monkeypatch.setenv`` without cleanup, a subprocess, etc.)
     from bleeding into an unrelated later test's "no override" defaults.
 
-    Live tests (e2e/integration) keep the real environment: there, those
+    Live tests (e2e) keep the real environment: there, those
     values are the point.
     """
-    if {"e2e", "integration"} & set(request.node.path.parts):
+    if is_live_test(request):
         yield
         return
 

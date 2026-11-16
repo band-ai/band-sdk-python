@@ -29,32 +29,29 @@ def registered_pytest_markers() -> set[str]:
     return {entry.split(":", 1)[0].strip() for entry in entries}
 
 
-def test_empty_collection_gate_vars_read_as_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    gate_fields = list(GATED_MARKERS.values())
-    for field in gate_fields:
+GATE_FIELDS = list(GATED_MARKERS.values())
+
+
+class TestOptInGates:
+    @pytest.mark.parametrize("field", GATE_FIELDS)
+    def test_empty_gate_var_reads_as_disabled(
+        self, monkeypatch: pytest.MonkeyPatch, field: str
+    ) -> None:
         monkeypatch.setenv(field.upper(), "")
-    gates = CollectionGateSettings()
-    for field in gate_fields:
-        assert getattr(gates, field) is False, field
+        assert getattr(CollectionGateSettings(), field) is False
 
+    @pytest.mark.parametrize("field", GATE_FIELDS)
+    def test_gated_marker_opens_with_a_real_settings_field(self, field: str) -> None:
+        assert field in CollectionGateSettings.model_fields
 
-def test_every_gated_marker_opens_with_a_real_settings_field() -> None:
-    gates = CollectionGateSettings()
-    for field in GATED_MARKERS.values():
-        assert hasattr(gates, field), field
+    def test_every_gated_marker_is_registered_in_pyproject(self) -> None:
+        assert set(GATED_MARKERS) <= registered_pytest_markers()
 
-
-def test_every_gated_marker_is_registered_in_pyproject() -> None:
-    assert set(GATED_MARKERS) <= registered_pytest_markers()
-
-
-def test_empty_baseline_vars_fall_back_to_defaults(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("E2E_TESTS_ENABLED", "")
-    monkeypatch.setenv("E2E_TIMEOUT", "")
-    settings = BaselineSettings()
-    assert settings.e2e_tests_enabled is False
-    assert settings.e2e_timeout == 120
+    def test_empty_baseline_vars_fall_back_to_defaults(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("E2E_TESTS_ENABLED", "")
+        monkeypatch.setenv("E2E_TIMEOUT", "")
+        settings = BaselineSettings()
+        assert settings.e2e_tests_enabled is False
+        assert settings.e2e_timeout == 120

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import sys
 from dataclasses import dataclass
 
@@ -16,42 +17,41 @@ SCRIPT = EXAMPLES_ROOT / "agentcore" / "custom_tools_llm_server.py"
 HEALTHY = load_script_module(SCRIPT, "coresident_container").HEALTHY
 HOST = "127.0.0.1"
 INSTANCES = 3
-# uvicorn logs this only after lifespan startup, once its socket is listening.
-SERVING = b"Uvicorn running on"
+# uvicorn logs this only after lifespan startup, once its socket is listening;
+# for port 0 it names the port the OS assigned.
+SERVING = re.compile(rb"Uvicorn running on (http://\S+)")
 # Hung-shutdown guard before escalating to kill; not part of any claim.
 STOP_GRACE_S = 10
 
 
 @dataclass(frozen=True)
 class Instance:
-    port: int
     process: asyncio.subprocess.Process
 
-    @property
-    def ping_url(self) -> str:
-        return f"http://{HOST}:{self.port}/ping"
-
-    async def serving(self) -> None:
-        """Return once uvicorn reports listening; fail with the output on early exit."""
+    async def serving(self) -> str:
+        """The base URL once uvicorn reports listening; fail with the output on early exit."""
         assert self.process.stdout is not None
         output = bytearray()
-        while SERVING not in (line := await self.process.stdout.readline()):
+        while not (
+            match := SERVING.search(line := await self.process.stdout.readline())
+        ):
             if not line:
                 raise AssertionError(
-                    f"instance on port {self.port} exited before serving:\n"
+                    "instance exited before serving:\n"
                     + output.decode(errors="replace")
                 )
             output += line
+        return match.group(1).decode()
 
 
-async def launch(port: int, platform_url: str) -> Instance:
-    """Start one container whose only per-instance setting is its port."""
+async def launch(platform_url: str) -> Instance:
+    """Start one container on a port the OS assigns when it binds."""
     env = {
         **os.environ,
         **CREDENTIALS,
         "BAND_REST_URL": platform_url,
         "HOST": HOST,
-        "PORT": str(port),
+        "PORT": "0",
     }
     process = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -60,7 +60,7 @@ async def launch(port: int, platform_url: str) -> Instance:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    return Instance(port, process)
+    return Instance(process)
 
 
 async def stop(instance: Instance) -> None:

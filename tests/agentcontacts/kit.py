@@ -1,4 +1,4 @@
-"""Minimal real adapter and platform coordinates for contact wiring tests."""
+"""Minimal real adapter and agent for contact wiring tests."""
 
 from __future__ import annotations
 
@@ -8,11 +8,8 @@ from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
 from band.runtime.agentconfig import AgentConfig
 from band.runtime.contacts import ContactEventConfig
+from tests.fakeplatform import REST_URL
 from tests.identifiers import AGENT_ID
-
-REST_URL = "https://test.invalid"
-AGENT_API_URL = f"{REST_URL}/api/v1/agent"
-STAMP = "2026-02-09T10:30:00Z"
 
 
 class ContactAdapter(SimpleAdapter[Any]):

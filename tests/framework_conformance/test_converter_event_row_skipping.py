@@ -8,11 +8,18 @@ from band.core.types import MessageType
 
 
 class TestEventRowSkipping:
-    @pytest.mark.parametrize("message_type", [MessageType.THOUGHT, MessageType.ERROR])
-    def test_skips_another_agents_event_row(
-        self, make_converter, output, message_type: MessageType
+    @pytest.mark.parametrize(
+        ("message_type", "kept"),
+        [
+            (MessageType.TEXT, True),
+            (MessageType.THOUGHT, False),
+            (MessageType.ERROR, False),
+        ],
+    )
+    def test_keeps_another_agents_row_only_when_it_is_text(
+        self, make_converter, output, message_type: MessageType, kept: bool
     ):
-        """Another agent's text row is kept, so only its type drops this one."""
+        """The text control proves only the row's type decides whether it drops."""
         converter = make_converter()
         raw = [
             {
@@ -25,4 +32,4 @@ class TestEventRowSkipping:
 
         result = converter.convert(raw)
 
-        assert output.is_empty(result)
+        assert output.is_empty(result) is not kept

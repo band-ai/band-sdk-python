@@ -10,7 +10,6 @@ import pytest_asyncio
 from band.integrations.uvicorn_server import ManagedUvicornServer
 from tests.agentcore_container.kit import HOST, INSTANCES, Instance, launch, stop
 from tests.agentcore_container.peer import IdentityPeer
-from tests.ports import HeldPort
 
 
 @pytest_asyncio.fixture(loop_scope="function")
@@ -29,16 +28,12 @@ async def identity_peer() -> AsyncIterator[tuple[IdentityPeer, str]]:
 async def instances(
     identity_peer: tuple[IdentityPeer, str],
 ) -> AsyncIterator[list[Instance]]:
-    """Launch every instance at once; each port is held until its instance starts."""
+    """Launch every instance at once; each binds a port the OS assigns, so none is reserved."""
     _, platform_url = identity_peer
-    held = [HeldPort(HOST) for _ in range(INSTANCES)]
     launched: list[Instance] = []
     try:
-        for port in held:
-            port.release()
-            launched.append(await launch(port.port, platform_url))
+        for _ in range(INSTANCES):
+            launched.append(await launch(platform_url))
         yield launched
     finally:
-        for port in held:
-            port.release()
         await asyncio.gather(*(stop(instance) for instance in launched))

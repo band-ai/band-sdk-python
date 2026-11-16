@@ -284,10 +284,12 @@ tests/
 └── conftest.py     # Shared fixtures
 ```
 
-Every test runs either in PR CI or in the nightly live E2E baseline
+Every test must run either in PR CI or in the nightly live E2E baseline
 (`tests/e2e/baseline`, run by `.github/workflows/e2e.yml`). A test that needs
 the real platform belongs in the baseline; anything else runs offline in CI
-against local peers. Do not add a suite that neither runs.
+against local peers. Do not add a suite that neither runs. Known exception:
+no workflow yet opens the `docker_build`, `sandbox` or `vscode_chat` gates
+(tracked in INT-2088, INT-2089 and INT-2091).
 
 `testpaths = ["tests"]`, so **every** test lives here — including tests for code
 outside `src/band` (`band-bridge` -> `tests/bridge`, `docker/band_python_kit` ->

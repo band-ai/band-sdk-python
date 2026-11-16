@@ -13,11 +13,11 @@ from band.platform.link import BandLink
 from band.runtime.contact_handler import ContactEventHandler
 from band.runtime.contact_tools import ContactTools
 from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
+from tests.fakeplatform import REST_URL
 from tests.identifiers import AGENT_ID
 from tests.runtime.contactwire.kit import (
     CHATS_URL,
     HUB_ROOM_CREATED,
-    REST_URL,
     HubRoom,
 )
 
