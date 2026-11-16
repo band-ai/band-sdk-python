@@ -290,6 +290,10 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         # so the room can dispatch the reply that resolves it.
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         self._turn_tasks: dict[str, TurnTask] = {}
+        # Interrupt/timeout call recovering() because the RPC return does not
+        # prove native work stopped. Without confirmation, _cancel_and_confirm
+        # would confirm_stopped immediately after interrupt and drop that
+        # recovery attachment before process release.
         self._backend_turns = BackendTurns[CodexTurn](
             self._interrupt_codex_turn,
             provider=CODEX_PROVIDER,
@@ -1457,6 +1461,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
         Native work is unproven stopped, and any late identity the process
         reveals feeds only this cleanup, never a publication or tool binding.
+        ``turn.generation`` is the process this turn started on — not the
+        room's current generation — so a replaced successor is never recovered
+        for this stop.
         """
         room = self._room_clients.get(turn.room_id)
         if room is None:
