@@ -291,13 +291,19 @@ def bind_turn_task(
     return owner
 
 
-def resource_tools(tools: AgentToolsProtocol, owner: TurnTask) -> AgentToolsProtocol:
-    """Capture a resource view when the tools declare runtime ownership support."""
+def resource_tools(
+    tools: AgentToolsProtocol, owner: TurnTask, *, subagent: bool = False
+) -> AgentToolsProtocol:
+    """Capture a resource view when the tools declare runtime ownership support.
+
+    A resource runs the model's own work unless ``subagent``: then the view
+    calls as ``owner``, whose decline ends only its own calls.
+    """
     if getattr_static(tools, "_for_resource", None) is None:
         return tools
     capture = getattr(tools, "_for_resource", None)
     if callable(capture):
-        return capture(owner)
+        return capture(owner, subagent=subagent)
     return tools
 
 

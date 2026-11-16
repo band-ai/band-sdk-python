@@ -338,20 +338,23 @@ class FakeAgentTools:
         self._observers: list[tuple[Callable[[], bool], asyncio.Future[None]]] = []
         self.turn = Turn()
         self._activity_observer: ActivityObserver | None = None
-        self._resource: TurnTask | None = None
+        self._origin: TurnTask | None = None
 
     @property
     def origin(self) -> TurnTask | None:
-        """The resource this view calls as; ``None`` for the turn's own model."""
-        return self._resource
+        """The subagent this view calls as; ``None`` for the turn's own model."""
+        return self._origin
 
-    def _for_resource(self, owner: TurnTask) -> FakeAgentTools:
+    def _for_resource(
+        self, owner: TurnTask, *, subagent: bool = False
+    ) -> FakeAgentTools:
         """A resource's view, as ``AgentTools`` gives one.
 
-        It shares the room's logs, state and turn, but calls as ``owner``.
+        It shares the room's logs, state and turn; a subagent's calls as ``owner``.
         """
         view = copy(self)
-        view._resource = owner
+        if subagent:
+            view._origin = owner
         return view
 
     @property

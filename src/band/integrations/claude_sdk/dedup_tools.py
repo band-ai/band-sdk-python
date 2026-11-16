@@ -151,8 +151,10 @@ class DedupingAgentTools:
     def for_origin(self, tools: AgentToolsProtocol) -> DedupingAgentTools:
         return DedupingAgentTools(tools, state=self._dedup)
 
-    def _for_resource(self, owner: TurnTask) -> DedupingAgentTools:
-        return self.for_origin(resource_tools(self._inner, owner))
+    def _for_resource(
+        self, owner: TurnTask, *, subagent: bool = False
+    ) -> DedupingAgentTools:
+        return self.for_origin(resource_tools(self._inner, owner, subagent=subagent))
 
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None

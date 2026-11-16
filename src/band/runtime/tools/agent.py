@@ -360,6 +360,7 @@ class AgentTools(AgentToolsProtocol):
         self._ctx: ExecutionContext | None = None
         self._scope: TurnScope | None = None
         self._resource: TurnTask | None = None
+        self._origin: TurnTask | None = None
         self._activity_observer: ActivityObserver | None = None
         self.turn = Turn()
 
@@ -414,13 +415,15 @@ class AgentTools(AgentToolsProtocol):
 
     @property
     def origin(self) -> TurnTask | None:
-        """The resource this view calls as; ``None`` for the turn's own model."""
-        return self._resource
+        """The subagent this view calls as; ``None`` for the turn's own model."""
+        return self._origin
 
-    def _for_resource(self, owner: TurnTask) -> AgentTools:
+    def _for_resource(self, owner: TurnTask, *, subagent: bool = False) -> AgentTools:
         """An immutable origin view whose effects also require this resource."""
         view = copy(self)
         view._resource = owner
+        if subagent:
+            view._origin = owner
         if self._ctx is not None:
             view._activity_observer = self._ctx.activity_observer(self._scope, owner)
         return view

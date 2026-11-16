@@ -1,4 +1,4 @@
-"""A FakeAgentTools resource view calls as its owner and shares the room's state."""
+"""A FakeAgentTools resource view shares the room's state; a subagent's calls as its owner."""
 
 from __future__ import annotations
 
@@ -32,12 +32,13 @@ def resource_view(tools: FakeAgentTools) -> tuple[FakeAgentTools, TurnTask]:
 
 
 class TestFakeToolsResourceViews:
-    async def test_a_view_calls_as_its_owner(self) -> None:
+    async def test_only_a_subagent_view_calls_as_its_owner(self) -> None:
         tools = FakeAgentTools()
-
         view, owner = resource_view(tools)
 
-        assert (tools.origin, view.origin) == (None, owner)
+        subagent = resource_tools(tools, owner, subagent=True)
+
+        assert (tools.origin, view.origin, subagent.origin) == (None, None, owner)
 
     async def test_a_view_and_its_original_number_tasks_from_one_board(self) -> None:
         tools = FakeAgentTools()
