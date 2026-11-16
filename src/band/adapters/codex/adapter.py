@@ -66,7 +66,8 @@ from band.adapters.codex.narration import (
     plan_steps,
     raw_task_event,
     stream_delta,
-    task_event_content,
+    thread_mapped,
+    thread_resumed,
     token_usage,
     turn_error_message,
     turn_failed,
@@ -143,7 +144,6 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
     TurnResultAlreadyReported,
-    send_event_safe,
 )
 from band.core.retention import ReleaseCause, ReleaseOutcome, RoomRetention
 from band.core.retention.cleanup import spawn_owned
@@ -950,7 +950,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         str(params.get("itemId") or ""),
                         str(params.get("delta", "")),
                         log_label="reasoning delta",
-                        codex_event_type=event.method,
+                        event_type=event.method,
                     )
             case CodexNotificationMethod.PLAN_DELTA:
                 if self.config.stream_plan_events:
@@ -1730,23 +1730,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             seed=SessionSeed(restored=True),
         )
         if Emit.TASK_EVENTS in self.features.emit:
-            await send_event_safe(
-                tools,
-                content=task_event_content(
-                    task_id=thread_id,
-                    task="Codex thread",
-                    status="resumed",
-                    summary=f"Room: {room_id}",
-                ),
-                message_type="task",
-                metadata={
-                    CodexMetadataKey.THREAD: thread_id,
-                    CodexMetadataKey.ROOM: room_id,
-                    "codex_resumed": True,
-                },
-                log_label="thread resumed task event",
-                log_level=logging.DEBUG,
-            )
+            await thread_resumed(tools, room_id, thread_id)
         return thread_id
 
     async def _start_thread(
@@ -1782,24 +1766,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         )
 
         if Emit.TASK_EVENTS in self.features.emit:
-            await send_event_safe(
-                tools,
-                content=task_event_content(
-                    task_id=thread_id,
-                    task="Codex thread",
-                    status="mapped",
-                    summary=f"Transport: {self.config.transport}",
-                ),
-                message_type="task",
-                metadata={
-                    CodexMetadataKey.THREAD: thread_id,
-                    CodexMetadataKey.ROOM: room_id,
-                    "codex_created_at": datetime.now(UTC).isoformat(),
-                    CodexMetadataKey.TRANSPORT: self.config.transport,
-                },
-                log_label="thread mapped task event",
-                log_level=logging.DEBUG,
-            )
+            await thread_mapped(tools, room_id, thread_id, self.config.transport)
 
         return thread_id
 

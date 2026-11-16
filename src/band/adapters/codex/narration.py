@@ -10,6 +10,7 @@ import json
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from band.adapters.codex.approvals import APPROVAL_OPTIONS, approval_type
@@ -38,6 +39,8 @@ from band.integrations.codex.types import (
 logger = logging.getLogger(__name__)
 
 # Bounds the titles remembered between task_started and task_complete.
+# codex_event_type of both turn lifecycle events.
+TURN_LIFECYCLE_EVENT = "turn_lifecycle"
 MAX_TASK_TITLES = 500
 
 # Cap on the raw diff forwarded in turn/diff/updated metadata, in UTF-8 bytes
@@ -226,7 +229,7 @@ async def _show_item(
         # An empty reasoning or plan item says nothing, so it is not shown.
         if Emit.THOUGHTS in emit and (text := thought_text(item_type, item)):
             await tools.send_event(
-                content=text, message_type="thought", metadata=metadata
+                content=text, message_type=MessageType.THOUGHT, metadata=metadata
             )
     elif item_type not in UNRENDERED_ITEM_TYPES:
         logger.debug("Unhandled item/completed type: %s", item_type)
@@ -265,7 +268,7 @@ async def raw_task_event(
         content=task_event_content(
             task_id=task_id, task=title, status=task_phase, summary=summary
         ),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata=metadata,
     )
     if not is_started and task_id:
@@ -291,7 +294,7 @@ async def turn_marker_started(tools: AgentToolsProtocol, ref: TurnRef) -> None:
             status="started",
             summary=f"Thread: {ref.thread_id}",
         ),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata=ref.metadata(),
         log_label="turn started task event",
         log_level=logging.DEBUG,
@@ -313,11 +316,11 @@ async def turn_marker_finished(
         content=task_event_content(
             task_id=ref.turn_id, task="Codex turn", status=status, summary=summary
         ),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata={
             **ref.metadata(),
-            "codex_turn_status": status,
-            "codex_error": error or None,
+            CodexMetadataKey.TURN_STATUS: status,
+            CodexMetadataKey.ERROR: error or None,
             **_turn_measures(duration_s, usage),
         },
         log_label="turn outcome task event",
@@ -336,11 +339,11 @@ async def turn_lifecycle_started(
             status="started",
             summary=f"Thread: {ref.thread_id}",
         ),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata={
-            "codex_event_type": "turn_lifecycle",
+            CodexMetadataKey.EVENT_TYPE: TURN_LIFECYCLE_EVENT,
             **ref.metadata(),
-            "codex_turn_status": "started",
+            CodexMetadataKey.TURN_STATUS: "started",
             "codex_input_summary": input_summary,
         },
         log_label="turn started lifecycle event",
@@ -365,12 +368,12 @@ async def turn_lifecycle_finished(
             status=status,
             summary=f"Duration: {duration_s:.1f}s | Thread: {ref.thread_id}",
         ),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata={
-            "codex_event_type": "turn_lifecycle",
+            CodexMetadataKey.EVENT_TYPE: TURN_LIFECYCLE_EVENT,
             **ref.metadata(),
-            "codex_turn_status": status,
-            **({"codex_error": error} if error else {}),
+            CodexMetadataKey.TURN_STATUS: status,
+            **({CodexMetadataKey.ERROR: error} if error else {}),
             **_turn_measures(duration_s, usage),
         },
         log_label="turn lifecycle event",
@@ -389,8 +392,8 @@ async def unstreamed_messages(
         await send_event_safe(
             tools,
             content=text,
-            message_type="thought",
-            metadata={"codex_item_id": item_id, **ref.metadata()},
+            message_type=MessageType.THOUGHT,
+            metadata={CodexMetadataKey.ITEM_ID: item_id, **ref.metadata()},
             log_label="Codex completed thought",
         )
 
@@ -411,17 +414,19 @@ async def stream_delta(
     delta: str,
     *,
     log_label: str,
-    **labels: str,
+    subtype: str | None = None,
+    event_type: str | None = None,
 ) -> bool:
     """Stream one delta of an item as a thought; whether it was delivered."""
+    labels = {"subtype": subtype, CodexMetadataKey.EVENT_TYPE: event_type}
     return await send_event_safe(
         tools,
         content=delta,
-        message_type="thought",
+        message_type=MessageType.THOUGHT,
         metadata={
             "streaming": True,
-            **labels,
-            "codex_item_id": item_id,
+            **{key: value for key, value in labels.items() if value is not None},
+            CodexMetadataKey.ITEM_ID: item_id,
             **ref.metadata(),
         },
         log_label=log_label,
@@ -443,9 +448,9 @@ async def context_compacted(
             status="completed",
             summary=f"Thread: {thread_id}",
         ),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata={
-            "codex_event_type": "context_compaction",
+            CodexMetadataKey.EVENT_TYPE: "context_compaction",
             **TurnRef(ref.room_id, thread_id, turn_id).metadata(),
         },
         log_label="context compaction event",
@@ -467,7 +472,7 @@ async def plan_steps(
             status="updated",
             summary=f"{len(steps)} steps",
         ),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata={
             "codex_plan_steps": [{"step": s.step, "status": s.status} for s in steps],
             **ref.metadata(),
@@ -489,7 +494,7 @@ async def token_usage(
     await send_event_safe(
         tools,
         content=usage.format_summary(),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata=metadata,
         log_label="token usage event",
         log_level=logging.DEBUG,
@@ -528,15 +533,77 @@ async def diff_updated(
         content=task_event_content(
             task_id=ref.turn_id, task="Codex diff", status="updated", summary=summary
         ),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata={
-            "codex_event_type": "turn_diff",
+            CodexMetadataKey.EVENT_TYPE: "turn_diff",
             **ref.metadata(),
             "codex_files_changed": files_changed,
             "codex_diff": diff,
             **truncation,
         },
         log_label="diff event",
+        log_level=logging.DEBUG,
+    )
+
+
+def _approval_labels(method: str) -> dict[str, Any]:
+    return {
+        CodexMetadataKey.APPROVAL_METHOD: method,
+        CodexMetadataKey.APPROVAL_TYPE: approval_type(method),
+        CodexMetadataKey.APPROVAL_OPTIONS: list(APPROVAL_OPTIONS),
+    }
+
+
+async def thread_resumed(
+    tools: AgentToolsProtocol, room_id: str, thread_id: str
+) -> None:
+    await _thread_event(
+        tools,
+        room_id,
+        thread_id,
+        status="resumed",
+        summary=f"Room: {room_id}",
+        details={"codex_resumed": True},
+    )
+
+
+async def thread_mapped(
+    tools: AgentToolsProtocol, room_id: str, thread_id: str, transport: str
+) -> None:
+    await _thread_event(
+        tools,
+        room_id,
+        thread_id,
+        status="mapped",
+        summary=f"Transport: {transport}",
+        details={
+            "codex_created_at": datetime.now(UTC).isoformat(),
+            CodexMetadataKey.TRANSPORT: transport,
+        },
+    )
+
+
+async def _thread_event(
+    tools: AgentToolsProtocol,
+    room_id: str,
+    thread_id: str,
+    *,
+    status: str,
+    summary: str,
+    details: dict[str, Any],
+) -> None:
+    await send_event_safe(
+        tools,
+        content=task_event_content(
+            task_id=thread_id, task="Codex thread", status=status, summary=summary
+        ),
+        message_type=MessageType.TASK,
+        metadata={
+            CodexMetadataKey.THREAD: thread_id,
+            CodexMetadataKey.ROOM: room_id,
+            **details,
+        },
+        log_label=f"thread {status} task event",
         log_level=logging.DEBUG,
     )
 
@@ -552,11 +619,9 @@ async def approval_requested(
 ) -> None:
     """A pending approval as a task event a UI can render as a prompt."""
     metadata: dict[str, Any] = {
-        "codex_event_type": "approval_request",
-        "codex_approval_type": approval_type(method),
-        "codex_approval_method": method,
+        CodexMetadataKey.EVENT_TYPE: "approval_request",
         CodexMetadataKey.ROOM: room_id,
-        "codex_approval_options": list(APPROVAL_OPTIONS),
+        **_approval_labels(method),
     }
     for key, field in (
         ("command", "codex_command"),
@@ -575,7 +640,7 @@ async def approval_requested(
             status="pending",
             summary=summary,
         ),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata=metadata,
         log_label="approval request task event",
         log_level=logging.DEBUG,
@@ -588,12 +653,8 @@ async def approval_decided_by_policy(
     await send_event_safe(
         tools,
         content=f"Codex approval request handled automatically ({decision}).",
-        message_type="thought",
-        metadata={
-            "codex_approval_method": method,
-            "codex_approval_type": approval_type(method),
-            "codex_approval_options": list(APPROVAL_OPTIONS),
-        },
+        message_type=MessageType.THOUGHT,
+        metadata=_approval_labels(method),
         log_label="approval thought event",
         log_level=logging.DEBUG,
     )
@@ -610,10 +671,10 @@ async def approval_resolved(
             status=entry.decision,
             summary=entry.summary,
         ),
-        message_type="task",
+        message_type=MessageType.TASK,
         metadata={
-            "codex_event_type": "approval_resolution",
-            "codex_approval_method": entry.method,
+            CodexMetadataKey.EVENT_TYPE: "approval_resolution",
+            CodexMetadataKey.APPROVAL_METHOD: entry.method,
             "codex_approval_decision": entry.decision,
             "codex_decided_by": entry.decided_by,
             "codex_session_level": entry.session_level,

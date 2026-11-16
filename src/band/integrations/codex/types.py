@@ -36,9 +36,10 @@ class CodexItemType(StrEnum):
     """``item/completed`` "type" values — the wire vocabulary the adapter
     dispatches on for tool-like, thought-like, and message items.
 
-    Single source of truth so the gate sets, the per-type extractors, and the
-    approval-label helpers in ``CodexAdapter`` all reference the same names
-    instead of re-typing the protocol's literal strings.
+    Single source of truth so the gate sets and extractors in
+    ``band.adapters.codex.items`` and the approval labels in
+    ``band.adapters.codex.approvals`` reference the same names instead of
+    re-typing the protocol's literal strings.
     """
 
     COMMAND_EXECUTION = "commandExecution"
@@ -86,12 +87,19 @@ DYNAMIC_TOOL_CALL_METHOD = "item/tool/call"
 
 
 class CodexMetadataKey(StrEnum):
-    """Metadata keys naming a Codex room, thread, turn and transport on Band events."""
+    """Metadata keys Codex events carry on Band, beyond one-off details."""
 
     ROOM = "codex_room_id"
     THREAD = "codex_thread_id"
     TURN = "codex_turn_id"
     TRANSPORT = "codex_transport"
+    EVENT_TYPE = "codex_event_type"
+    ITEM_ID = "codex_item_id"
+    TURN_STATUS = "codex_turn_status"
+    ERROR = "codex_error"
+    APPROVAL_METHOD = "codex_approval_method"
+    APPROVAL_TYPE = "codex_approval_type"
+    APPROVAL_OPTIONS = "codex_approval_options"
 
 
 class CodexTurnStatus(StrEnum):
@@ -453,7 +461,7 @@ class CodexTokenUsage:
     def to_metadata(self) -> dict[str, Any]:
         """Return metadata dict for a token usage event."""
         meta: dict[str, Any] = {
-            "codex_event_type": "token_usage",
+            CodexMetadataKey.EVENT_TYPE: "token_usage",
             "codex_input_tokens": self.input_tokens,
             "codex_output_tokens": self.output_tokens,
             "codex_reasoning_tokens": self.reasoning_tokens,
