@@ -11,27 +11,19 @@ from band_rest import (
 )
 
 from tests.mcp.standalonedoor.kit import call, read_as, standalone_door
-from tests.mcp.standalonedoor.peer import OWNER, OWNER_EMAIL, room_record
+from tests.mcp.standalonedoor.peer import Platform, room_record
 
 
 @pytest.mark.usefixtures("platform")
 class TestHumanDoor:
-    async def test_profile_reports_the_signed_in_owner(self) -> None:
+    async def test_profile_reports_the_signed_in_owner(
+        self, platform: Platform
+    ) -> None:
         async with standalone_door() as door:
             profile = await call(door, "band_get_my_profile")
 
         assert profile == read_as(
-            GetMyProfileResponse,
-            {
-                "data": {
-                    "id": OWNER.id,
-                    "handle": OWNER.handle,
-                    "email": OWNER_EMAIL,
-                    "first_name": "Olive",
-                    "last_name": "Owner",
-                    "role": "user",
-                }
-            },
+            GetMyProfileResponse, {"data": platform.owner_profile()}
         )
 
     async def test_created_room_is_listed_and_fetched_by_id(self) -> None:
