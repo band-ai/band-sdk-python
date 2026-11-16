@@ -193,3 +193,73 @@ class TestContactToolsWire:
             {"action": action, "request_id": "request-1"},
         )
         assert result == {"id": "request-1", "status": status}
+
+    async def test_an_empty_contact_page_reads_as_no_contacts(
+        self, tools: ContactTools, httpx_mock: HTTPXMock
+    ) -> None:
+        empty_page = {"page": 1, "page_size": 50, "total_count": 0, "total_pages": 0}
+        httpx_mock.add_response(json={"data": [], "metadata": empty_page})
+
+        assert await tools.list_contacts() == {"contacts": [], "metadata": empty_page}
+
+    async def test_remove_contact_by_id_sends_only_the_id(
+        self, tools: ContactTools, httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(json={"data": {"status": "removed"}})
+
+        result = await tools.remove_contact(contact_id="contact-1")
+
+        assert sent(httpx_mock.get_request()) == (
+            "POST",
+            f"{CONTACTS_URL}/remove",
+            {"contact_id": "contact-1"},
+        )
+        assert result == {"status": "removed"}
+
+    async def test_list_contact_requests_sends_the_sent_status_filter(
+        self, tools: ContactTools, httpx_mock: HTTPXMock
+    ) -> None:
+        directions = {"total": 0, "total_pages": 0}
+        httpx_mock.add_response(
+            json={
+                "data": {"received": [], "sent": []},
+                "metadata": {
+                    "page": 1,
+                    "page_size": 50,
+                    "received": directions,
+                    "sent": directions,
+                },
+            }
+        )
+
+        await tools.list_contact_requests(sent_status="approved")
+
+        assert sent(httpx_mock.get_request()) == (
+            "GET",
+            f"{CONTACTS_URL}/requests?page=1&page_size=50&sent_status=approved",
+            None,
+        )
+
+    async def test_respond_contact_request_by_handle_sends_only_the_handle(
+        self, tools: ContactTools, httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(
+            json={"data": {"id": "request-2", "status": "cancelled"}}
+        )
+
+        result = await tools.respond_contact_request("cancel", handle="@john_doe")
+
+        assert sent(httpx_mock.get_request()) == (
+            "POST",
+            f"{CONTACTS_URL}/requests/respond",
+            {"action": "cancel", "handle": "@john_doe"},
+        )
+        assert result == {"id": "request-2", "status": "cancelled"}
+
+    async def test_remove_and_respond_need_an_identifier_and_send_nothing(
+        self, tools: ContactTools
+    ) -> None:
+        with pytest.raises(ValueError, match="Either handle or contact_id"):
+            await tools.remove_contact()
+        with pytest.raises(ValueError, match="Either handle or request_id"):
+            await tools.respond_contact_request("approve")

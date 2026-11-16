@@ -57,6 +57,10 @@ class WireCall(NamedTuple):
     body: Any
 
 
+INVALID_KEY = "Invalid API key"
+ORPHAN_WARNING = f"Failed after creating room {ROOM_ID} — room may need manual cleanup"
+
+
 def wire_calls(requests: list[httpx.Request]) -> list[WireCall]:
     """Project sent requests onto what the platform acts on."""
     return [
@@ -79,22 +83,25 @@ def api_url(
     )
 
 
+def cli_args(mode: AuthMode, target_handle: str) -> list[str]:
+    """The command-line arguments for one trigger against the mocked platform."""
+    return [
+        "--api-key",
+        API_KEY,
+        "--rest-url",
+        REST_URL,
+        "--auth-mode",
+        mode,
+        "--target-handle",
+        target_handle,
+        "--message",
+        MESSAGE,
+    ]
+
+
 def trigger_args(mode: AuthMode, target_handle: str) -> argparse.Namespace:
     """The parsed CLI arguments for one trigger against the mocked platform."""
-    return build_parser().parse_args(
-        [
-            "--api-key",
-            API_KEY,
-            "--rest-url",
-            REST_URL,
-            "--auth-mode",
-            mode,
-            "--target-handle",
-            target_handle,
-            "--message",
-            MESSAGE,
-        ]
-    )
+    return build_parser().parse_args(cli_args(mode, target_handle))
 
 
 def page_params(page: int) -> dict[str, str]:

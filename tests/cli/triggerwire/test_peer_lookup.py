@@ -9,7 +9,7 @@ from band.cli.trigger import AuthMode, find_peer_by_handle
 from band.client.rest import AsyncRestClient
 from tests.cli.triggerwire.kit import TARGET, answer_peer_pages
 
-LISTED = "owner/reporter"
+LISTED = TARGET["handle"]
 
 
 class TestPeerLookup:
@@ -21,8 +21,8 @@ class TestPeerLookup:
             pytest.param(f"@{LISTED}", LISTED, id="requested-with-at"),
             pytest.param(LISTED, f"@{LISTED}", id="listed-with-at"),
             pytest.param(f"@{LISTED}", f"@{LISTED}", id="both-with-at"),
-            pytest.param("@Owner/Reporter", LISTED, id="requested-case"),
-            pytest.param(LISTED, "Owner/Reporter", id="listed-case"),
+            pytest.param(f"@{LISTED.upper()}", LISTED, id="requested-case"),
+            pytest.param(LISTED, LISTED.upper(), id="listed-case"),
         ],
     )
     async def test_finds_the_peer_and_keeps_its_listed_handle(

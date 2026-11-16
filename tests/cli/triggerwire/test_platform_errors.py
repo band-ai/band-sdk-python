@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pytest
@@ -10,7 +11,9 @@ from pytest_httpx import HTTPXMock
 from band.cli.trigger import AuthMode, run
 from tests.cli.triggerwire.kit import (
     CHATS,
+    INVALID_KEY,
     MESSAGES,
+    ORPHAN_WARNING,
     PARTICIPANTS,
     PEERS,
     ROOM_ID,
@@ -29,7 +32,6 @@ ROOM_LIMIT = "Chat room limit reached."
 INVALID_CHAT = "Validation failed"
 UNKNOWN_PARTICIPANT = "Participant not found"
 INVALID_PARTICIPANT = "Participant cannot join this room"
-INVALID_KEY = "Invalid API key"
 MESSAGE_FORBIDDEN = "Messaging this agent is not allowed"
 
 # 403/404 parse into Fern's ``Error`` model; an undeclared or ``Any``-typed
@@ -111,6 +113,7 @@ class TestTriggerPlatformErrors:
     async def test_participant_rejection_reports_the_message_and_orphan_room(
         self,
         httpx_mock: HTTPXMock,
+        caplog: pytest.LogCaptureFixture,
         mode: AuthMode,
         status: int,
         body: dict[str, Any],
@@ -127,16 +130,19 @@ class TestTriggerPlatformErrors:
             status=status,
         )
 
+        caplog.set_level(logging.WARNING, logger="band.cli.trigger")
+
         with pytest.raises(RuntimeError) as caught:
             await run(trigger_args(mode, target_handle=f"@{TARGET['handle']}"))
 
+        assert ORPHAN_WARNING in caplog.messages
         assert str(caught.value) == (
             f"Failed to complete trigger: {platform_message} (orphan room: {ROOM_ID})"
         )
 
     @pytest.mark.parametrize("mode", list(AuthMode))
     async def test_message_rejection_reports_the_message_and_orphan_room(
-        self, httpx_mock: HTTPXMock, mode: AuthMode
+        self, httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture, mode: AuthMode
     ) -> None:
         answer_peer_pages(httpx_mock, mode, [[TARGET]])
         answer(httpx_mock, mode, "POST", CHATS, created_room())
@@ -150,9 +156,12 @@ class TestTriggerPlatformErrors:
             status=403,
         )
 
+        caplog.set_level(logging.WARNING, logger="band.cli.trigger")
+
         with pytest.raises(RuntimeError) as caught:
             await run(trigger_args(mode, target_handle=f"@{TARGET['handle']}"))
 
+        assert ORPHAN_WARNING in caplog.messages
         assert str(caught.value) == (
             f"Failed to complete trigger: {MESSAGE_FORBIDDEN} (orphan room: {ROOM_ID})"
         )

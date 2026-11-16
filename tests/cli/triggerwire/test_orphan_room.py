@@ -11,8 +11,8 @@ from pytest_httpx import HTTPXMock
 from band.cli.trigger import AuthMode, run
 from tests.cli.triggerwire.kit import (
     CHATS,
+    ORPHAN_WARNING,
     PARTICIPANTS,
-    ROOM_ID,
     TARGET,
     answer,
     answer_peer_pages,
@@ -20,8 +20,6 @@ from tests.cli.triggerwire.kit import (
     created_room,
     trigger_args,
 )
-
-ORPHAN_WARNING = f"Failed after creating room {ROOM_ID} — room may need manual cleanup"
 
 
 class TestOrphanRoom:
