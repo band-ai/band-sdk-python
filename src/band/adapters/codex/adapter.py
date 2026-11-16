@@ -1741,13 +1741,13 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         tools: AgentToolsProtocol,
     ) -> str:
         room_id = room.room_id
-        dynamic_tools = self._build_dynamic_tools(tools)
+        offered = self._build_dynamic_tools(tools)
         start_params: dict[str, Any] = {
             "model": room.selected_model,
             "cwd": room.workspace,
             "approvalPolicy": self.config.approval_policy,
             "personality": self.config.personality,
-            "dynamicTools": dynamic_tools,
+            "dynamicTools": offered,
         }
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
@@ -1760,7 +1760,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         # complete abandons it, and Band history names it only once one does.
         self._room_threads[room_id] = thread_id
         room.bind_thread(
-            registration=dynamic_tools,
+            registration=offered,
             settings=ThreadSettings.reported_by(started),
             seed=SessionSeed(),
         )

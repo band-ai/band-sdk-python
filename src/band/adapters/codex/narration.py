@@ -38,9 +38,10 @@ from band.integrations.codex.types import (
 
 logger = logging.getLogger(__name__)
 
-# Bounds the titles remembered between task_started and task_complete.
 # codex_event_type of both turn lifecycle events.
 TURN_LIFECYCLE_EVENT = "turn_lifecycle"
+
+# Bounds the titles remembered between task_started and task_complete.
 MAX_TASK_TITLES = 500
 
 # Cap on the raw diff forwarded in turn/diff/updated metadata, in UTF-8 bytes
