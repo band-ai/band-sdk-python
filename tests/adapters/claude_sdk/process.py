@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
@@ -39,7 +39,7 @@ class WorkspaceProcess(SubprocessCLITransport):
             raise RuntimeError(CLEANUP_FAILURE)
         await super().close()
 
-    async def _check_claude_version(self) -> None:
+    def _check_claude_version(self, data: dict[str, Any]) -> None:
         pass
 
     def _build_command(self) -> list[str]:
