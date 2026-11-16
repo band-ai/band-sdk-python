@@ -7,6 +7,7 @@ import logging
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex.commands import HELP_TEXT
 from band.converters.codex import CODEX_RESUME_RECORD
 from band.integrations.codex.types import CodexRequestMethod, CodexSessionState
 from band.testing import reported_failures
@@ -45,6 +46,25 @@ class TestSlashCommandCoverage:
 
         assert tools.messages_sent
         assert "No thread mapped" in tools.messages_sent[-1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_help_answers_with_the_command_reference(self) -> None:
+        adapter = make_codex_adapter(FakeCodexClient(), config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+        await send_bootstrap(adapter, content="/help", tools=tools)
+
+        assert [m["content"] for m in tools.messages_sent] == [HELP_TEXT]
+
+    @pytest.mark.asyncio
+    async def test_unknown_thread_subcommand_goes_to_codex(self) -> None:
+        """Only known /thread subcommands are local; anything else is a prompt."""
+        client = FakeCodexClient(events=[turn_completed()])
+        adapter = make_codex_adapter(client, config=CodexAdapterConfig())
+        await adapter.on_started("Agent", "A coding agent")
+        await send_bootstrap(adapter, content="/thread bogus")
+
+        assert CodexRequestMethod.TURN_START in client.request_methods
 
     @pytest.mark.asyncio
     async def test_thread_info_includes_thread_and_usage(self) -> None:

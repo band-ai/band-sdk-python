@@ -34,13 +34,13 @@ from band.adapters.codex.commands import (
     APPROVAL_REQUESTED_TEMPLATE,
     APPROVAL_RESOLVED_TEMPLATE,
     APPROVAL_TIMED_OUT_TEMPLATE,
-    COMMAND_WORDS,
     HELP_TEXT,
     MODEL_LIST_WORDS,
     NO_APPROVALS_TO_RESOLVE_MESSAGE,
     PROCESS_COMMANDS,
     CodexCommand,
     CodexSubcommand,
+    parse_command,
 )
 from band.adapters.codex.config import CodexAdapterConfig
 from band.adapters.codex.dynamictools import (
@@ -58,6 +58,7 @@ from band.adapters.codex.items import (
     CodexToolItem,
     item_call_id,
 )
+from band.adapters.codex.models import supported_efforts, visible_model_ids
 from band.adapters.codex.roomstate import RoomCodexClient, ThreadSettings
 from band.adapters.codex.rpc import (
     CodexClientProtocol,
@@ -71,15 +72,15 @@ from band.adapters.codex.rpc import (
 )
 from band.adapters.codex.sandbox import (
     ENFORCED_SANDBOX_MODES,
-    EXTERNAL_SANDBOX_KEY,
-    EXTERNAL_SANDBOX_POLICY_TYPE,
     SANDBOX_CONFIRM_FLAG,
-    SANDBOX_KEY_ALIASES,
     SANDBOX_MODE_CHOICES,
-    SANDBOX_MODES,
     WINDOWS_SANDBOX_MISSING_WARNING,
     WINDOWS_SANDBOX_SETUP_WARNING,
     CodexSandboxMode,
+    apply_thread_sandbox,
+    apply_turn_sandbox,
+    canonical_sandbox_key,
+    normalize_sandbox_mode,
 )
 from band.adapters.codex.selfconfig import (
     REASONING_SUMMARIES,
@@ -165,7 +166,6 @@ from band.integrations.codex.types import (
     CODEX_TRANSPORT_CLOSED_FAILURE_CODE,
     DYNAMIC_TOOL_CALL_METHOD,
     WINDOWS_PLATFORM_OS,
-    WINDOWS_SANDBOX_CONFIG_KEY,
     ApprovalAuditEntry,
     CodexItemType,
     CodexMetadataKey,
@@ -193,7 +193,6 @@ from band.runtime.decisions import (
 from band.runtime.formatters import (
     build_participants_message,
     format_current_inputs,
-    strip_leading_mentions,
 )
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, render_system_prompt
 from band.runtime.sessionresume import SessionSeed, fetch_transcript
@@ -476,12 +475,12 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
     def is_control_message(self, msg: PlatformMessage) -> bool:
         """Keep all local commands outside ordinary model input."""
-        return self._extract_local_command(msg.content) is not None
+        return parse_command(msg.content) is not None
 
     async def try_handle_control(
         self, msg: PlatformMessage, tools: AgentToolsProtocol
     ) -> bool:
-        command = self._extract_local_command(msg.content)
+        command = parse_command(msg.content)
         if command is None:
             return False
         room_id = msg.room_id
@@ -525,11 +524,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         room = self._room_client(room_id)
         self._active_room.set(room_id)
         # A local command is always a turn of its own (see is_control_message).
-        command = (
-            self._extract_local_command(messages[0].content)
-            if len(messages) == 1
-            else None
-        )
+        command = parse_command(messages[0].content) if len(messages) == 1 else None
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         owner_ready: asyncio.Future[TurnTask] = (
@@ -1801,7 +1796,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         kind = policy.get("type") if policy is not None else self.config.sandbox
         if not isinstance(kind, str):
             return True
-        return self._canonical_sandbox_key(kind) in ENFORCED_SANDBOX_MODES
+        return canonical_sandbox_key(kind) in ENFORCED_SANDBOX_MODES
 
     async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
         roots = self.config.skill_roots
@@ -1831,9 +1826,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
             return OPENAI_MODEL
 
-        visible_model_ids = self._visible_model_ids(result)
-        if visible_model_ids:
-            return visible_model_ids[0]
+        if models := visible_model_ids(result):
+            return models[0]
         logger.warning("model/list has no visible models; using default Codex model")
         return OPENAI_MODEL
 
@@ -3287,286 +3281,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         command: CodexCommand,
         args: str,
     ) -> bool:
-        mention = self._sender_mention(msg)
-
-        if command == CodexCommand.HELP:
-            await deliver_notice(tools, HELP_TEXT, mentions=mention)
-            return True
-
-        if command == CodexCommand.STATUS:
-            mapped_thread = self._room_threads.get(room_id)
-            usage = (
-                self._token_usage.get(mapped_thread or "") if mapped_thread else None
-            )
-            usage_line = (
-                usage.format_summary() if usage and usage.total_tokens > 0 else "none"
-            )
-            session_approvals = len(self._approvals.session_patterns(room_id))
-            room = self._active_client_state()
-            selected_model = room.selected_model if room is not None else None
-            status_text = (
-                "Codex status:\n"
-                f"- transport: {self.config.transport}\n"
-                f"- selected_model: {selected_model or 'unknown'}\n"
-                f"- configured_model: {self.config.model or 'auto'}\n"
-                f"- room_id: {room_id}\n"
-                f"- thread_id: {mapped_thread or 'not mapped'}\n"
-                f"- approval_policy: {self.config.approval_policy}\n"
-                f"- approval_mode: {self.config.approval_mode}\n"
-                f"- sandbox: {self._effective_sandbox(room_id) or 'default'}\n"
-                f"- reasoning_effort: {self.config.reasoning_effort or 'default'}\n"
-                f"- reasoning_summary: {self.config.reasoning_summary or 'default'}\n"
-                f"- pending_approvals: {self._approvals.open_count(room_id)}\n"
-                f"- session_approvals: {session_approvals}\n"
-                f"- token_usage: {usage_line}\n"
-                f"- turn_task_markers: {self.config.emit_turn_task_markers}"
-            )
-            await deliver_notice(tools, status_text, mentions=mention)
-            return True
-
-        if command in {CodexCommand.MODEL, CodexCommand.MODELS}:
-            model_arg = args.strip()
-            if not model_arg:
-                await deliver_notice(
-                    tools,
-                    "Current model: "
-                    f"`{self._selected_model or 'unknown'}` "
-                    f"(configured: `{self.config.model or 'auto'}`). "
-                    f"Use `/{CodexCommand.MODEL} {CodexSubcommand.LIST}` to view available "
-                    f"models or `/{CodexCommand.MODEL} <id>` to override.",
-                    mentions=mention,
-                )
-                return True
-
-            if model_arg.lower() in MODEL_LIST_WORDS:
-                client = self._require_active_client_state().require_client()
-                result = await client.request(CodexRequestMethod.MODEL_LIST, {})
-                models = self._visible_model_ids(result)
-                if models:
-                    preview = ", ".join(models[:10])
-                    if len(models) > 10:
-                        preview += ", ..."
-                    await deliver_notice(
-                        tools,
-                        f"Available models ({len(models)}): {preview}",
-                        mentions=mention,
-                    )
-                else:
-                    await deliver_notice(
-                        tools,
-                        "No visible models returned by Codex app-server.",
-                        mentions=mention,
-                    )
-                return True
-
-            # The room's choice outlives its process; never adapter-wide config.
-            self._selected_model = model_arg
-            await deliver_notice(
-                tools,
-                f"Model override set to `{model_arg}` for subsequent turns.",
-                mentions=mention,
-            )
-            return True
-
-        if command == CodexCommand.REASONING:
-            effort_arg = args.strip().lower()
-            model_id, efforts = await self._current_model_efforts()
-            supported = ", ".join(efforts)
-            if not effort_arg:
-                hint = f"`{model_id}` supports: {supported}. " if efforts else ""
-                await deliver_notice(
-                    tools,
-                    f"Current reasoning effort: `{self.config.reasoning_effort or 'default'}`. "
-                    f"Summary: `{self.config.reasoning_summary or 'default'}`. "
-                    f"{hint}Use `/reasoning <effort>` to override.",
-                    mentions=mention,
-                )
-                return True
-            # A person's typo would otherwise fail every later turn; the
-            # setreasoning tool can't check this because it runs mid-turn.
-            if efforts and effort_arg not in efforts:
-                await deliver_notice(
-                    tools,
-                    f"`{model_id}` doesn't support reasoning effort `{effort_arg}`. "
-                    f"Supported: {supported}.",
-                    mentions=mention,
-                )
-                return True
-            self._require_active_client_state().reasoning_effort = effort_arg
-            await deliver_notice(
-                tools,
-                f"Reasoning effort set to `{effort_arg}` for subsequent turns.",
-                mentions=mention,
-            )
-            return True
-
-        # --- Phase 1: /sandbox and /permissions commands ---
-        if command == CodexCommand.SANDBOX:
-            if self.config.sandbox_policy is not None:
-                await deliver_notice(
-                    tools,
-                    "Cannot override sandbox: a `sandbox_policy` is configured. "
-                    "Remove `sandbox_policy` from config to use per-room "
-                    f"`/{CodexCommand.SANDBOX}` overrides.",
-                    mentions=mention,
-                )
-                return True
-            mode_arg = args.strip()
-            if not mode_arg:
-                effective = self._effective_sandbox(room_id) or "default"
-                await deliver_notice(
-                    tools,
-                    f"Current sandbox: `{effective}`. "
-                    f"Use `/{CodexCommand.SANDBOX} <{SANDBOX_MODE_CHOICES}>` to change.",
-                    mentions=mention,
-                )
-                return True
-            # Parse tokens explicitly so "--confirm-anything-else" is surfaced
-            # as an unknown mode instead of silently stripped away.
-            tokens = mode_arg.split()
-            confirm_flag = SANDBOX_CONFIRM_FLAG in tokens
-            mode_tokens = [tok for tok in tokens if tok != SANDBOX_CONFIRM_FLAG]
-            if len(mode_tokens) != 1:
-                await deliver_notice(
-                    tools,
-                    f"Usage: `/{CodexCommand.SANDBOX} <{SANDBOX_MODE_CHOICES}> "
-                    f"[{SANDBOX_CONFIRM_FLAG}]`.",
-                    mentions=mention,
-                )
-                return True
-            mode_token = mode_tokens[0]
-            normalized = self._normalize_sandbox_mode(mode_token)
-            if normalized is None:
-                await deliver_notice(
-                    tools,
-                    f"Invalid sandbox mode `{mode_token}`. "
-                    f"Valid: {', '.join(CodexSandboxMode)}.",
-                    mentions=mention,
-                )
-                return True
-            escalating = normalized == CodexSandboxMode.DANGER_FULL_ACCESS
-            if escalating and not confirm_flag:
-                await deliver_notice(
-                    tools,
-                    f"Escalating to `{normalized}` removes all sandbox "
-                    f"restrictions. Re-run with `{SANDBOX_CONFIRM_FLAG}` to proceed:\n"
-                    f"`/{CodexCommand.SANDBOX} {normalized} {SANDBOX_CONFIRM_FLAG}`",
-                    mentions=mention,
-                )
-                return True
-            if escalating:
-                logger.warning(
-                    "Sandbox escalated to %s via /%s command in room %s by %s",
-                    normalized,
-                    CodexCommand.SANDBOX,
-                    room_id,
-                    msg.sender_name or msg.sender_type or "unknown",
-                )
-            self._sandbox_overrides[room_id] = normalized
-            await deliver_notice(
-                tools,
-                f"Sandbox mode set to `{normalized}` for subsequent turns in this room.",
-                mentions=mention,
-            )
-            return True
-
-        if command == CodexCommand.PERMISSIONS:
-            session_approved = self._approvals.session_patterns(room_id)
-            audit = self._approvals.audit(room_id)
-            lines = ["Effective permissions:"]
-            lines.append(f"- approval_mode: {self.config.approval_mode}")
-            lines.append(f"- sandbox: {self._effective_sandbox(room_id) or 'default'}")
-            lines.append(f"- approval_policy: {self.config.approval_policy}")
-            if session_approved:
-                lines.append(f"- session_approved patterns: {len(session_approved)}")
-                for pattern in session_approved:
-                    lines.append(f"  - {pattern}")
-            if audit:
-                lines.append(f"- approval_history: {len(audit)} decisions")
-                for entry in audit[-5:]:
-                    lines.append(
-                        f"  - [{entry.timestamp}] {entry.method}: "
-                        f"{entry.decision} by {entry.decided_by}"
-                    )
-            await deliver_notice(tools, "\n".join(lines), mentions=mention)
-            return True
-
-        # --- Phase 2: /threads, /thread info, /thread archive ---
-        if command in {CodexCommand.THREADS, CodexCommand.THREAD}:
-            subcommand = args.strip().lower()
-            if command == CodexCommand.THREADS or not subcommand:
-                # List all room->thread mappings
-                if not self._room_threads:
-                    await deliver_notice(
-                        tools, "No active thread mappings.", mentions=mention
-                    )
-                    return True
-                lines = ["Active thread mappings:"]
-                for rid, tid in self._room_threads.items():
-                    current = " (current)" if rid == room_id else ""
-                    lines.append(f"- room `{rid}` → thread `{tid}`{current}")
-                await deliver_notice(tools, "\n".join(lines), mentions=mention)
-                return True
-
-            if subcommand == CodexSubcommand.INFO:
-                mapped_thread = self._room_threads.get(room_id)
-                if not mapped_thread:
-                    await deliver_notice(
-                        tools, "No thread mapped for this room.", mentions=mention
-                    )
-                    return True
-                usage = self._token_usage.get(mapped_thread)
-                usage_line = (
-                    usage.format_summary()
-                    if usage and usage.total_tokens > 0
-                    else "none"
-                )
-                info_text = (
-                    f"Thread info:\n"
-                    f"- thread_id: {mapped_thread}\n"
-                    f"- room_id: {room_id}\n"
-                    f"- token_usage: {usage_line}"
-                )
-                await deliver_notice(tools, info_text, mentions=mention)
-                return True
-
-            if subcommand == CodexSubcommand.ARCHIVE:
-                mapped_thread = self._forget_room_thread(room_id)
-                self._require_active_client_state().forget_thread()
-                await deliver_notice(
-                    tools,
-                    f"Thread `{mapped_thread or 'none'}` archived. "
-                    "A new thread will be created on next message.",
-                    mentions=mention,
-                )
-                return True
-
-            return False
-
-        # --- Phase 4: /usage command ---
-        if command == CodexCommand.USAGE:
-            mapped_thread = self._room_threads.get(room_id)
-            if not mapped_thread:
-                await deliver_notice(
-                    tools,
-                    "No thread mapped for this room — no usage data.",
-                    mentions=mention,
-                )
-                return True
-            usage = self._token_usage.get(mapped_thread)
-            if not usage or usage.total_tokens == 0:
-                await deliver_notice(
-                    tools, "No token usage recorded for this thread.", mentions=mention
-                )
-                return True
-            await deliver_notice(
-                tools,
-                f"Thread `{mapped_thread}` — {usage.format_summary()}",
-                mentions=mention,
-            )
-            return True
-
-        return False
+        reply = await self._local_command_reply(msg, room_id, command, args.strip())
+        return await self._answer_command(tools, msg, reply)
 
     async def _handle_approval_command(
         self,
@@ -3577,101 +3293,277 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         command: CodexCommand,
         args: str,
     ) -> bool:
-        mention = self._sender_mention(msg)
-        pending = self._approvals.pending(room_id)
+        reply = self._approval_command_reply(room_id, command, args.strip())
+        return await self._answer_command(tools, msg, reply)
 
+    async def _answer_command(
+        self, tools: AgentToolsProtocol, msg: PlatformMessage, reply: str | None
+    ) -> bool:
+        """Answer a handled command's sender; ``None`` means it was not handled."""
+        if reply is None:
+            return False
+        await deliver_notice(tools, reply, mentions=self._sender_mention(msg))
+        return True
+
+    async def _local_command_reply(
+        self, msg: PlatformMessage, room_id: str, command: CodexCommand, args: str
+    ) -> str | None:
+        match command:
+            case CodexCommand.HELP:
+                return HELP_TEXT
+            case CodexCommand.STATUS:
+                return self._status_text(room_id)
+            case CodexCommand.MODEL | CodexCommand.MODELS:
+                return await self._model_reply(args)
+            case CodexCommand.REASONING:
+                return await self._reasoning_reply(args.lower())
+            case CodexCommand.SANDBOX:
+                return self._sandbox_reply(msg, room_id, args)
+            case CodexCommand.PERMISSIONS:
+                return self._permissions_text(room_id)
+            case CodexCommand.THREADS | CodexCommand.THREAD:
+                return self._thread_reply(room_id, command, args.lower())
+            case CodexCommand.USAGE:
+                return self._usage_reply(room_id)
+            case _:
+                return None
+
+    def _usage_summary(self, thread_id: str | None) -> str:
+        usage = self._token_usage.get(thread_id) if thread_id else None
+        return usage.format_summary() if usage and usage.total_tokens > 0 else "none"
+
+    def _status_text(self, room_id: str) -> str:
+        mapped_thread = self._room_threads.get(room_id)
+        room = self._active_client_state()
+        selected_model = room.selected_model if room is not None else None
+        return (
+            "Codex status:\n"
+            f"- transport: {self.config.transport}\n"
+            f"- selected_model: {selected_model or 'unknown'}\n"
+            f"- configured_model: {self.config.model or 'auto'}\n"
+            f"- room_id: {room_id}\n"
+            f"- thread_id: {mapped_thread or 'not mapped'}\n"
+            f"- approval_policy: {self.config.approval_policy}\n"
+            f"- approval_mode: {self.config.approval_mode}\n"
+            f"- sandbox: {self._effective_sandbox(room_id) or 'default'}\n"
+            f"- reasoning_effort: {self.config.reasoning_effort or 'default'}\n"
+            f"- reasoning_summary: {self.config.reasoning_summary or 'default'}\n"
+            f"- pending_approvals: {self._approvals.open_count(room_id)}\n"
+            f"- session_approvals: {len(self._approvals.session_patterns(room_id))}\n"
+            f"- token_usage: {self._usage_summary(mapped_thread)}\n"
+            f"- turn_task_markers: {self.config.emit_turn_task_markers}"
+        )
+
+    async def _model_reply(self, model_arg: str) -> str:
+        if not model_arg:
+            return (
+                "Current model: "
+                f"`{self._selected_model or 'unknown'}` "
+                f"(configured: `{self.config.model or 'auto'}`). "
+                f"Use `/{CodexCommand.MODEL} {CodexSubcommand.LIST}` to view available "
+                f"models or `/{CodexCommand.MODEL} <id>` to override."
+            )
+        if model_arg.lower() in MODEL_LIST_WORDS:
+            client = self._require_active_client_state().require_client()
+            result = await client.request(CodexRequestMethod.MODEL_LIST, {})
+            if not (models := visible_model_ids(result)):
+                return "No visible models returned by Codex app-server."
+            preview = ", ".join(models[:10]) + (", ..." if len(models) > 10 else "")
+            return f"Available models ({len(models)}): {preview}"
+        # The room's choice outlives its process; never adapter-wide config.
+        self._selected_model = model_arg
+        return f"Model override set to `{model_arg}` for subsequent turns."
+
+    async def _reasoning_reply(self, effort_arg: str) -> str:
+        model_id, efforts = await self._current_model_efforts()
+        supported = ", ".join(efforts)
+        if not effort_arg:
+            hint = f"`{model_id}` supports: {supported}. " if efforts else ""
+            return (
+                f"Current reasoning effort: `{self.config.reasoning_effort or 'default'}`. "
+                f"Summary: `{self.config.reasoning_summary or 'default'}`. "
+                f"{hint}Use `/reasoning <effort>` to override."
+            )
+        # A person's typo would otherwise fail every later turn; the
+        # setreasoning tool can't check this because it runs mid-turn.
+        if efforts and effort_arg not in efforts:
+            return (
+                f"`{model_id}` doesn't support reasoning effort `{effort_arg}`. "
+                f"Supported: {supported}."
+            )
+        self._require_active_client_state().reasoning_effort = effort_arg
+        return f"Reasoning effort set to `{effort_arg}` for subsequent turns."
+
+    def _sandbox_reply(self, msg: PlatformMessage, room_id: str, mode_arg: str) -> str:
+        if self.config.sandbox_policy is not None:
+            return (
+                "Cannot override sandbox: a `sandbox_policy` is configured. "
+                "Remove `sandbox_policy` from config to use per-room "
+                f"`/{CodexCommand.SANDBOX}` overrides."
+            )
+        if not mode_arg:
+            effective = self._effective_sandbox(room_id) or "default"
+            return (
+                f"Current sandbox: `{effective}`. "
+                f"Use `/{CodexCommand.SANDBOX} <{SANDBOX_MODE_CHOICES}>` to change."
+            )
+        # Parse tokens explicitly so "--confirm-anything-else" is surfaced
+        # as an unknown mode instead of silently stripped away.
+        tokens = mode_arg.split()
+        confirmed = SANDBOX_CONFIRM_FLAG in tokens
+        mode_tokens = [tok for tok in tokens if tok != SANDBOX_CONFIRM_FLAG]
+        if len(mode_tokens) != 1:
+            return (
+                f"Usage: `/{CodexCommand.SANDBOX} <{SANDBOX_MODE_CHOICES}> "
+                f"[{SANDBOX_CONFIRM_FLAG}]`."
+            )
+        mode_token = mode_tokens[0]
+        if (normalized := normalize_sandbox_mode(mode_token)) is None:
+            return (
+                f"Invalid sandbox mode `{mode_token}`. "
+                f"Valid: {', '.join(CodexSandboxMode)}."
+            )
+        if normalized == CodexSandboxMode.DANGER_FULL_ACCESS:
+            if not confirmed:
+                return (
+                    f"Escalating to `{normalized}` removes all sandbox "
+                    f"restrictions. Re-run with `{SANDBOX_CONFIRM_FLAG}` to proceed:\n"
+                    f"`/{CodexCommand.SANDBOX} {normalized} {SANDBOX_CONFIRM_FLAG}`"
+                )
+            logger.warning(
+                "Sandbox escalated to %s via /%s command in room %s by %s",
+                normalized,
+                CodexCommand.SANDBOX,
+                room_id,
+                msg.sender_name or msg.sender_type or "unknown",
+            )
+        self._sandbox_overrides[room_id] = normalized
+        return f"Sandbox mode set to `{normalized}` for subsequent turns in this room."
+
+    def _permissions_text(self, room_id: str) -> str:
+        session_approved = self._approvals.session_patterns(room_id)
+        audit = self._approvals.audit(room_id)
+        lines = [
+            "Effective permissions:",
+            f"- approval_mode: {self.config.approval_mode}",
+            f"- sandbox: {self._effective_sandbox(room_id) or 'default'}",
+            f"- approval_policy: {self.config.approval_policy}",
+        ]
+        if session_approved:
+            lines.append(f"- session_approved patterns: {len(session_approved)}")
+            lines.extend(f"  - {pattern}" for pattern in session_approved)
+        if audit:
+            lines.append(f"- approval_history: {len(audit)} decisions")
+            lines.extend(
+                f"  - [{entry.timestamp}] {entry.method}: "
+                f"{entry.decision} by {entry.decided_by}"
+                for entry in audit[-5:]
+            )
+        return "\n".join(lines)
+
+    def _thread_reply(
+        self, room_id: str, command: CodexCommand, subcommand: str
+    ) -> str | None:
+        if command == CodexCommand.THREADS or not subcommand:
+            if not self._room_threads:
+                return "No active thread mappings."
+            lines = ["Active thread mappings:"]
+            lines.extend(
+                f"- room `{rid}` → thread `{tid}`"
+                + (" (current)" if rid == room_id else "")
+                for rid, tid in self._room_threads.items()
+            )
+            return "\n".join(lines)
+        match subcommand:
+            case CodexSubcommand.INFO:
+                if not (mapped_thread := self._room_threads.get(room_id)):
+                    return "No thread mapped for this room."
+                return (
+                    f"Thread info:\n"
+                    f"- thread_id: {mapped_thread}\n"
+                    f"- room_id: {room_id}\n"
+                    f"- token_usage: {self._usage_summary(mapped_thread)}"
+                )
+            case CodexSubcommand.ARCHIVE:
+                mapped_thread = self._forget_room_thread(room_id)
+                self._require_active_client_state().forget_thread()
+                return (
+                    f"Thread `{mapped_thread or 'none'}` archived. "
+                    "A new thread will be created on next message."
+                )
+            case _:
+                return None
+
+    def _usage_reply(self, room_id: str) -> str:
+        if not (mapped_thread := self._room_threads.get(room_id)):
+            return "No thread mapped for this room — no usage data."
+        usage = self._token_usage.get(mapped_thread)
+        if not usage or usage.total_tokens == 0:
+            return "No token usage recorded for this thread."
+        return f"Thread `{mapped_thread}` — {usage.format_summary()}"
+
+    def _approval_command_reply(
+        self, room_id: str, command: CodexCommand, args: str
+    ) -> str | None:
+        pending = self._approvals.pending(room_id)
         if command == CodexCommand.APPROVALS:
             if not (open_entries := pending.unclaimed()):
-                await deliver_notice(tools, "No pending approvals.", mentions=mention)
-                return True
-            lines = ["Pending approvals:"]
+                return "No pending approvals."
             now = datetime.now(UTC)
-            for entry in open_entries:
-                age_s = int((now - entry.payload.created_at).total_seconds())
-                lines.append(f"- {entry.token}: {entry.payload.summary} ({age_s}s)")
-            await deliver_notice(tools, "\n".join(lines), mentions=mention)
-            return True
-
-        if (decision_value := APPROVAL_COMMAND_DECISIONS.get(command)) is None:
-            return False
-
-        if not pending:
-            await deliver_notice(
-                tools, NO_APPROVALS_TO_RESOLVE_MESSAGE, mentions=mention
+            lines = ["Pending approvals:"]
+            lines.extend(
+                f"- {entry.token}: {entry.payload.summary} "
+                f"({int((now - entry.payload.created_at).total_seconds())}s)"
+                for entry in open_entries
             )
-            return True
+            return "\n".join(lines)
+
+        if (decision := APPROVAL_COMMAND_DECISIONS.get(command)) is None:
+            return None
+        if not pending:
+            return NO_APPROVALS_TO_RESOLVE_MESSAGE
 
         open_ids = sorted(entry.token for entry in pending.unclaimed())
-        token = args.strip().split(" ", 1)[0] if args.strip() else ""
+        token = args.split(" ", 1)[0] if args else ""
         if not token:
             match open_ids:
                 case []:
-                    await deliver_notice(
-                        tools, NO_APPROVALS_TO_RESOLVE_MESSAGE, mentions=mention
-                    )
-                    return True
+                    return NO_APPROVALS_TO_RESOLVE_MESSAGE
                 case [only]:
                     token = only
                 case _:
-                    await deliver_notice(
-                        tools,
+                    return (
                         "Multiple approvals pending. "
-                        f"Use `/{command} <id>`. Pending: {', '.join(open_ids)}",
-                        mentions=mention,
+                        f"Use `/{command} <id>`. Pending: {', '.join(open_ids)}"
                     )
-                    return True
 
         if (selected := pending.get(token)) is None:
-            await deliver_notice(
-                tools,
+            return (
                 f"Unknown approval id `{token}`. "
-                f"Pending: {', '.join(open_ids) or 'none'}",
-                mentions=mention,
+                f"Pending: {', '.join(open_ids) or 'none'}"
             )
-            return True
 
-        is_session = command == CodexCommand.APPROVE_SESSION
-        # Session-level approval needs a non-empty key (e.g. a concrete command
-        # string) so future requests can match.  Reject early so we never store
-        # an empty session approval or report a misleading
-        # "Future `` requests will be auto-approved" message to the user.
-        if is_session and not selected.session_key:
-            await deliver_notice(
-                tools,
+        for_session = command == CodexCommand.APPROVE_SESSION
+        # A session approval needs a key (e.g. a concrete command) that later
+        # requests can match; an empty one would match nothing and mislead.
+        if for_session and not selected.session_key:
+            return (
                 f"Approval `{token}` cannot be resolved as session-level: "
                 "this request has no command signature to match against. "
-                f"Use `/{CodexCommand.APPROVE} {token}` for a one-shot approval instead.",
-                mentions=mention,
+                f"Use `/{CodexCommand.APPROVE} {token}` for a one-shot approval instead."
             )
-            return True
-
         if pending.try_claim(token) is None:
-            await deliver_notice(
-                tools,
-                APPROVAL_NOT_PENDING_TEMPLATE.format(token=token),
-                mentions=mention,
-            )
-            return True
+            return APPROVAL_NOT_PENDING_TEMPLATE.format(token=token)
 
-        selected.future.set_result(decision_value)
-
-        # Session-level: register the session key for auto-approval
-        if is_session:
-            self._approvals.approve_for_session(room_id, selected.session_key)
-            await deliver_notice(
-                tools,
-                APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision_value)
-                + " This session-level approval auto-approves future "
-                f"`{selected.session_key}` requests.",
-                mentions=mention,
-            )
-        else:
-            await deliver_notice(
-                tools,
-                APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision_value),
-                mentions=mention,
-            )
-        return True
+        selected.future.set_result(decision)
+        resolved = APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision)
+        if not for_session:
+            return resolved
+        self._approvals.approve_for_session(room_id, selected.session_key)
+        return (
+            resolved + " This session-level approval auto-approves future "
+            f"`{selected.session_key}` requests."
+        )
 
     def _build_system_prompt(self) -> None:
         if self.config.system_prompt:
@@ -3702,88 +3594,21 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             params["effort"] = state.reasoning_effort or self.config.reasoning_effort
         if state.reasoning_summary or self.config.reasoning_summary:
             params["summary"] = state.reasoning_summary or self.config.reasoning_summary
-        self._apply_turn_sandbox(params, room_id=room_id)
+        apply_turn_sandbox(
+            params,
+            policy=self.config.sandbox_policy,
+            effective=self._effective_sandbox(room_id),
+        )
 
     def _apply_thread_sandbox(
         self, params: dict[str, Any], *, room_id: str | None = None
     ) -> None:
-        """Apply sandbox settings to thread/start or thread/resume params.
-
-        Only a SandboxMode is accepted there, plus the Windows backend override.
-        """
-        if self.config.windows_sandbox is not None:
-            params["config"] = {WINDOWS_SANDBOX_CONFIG_KEY: self.config.windows_sandbox}
-        if self.config.sandbox_policy is not None:
-            # thread/start only has a `sandbox` field (SandboxMode enum).
-            # Extract mode from sandbox_policy when possible.
-            policy_type = self.config.sandbox_policy.get("type")
-            if isinstance(policy_type, str):
-                mode = self._normalize_sandbox_mode(policy_type)
-                if mode is not None:
-                    params["sandbox"] = mode
-                    return
-            logger.warning(
-                "sandbox_policy type %s is not representable on thread/start; "
-                "it will be applied at turn level instead",
-                policy_type,
-            )
-            return
-
-        effective = self._effective_sandbox(room_id)
-        if effective is None:
-            return
-
-        sandbox_mode = self._normalize_sandbox_mode(effective)
-        if sandbox_mode is not None:
-            params["sandbox"] = sandbox_mode
-            return
-
-        if self._canonical_sandbox_key(effective) == EXTERNAL_SANDBOX_KEY:
-            # externalSandbox is only representable via sandboxPolicy on
-            # turn/start; thread/start does not accept it.
-            logger.debug(
-                "external-sandbox will be applied at turn level, not on thread/start"
-            )
-            return
-
-        logger.warning("Ignoring unsupported Codex sandbox value: %s", effective)
-
-    # Codex app-server has two sandbox fields with different wire formats:
-    # thread/start.sandbox takes a kebab-case CodexSandboxMode, while
-    # turn/start.sandboxPolicy takes a camelCase SandboxPolicy type tag.
-    # This mapping bridges the two (see codex-app-server protocol types).
-    _SANDBOX_MODE_TO_POLICY_TYPE: ClassVar[dict[str, str]] = {
-        CodexSandboxMode.READ_ONLY: "readOnly",
-        CodexSandboxMode.WORKSPACE_WRITE: "workspaceWrite",
-        CodexSandboxMode.DANGER_FULL_ACCESS: "dangerFullAccess",
-    }
-
-    def _apply_turn_sandbox(
-        self, params: dict[str, Any], *, room_id: str | None = None
-    ) -> None:
-        """Apply sandbox to turn/start params (full SandboxPolicy is accepted)."""
-        if self.config.sandbox_policy is not None:
-            params["sandboxPolicy"] = self._normalize_sandbox_policy(
-                self.config.sandbox_policy
-            )
-            return
-
-        effective = self._effective_sandbox(room_id)
-        if effective is None:
-            return
-
-        sandbox_mode = self._normalize_sandbox_mode(effective)
-        if sandbox_mode is not None:
-            policy_type = self._SANDBOX_MODE_TO_POLICY_TYPE.get(sandbox_mode)
-            if policy_type:
-                params["sandboxPolicy"] = {"type": policy_type}
-            return
-
-        if self._canonical_sandbox_key(effective) == EXTERNAL_SANDBOX_KEY:
-            params["sandboxPolicy"] = {"type": EXTERNAL_SANDBOX_POLICY_TYPE}
-            return
-
-        logger.warning("Ignoring unsupported Codex sandbox value: %s", effective)
+        apply_thread_sandbox(
+            params,
+            policy=self.config.sandbox_policy,
+            windows_sandbox=self.config.windows_sandbox,
+            effective=self._effective_sandbox(room_id),
+        )
 
     def _effective_sandbox(self, room_id: str | None = None) -> str | None:
         """Return the effective sandbox for *room_id*, checking per-room overrides first."""
@@ -3792,33 +3617,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             if override is not None:
                 return override
         return self.config.sandbox
-
-    @classmethod
-    def _normalize_sandbox_mode(cls, sandbox: str) -> CodexSandboxMode | None:
-        key = cls._canonical_sandbox_key(sandbox)
-        return CodexSandboxMode(key) if key in SANDBOX_MODES else None
-
-    @classmethod
-    def _normalize_sandbox_policy(
-        cls, sandbox_policy: dict[str, Any]
-    ) -> dict[str, Any]:
-        normalized = dict(sandbox_policy)
-        policy_type = normalized.get("type")
-        if not isinstance(policy_type, str):
-            return normalized
-
-        key = cls._canonical_sandbox_key(policy_type)
-        camel = cls._SANDBOX_MODE_TO_POLICY_TYPE.get(key)
-        if camel:
-            normalized["type"] = camel
-        elif key == EXTERNAL_SANDBOX_KEY:
-            normalized["type"] = EXTERNAL_SANDBOX_POLICY_TYPE
-        return normalized
-
-    @staticmethod
-    def _canonical_sandbox_key(value: str) -> str:
-        compact = value.strip().lower().replace("_", "-").replace(" ", "")
-        return SANDBOX_KEY_ALIASES.get(compact, compact)
 
     @staticmethod
     def _extract_turn_error(turn_payload: dict[str, Any]) -> str:
@@ -3902,67 +3700,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             for sender_id in distinct_sender_ids(messages)
         ]
 
-    @staticmethod
-    def _extract_local_command(content: str) -> tuple[CodexCommand, str] | None:
-        """Return ``(command, args)`` when ``content`` opens with a slash command.
-
-        A delivered room message always leads with the platform's ``@handle``
-        mention block (a message reaches an agent only by mentioning it), so
-        that block is stripped first -- otherwise the command never leads the
-        content and ``/approve``/``/decline`` silently miss. Only the token
-        that remains in front is considered, so prose merely *containing* a
-        slash word ("don't /approve it yet") stays prose instead of resolving
-        to the command it argues against.
-        """
-        stripped = strip_leading_mentions(content).lstrip()
-        if not stripped.startswith("/"):
-            return None
-        # Split on any whitespace, so a tab- or newline-separated argument still
-        # reaches the command it belongs to.
-        parts = stripped.removeprefix("/").split(maxsplit=1)
-        word = parts[0].lower() if parts else ""
-        if word not in COMMAND_WORDS:
-            return None
-        return CodexCommand(word), parts[1].strip() if len(parts) > 1 else ""
-
     def _clear_pending_approvals_for_room(self, room_id: str) -> None:
         """ApprovalInterruptMixin's hook: an interrupt declines the room's approvals."""
         self._approvals.decline_all(room_id)
-
-    @staticmethod
-    def _visible_model_ids(result: dict[str, Any]) -> list[str]:
-        data = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(data, list):
-            return []
-        models: list[str] = []
-        for entry in data:
-            if not isinstance(entry, dict):
-                continue
-            model_id = entry.get("id")
-            if not isinstance(model_id, str) or not model_id:
-                continue
-            if bool(entry.get("hidden", False)):
-                continue
-            models.append(model_id)
-        return models
-
-    @staticmethod
-    def _supported_efforts(result: dict[str, Any], model_id: str) -> list[str]:
-        data = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(data, list):
-            return []
-        entry = next(
-            (e for e in data if isinstance(e, dict) and e.get("id") == model_id), None
-        )
-        efforts = entry.get("supportedReasoningEfforts") if entry else None
-        if not isinstance(efforts, list):
-            return []
-        return [
-            effort["reasoningEffort"]
-            for effort in efforts
-            if isinstance(effort, dict)
-            and isinstance(effort.get("reasoningEffort"), str)
-        ]
 
     async def _current_model_efforts(self) -> tuple[str, list[str]]:
         """The room's model and the efforts Codex reports for it (empty if unknown)."""
@@ -3977,4 +3717,4 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 exc_info=True,
             )
             return model_id, []
-        return model_id, self._supported_efforts(result, model_id)
+        return model_id, supported_efforts(result, model_id)
