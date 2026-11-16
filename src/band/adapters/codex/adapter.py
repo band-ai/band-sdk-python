@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import time as _time
-from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
@@ -52,13 +51,27 @@ from band.adapters.codex.dynamictools import (
 )
 from band.adapters.codex.items import (
     ACTIVITY_ITEM_TYPES,
-    THOUGHT_ITEM_TYPES,
     TOOL_ITEM_TYPES,
-    UNRENDERED_ITEM_TYPES,
-    CodexToolItem,
     item_call_id,
+    tool_item,
 )
 from band.adapters.codex.models import supported_efforts, visible_model_ids
+from band.adapters.codex.narration import (
+    RAW_TASK_METHODS,
+    TaskTitles,
+    TurnRef,
+    approval_resolved,
+    diff_updated,
+    error_notification,
+    item_completed,
+    plan_steps,
+    raw_task_event,
+    task_event_content,
+    token_usage,
+    turn_error_message,
+    turn_failed,
+    turn_usage,
+)
 from band.adapters.codex.roomstate import RoomCodexClient, ThreadSettings
 from band.adapters.codex.rpc import (
     CodexClientProtocol,
@@ -150,7 +163,6 @@ from band.core.types import (
     FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
-    TurnUsage,
     distinct_sender_ids,
 )
 from band.integrations.codex import (
@@ -166,7 +178,6 @@ from band.integrations.codex.types import (
     CODEX_TRANSPORT_CLOSED_FAILURE_CODE,
     DYNAMIC_TOOL_CALL_METHOD,
     WINDOWS_PLATFORM_OS,
-    ApprovalAuditEntry,
     CodexItemType,
     CodexMetadataKey,
     CodexNotificationMethod,
@@ -175,8 +186,6 @@ from band.integrations.codex.types import (
     CodexTokenUsage,
     CodexTurnStatus,
     CodexWindowsSandboxReadiness,
-    build_agent_failure,
-    parse_plan_steps,
 )
 from band.runtime.activity import permission_wait
 from band.runtime.custom_tools import (
@@ -212,22 +221,6 @@ from band.workspaces import RoomWorkspaces
 logger = logging.getLogger(__name__)
 
 SYSTEM_CONTEXT_PREFIX = "[System]:"
-
-
-# Upper bound on cached task titles (room-lifecycle map used to preserve the
-# title between task_started and task_complete events).  500 covers bursty
-# conversations while keeping memory bounded.
-_MAX_TASK_TITLES = 500
-
-
-# Cap on the raw diff string forwarded in ``turn/diff/updated`` task metadata,
-# expressed in UTF-8 bytes.  Diffs can be megabytes on large refactors;
-# shipping the full blob inflates WebSocket frames and chat-event storage.
-# Consumers that need the full diff should request it from Codex directly.
-# Enforcing the cap on encoded bytes (not Python characters) bounds the wire
-# size uniformly regardless of whether the diff contains ASCII or heavy
-# multi-byte content (emoji, CJK).
-_MAX_DIFF_METADATA_BYTES = 64 * 1024
 
 
 class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState]):
@@ -292,8 +285,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._system_prompt: str = ""
         self._room_threads: dict[str, str] = {}
         self._prompt_injected_rooms: set[str] = set()
-        self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
-        self._max_task_titles: int = _MAX_TASK_TITLES
+        self._task_titles = TaskTitles()
         self._approvals = CodexApprovals(
             max_pending=self.config.max_pending_approvals_per_room,
             max_session_approved=self.config.max_session_approved_per_room,
@@ -348,13 +340,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if state is None:
             raise RuntimeError("Codex operation requires a room context")
         return state
-
-    @property
-    def _task_titles_by_id(self) -> OrderedDict[str, str]:
-        room_id = self._active_room.get()
-        if room_id is None:
-            raise RuntimeError("Codex task state requires a room context")
-        return self._room_task_titles.setdefault(room_id, OrderedDict())
 
     @property
     def _selected_model(self) -> str | None:
@@ -821,7 +806,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if self.config.emit_turn_task_markers:
             await send_event_safe(
                 tools,
-                content=self._build_task_event_content(
+                content=task_event_content(
                     task_id=turn_id,
                     task="Codex turn",
                     status="started",
@@ -840,7 +825,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             input_summary = "\n".join(m.content or "" for m in messages)[:200]
             await send_event_safe(
                 tools,
-                content=self._build_task_event_content(
+                content=task_event_content(
                     task_id=turn_id,
                     task="Codex turn lifecycle",
                     status="started",
@@ -908,6 +893,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
     ) -> TurnResult:
         """Consume the events addressed to one native turn and return its result."""
         turn_id = native.turn_id
+        ref = TurnRef(room_id, thread_id, turn_id)
         result = TurnResult()
         failure_reported = False
         try:
@@ -931,28 +917,15 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
                 params = event_params(event)
 
-                if event.method in {
-                    "codex/event/task_started",
-                    "codex/event/task_complete",
-                }:
-                    await self._forward_raw_task_event(
-                        tools=tools,
-                        room_id=room_id,
-                        thread_id=thread_id,
-                        turn_id=turn_id,
-                        method=event.method,
-                        params=params,
-                    )
+                if event.method in RAW_TASK_METHODS:
+                    if Emit.TASK_EVENTS in self.features.emit:
+                        await raw_task_event(
+                            tools, ref, event.method, params, self._task_titles
+                        )
                     continue
 
                 if event.method == "error":
-                    reported = await self._handle_error_event(
-                        tools=tools,
-                        params=params,
-                        room_id=room_id,
-                        thread_id=thread_id,
-                        turn_id=turn_id,
-                    )
+                    reported = await error_notification(tools, ref, params)
                     failure_reported = failure_reported or reported
                     continue
 
@@ -972,9 +945,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                                 "streaming": True,
                                 "codex_item_id": item_id,
                                 "codex_event_type": event.method,
-                                CodexMetadataKey.ROOM: room_id,
-                                CodexMetadataKey.THREAD: thread_id,
-                                CodexMetadataKey.TURN: turn_id,
+                                **ref.metadata(),
                             },
                             log_label="reasoning delta",
                             log_level=logging.DEBUG,
@@ -993,9 +964,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                                 "streaming": True,
                                 "subtype": "plan",
                                 "codex_item_id": item_id,
-                                CodexMetadataKey.ROOM: room_id,
-                                CodexMetadataKey.THREAD: thread_id,
-                                CodexMetadataKey.TURN: turn_id,
+                                **ref.metadata(),
                             },
                             log_label="plan delta",
                             log_level=logging.DEBUG,
@@ -1005,22 +974,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 # --- Phase 2: Plan step tracking ---
                 if event.method == "turn/plan/updated":
                     if self.config.stream_plan_events:
-                        await self._forward_plan_steps(
-                            tools=tools,
-                            params=params,
-                            room_id=room_id,
-                            thread_id=thread_id,
-                            turn_id=turn_id,
-                        )
+                        await plan_steps(tools, ref, params)
                     continue
 
                 # --- Phase 4: Token usage ---
                 if event.method == "thread/tokenUsage/updated":
                     self._update_token_usage(thread_id, params)
                     if self.config.emit_token_usage_events:
-                        await self._emit_token_usage_event(
-                            tools=tools, thread_id=thread_id, room_id=room_id
-                        )
+                        await token_usage(tools, ref, self._token_usage.get(thread_id))
                     continue
 
                 # --- Phase 2: Context compaction events ---
@@ -1033,7 +994,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         compacted_turn = str(params.get("turnId") or turn_id or "")
                         await send_event_safe(
                             tools,
-                            content=self._build_task_event_content(
+                            content=task_event_content(
                                 task_id=compacted_turn or None,
                                 task="Codex context compaction",
                                 status="completed",
@@ -1057,13 +1018,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         self.config.emit_diff_events
                         and Emit.TASK_EVENTS in self.features.emit
                     ):
-                        await self._forward_diff_event(
-                            tools=tools,
-                            params=params,
-                            room_id=room_id,
-                            thread_id=thread_id,
-                            turn_id=turn_id,
-                        )
+                        await diff_updated(tools, ref, params)
                     continue
 
                 if event.method == CodexNotificationMethod.ITEM_STARTED:
@@ -1095,9 +1050,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                                 "streaming": True,
                                 "subtype": "commentary",
                                 "codex_item_id": item_id,
-                                CodexMetadataKey.ROOM: room_id,
-                                CodexMetadataKey.THREAD: thread_id,
-                                CodexMetadataKey.TURN: turn_id,
+                                **ref.metadata(),
                             },
                             log_label="commentary delta",
                             log_level=logging.DEBUG,
@@ -1118,13 +1071,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                             if isinstance(text, str):
                                 message.completed_text = text
                         else:
-                            await self._emit_item_completed_events(
-                                tools=tools,
-                                item=item,
-                                room_id=room_id,
-                                thread_id=thread_id,
-                                turn_id=turn_id,
-                            )
+                            await item_completed(tools, ref, item, self.features.emit)
                     continue
 
                 if event.method == TRANSPORT_CLOSED:
@@ -1152,20 +1099,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     result.turn_status = str(
                         turn_payload.get("status") or CodexTurnStatus.FAILED
                     )
-                    result.turn_error = self._extract_turn_error(turn_payload)
+                    result.turn_error = turn_error_message(turn_payload)
                     if result.turn_status != CodexTurnStatus.FAILED:
                         break
                     # Skipped when an earlier "error" notification in this same
                     # turn already reported one, so one incident isn't posted
                     # twice -- but the turn still fails either way.
                     if not failure_reported:
-                        await self._emit_structured_turn_error(
-                            tools=tools,
-                            turn_payload=turn_payload,
-                            room_id=room_id,
-                            thread_id=thread_id,
-                            turn_id=turn_id,
-                        )
+                        await turn_failed(tools, ref, turn_payload)
                     raise TurnResultAlreadyReported(result.turn_error or "Turn failed")
         except TurnResultAlreadyReported as error:
             result.turn_status = CodexTurnStatus.FAILED
@@ -1383,7 +1324,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         )
         command.tools = resource_tools(tools, command.owner)
         room.commands[identity] = command
-        name = self._extract_tool_item(CodexItemType.COMMAND_EXECUTION, item).name
+        name = tool_item(CodexItemType.COMMAND_EXECUTION, item).name
         await start_native_tool_activity(command.tools, command.token, name)
 
     async def _observe_foreground_item(
@@ -1733,7 +1674,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         self._forget_room_thread(room_id)
         self._approvals.forget_room(room_id)
         self._sandbox_overrides.pop(room_id, None)
-        self._room_task_titles.pop(room_id, None)
+        self._task_titles.forget_room(room_id)
         self._workspaces.release(room_id, room.workspace)
         room.pending_system_context.clear()
         if self._room_clients.get(room_id) is room:
@@ -1905,7 +1846,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if Emit.TASK_EVENTS in self.features.emit:
             await send_event_safe(
                 tools,
-                content=self._build_task_event_content(
+                content=task_event_content(
                     task_id=thread_id,
                     task="Codex thread",
                     status="resumed",
@@ -1957,7 +1898,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if Emit.TASK_EVENTS in self.features.emit:
             await send_event_safe(
                 tools,
-                content=self._build_task_event_content(
+                content=task_event_content(
                     task_id=thread_id,
                     task="Codex thread",
                     status="mapped",
@@ -2140,7 +2081,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
 
         ``client`` is the process the request came from; the answer goes back
         there. Concurrency model: this coroutine mutates room-scoped adapter
-        state (``_approvals``, ``_task_titles_by_id``) without an explicit lock.
+        state (``_approvals``, ``_task_titles``) without an explicit lock.
         It is safe because it runs only inside a turn, which holds its room's
         ``rpc_lock`` -- and every structure it touches is
         keyed (or routed via ``_active_room``) per room, so a concurrent
@@ -2343,9 +2284,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             summary=summary,
             session_level=session_hit,
         )
-        await self._emit_approval_audit_event(
-            tools=tools, room_id=room_id, entry=audit_entry
-        )
+        if Emit.TASK_EVENTS in self.features.emit:
+            await approval_resolved(tools, room_id, audit_entry)
 
         if (
             self.config.approval_mode != "manual"
@@ -2384,27 +2324,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 log_level=logging.DEBUG,
             )
 
-    @staticmethod
-    def _turn_usage(usage: CodexTokenUsage | None) -> TurnUsage:
-        """Map codex's per-turn token deltas onto the framework-agnostic TurnUsage.
-
-        Uses the per-turn deltas (rise from the turn-start anchor), not the
-        thread cumulatives, so each emitted record is this turn's usage —
-        matching what the in-process adapters emit. Codex reports no cache
-        dimension, so those stay 0; a ``None`` usage yields empty (no emit).
-
-        Codex reports reasoning tokens *disjointly* from output (its own total is
-        ``input + output + reasoning``), so fold reasoning into ``output_tokens``
-        — otherwise reasoning-heavy turns undercount, and this stays consistent
-        with providers that already count reasoning inside output.
-        """
-        return TurnUsage.from_object(
-            usage,
-            input="turn_input_tokens",
-            output="turn_output_tokens",
-            reasoning="turn_reasoning_tokens",
-        )
-
     async def _emit_turn_outcome(
         self,
         *,
@@ -2429,7 +2348,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         # is independent of the codex-specific emit_token_usage_events path
         # (which embeds codex_*_tokens on the marker/lifecycle task events);
         # emit_usage no-ops unless Emit.USAGE is enabled and usage is non-empty.
-        await self.emit_usage(tools, self._turn_usage(usage))
+        await self.emit_usage(tools, turn_usage(usage))
 
         if (
             Emit.TASK_EVENTS in self.features.emit
@@ -2451,7 +2370,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 metadata.update(usage.to_metadata())
             await send_event_safe(
                 tools,
-                content=self._build_task_event_content(
+                content=task_event_content(
                     task_id=turn_id,
                     task="Codex turn",
                     status=turn_status,
@@ -2487,7 +2406,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 lifecycle_metadata.update(usage.to_metadata())
             await send_event_safe(
                 tools,
-                content=self._build_task_event_content(
+                content=task_event_content(
                     task_id=turn_id,
                     task="Codex turn lifecycle",
                     status=turn_status,
@@ -2546,46 +2465,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             await deliver_notice(tools, outcome_text, mentions=mentions)
         tools.turn.settle()
 
-    async def _emit_item_completed_events(
-        self,
-        *,
-        tools: AgentToolsProtocol,
-        item: dict[str, Any],
-        room_id: str,
-        thread_id: str,
-        turn_id: str | None,
-    ) -> None:
-        """Forward internal Codex operations as platform events.
-
-        Best-effort: failures are logged but never propagated, since
-        execution reporting is supplementary and must not kill message
-        processing (e.g. a transient 403 from the load balancer).
-        """
-        item_type = item.get("type", "")
-        item_id = item_call_id(item)
-        metadata: dict[str, Any] = {
-            CodexMetadataKey.ROOM: room_id,
-            CodexMetadataKey.THREAD: thread_id,
-            CodexMetadataKey.TURN: turn_id,
-        }
-
-        try:
-            await self._emit_item_event(
-                tools=tools,
-                item_type=item_type,
-                item_id=item_id,
-                item=item,
-                metadata=metadata,
-            )
-        except Exception:
-            # Best-effort telemetry — never fail the turn on emit failures.
-            logger.debug(
-                "Failed to emit %s event for item %s (best-effort)",
-                item_type,
-                item_id,
-                exc_info=True,
-            )
-
     async def _show_item_started(
         self, tools: AgentToolsProtocol, item: dict[str, Any], token: object
     ) -> None:
@@ -2593,240 +2472,8 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if item_type == CodexItemType.CONTEXT_COMPACTION:
             await start_memory_activity(tools, token)
         elif item_type in TOOL_ITEM_TYPES:
-            name = self._extract_tool_item(item_type, item).name
+            name = tool_item(item_type, item).name
             await start_native_tool_activity(tools, token, name)
-
-    async def _emit_item_event(
-        self,
-        *,
-        tools: AgentToolsProtocol,
-        item_type: str,
-        item_id: str,
-        item: dict[str, Any],
-        metadata: dict[str, Any],
-    ) -> None:
-        """Inner dispatch for item events — may raise on API errors."""
-        # Tool-like items gated on Emit.TOOL_CALLS
-        if item_type in TOOL_ITEM_TYPES:
-            if Emit.TOOL_CALLS not in self.features.emit:
-                return
-            name, args, output = self._extract_tool_item(item_type, item)
-            await tools.send_event(
-                content=json.dumps(
-                    {
-                        ToolEventKey.NAME: name,
-                        ToolEventKey.ARGS: args,
-                        ToolEventKey.TOOL_CALL_ID: item_id,
-                    }
-                ),
-                message_type="tool_call",
-                metadata=metadata,
-            )
-            await tools.send_event(
-                content=json.dumps(
-                    {
-                        ToolEventKey.NAME: name,
-                        ToolEventKey.OUTPUT: output,
-                        ToolEventKey.TOOL_CALL_ID: item_id,
-                    }
-                ),
-                message_type="tool_result",
-                metadata=metadata,
-            )
-            return
-
-        # Thought-like items gated on Emit.THOUGHTS
-        if item_type in THOUGHT_ITEM_TYPES:
-            if Emit.THOUGHTS not in self.features.emit:
-                return
-            text = self._extract_thought_text(item_type, item)
-            if not text:
-                # Empty reasoning/plan items carry no information — skip rather
-                # than posting a placeholder like "(reasoning)" / "(plan)".
-                return
-            await tools.send_event(
-                content=text, message_type="thought", metadata=metadata
-            )
-            return
-
-        if item_type in UNRENDERED_ITEM_TYPES:
-            return
-
-        logger.debug("Unhandled item/completed type: %s", item_type)
-
-    @staticmethod
-    def _extract_tool_item(item_type: str, item: dict[str, Any]) -> CodexToolItem:
-        """Extract (name, args, output) for a tool-like item."""
-        match item_type:
-            case CodexItemType.COMMAND_EXECUTION:
-                return CodexAdapter._extract_command_execution(item)
-            case CodexItemType.FILE_CHANGE:
-                return CodexAdapter._extract_file_change(item)
-            case CodexItemType.MCP_TOOL_CALL:
-                return CodexAdapter._extract_mcp_tool_call(item)
-            case CodexItemType.WEB_SEARCH:
-                return CodexAdapter._extract_web_search(item)
-            case CodexItemType.IMAGE_VIEW:
-                return CodexAdapter._extract_image_view(item)
-            case CodexItemType.COLLAB_AGENT_TOOL_CALL:
-                return CodexAdapter._extract_collab_agent_tool_call(item)
-            case _:
-                return CodexToolItem(item_type, {}, "completed")
-
-    @staticmethod
-    def _extract_command_execution(item: dict[str, Any]) -> CodexToolItem:
-        command = item.get("command", "")
-        cwd = item.get("cwd", "")
-        args: dict[str, Any] = {"command": command, "cwd": cwd}
-        output_parts: list[str] = []
-        if item.get("aggregated_output"):
-            output_parts.append(str(item["aggregated_output"]))
-        exit_code = item.get("exitCode")
-        if exit_code is not None:
-            output_parts.append(f"exit_code={exit_code}")
-        status = item.get("status", "")
-        output = "\n".join(output_parts) if output_parts else str(status)
-        return CodexToolItem("exec", args, output)
-
-    @staticmethod
-    def _extract_file_change(item: dict[str, Any]) -> CodexToolItem:
-        changes = item.get("changes", [])
-        if not isinstance(changes, list):
-            changes = []
-        file_paths = [c.get("path", "") for c in changes if isinstance(c, dict)]
-        return CodexToolItem(
-            "file_edit", {"files": file_paths}, str(item.get("status", "applied"))
-        )
-
-    @staticmethod
-    def _extract_mcp_tool_call(item: dict[str, Any]) -> CodexToolItem:
-        server = item.get("server", "")
-        tool = item.get("tool", "")
-        name = f"mcp:{server}/{tool}"
-        mcp_args = item.get("arguments", {})
-        if not isinstance(mcp_args, dict):
-            mcp_args = {}
-        # redact_tool_call_args compares against the bare tool name (e.g.
-        # "band_send_room_file"), not the "mcp:{server}/{tool}" display name
-        # this method returns -- redact before that prefix is applied.
-        mcp_args = redact_tool_call_args(tool, mcp_args)
-        output = CodexAdapter._stringify_tool_output(
-            item.get("result"),
-            item.get("error"),
-            default="completed",
-            raw_fallback=True,
-        )
-        return CodexToolItem(name, mcp_args, output)
-
-    @staticmethod
-    def _extract_web_search(item: dict[str, Any]) -> CodexToolItem:
-        query = item.get("query", "")
-        output = CodexAdapter._stringify_tool_output(
-            item.get("action"), default="completed", raw_fallback=True
-        )
-        return CodexToolItem("web_search", {"query": query}, output)
-
-    @staticmethod
-    def _extract_image_view(item: dict[str, Any]) -> CodexToolItem:
-        path = item.get("path", "")
-        return CodexToolItem(
-            "view_image", {"path": path}, str(item.get("status", "viewed"))
-        )
-
-    @staticmethod
-    def _extract_collab_agent_tool_call(item: dict[str, Any]) -> CodexToolItem:
-        collab_tool = item.get("tool", "")
-        name = f"collab:{collab_tool}"
-        collab_args: dict[str, Any] = {}
-        if item.get("prompt"):
-            collab_args["prompt"] = item["prompt"]
-        if item.get("agents"):
-            collab_args["agents"] = item["agents"]
-        output = CodexAdapter._stringify_tool_output(
-            item.get("result"), default="completed", raw_fallback=True
-        )
-        return CodexToolItem(name, collab_args, output)
-
-    @staticmethod
-    def _stringify_tool_output(
-        *values: Any, default: str, raw_fallback: bool = False
-    ) -> str:
-        """Return the first present value as displayable text.
-
-        Shared by tool-result narration and thought extraction: strings pass
-        through; lists contribute joined ``str`` / ``dict["text"]`` entries.
-
-        A list with nothing extractable has two different honest readings
-        depending on the caller:
-
-        - Thought extraction (``raw_fallback=False``, the default): the list is
-          treated as carrying no information, so it is skipped in favor of the
-          next candidate value (or ``default``) rather than becoming a
-          placeholder like ``"[]"``.
-        - Real tool output (``raw_fallback=True``): a non-text list (e.g. an
-          MCP image/resource content block) is still real data, so it is
-          dumped as JSON instead of being discarded.
-        """
-
-        def list_item_text(item: Any) -> str | None:
-            if isinstance(item, str):
-                return item
-            if isinstance(item, dict):
-                text = item.get("text")
-                return text if isinstance(text, str) else None
-            return None
-
-        for value in values:
-            if value is None:
-                continue
-            if isinstance(value, str):
-                return value
-            if isinstance(value, list):
-                text_parts = [
-                    text for item in value if (text := list_item_text(item)) is not None
-                ]
-                if text_parts:
-                    return "\n".join(text_parts)
-                if raw_fallback:
-                    return json.dumps(value, default=str)
-                continue
-            return json.dumps(value, default=str)
-        return default
-
-    @staticmethod
-    def _extract_thought_text(item_type: str, item: dict[str, Any]) -> str | None:
-        """Extract display text for a thought-like item.
-
-        Reasoning summaries and plan text go through
-        :meth:`_stringify_tool_output` (single source of truth for turning
-        protocol payloads into display text). Returns ``None`` when nothing
-        informative is present so callers can skip emission instead of posting
-        a placeholder.
-        """
-        match item_type:
-            case CodexItemType.REASONING:
-                text = CodexAdapter._stringify_tool_output(
-                    item.get("summary"), default=""
-                ).strip()
-                return text or None
-
-            case CodexItemType.PLAN:
-                text = CodexAdapter._stringify_tool_output(
-                    item.get("text"), default=""
-                ).strip()
-                return text or None
-
-            case CodexItemType.CONTEXT_COMPACTION:
-                return "Context compaction performed"
-
-            case CodexItemType.ENTERED_REVIEW_MODE | CodexItemType.EXITED_REVIEW_MODE:
-                text = CodexAdapter._stringify_tool_output(
-                    item.get("text"), default=""
-                ).strip()
-                return text or f"Review mode: {item_type}"
-
-            case _:
-                return None
 
     @asynccontextmanager
     async def _resolve_manual_approval(
@@ -2901,7 +2548,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                         approval_metadata["codex_network_context"] = net_ctx
                     await send_event_safe(
                         tools,
-                        content=self._build_task_event_content(
+                        content=task_event_content(
                             task_id=token,
                             task="Codex approval request",
                             status="pending",
@@ -2978,173 +2625,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             finally:
                 self._approvals.forget(room_id, entry)
 
-    async def _forward_raw_task_event(
-        self,
-        *,
-        tools: AgentToolsProtocol,
-        room_id: str,
-        thread_id: str,
-        turn_id: str | None,
-        method: str,
-        params: dict[str, Any],
-    ) -> None:
-        if Emit.TASK_EVENTS not in self.features.emit:
-            return
-
-        is_started = method == "codex/event/task_started"
-        task_phase = "started" if is_started else "completed"
-        task_id = self._task_event_id(params)
-        title = self._task_event_title(params)
-        if task_id and title and is_started:
-            self._task_titles_by_id[task_id] = title
-            if len(self._task_titles_by_id) > self._max_task_titles:
-                self._task_titles_by_id.popitem(last=False)
-        if task_id and not title:
-            title = self._task_titles_by_id.get(task_id)
-        summary = self._task_event_summary(params)
-        if not title:
-            title = "Codex task lifecycle event"
-            if not summary:
-                summary = f"Method: {method}"
-        content = self._build_task_event_content(
-            task_id=task_id, task=title, status=task_phase, summary=summary
-        )
-
-        metadata: dict[str, Any] = {
-            CodexMetadataKey.ROOM: room_id,
-            CodexMetadataKey.THREAD: thread_id,
-            CodexMetadataKey.TURN: turn_id,
-            "codex_event_method": method,
-            "codex_task_phase": task_phase,
-        }
-        if task_id:
-            metadata["codex_task_id"] = task_id
-        if params:
-            metadata["codex_event_params"] = params
-
-        await tools.send_event(content=content, message_type="task", metadata=metadata)
-        if not is_started and task_id:
-            self._task_titles_by_id.pop(task_id, None)
-
-    # ------------------------------------------------------------------
-    # Phase 1: Structured error handling
-    # ------------------------------------------------------------------
-
-    async def _handle_error_event(
-        self,
-        *,
-        tools: AgentToolsProtocol,
-        params: dict[str, Any],
-        room_id: str,
-        thread_id: str,
-        turn_id: str | None,
-    ) -> bool:
-        """Handle an ``error`` notification from Codex.
-
-        Returns whether a failure was actually reported, so the turn loop can
-        skip a redundant second report if ``turn/completed`` also arrives with
-        a failed status for the same incident.
-        """
-        error_obj = params.get("error") or {}
-        if isinstance(error_obj, dict):
-            error_msg = error_obj.get("message", "")
-        else:
-            error_msg = str(error_obj)
-            error_obj = {"message": error_msg}
-        will_retry = bool(params.get("willRetry", False))
-        if will_retry:
-            # Include retry metadata so a retry storm is observable in logs
-            # even though we don't surface transient errors to the user.
-            retry_attempt = params.get("retryAttempt") or params.get("attempt")
-            retry_after_s = params.get("retryAfterSeconds") or params.get("retryAfter")
-            logger.warning(
-                "Codex transient error (will retry, attempt=%s, retry_after=%ss, "
-                "thread=%s, turn=%s): %s",
-                retry_attempt,
-                retry_after_s,
-                thread_id,
-                turn_id,
-                error_msg,
-            )
-            return False
-
-        logger.error("Codex error: %s", error_msg)
-        await tools.send_failure(
-            build_agent_failure(
-                error_obj, thread_id=thread_id, turn_id=turn_id, room_id=room_id
-            )
-        )
-        return True
-
-    async def _emit_structured_turn_error(
-        self,
-        *,
-        tools: AgentToolsProtocol,
-        turn_payload: dict[str, Any],
-        room_id: str,
-        thread_id: str,
-        turn_id: str | None,
-    ) -> None:
-        """Emit a structured error event when turn/completed reports failure."""
-        error = turn_payload.get("error")
-        if not isinstance(error, dict):
-            # A falsy scalar (``""``, ``0``, ``None``) has no useful message to
-            # carry; build_agent_failure's own fallback covers it uniformly
-            # instead of shipping a degenerate literal string like "None".
-            error = {"message": str(error)} if error else {}
-        logger.error(
-            "Codex turn failed (thread=%s, turn=%s): %s",
-            thread_id,
-            turn_id,
-            error.get("message", ""),
-        )
-        await tools.send_failure(
-            build_agent_failure(
-                error, thread_id=thread_id, turn_id=turn_id, room_id=room_id
-            )
-        )
-
-    # ------------------------------------------------------------------
-    # Phase 2: Plan step tracking
-    # ------------------------------------------------------------------
-
-    async def _forward_plan_steps(
-        self,
-        *,
-        tools: AgentToolsProtocol,
-        params: dict[str, Any],
-        room_id: str,
-        thread_id: str,
-        turn_id: str | None,
-    ) -> None:
-        """Forward turn/plan/updated with structured step-level status."""
-        steps = parse_plan_steps(params)
-        if not steps:
-            return
-        step_dicts = [{"step": s.step, "status": s.status} for s in steps]
-        await send_event_safe(
-            tools,
-            content=self._build_task_event_content(
-                task_id=turn_id,
-                task="Codex plan",
-                status="updated",
-                summary=f"{len(steps)} steps",
-            ),
-            message_type="task",
-            metadata={
-                "codex_plan_steps": step_dicts,
-                CodexMetadataKey.ROOM: room_id,
-                CodexMetadataKey.THREAD: thread_id,
-                CodexMetadataKey.TURN: turn_id,
-            },
-            log_label="plan steps",
-            log_level=logging.DEBUG,
-        )
-
-    # ------------------------------------------------------------------
-    # Phase 4: Token usage & diffs
-    # ------------------------------------------------------------------
-
     def _update_token_usage(self, thread_id: str, params: dict[str, Any]) -> None:
         """Update accumulated token usage for a thread."""
         usage = self._token_usage.get(thread_id)
@@ -3152,125 +2632,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             usage = CodexTokenUsage()
             self._token_usage[thread_id] = usage
         usage.update(params)
-
-    async def _emit_token_usage_event(
-        self, *, tools: AgentToolsProtocol, thread_id: str, room_id: str
-    ) -> None:
-        """Emit a task event with current token usage."""
-        usage = self._token_usage.get(thread_id)
-        # Dataclass instances are always truthy, so check for None and the
-        # zero-tokens sentinel explicitly — otherwise we'd emit an empty event
-        # before any thread/tokenUsage/updated notification has arrived.
-        if usage is None or usage.total_tokens == 0:
-            return
-        metadata = usage.to_metadata()
-        metadata[CodexMetadataKey.THREAD] = thread_id
-        metadata[CodexMetadataKey.ROOM] = room_id
-        await send_event_safe(
-            tools,
-            content=usage.format_summary(),
-            message_type="task",
-            metadata=metadata,
-            log_label="token usage event",
-            log_level=logging.DEBUG,
-        )
-
-    async def _forward_diff_event(
-        self,
-        *,
-        tools: AgentToolsProtocol,
-        params: dict[str, Any],
-        room_id: str,
-        thread_id: str,
-        turn_id: str | None,
-    ) -> None:
-        """Forward turn/diff/updated as a task event.
-
-        Diffs are semantically separate from tool results, so we emit a task
-        event with ``codex_event_type=turn_diff`` and carry the raw diff in
-        metadata.  Consumers filter on ``codex_event_type`` rather than the
-        generic ``tool_result`` channel.
-        """
-        diff_content = str(params.get("diff") or params.get("content") or "")
-        files_changed: list[str] = []
-        files_raw = params.get("files") or params.get("filesChanged") or []
-        if isinstance(files_raw, list):
-            files_changed = [str(f) for f in files_raw if f]
-        summary = (
-            f"{len(files_changed)} files changed" if files_changed else "diff updated"
-        )
-
-        # Enforce the cap on UTF-8 bytes (not Python characters) so a diff
-        # loaded with emoji or CJK can't silently inflate the WebSocket
-        # frame well past the intended budget.
-        diff_truncated = False
-        diff_bytes = diff_content.encode("utf-8")
-        original_byte_length = len(diff_bytes)
-        original_length = len(diff_content)
-        if original_byte_length > _MAX_DIFF_METADATA_BYTES:
-            truncated_bytes = diff_bytes[:_MAX_DIFF_METADATA_BYTES]
-            # Drop any trailing partial UTF-8 sequence introduced by slicing
-            # inside a multi-byte character.
-            diff_content = truncated_bytes.decode("utf-8", errors="ignore") + (
-                f"\n... [truncated, {original_byte_length - _MAX_DIFF_METADATA_BYTES} "
-                f"more bytes]"
-            )
-            diff_truncated = True
-
-        metadata: dict[str, Any] = {
-            "codex_event_type": "turn_diff",
-            CodexMetadataKey.THREAD: thread_id,
-            CodexMetadataKey.TURN: turn_id,
-            CodexMetadataKey.ROOM: room_id,
-            "codex_files_changed": files_changed,
-            "codex_diff": diff_content,
-        }
-        if diff_truncated:
-            metadata["codex_diff_truncated"] = True
-            metadata["codex_diff_original_length"] = original_length
-            metadata["codex_diff_original_bytes"] = original_byte_length
-        await send_event_safe(
-            tools,
-            content=self._build_task_event_content(
-                task_id=turn_id, task="Codex diff", status="updated", summary=summary
-            ),
-            message_type="task",
-            metadata=metadata,
-            log_label="diff event",
-            log_level=logging.DEBUG,
-        )
-
-    # ------------------------------------------------------------------
-    # Phase 1: Approval audit trail
-    # ------------------------------------------------------------------
-
-    async def _emit_approval_audit_event(
-        self, *, tools: AgentToolsProtocol, room_id: str, entry: ApprovalAuditEntry
-    ) -> None:
-        """Emit a task event for an approval decision."""
-        if Emit.TASK_EVENTS not in self.features.emit:
-            return
-        await send_event_safe(
-            tools,
-            content=self._build_task_event_content(
-                task_id=str(entry.request_id),
-                task="Codex approval",
-                status=entry.decision,
-                summary=entry.summary,
-            ),
-            message_type="task",
-            metadata={
-                "codex_event_type": "approval_resolution",
-                "codex_approval_method": entry.method,
-                "codex_approval_decision": entry.decision,
-                "codex_decided_by": entry.decided_by,
-                "codex_session_level": entry.session_level,
-                CodexMetadataKey.ROOM: room_id,
-                "codex_timestamp": entry.timestamp,
-            },
-            log_label="approval audit event",
-            log_level=logging.DEBUG,
-        )
 
     async def _handle_local_command(
         self,
@@ -3617,75 +2978,6 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             if override is not None:
                 return override
         return self.config.sandbox
-
-    @staticmethod
-    def _extract_turn_error(turn_payload: dict[str, Any]) -> str:
-        error = turn_payload.get("error")
-        if isinstance(error, dict):
-            message = error.get("message")
-            if isinstance(message, str):
-                return message
-        return ""
-
-    @staticmethod
-    def _task_event_id(params: dict[str, Any]) -> str | None:
-        for key in ("taskId", "task_id"):
-            value = params.get(key)
-            if isinstance(value, str) and value:
-                return value
-
-        task_value = params.get("task")
-        if isinstance(task_value, dict):
-            for key in ("taskId", "task_id", "id"):
-                nested = task_value.get(key)
-                if isinstance(nested, str) and nested:
-                    return nested
-        return None
-
-    @staticmethod
-    def _task_event_title(params: dict[str, Any]) -> str | None:
-        for key in ("title", "name"):
-            value = params.get(key)
-            if isinstance(value, str) and value:
-                return value
-
-        task_value = params.get("task")
-        if isinstance(task_value, str) and task_value:
-            return task_value
-        if isinstance(task_value, dict):
-            for key in ("title", "name", "description"):
-                nested = task_value.get(key)
-                if isinstance(nested, str) and nested:
-                    return nested
-        return None
-
-    @staticmethod
-    def _task_event_summary(params: dict[str, Any]) -> str | None:
-        for key in ("summary", "result", "message", "description"):
-            value = params.get(key)
-            if isinstance(value, str) and value:
-                return value
-
-        task_value = params.get("task")
-        if isinstance(task_value, dict):
-            for key in ("summary", "result", "message", "description"):
-                nested = task_value.get(key)
-                if isinstance(nested, str) and nested:
-                    return nested
-        return None
-
-    @staticmethod
-    def _build_task_event_content(
-        *, task_id: str | None, task: str, status: str, summary: str | None = None
-    ) -> str:
-        lines: list[str] = []
-        if task_id:
-            lines.append(f"UUID: {task_id}")
-        lines.append(f"Task: {task}")
-        lines.append(f"Status: {status}")
-        if summary and summary != task:
-            lines.append(f"Summary: {summary}")
-        return "\n".join(lines)
 
     @staticmethod
     def _sender_mention(msg: PlatformMessage) -> list[dict[str, str]]:
