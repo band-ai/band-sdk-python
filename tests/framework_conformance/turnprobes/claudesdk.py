@@ -13,12 +13,12 @@ from band.testing.fake_tools import FakeAgentTools
 from tests.baseline.decisions import ModelDecision
 from tests.framework_conformance.turnprobes import (
     ROOM_ID,
-    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
     user_message,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 
 def scripted_turn(script: TurnScript) -> list[ModelDecision]:

@@ -13,12 +13,12 @@ from band.runtime.tools import CHAT_ID_FIELD_NAME
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.turnprobes import (
     ROOM_ID,
-    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
     user_message,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 if TYPE_CHECKING:
     from band.core.types import AgentInput

@@ -30,7 +30,6 @@ from band.testing import failure_reports
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.turnprobes import (
     ToolCall,
-    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     acp,
@@ -44,6 +43,7 @@ from tests.framework_conformance.turnprobes import (
     toolloop,
     turn_tools,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 TURN_OUTCOME_PROBES: dict[str, TurnOutcomeProbe] = {
     **acp.PROBES,
@@ -66,6 +66,8 @@ REPLY_SENT = {
     "recipients": [{"handle": "alice", "id": "alice", "name": None}],
     "success": True,
 }
+#: What ``turn_tools`` answers ``DECLINE`` with.
+DECLINE_ACK = {"status": "no_reply"}
 
 
 @dataclass(frozen=True)

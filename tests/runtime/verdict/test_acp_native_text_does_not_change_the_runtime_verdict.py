@@ -30,7 +30,7 @@ class TestAcpNativeTextDoesNotChangeTheRuntimeVerdict:
             "reply",
             "act",
             "failed-then-decline",
-            "decline-then-refused-reply",
+            "decline-holds-past-a-refused-reply",
         ],
     )
     async def test_acp_native_text_does_not_change_the_runtime_verdict(

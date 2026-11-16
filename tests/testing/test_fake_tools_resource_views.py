@@ -7,12 +7,17 @@ import asyncio
 from band.core.turn_lifecycle import TurnTask, resource_tools
 from band.testing import FakeAgentTools
 
+#: A room message in the fake's canonical form, so it reads back unchanged.
 MESSAGE = {
     "id": "msg-1",
     "content": "hello",
     "sender_id": "user-1",
     "sender_type": "User",
+    "sender_name": None,
     "message_type": "text",
+    "metadata": {"delegation": None},
+    "inserted_at": None,
+    "created_at": None,
 }
 
 
@@ -53,4 +58,7 @@ class TestFakeToolsResourceViews:
         tools.set_room_context([MESSAGE])
         page = await view.fetch_room_context(room_id=tools.room_id)
 
-        assert [item["content"] for item in page["data"]] == [MESSAGE["content"]]
+        assert page == {
+            "data": [MESSAGE],
+            "meta": {"page": 1, "page_size": 50, "total_count": 1, "total_pages": 1},
+        }

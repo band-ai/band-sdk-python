@@ -79,7 +79,7 @@ def declined_turn_refusal(tools: TurnTools) -> str | None:
     origin = _origin(tools)
     if not tools.turn.declined(origin):
         return None
-    caller = "the model" if origin is None else type(origin).__name__
+    caller = "the model" if origin is None else "a subagent"
     logger.info("Refusing a tool call from %s: its turn ended in a decline", caller)
     return DECLINED_TURN_REFUSAL
 

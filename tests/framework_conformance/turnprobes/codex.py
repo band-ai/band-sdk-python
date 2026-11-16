@@ -13,12 +13,12 @@ from tests.adapters.codexturns import (
     turn_completed,
 )
 from tests.framework_conformance.turnprobes import (
-    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
     user_message,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 
 def scripted_events(script: TurnScript) -> list[RpcEvent]:

@@ -14,7 +14,7 @@ from tests.adapters.opencode.helpers import (
     event_session_idle,
     run_single_turn,
 )
-from tests.framework_conformance.outcomeprobes import DECLINE, REPLY
+from tests.framework_conformance.outcomeprobes import DECLINE, DECLINE_ACK, REPLY
 from tests.mcp.toolresults import mcp_text_result, mcp_tool_error
 
 
@@ -35,9 +35,8 @@ class TestDeclinedTurn:
 
         await run_single_turn(make_adapter(client), tools)
 
-        declined = await FakeAgentTools().no_reply()
         assert mcp_backend.results == [
-            mcp_text_result(json.dumps(declined)),
+            mcp_text_result(json.dumps(DECLINE_ACK)),
             mcp_tool_error(BandTool.SEND_MESSAGE, DECLINED_TURN_REFUSAL),
         ]
         assert tools.chat == []

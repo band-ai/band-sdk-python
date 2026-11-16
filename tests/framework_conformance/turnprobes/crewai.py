@@ -15,11 +15,11 @@ import pytest
 from band.adapters.crewai import EMPTY_LLM_RESPONSE_MARKER, CrewAIAdapter
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.turnprobes import (
-    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 
 class ScriptedCrewAgent:

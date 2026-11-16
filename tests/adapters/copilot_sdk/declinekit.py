@@ -20,7 +20,7 @@ if _COPILOT_SDK_AVAILABLE:
 
 
 #: The model's custom decline, as it calls it.
-DECLINE = ToolCall(SKIP)
+CUSTOM_DECLINE = ToolCall(SKIP)
 
 
 def refused() -> ToolResult:

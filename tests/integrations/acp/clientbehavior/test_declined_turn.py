@@ -8,8 +8,7 @@ from band.core.types import Emit
 from band.integrations.acp.types import ToolResultRoomEvent
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
-from band.testing import FakeAgentTools
-from tests.framework_conformance.outcomeprobes import ANSWER, DECLINE
+from tests.framework_conformance.outcomeprobes import ANSWER, DECLINE, DECLINE_ACK
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
@@ -47,15 +46,12 @@ class TestDeclinedTurn:
             answered = await session.send_judged("What is the vault code?")
 
             assert session.session_id(session.room().room_id) == declined_session
-        declined_result = await FakeAgentTools().no_reply()
         refusal = mcp_tool_error(BandTool.SEND_MESSAGE, DECLINED_TURN_REFUSAL)
         assert declined.texts == []
         assert declined.parsed_tool_results == [
             ToolResultRoomEvent(
                 name=BandTool.NO_REPLY,
-                output=str(
-                    content_blocks(mcp_text_result(json.dumps(declined_result)))
-                ),
+                output=str(content_blocks(mcp_text_result(json.dumps(DECLINE_ACK)))),
                 tool_call_id=DECLINE_CALL,
                 is_error=False,
             ),

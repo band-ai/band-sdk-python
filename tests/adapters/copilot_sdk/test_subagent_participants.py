@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 from band_rest.types import ChatMessageRequestMentionsItem
@@ -26,11 +27,13 @@ if _COPILOT_SDK_AVAILABLE:
     from copilot import ToolResult
 
 SUBAGENT = "subagent-1"
-ADD_AGENT_TWO = ToolCall(BandTool.ADD_PARTICIPANT, {"identifier": "agent-two"})
+#: The agent the sub-agent adds (the default peer of ``mock_rest_client``), as
+#: a sent message names it.
+AGENT_TWO = ChatMessageRequestMentionsItem(handle="agent-two", id="agent-2")
+ADD_AGENT_TWO = ToolCall(BandTool.ADD_PARTICIPANT, {"identifier": AGENT_TWO.handle})
 WELCOME = ToolCall(
-    BandTool.SEND_MESSAGE, {"content": "welcome", "mentions": ["@agent-two"]}
+    BandTool.SEND_MESSAGE, {"content": "welcome", "mentions": [f"@{AGENT_TWO.handle}"]}
 )
-
 
 #: The room's one member before the sub-agent adds anyone.
 ROOM_USER = ChatParticipant(
@@ -41,9 +44,11 @@ ROOM_USER = ChatParticipant(
     role="member",
     status="active",
 )
-#: How a sent message names the added agent (the default peer of
-#: ``mock_rest_client``).
-AGENT_TWO_MENTION = ChatMessageRequestMentionsItem(handle="agent-two", id="agent-2")
+
+
+def succeeded(value: dict[str, str]) -> ToolResult:
+    """The result the model receives for a tool call that returned ``value``."""
+    return ToolResult(text_result_for_llm=json.dumps(value), result_type="success")
 
 
 class TestSubagentParticipants:
@@ -70,8 +75,15 @@ class TestSubagentParticipants:
         await run_event(adapter, tools)
 
         sent = mock_rest_client.agent_api_messages.create_agent_chat_message
-        assert [result.result_type for result in results] == ["success"] * 3
+        added = {
+            "id": AGENT_TWO.id,
+            "name": "Agent Two",
+            "role": "member",
+            "status": "added",
+        }
+        posted = {"id": "msg-123", "content": "Hello", "sender_id": "agent-1"}
+        assert results == [succeeded(added), succeeded(posted), succeeded(posted)]
         assert [call.kwargs["message"].mentions for call in sent.call_args_list] == [
-            [AGENT_TWO_MENTION],
-            [AGENT_TWO_MENTION],
+            [AGENT_TWO],
+            [AGENT_TWO],
         ]

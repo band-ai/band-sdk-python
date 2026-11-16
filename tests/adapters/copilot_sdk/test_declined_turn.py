@@ -11,7 +11,7 @@ from band.core.types import Emit, MessageType, ToolEventKey
 from band.integrations.copilot_sdk import ASK_USER_ROOM
 from band.integrations.copilot_sdk.room_ask_user import freeform_answer
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL
-from tests.adapters.copilot_sdk.declinekit import DECLINE, refused, tool_events
+from tests.adapters.copilot_sdk.declinekit import CUSTOM_DECLINE, refused, tool_events
 from tests.adapters.copilot_sdk.fakes import (
     QUESTION,
     FakeCopilotClient,
@@ -71,7 +71,7 @@ class TestDeclinedTurn:
         results: list[ToolResult] = []
 
         async def decline_then_call(session: FakeCopilotSession) -> None:
-            await call_tool(session, DECLINE)
+            await call_tool(session, CUSTOM_DECLINE)
             results.append(await call_tool(session, later))
 
         client = FakeCopilotClient(turn_events=[decline_then_call])
@@ -88,7 +88,7 @@ class TestDeclinedTurn:
 
     async def test_a_refused_call_is_reported_as_its_refusal(self) -> None:
         async def decline_then_reply(session: FakeCopilotSession) -> None:
-            await call_tool(session, DECLINE)
+            await call_tool(session, CUSTOM_DECLINE)
             await call_tool(session, REPLY)
 
         client = FakeCopilotClient(turn_events=[decline_then_reply])
@@ -100,8 +100,8 @@ class TestDeclinedTurn:
         await run_event(adapter, tools)
 
         assert tool_events(tools) == [
-            reported_call(DECLINE),
-            reported_result(DECLINE, SKIPPED),
+            reported_call(CUSTOM_DECLINE),
+            reported_result(CUSTOM_DECLINE, SKIPPED),
             reported_call(REPLY),
             reported_result(REPLY, DECLINED_TURN_REFUSAL),
         ]
@@ -111,7 +111,7 @@ class TestDeclinedTurn:
         answers: list[Any] = []
 
         async def decline_then_ask(session: FakeCopilotSession) -> None:
-            await call_tool(session, DECLINE)
+            await call_tool(session, CUSTOM_DECLINE)
             handler = session.kwargs["on_user_input_request"]
             answers.append(await handler(QUESTION, {"session_id": session.session_id}))
 

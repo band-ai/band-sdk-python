@@ -8,7 +8,7 @@ from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
 from band.integrations.copilot_sdk import ASK_USER_ROOM, render_room_question
 from band.integrations.copilot_sdk.room_ask_user import question_delivered_answer
 from tests.adapters.copilot_sdk.declinekit import (
-    DECLINE,
+    CUSTOM_DECLINE,
     PostingTools,
     refused,
     replied,
@@ -40,7 +40,7 @@ class TestSubagentDecline:
         async def sub_agent_declines_then_root_replies(
             session: FakeCopilotSession,
         ) -> None:
-            await call_tool(session, DECLINE, agent_id=SUBAGENT)
+            await call_tool(session, CUSTOM_DECLINE, agent_id=SUBAGENT)
             results.append(await call_tool(session, REPLY))
 
         client = FakeCopilotClient(turn_events=[sub_agent_declines_then_root_replies])
@@ -62,7 +62,7 @@ class TestSubagentDecline:
         async def sub_agent_declines_then_both_reply(
             session: FakeCopilotSession,
         ) -> None:
-            await call_tool(session, DECLINE, agent_id=SUBAGENT)
+            await call_tool(session, CUSTOM_DECLINE, agent_id=SUBAGENT)
             results.append(await call_tool(session, REPLY, agent_id=SUBAGENT))
             results.append(await call_tool(session, REPLY, agent_id=SIBLING))
 
@@ -85,7 +85,7 @@ class TestSubagentDecline:
         async def sub_agent_declines_then_root_asks(
             session: FakeCopilotSession,
         ) -> None:
-            await call_tool(session, DECLINE, agent_id=SUBAGENT)
+            await call_tool(session, CUSTOM_DECLINE, agent_id=SUBAGENT)
             handler = session.kwargs["on_user_input_request"]
             answers.append(await handler(QUESTION, {"session_id": session.session_id}))
 
@@ -107,7 +107,7 @@ class TestSubagentDecline:
         async def root_declines_then_sub_agent_replies(
             session: FakeCopilotSession,
         ) -> None:
-            await call_tool(session, DECLINE)
+            await call_tool(session, CUSTOM_DECLINE)
             results.append(await call_tool(session, REPLY, agent_id=SUBAGENT))
 
         client = FakeCopilotClient(turn_events=[root_declines_then_sub_agent_replies])

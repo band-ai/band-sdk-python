@@ -11,11 +11,11 @@ from tests.adapters.copilot_sdk.fakes import (
 )
 from tests.framework_conformance.turnprobes import (
     ROOM_ID,
-    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 
 async def run_copilot_sdk_turn(script: TurnScript, tools: FakeAgentTools) -> None:

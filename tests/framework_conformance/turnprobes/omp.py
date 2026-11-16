@@ -14,11 +14,11 @@ from band.runtime.custom_tools import CustomToolDef
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.ompadapter import started_omp_adapter
 from tests.framework_conformance.turnprobes import (
-    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 if TYPE_CHECKING:
     from band.adapters.omp import OmpAdapter

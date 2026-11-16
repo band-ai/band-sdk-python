@@ -10,6 +10,7 @@ without a mocking framework.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -162,6 +163,39 @@ class CapturingModel(Model):
         messages = self.captured_messages or []
         return "\n".join(
             m.content for m in messages if m.role == "system" and m.content
+        )
+
+
+class ScriptedToolModel(Model):
+    """A real Agno model that asks for one scripted tool call per round, then
+    answers ``final_text``. Agno's own loop runs each call and calls back."""
+
+    def __init__(
+        self, calls: list[tuple[str, dict[str, Any]]], final_text: str = ""
+    ) -> None:
+        super().__init__(id="scripted", provider="fake")
+        self._calls = list(calls)
+        self._final_text = final_text
+
+    def invoke(self, *args: Any, **kwargs: Any) -> Any: ...
+    def invoke_stream(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> Any: ...
+    def _parse_provider_response(self, *args: Any, **kwargs: Any) -> Any: ...
+    def _parse_provider_response_delta(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        if not self._calls:
+            return ModelResponse(role="assistant", content=self._final_text)
+        name, arguments = self._calls.pop(0)
+        return ModelResponse(
+            role="assistant",
+            tool_calls=[
+                {
+                    "id": f"call-{name}-{len(self._calls)}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(arguments)},
+                }
+            ],
         )
 
 

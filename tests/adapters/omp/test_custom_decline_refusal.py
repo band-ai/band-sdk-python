@@ -19,7 +19,6 @@ from tests.framework_conformance.outcomeprobes import REPLY, TurnResult, run_tur
 from tests.framework_conformance.turnprobes import (
     ROOM_ID,
     ToolCall,
-    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
@@ -27,6 +26,7 @@ from tests.framework_conformance.turnprobes import (
 )
 from tests.framework_conformance.turnprobes.omp import scripted_omp_adapter
 from tests.framework_conformance.turnprobes.omppeer import host_request_id
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 from tests.runtime.customtools.kit import SKIP, SKIPPED, SkipInput, skip
 
 SKIP_THEN_REPLY = TurnScript((ToolCall(SKIP), REPLY))

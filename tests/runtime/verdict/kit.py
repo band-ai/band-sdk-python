@@ -138,7 +138,7 @@ NATIVE_OUTCOMES = {
         [(BandTool.NO_REPLY, {"reason": 123}), (BandTool.NO_REPLY, {})],
         True,
     ),
-    "decline-then-refused-reply": (
+    "decline-holds-past-a-refused-reply": (
         [
             (BandTool.NO_REPLY, {}),
             (BandTool.SEND_MESSAGE, {"content": "hi", "mentions": USER}),

@@ -18,13 +18,13 @@ from tests.adapters.opencode.helpers import (
 )
 from tests.framework_conformance.turnprobes import (
     ROOM_ID,
-    TurnLoop,
     TurnOutcomeProbe,
     TurnScript,
     turn_input,
     turn_tools,
     user_message,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 from tests.mcpbackends import backends_created_by
 
 SESSION_ID = "sess-1"
