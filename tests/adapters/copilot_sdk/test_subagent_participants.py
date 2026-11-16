@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from unittest.mock import MagicMock
 
 from band_rest.types import ChatMessageRequestMentionsItem
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
 from band.client.rest import ChatParticipant
-from band.runtime.tools import AgentTools
+from band.runtime.tools import AgentTools, ParticipantAddResult, ParticipantAddStatus
 from band.runtime.tools.types import BandTool
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
@@ -46,7 +47,7 @@ ROOM_USER = ChatParticipant(
 )
 
 
-def succeeded(value: dict[str, str]) -> ToolResult:
+def succeeded(value: Mapping[str, object]) -> ToolResult:
     """The result the model receives for a tool call that returned ``value``."""
     return ToolResult(text_result_for_llm=json.dumps(value), result_type="success")
 
@@ -75,12 +76,12 @@ class TestSubagentParticipants:
         await run_event(adapter, tools)
 
         sent = mock_rest_client.agent_api_messages.create_agent_chat_message
-        added = {
-            "id": AGENT_TWO.id,
-            "name": "Agent Two",
-            "role": "member",
-            "status": "added",
-        }
+        added = ParticipantAddResult(
+            id=AGENT_TWO.id,
+            name="Agent Two",
+            role="member",
+            status=ParticipantAddStatus.ADDED.value,
+        )
         posted = {"id": "msg-123", "content": "Hello", "sender_id": "agent-1"}
         assert results == [succeeded(added), succeeded(posted), succeeded(posted)]
         assert [call.kwargs["message"].mentions for call in sent.call_args_list] == [

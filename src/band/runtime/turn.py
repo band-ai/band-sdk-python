@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Protocol
 
+from band.core.exceptions import BandToolError
 from band.runtime.tools.effects import DECLINED_TURN_REFUSAL, turn_effect
 from band.runtime.tools.registry import ToolsClass, agent_tool_methods
 from band.runtime.tools.types import TurnEffect
@@ -67,6 +68,11 @@ def record_tool_result(tools: TurnTools, tool_name: str, result: Any) -> None:
     record_effect(tools, effect)
 
 
+def turn_declined(tools: TurnTools) -> bool:
+    """Whether whoever calls through ``tools`` already declined this turn."""
+    return tools.turn.declined(_origin(tools))
+
+
 def declined_turn_refusal(tools: TurnTools) -> str | None:
     """The refusal for a tool call through ``tools`` after its caller declined.
 
@@ -76,12 +82,17 @@ def declined_turn_refusal(tools: TurnTools) -> str | None:
     refuses only its own. SDK-driven loops stop calling the model instead and
     never consult this.
     """
-    origin = _origin(tools)
-    if not tools.turn.declined(origin):
+    if not turn_declined(tools):
         return None
-    caller = "the model" if origin is None else "a subagent"
+    caller = "the model" if _origin(tools) is None else "a subagent"
     logger.info("Refusing a tool call from %s: its turn ended in a decline", caller)
     return DECLINED_TURN_REFUSAL
+
+
+def refuse_if_declined(tools: TurnTools) -> None:
+    """Raise the decline refusal as a tool error, for entries that raise one."""
+    if refusal := declined_turn_refusal(tools):
+        raise BandToolError(refusal)
 
 
 def _recording(

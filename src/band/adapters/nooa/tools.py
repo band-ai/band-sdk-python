@@ -46,7 +46,7 @@ from band.runtime.tools import (
     redact_tool_call_args,
     serialize_tool_result,
 )
-from band.runtime.turn import declined_turn_refusal
+from band.runtime.turn import refuse_if_declined
 
 logger = logging.getLogger(__name__)
 
@@ -413,12 +413,6 @@ def room_tools_reference(tools_class: type[RoomTools]) -> str:
     return "\n\n".join(sections)
 
 
-def _refuse_after_decline(tools: AgentToolsProtocol) -> None:
-    """NOOA's code loop runs past a decline, so refuse the turn's later calls."""
-    if refusal := declined_turn_refusal(tools):
-        raise BandToolError(refusal)
-
-
 def platform_tool_spec(definition: ToolDefinition) -> RoomToolSpec:
     """Dispatch a Band tool through the turn's tools, as every adapter does.
 
@@ -427,7 +421,7 @@ def platform_tool_spec(definition: ToolDefinition) -> RoomToolSpec:
     """
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
-        _refuse_after_decline(tools)
+        refuse_if_declined(tools)
         outcome = await tools.execute_tool_call_structured(definition.name, arguments)
         if not outcome.ok:
             raise BandToolError(outcome.error_message or str(outcome.value))
@@ -443,7 +437,7 @@ def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
     input_model, _ = tool_def
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
-        _refuse_after_decline(tools)
+        refuse_if_declined(tools)
         outcome = await run_custom_tool(tool_def, arguments, tools=tools)
         if not outcome.ok:
             raise BandToolError(outcome.error_message or str(outcome.value))

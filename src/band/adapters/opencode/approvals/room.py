@@ -62,7 +62,7 @@ from band.integrations.opencode import (
 )
 from band.runtime.activity import permission_wait
 from band.runtime.decisions import DecisionEntry, DecisionRegistry
-from band.runtime.turn import declined_turn_refusal
+from band.runtime.turn import turn_declined
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +306,7 @@ class RoomApprovals:
     def _turn_declined(self) -> bool:
         """The room's turn declined, so the model's question must not reach it."""
         tools = self._ports.tools()
-        return tools is not None and declined_turn_refusal(tools) is not None
+        return tools is not None and turn_declined(tools)
 
     def recognizes_reply(self, content: str) -> bool:
         """Recognize a reply without claiming an ask or posting."""

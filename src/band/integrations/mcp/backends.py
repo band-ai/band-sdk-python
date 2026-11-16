@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Self
 
-from band.core.exceptions import BandToolError, CleanupIncompleteError
+from band.core.exceptions import CleanupIncompleteError
 from band.core.protocols import AgentToolsProtocol
 from band.core.retention.cleanup import (
     cleanup_deadline,
@@ -33,7 +33,7 @@ from band.integrations.mcp.local_server import (
 )
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
-from band.runtime.turn import declined_turn_refusal
+from band.runtime.turn import refuse_if_declined
 
 logger = logging.getLogger(__name__)
 
@@ -141,8 +141,8 @@ def _refusing_after_decline(get_tools: RoomToolResolver) -> RoomToolResolver:
 
     def resolve(room_id: str) -> AgentToolsProtocol | None:
         tools = get_tools(room_id)
-        if tools is not None and (refusal := declined_turn_refusal(tools)):
-            raise BandToolError(refusal)
+        if tools is not None:
+            refuse_if_declined(tools)
         return tools
 
     return resolve
