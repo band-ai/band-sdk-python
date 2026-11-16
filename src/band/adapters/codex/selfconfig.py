@@ -12,6 +12,7 @@ from band.adapters.codex.roomstate import RoomCodexClient
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 
 REASONING_SUMMARIES: frozenset[str] = frozenset(get_args(ReasoningSummary))
+*_FIRST_SUMMARIES, _LAST_SUMMARY = get_args(ReasoningSummary)
 
 
 class SetModelInput(BaseModel):
@@ -29,7 +30,7 @@ class SetReasoningInput(BaseModel):
     )
     summary: str | None = Field(
         default=None,
-        description=f"Reasoning summary detail: {', '.join(get_args(ReasoningSummary))}. Omit to keep current.",
+        description=f"Reasoning summary detail: {', '.join(_FIRST_SUMMARIES)}, or {_LAST_SUMMARY}. Omit to keep current.",
     )
 
 
