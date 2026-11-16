@@ -574,17 +574,15 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                     )
                 )
                 try:
-                    live = await await_owned_result(
-                        self.backend_turns.started(room_id, prepare),
+                    live = await self.backend_turns.start_within(
+                        room_id,
+                        prepare,
                         timeout=self.config.transition_timeout_s,
                         label=f"Copilot session setup for room {room_id}",
                     )
                     assert live is not None
                     session = live.session
                 except Exception:
-                    if not prepare.done():
-                        # Transition budget expired: keep prepare for late cleanup.
-                        self.backend_turns.abandon_start_wait(room_id, prepare)
                     logger.exception("Room %s: Copilot session setup failed", room_id)
                     await tools.send_failure(
                         AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
@@ -1159,12 +1157,14 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         return "\n\n".join(parts)
 
     async def _abort_turn(self, live: SessionTurn) -> None:
-        """Request stop and join cleanup without losing late settlement evidence."""
+        """Request stop; failed-session cleanup stays owned for late confirmation.
+
+        Do not await retirement here: a stop budget must not cancel the delete
+        that still owns settlement evidence after abort returns.
+        """
         assert self._session_manager is not None
         await self._abort_prompt(live)
         self._settle(live)
-        if live.cleanup is not None:
-            await asyncio.shield(live.cleanup)
 
     async def _abort_prompt(self, live: SessionTurn) -> None:
         """Abort the prompt and, while one is running, wait for the idle that ends it.

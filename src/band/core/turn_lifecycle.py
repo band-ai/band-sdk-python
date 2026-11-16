@@ -31,7 +31,7 @@ from band.core.exceptions import (
 )
 from band.core.protocols import AgentToolsProtocol
 from band.core.retention import Residency, RetainedRoom
-from band.core.retention.cleanup import await_owned, spawn_owned
+from band.core.retention.cleanup import await_owned, await_owned_result, spawn_owned
 from band.core.turn import judge_detached_turn
 
 logger = logging.getLogger(__name__)
@@ -323,7 +323,7 @@ class UnconfirmedStop(Generic[H]):
     reported: set[BackendStopNotice] = field(default_factory=set)
     recovery: tuple[RetainedRoom, int] | None = None
     release_callback: Callable[[], None] | None = None
-    # Latched after one failed recovery attempt; wakes readiness for recheck.
+    # Terminal admission latch from mark_unavailable (any path); wakes readiness.
     unavailable: bool = False
     # Originals deferred on this stop; latched terminal before the wake.
     waiting: set[str] = field(default_factory=set)
@@ -451,9 +451,8 @@ class BackendTurns(Generic[H]):
             return failed
         stop.unavailable = True
         logger.warning(
-            "Marking %s room %s unavailable until matching recovery evidence",
+            "Marking %s room unavailable until matching recovery evidence",
             self._provider,
-            room_id,
         )
         try:
             self._latch_waiting(room_id, failed)
@@ -529,18 +528,39 @@ class BackendTurns(Generic[H]):
 
         The call outlives a cancelled owner, so a turn the backend already
         accepted is still stopped once its handle arrives. A late handle after
-        abandonment feeds cleanup only.
+        abandonment feeds cleanup only. Prefer ``start_within`` when a
+        transition budget owns the wait.
         """
         call = asyncio.ensure_future(start)
         try:
             handle = await asyncio.shield(call)
         except asyncio.CancelledError:
-            stop = self._unconfirmed_stop(room_id, None)
-            self._spawn_stop(
-                room_id,
-                self._stop_when_started(room_id, call, stop),
-                cancel_on_timeout=False,
-            )
+            self.abandon_start_wait(room_id, call)
+            raise
+        if handle is not None:
+            self.bind(room_id, handle)
+        return handle
+
+    async def start_within(
+        self,
+        room_id: str,
+        start: Awaitable[H | None],
+        *,
+        timeout: float | None,
+        label: str,
+    ) -> H | None:
+        """Await ``start`` under a transition budget and bind its handle.
+
+        Expiry or host cancel abandons the wait through ``abandon_start_wait``
+        so late identity is cleanup-only; the start awaitable stays owned for
+        that cleanup. One owner covers both ``TimeoutError`` and
+        ``CancelledError`` — adapters must not wrap ``started`` themselves.
+        """
+        call = asyncio.ensure_future(start)
+        try:
+            handle = await await_owned_result(call, timeout=timeout, label=label)
+        except (TimeoutError, asyncio.CancelledError):
+            self.abandon_start_wait(room_id, call)
             raise
         if handle is not None:
             self.bind(room_id, handle)
@@ -792,8 +812,9 @@ class BackendTurns(Generic[H]):
                 room_id,
                 error,
             )
-            if self._unconfirmed.get(room_id) is stop:
+            if self._unconfirmed.get(room_id) is stop and not stop.unavailable:
                 # Never-accepted setup: deadlines must not latch unavailable.
+                # Keep an unavailable latch already set by abandon_start.
                 self.confirm_stopped(room_id, None)
             return
         if self._unconfirmed.get(room_id) is not stop:
@@ -843,7 +864,8 @@ class BackendTurns(Generic[H]):
                 self.mark_unavailable(room_id)
             raise
         # Deadline abandons this wait only; confirmation or failed recovery
-        # still owns whether the room becomes unavailable.
+        # (including a cancel cancelled with no late evidence) still owns
+        # whether the room becomes unavailable.
         raise TimeoutError("Backend stop exceeded its cancellation budget")
 
     def _forget_stop(self, room_id: str, task: asyncio.Task[None]) -> None:

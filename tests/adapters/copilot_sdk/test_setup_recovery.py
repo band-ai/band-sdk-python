@@ -8,7 +8,7 @@ import pytest
 
 from band.adapters.copilot_sdk import CopilotSDKAdapterConfig
 from band.converters.copilot_sdk import CopilotSDKSessionState
-from band.core.exceptions import ProviderUnavailableError
+from band.core.exceptions import InputNotAccepted
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
@@ -38,7 +38,8 @@ class TestSetupRecovery:
             with pytest.raises(TimeoutError):
                 await turn
             await adapter.backend_turns.settled("room-1")
-            with pytest.raises(ProviderUnavailableError):
+            # Deadline abandoned the wait only; late resume still owns cleanup.
+            with pytest.raises(InputNotAccepted):
                 await run_message(adapter, tools, history=history)
             assert client.create_calls == []
             assert client.sessions == []
@@ -46,7 +47,7 @@ class TestSetupRecovery:
             client.resume_released.set()
             await wait_for_condition(lambda: bool(client.sessions))
             await wait_for_condition(
-                lambda: not adapter.backend_turns.unavailable("room-1")
+                lambda: adapter.backend_turns.unconfirmed_handle("room-1") is None
             )
         client.hold_resume = False
         await run_message(adapter, tools, history=history)
@@ -70,7 +71,8 @@ class TestSetupRecovery:
             with pytest.raises(TimeoutError):
                 await turn
             await adapter.backend_turns.settled("room-1")
-            with pytest.raises(ProviderUnavailableError):
+            # Delete still owns settlement after the setup budget; no sticky latch.
+            with pytest.raises(InputNotAccepted):
                 await run_message(adapter, tools)
             assert len(client.create_calls) == 1
             assert client.deleted == []
@@ -78,7 +80,7 @@ class TestSetupRecovery:
             client.delete_released.set()
             await wait_for_condition(lambda: client.deleted == client.create_calls)
             await wait_for_condition(
-                lambda: not adapter.backend_turns.stopping("room-1")
+                lambda: adapter.backend_turns.unconfirmed_handle("room-1") is None
             )
         client.create_error = None
         client.hold_delete = False

@@ -408,7 +408,28 @@ class TestA2AAdapterMessageFlow:
         )
 
         assert tools.messages_sent[-1]["content"] == "Please authenticate"
-        assert adapter._tasks.get("room-123"), "auth-required must keep the task"
+        assert tools.events_sent[-1]["metadata"]["a2a_task_state"] == (
+            "TASK_STATE_AUTH_REQUIRED"
+        )
+
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(
+            return_value=stream(task_event(make_task(artifact_text="authenticated")))
+        )
+        await adapter.on_message(
+            make_platform_message("token"),
+            tools,
+            A2ASessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+        request = adapter._client.send_message.call_args.args[0]
+        assert request.message.task_id == "task-123", (
+            "the next turn must continue the auth-required task"
+        )
+        assert tools.messages_sent[-1]["content"] == "authenticated"
 
     @pytest.mark.asyncio
     async def test_input_required_is_forwarded_and_persisted(

@@ -607,9 +607,10 @@ class Agent:
 
     def _bind_backend_delivery(self, ctx: ExecutionContext) -> None:
         """Latch provider-unavailable failures into this room's delivery owner."""
-        turns = getattr(self._adapter, "backend_turns", None)
-        if turns is not None:
-            ctx.delivery.bind_backend_turns(turns)
+        if isinstance(self._adapter, SimpleAdapter):
+            turns = self._adapter.backend_turns
+            if turns is not None:
+                ctx.delivery.bind_backend_turns(turns)
 
     async def _on_execute(
         self,

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from acp.exceptions import RequestError
@@ -155,20 +156,19 @@ class TestACPRuntime:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.looptime
     async def test_load_session_timeout_is_not_a_missing_session(self) -> None:
         mock_conn = AsyncMock()
-        mock_conn.load_session = AsyncMock(side_effect=TimeoutError)
+
+        async def never(**_kwargs: object) -> None:
+            await asyncio.Future()
+
+        mock_conn.load_session = never
         runtime = ACPRuntime(command=["codex"])
         runtime._conn = mock_conn
         runtime._agent_supports_session_load = True
 
-        with (
-            patch(
-                "band.integrations.acp.sessions.ACP_SESSION_LOAD_TIMEOUT_SECONDS",
-                0.01,
-            ),
-            pytest.raises(ACPSessionRestoreError, match="no answer"),
-        ):
+        with pytest.raises(ACPSessionRestoreError, match="no answer"):
             await runtime.load_session(cwd="/tmp", session_id="sess-1", mcp_servers=[])
 
     @pytest.mark.asyncio

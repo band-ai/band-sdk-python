@@ -867,6 +867,9 @@ class ACPClientAdapter(
         room_id: str,
     ) -> None:
         room = self._room(room_id)
+        # Park on an in-flight cancel before the unconfirmed/unavailable check so
+        # a successor turn waits for the previous stop send the way settled does.
+        await self.backend_turns.settled(room_id)
         await self.backend_turns.require_admission(room_id, tools)
 
         async def prompt_room() -> None:
@@ -1127,13 +1130,20 @@ class ACPClientAdapter(
         try:
             await turn.runtime.cancel_turn(turn.session_id)
             sent = True
+        except asyncio.CancelledError:
+            # Stop budget abandoned this wait after the notification may already
+            # have been sent; treat as a failed cancel so recovery owns the room.
+            turn.cancel_attempted = True
+            self._resolve_stop(turn, cancel_failed=True)
+            raise
         except Exception:
             logger.exception(
                 "ACP turn cancellation failed (session=%s)", turn.session_id
             )
         finally:
-            turn.cancel_attempted = True
-            self._resolve_stop(turn, cancel_failed=not sent)
+            if not turn.cancel_attempted:
+                turn.cancel_attempted = True
+                self._resolve_stop(turn, cancel_failed=not sent)
 
     def _resolve_stop(self, turn: ACPTurn, *, cancel_failed: bool = False) -> None:
         """Confirm the stop once the agent answered the prompt, or recover the

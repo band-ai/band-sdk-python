@@ -14,6 +14,7 @@ from tests.adapters.codex.kit import (
     ROOM_ID,
     CodexRoom,
     CountingCloseClient,
+    residency_of,
     send_bootstrap,
 )
 from tests.adapters.codexturns import (
@@ -80,7 +81,8 @@ class TestCancelledStartRecovery:
                 handle = room.adapter.backend_turns.unconfirmed_handle(RUNTIME_ROOM_ID)
                 assert handle is not None
                 client.refuse_close = False
-                retained = room.adapter._room_clients[RUNTIME_ROOM_ID].retained
+                retained = residency_of(room.adapter, RUNTIME_ROOM_ID)
+                assert retained is not None
                 generation = handle.generation
                 await retained.wait_released(generation=generation)
                 room.adapter.backend_turns.confirm_stopped(RUNTIME_ROOM_ID, handle)

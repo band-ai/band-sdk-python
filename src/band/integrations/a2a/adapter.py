@@ -57,6 +57,12 @@ from band.integrations.a2a.types import A2AAdapterConfig, A2ASessionState
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "a2a"
+# States that pause the remote task for a later Band turn; one map owns both
+# the emit grouping and the status-or-fallback reply text.
+_CONTINUATION_FALLBACKS = {
+    TaskState.TASK_STATE_INPUT_REQUIRED: "Please provide more information.",
+    TaskState.TASK_STATE_AUTH_REQUIRED: "Authentication is required.",
+}
 
 
 @dataclass
@@ -265,16 +271,12 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                     reveal = asyncio.ensure_future(
                         _reveal_task(self._client, room_id, events, read)
                     )
-                    try:
-                        run = await await_owned_result(
-                            self.backend_turns.started(room_id, reveal),
-                            timeout=self.config.transition_timeout_s,
-                            label=f"A2A task reveal for room {room_id}",
-                        )
-                    except Exception:
-                        if not reveal.done():
-                            self.backend_turns.abandon_start_wait(room_id, reveal)
-                        raise
+                    run = await self.backend_turns.start_within(
+                        room_id,
+                        reveal,
+                        timeout=self.config.transition_timeout_s,
+                        label=f"A2A task reveal for room {room_id}",
+                    )
                 async for event in _prepended(read, events):
                     await self._handle_event(
                         event, tools, room_id, msg.sender_id, msg.sender_name, run
@@ -317,10 +319,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             run.finished = True
         try:
             await self._deliver_task_update(task, tools, self._task_senders[key])
-            if state in (
-                TaskState.TASK_STATE_INPUT_REQUIRED,
-                TaskState.TASK_STATE_AUTH_REQUIRED,
-            ):
+            if state in _CONTINUATION_FALLBACKS:
                 await self._emit_task_event(tools, task, state)
         finally:
             # A terminal task must be persisted and released even when Band
@@ -381,7 +380,9 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             return
         try:
             task = await run.client.cancel_task(CancelTaskRequest(id=run.task_id))
-        except Exception:
+        except BaseException:
+            # CancelledError included: cancel_on_timeout may destroy this call
+            # with no terminal task evidence left to confirm the stop.
             self.backend_turns.mark_unavailable(run.room_id)
             raise
         if (
@@ -415,13 +416,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 await send_event_safe(tools, status_text, "thought")
             return
 
-        if state == TaskState.TASK_STATE_INPUT_REQUIRED:
-            text = self._get_status_text(task) or "Please provide more information."
-            await deliver_reply(tools, text, mentions=[sender])
-            return
-
-        if state == TaskState.TASK_STATE_AUTH_REQUIRED:
-            text = self._get_status_text(task) or "Authentication is required."
+        if state in _CONTINUATION_FALLBACKS:
+            text = self._get_status_text(task) or _CONTINUATION_FALLBACKS[state]
             await deliver_reply(tools, text, mentions=[sender])
             return
 

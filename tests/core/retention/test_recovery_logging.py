@@ -47,7 +47,12 @@ class TestRecoveryLogging:
         ] == [
             (
                 logging.WARNING,
-                "Backend recovery failed (RuntimeError); marking room unavailable",
+                "Backend recovery failed (RuntimeError)",
+                None,
+            ),
+            (
+                logging.WARNING,
+                "Marking test room unavailable until matching recovery evidence",
                 None,
             ),
             (
