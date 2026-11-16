@@ -4,50 +4,49 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
 from band.credentials import PROXY_MANAGED_API_KEY
 from tests.docker.toolkit import sandbox_agent as registration
-from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.provisioning import NAME_PREFIX
+from tests.e2e.baseline.toolkit.provisioning import (
+    NAME_PREFIX,
+    NAME_TOKEN_HEX,
+    TOKEN_LABEL_SEPARATOR,
+)
+
+Start = Callable[[Any], AbstractAsyncContextManager[tuple[str, str, Any]]]
+NO_SECRETS = SimpleNamespace(returncode=0, stdout='{"custom_secrets": []}')
 
 
 class TestSelfRegistrationCleanup:
     async def test_self_registration_room_failure_still_attempts_both_cleanup_paths(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        registration_workspace: Path,
+        start_registration: Start,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        (workspace / "band.yaml").write_text("agent:\n  id: registered-agent\n")
-        monkeypatch.setattr(
-            registration, "prepare_workspace", lambda *a, **k: workspace
+        (registration_workspace / "band.yaml").write_text(
+            "agent:\n  id: registered-agent\n"
         )
         monkeypatch.setattr(
             registration, "provision_run", AsyncMock(return_value="registered-agent")
         )
-        manager = MagicMock()
-        manager.provision_room = AsyncMock(
-            side_effect=RuntimeError("room create blocked")
-        )
-        manager.reap_agent = AsyncMock(
-            side_effect=RuntimeError("agent cleanup blocked")
+        manager = MagicMock(
+            provision_room=AsyncMock(side_effect=RuntimeError("room create blocked")),
+            reap_agent=AsyncMock(side_effect=RuntimeError("agent cleanup blocked")),
         )
         secret_cleanup = MagicMock(side_effect=subprocess.TimeoutExpired("sbx", 60))
         monkeypatch.setattr(registration.subprocess, "run", secret_cleanup)
-        settings = BaselineSettings()
-        settings.credentials = settings.credentials.model_copy(
-            update={"api_key_user": "nonsecret-user-fixture"}
-        )
-        registered = registration.self_registered_sandbox(
-            tmp_path, manager, settings, SimpleNamespace(tag="nonsecret-image")
-        )
 
         with pytest.raises(ExceptionGroup) as caught:
-            async with registered:
+            async with start_registration(manager):
                 pass
 
         manager.reap_agent.assert_awaited_once_with("registered-agent")
@@ -62,51 +61,49 @@ class TestSelfRegistrationCleanup:
         assert isinstance(caught.value.__context__, RuntimeError)
         assert str(caught.value.__context__) == "room create blocked"
 
-    async def test_registration_failure_reaps_the_agent_found_by_its_swept_name(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ("registered_id", "expected_reaps"),
+        [
+            pytest.param(
+                "registered-agent", [call("registered-agent")], id="registered-anyway"
+            ),
+            pytest.param(None, [], id="never-registered"),
+        ],
+    )
+    async def test_registration_failure_reaps_only_an_agent_found_by_its_swept_name(
+        self,
+        start_registration: Start,
+        monkeypatch: pytest.MonkeyPatch,
+        registered_id: str | None,
+        expected_reaps: list[Any],
     ) -> None:
-        """A client-side registration timeout can still register the agent."""
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        monkeypatch.setattr(
-            registration, "prepare_workspace", lambda *a, **k: workspace
-        )
+        """A client-side registration timeout may or may not have registered the agent."""
         provision = AsyncMock(side_effect=RuntimeError("registration timed out"))
         monkeypatch.setattr(registration, "provision_run", provision)
         manager = MagicMock(
-            find_agent_id=AsyncMock(return_value="registered-agent"),
-            reap_agent=AsyncMock(),
+            find_agent_id=AsyncMock(return_value=registered_id), reap_agent=AsyncMock()
         )
-        secret_cleanup = MagicMock(
-            return_value=SimpleNamespace(returncode=0, stdout='{"custom_secrets": []}')
-        )
+        secret_cleanup = MagicMock(return_value=NO_SECRETS)
         monkeypatch.setattr(registration.subprocess, "run", secret_cleanup)
-        settings = BaselineSettings()
-        settings.credentials = settings.credentials.model_copy(
-            update={"api_key_user": "nonsecret-user-fixture"}
-        )
-        registered = registration.self_registered_sandbox(
-            tmp_path, manager, settings, SimpleNamespace(tag="nonsecret-image")
-        )
 
         with pytest.raises(RuntimeError, match="registration timed out"):
-            async with registered:
+            async with start_registration(manager):
                 pass
 
         registered_name = provision.await_args.args[0].agent_name
         assert registered_name.startswith(NAME_PREFIX)
+        token = registered_name.removeprefix(NAME_PREFIX).split(TOKEN_LABEL_SEPARATOR)[
+            0
+        ]
+        # A full uuid token: the exact-name lookup can only find this run's agent.
+        assert len(token) == NAME_TOKEN_HEX
         manager.find_agent_id.assert_awaited_once_with(registered_name)
-        manager.reap_agent.assert_awaited_once_with("registered-agent")
+        assert manager.reap_agent.await_args_list == expected_reaps
         secret_cleanup.assert_called_once()
 
     async def test_cancelled_agent_cleanup_still_removes_the_scoped_secret(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, start_registration: Start, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        monkeypatch.setattr(
-            registration, "prepare_workspace", lambda *a, **k: workspace
-        )
         monkeypatch.setattr(
             registration,
             "provision_run",
@@ -116,32 +113,18 @@ class TestSelfRegistrationCleanup:
             find_agent_id=AsyncMock(return_value="registered-agent"),
             reap_agent=AsyncMock(side_effect=asyncio.CancelledError),
         )
-        secret_cleanup = MagicMock(
-            return_value=SimpleNamespace(returncode=0, stdout='{"custom_secrets": []}')
-        )
+        secret_cleanup = MagicMock(return_value=NO_SECRETS)
         monkeypatch.setattr(registration.subprocess, "run", secret_cleanup)
-        settings = BaselineSettings()
-        settings.credentials = settings.credentials.model_copy(
-            update={"api_key_user": "nonsecret-user-fixture"}
-        )
-        registered = registration.self_registered_sandbox(
-            tmp_path, manager, settings, SimpleNamespace(tag="nonsecret-image")
-        )
 
         with pytest.raises(asyncio.CancelledError):
-            async with registered:
+            async with start_registration(manager):
                 pass
 
         secret_cleanup.assert_called_once()
 
     async def test_secret_cleanup_requires_confirmed_absence(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, start_registration: Start, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        monkeypatch.setattr(
-            registration, "prepare_workspace", lambda *a, **k: workspace
-        )
         monkeypatch.setattr(
             registration,
             "provision_run",
@@ -160,16 +143,9 @@ class TestSelfRegistrationCleanup:
             side_effect=[listing, SimpleNamespace(returncode=0), listing]
         )
         monkeypatch.setattr(registration.subprocess, "run", secret_cleanup)
-        settings = BaselineSettings()
-        settings.credentials = settings.credentials.model_copy(
-            update={"api_key_user": "nonsecret-user-fixture"}
-        )
-        registered = registration.self_registered_sandbox(
-            tmp_path, manager, settings, SimpleNamespace(tag="nonsecret-image")
-        )
 
         with pytest.raises(ExceptionGroup) as caught:
-            async with registered:
+            async with start_registration(manager):
                 pass
 
         manager.reap_agent.assert_awaited_once_with("persisted-agent")

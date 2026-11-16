@@ -25,7 +25,7 @@ import yaml
 from band.credentials import PROXY_MANAGED_API_KEY
 from band.docker.launcher.credentials import CredentialName
 from band.docker.launcher.run import AGENT_UID
-from band.docker.provision import read_agent_id
+from band.docker.provision import DEFAULT_BAND_HOST, read_agent_id
 from band.docker.provision import run as provision_run
 from band.docker.sbx_process import sbx_json
 from tests.docker.toolkit.docker_cli import Image
@@ -46,11 +46,13 @@ from tests.toolkit.tasks import off_loop
 logger = logging.getLogger(__name__)
 
 # The proxy injects the Band key for every Band host.
-BAND_HOST_PATTERN = "**.band.ai"
+BAND_HOST_PATTERN = DEFAULT_BAND_HOST
 # The kit declares PyPI in its network policy; an undeclared host is refused.
 DECLARED_HOST_URL = "https://pypi.org/simple/"
 UNDECLARED_HOST_URL = "https://example.com"
-SELF_REGISTRATION_LABEL = "selfreg"
+# Longer than a mentionable label, so its name gets a full uuid token: cleanup
+# reaps by exact name, which must never match another run's agent.
+SELF_REGISTRATION_LABEL = "self-registration"
 # The agent uid, then the declared and undeclared hosts' HTTP status.
 DECLARED_POSTURE = (str(AGENT_UID), "200", "403")
 

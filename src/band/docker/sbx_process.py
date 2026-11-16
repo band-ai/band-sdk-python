@@ -1,10 +1,10 @@
-"""Shared `sbx`-subprocess execution.
+"""Shared `sbx`-subprocess execution and output parsing.
 
-Both `band.docker.provision` (the live CLI) and
-`tests.docker.toolkit.sbx_cli` (the never-in-VM E2E toolkit) run `sbx`
-subprocesses and must redact any secret from a failure's error message --
-`src/` code cannot import from `tests/`, so this is the one place both
-directions import the run+redact logic from instead of hand-duplicating it.
+Both `band.docker.provision` (the live CLI) and the kit's E2E toolkit under
+`tests/docker/toolkit/` run `sbx` subprocesses, redact any secret from a
+failure's error message, and read `sbx`'s `--json` output -- `src/` code cannot
+import from `tests/`, so this is the one place both import that logic from
+instead of hand-duplicating it.
 """
 
 from __future__ import annotations

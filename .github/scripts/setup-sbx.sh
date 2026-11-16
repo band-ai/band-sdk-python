@@ -19,10 +19,14 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --name-match=kvm --settle
 test -w /dev/kvm
 
+# Pinned: the smokes depend on sbx's CLI and `--json` output, so a floating
+# release would land as an unrelated-looking lane failure. Bump deliberately.
+SBX_CLI_VERSION="${SBX_CLI_VERSION:-0.47.0}"
+
 # The runner already has Docker Engine; add only Docker's apt repo and sbx.
 curl -fsSL https://get.docker.com | sudo REPO_ONLY=1 sh
-sudo apt-get install -y docker-sbx
-sbx version
+sudo apt-get install -y "docker-sbx=${SBX_CLI_VERSION}-*"
+sbx version | grep -F "v${SBX_CLI_VERSION}"
 
 printf '%s' "$SBX_DOCKER_TOKEN" \
   | sbx login --username "$SBX_DOCKER_USERNAME" --password-stdin

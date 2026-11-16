@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 
 import pytest
 
@@ -40,30 +40,30 @@ def recording(
 
 
 class TestOffLoop:
-    @pytest.mark.parametrize(
-        ("body_error", "suppress", "propagates"),
-        [
-            pytest.param(None, False, False, id="clean-exit"),
-            pytest.param(RuntimeError("body"), False, True, id="error-propagates"),
-            pytest.param(RuntimeError("body"), True, False, id="exit-suppresses"),
-        ],
-    )
-    async def test_exit_receives_the_body_outcome(
-        self, body_error: Exception | None, suppress: bool, propagates: bool
-    ) -> None:
+    async def test_clean_body_reaches_exit_without_an_error(self) -> None:
         exits: list[BaseException | None] = []
 
-        async def use() -> None:
-            async with off_loop(recording(exits, suppress=suppress)) as value:
-                assert value == RESOURCE
-                if body_error is not None:
-                    raise body_error
+        async with off_loop(recording(exits)) as value:
+            assert value == RESOURCE
 
-        if propagates:
-            with pytest.raises(RuntimeError):
-                await use()
-        else:
-            await use()
+        assert exits == [None]
+
+    @pytest.mark.parametrize(
+        ("suppress", "outcome"),
+        [
+            pytest.param(False, pytest.raises(RuntimeError), id="error-propagates"),
+            pytest.param(True, nullcontext(), id="exit-suppresses"),
+        ],
+    )
+    async def test_body_error_reaches_exit(
+        self, suppress: bool, outcome: AbstractContextManager[object]
+    ) -> None:
+        exits: list[BaseException | None] = []
+        body_error = RuntimeError("body")
+
+        with outcome:
+            async with off_loop(recording(exits, suppress=suppress)):
+                raise body_error
 
         assert exits == [body_error]
 

@@ -13,6 +13,7 @@ Under proxy-managed custody (`sbx create WORKLOAD WORKSPACE` + host-side
 
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import urlsplit
 
 import pytest
@@ -41,7 +42,7 @@ class TestProxyManagedCustody:
         band_host = urlsplit(baseline_settings.endpoints.rest_url).hostname
         assert band_host is not None
 
-        cert = sandbox.band_host_cert(band_host)
+        cert = await asyncio.to_thread(sandbox.band_host_cert, band_host)
 
         # The probe produced a cert, so a missing marker means "wrong issuer".
         assert "cert-probe-error" not in cert, cert
@@ -55,13 +56,14 @@ class TestProxyManagedCustody:
         """Before foreground startup, VM exec uses agent and enforces declared hosts."""
         sandbox, _ = custody_sandbox
 
-        assert workload_posture(sandbox) == DECLARED_POSTURE
+        assert await asyncio.to_thread(workload_posture, sandbox) == DECLARED_POSTURE
 
     async def test_real_band_key_never_enters_the_vm(
         self, custody_sandbox: tuple[Sandbox, str]
     ) -> None:
         sandbox, real_key = custody_sandbox
-        environ = sandbox.all_process_environ()
+        # Each probe is a blocking `sbx exec`, kept off the session loop.
+        environ = await asyncio.to_thread(sandbox.all_process_environ)
 
         # Positive control first: the agent's live environment was captured, so
         # the absence checks below cannot pass over empty output.
@@ -69,10 +71,10 @@ class TestProxyManagedCustody:
             "agent env not observed"
         )
         assert real_key not in environ
-        assert real_key not in sandbox.shell_env()
-        assert (
-            sandbox.files_containing(
-                real_key, search_paths=["/home/agent", "/etc", "/tmp", "/workspace"]
-            )
-            == ""
+        assert real_key not in await asyncio.to_thread(sandbox.shell_env)
+        leaked_files = await asyncio.to_thread(
+            sandbox.files_containing,
+            real_key,
+            search_paths=["/home/agent", "/etc", "/tmp", "/workspace"],
         )
+        assert leaked_files == ""

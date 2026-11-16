@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import AbstractContextManager, asynccontextmanager
 from typing import Any, TypeVar
 
 Result = TypeVar("Result")
+
+logger = logging.getLogger(__name__)
 
 # asyncio/windows_events.py: the proactor serves each accept as its own task.
 PROACTOR_ACCEPT = "IocpProactor.accept.<locals>.accept_coro"
@@ -42,7 +45,11 @@ async def off_loop(manager: AbstractContextManager[Result]) -> AsyncIterator[Res
         value = await asyncio.shield(entering)
     except asyncio.CancelledError:
         await asyncio.wait([entering])
-        if entering.exception() is None:
+        if error := entering.exception():
+            logger.warning(
+                "Enter failed after its caller was cancelled", exc_info=error
+            )
+        else:
             await asyncio.to_thread(manager.__exit__, None, None, None)
         raise
     try:

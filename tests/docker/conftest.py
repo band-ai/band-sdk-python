@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from tests.docker.toolkit import sandbox_agent
 from tests.docker.toolkit.docker_cli import (
     BAND_PYTHON_KIT_DOCKERFILE,
     Container,
     Image,
     OciLayout,
 )
+from tests.e2e.baseline.settings import BaselineSettings
 from tests.loaders import load_script_module
 
 
@@ -105,3 +109,30 @@ def graph() -> dict[str, dict[str, Any]]:
             ]
         }
     return documents
+
+
+@pytest.fixture
+def registration_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The empty workspace self-registration prepares instead of copying the kit's."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(sandbox_agent, "prepare_workspace", lambda *a, **k: workspace)
+    return workspace
+
+
+@pytest.fixture
+def start_registration(
+    tmp_path: Path, registration_workspace: Path
+) -> Callable[[Any], AbstractAsyncContextManager[tuple[str, str, Any]]]:
+    """Build ``self_registered_sandbox`` for a manager double, with fixture credentials."""
+    settings = BaselineSettings()
+    settings.credentials = settings.credentials.model_copy(
+        update={"api_key_user": "nonsecret-user-fixture"}
+    )
+
+    def start(manager: Any) -> AbstractAsyncContextManager[tuple[str, str, Any]]:
+        return sandbox_agent.self_registered_sandbox(
+            tmp_path, manager, settings, SimpleNamespace(tag="nonsecret-image")
+        )
+
+    return start

@@ -373,7 +373,7 @@ class RegistrationTimeoutOutcome(StrEnum):
     UNKNOWN = "unknown"
 
 
-async def _find_registered_agent(
+async def find_registered_agent(
     client: AsyncRestClient, *, agent_name: str
 ) -> str | None:
     """The id of the agent named exactly `agent_name`, paging until it's
@@ -412,7 +412,7 @@ async def _check_registration_after_timeout(
     try:
         async with _rest_client(api_key=api_key, rest_url=rest_url) as client:
             agent_id = await asyncio.wait_for(
-                _find_registered_agent(client, agent_name=agent_name),
+                find_registered_agent(client, agent_name=agent_name),
                 timeout=TIMEOUT_RECOVERY_CHECK_S,
             )
     except Exception:
