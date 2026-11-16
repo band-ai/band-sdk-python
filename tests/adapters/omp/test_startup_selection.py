@@ -66,7 +66,7 @@ class TestStartupSelection:
         self, launches: Launches, tmp_path: Path
     ) -> None:
         runtime = SelectionGateRuntime()
-        runtime.held_command = OmpCommandName.SET_ASK_DIALOG
+        runtime.held_command = OmpCommandName.SET_HOST_TOOLS
         launches.runtime_factory = lambda: runtime
         adapter = OmpAdapter(
             OmpAdapterConfig(

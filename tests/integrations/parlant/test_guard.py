@@ -124,16 +124,23 @@ class TestGuardFailures:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("tool", "arguments", "level", "traceback"),
+        ("tool", "arguments", "shown", "level", "traceback"),
         [
             (
                 "band_get_task",
                 {"id": "task-1", "include": "bogus"},
+                "Error getting task 'task-1': Invalid arguments for band_get_task:",
                 logging.WARNING,
                 False,
             ),
-            ("record", {"count": "many"}, logging.WARNING, False),
-            ("record", {"count": "1"}, logging.ERROR, True),
+            (
+                "record",
+                {"count": "many"},
+                "Invalid arguments for record:",
+                logging.WARNING,
+                False,
+            ),
+            ("record", {"count": "1"}, "Error executing record:", logging.ERROR, True),
         ],
         ids=[
             "band-tool-invalid-argument",
@@ -149,6 +156,7 @@ class TestGuardFailures:
         caplog,
         tool,
         arguments,
+        shown,
         level,
         traceback,
     ):
@@ -159,6 +167,6 @@ class TestGuardFailures:
         with caplog.at_level(logging.WARNING, logger=GUARD_LOGGER):
             result = await guarded_tools[tool](mock_context, **arguments)
 
-        assert result.data.startswith("Error ")
+        assert result.data.startswith(shown)
         [record] = caplog.records
         assert (record.levelno, bool(record.exc_info)) == (level, traceback)

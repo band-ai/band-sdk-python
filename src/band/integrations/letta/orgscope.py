@@ -10,17 +10,32 @@ and sending its ``user_id`` in every request (``AsyncLetta(default_headers=
 
 The admin API this needs (``/v1/admin/orgs/``, ``/v1/admin/users/``) is not
 exposed by the ``letta_client`` SDK, hence the raw ``httpx`` calls here.
+
+Letta enforces no unique name, accepts no caller-chosen id, and stamps
+``created_at`` before the insert commits, so two concurrent find-or-create
+calls can each adopt a different record. Provisioning is therefore
+serialized per scope within a process; separate processes starting the same
+agent at once can still create duplicates, which the canonical-match warning
+reports.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import weakref
 from collections.abc import Callable
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Per event loop, because an asyncio.Lock binds to the loop that first waits
+# on it; weak keys let a closed loop's locks go with it.
+_scope_locks: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop, dict[tuple[str, str], asyncio.Lock]
+] = weakref.WeakKeyDictionary()
 
 _ADMIN_PREFIX = "/v1/admin"
 _DEFAULT_TIMEOUT_S = 30.0
@@ -183,10 +198,17 @@ async def resolve_org_scoped_headers(
     scope_name = f"band-{agent_name}"
     scope_client = LettaOrgScopeClient(base_url=base_url, bearer_token=bearer_token)
     try:
-        organization_id = await scope_client.find_or_create_organization(scope_name)
-        user_id = await scope_client.find_or_create_user(
-            scope_name, organization_id=organization_id
-        )
+        async with _scope_lock(base_url, scope_name):
+            organization_id = await scope_client.find_or_create_organization(scope_name)
+            user_id = await scope_client.find_or_create_user(
+                scope_name, organization_id=organization_id
+            )
     finally:
         await scope_client.aclose()
     return {"user_id": user_id}
+
+
+def _scope_lock(base_url: str, scope_name: str) -> asyncio.Lock:
+    """The lock that serializes this process's provisioning of one scope."""
+    locks = _scope_locks.setdefault(asyncio.get_running_loop(), {})
+    return locks.setdefault((base_url, scope_name), asyncio.Lock())

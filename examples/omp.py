@@ -12,6 +12,10 @@ The inline source override installs the checkout containing this example.
 
 The SDK owns one process per room, registers Band tools as native host tools,
 and waits through background continuations until the session is settled.
+Extensions run headless and OMP's interactive ``ask`` tool is disabled, so the
+agent asks the room questions in ordinary replies and reads the answers from
+later messages. Tool permission prompts still reach the adapter, which an
+``OmpAdapter(resolve_permission=...)`` callback can decide.
 Provider credentials are passed only to the OMP child process environment.
 """
 

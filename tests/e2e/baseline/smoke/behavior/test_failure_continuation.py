@@ -14,7 +14,11 @@ from tests.e2e.baseline.smoke.samples.delivery import (
     lose_failed_response,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.continuation import running_failure_continuation
+from tests.e2e.baseline.toolkit.continuation import (
+    EXPECTED_RETRIES,
+    RETRYING_MAX_MESSAGE_RETRIES,
+    running_failure_continuation,
+)
 from tests.e2e.baseline.toolkit.invocations import InvocationObserver
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
@@ -43,7 +47,7 @@ class TestFailureContinuation:
             adapter,
             baseline_settings,
             session_config=SessionConfig(
-                max_message_retries=2,
+                max_message_retries=RETRYING_MAX_MESSAGE_RETRIES,
                 idle_resync_seconds=1,
                 idle_resync_max_seconds=1,
                 enable_working_state=False,
@@ -68,7 +72,9 @@ class TestFailureContinuation:
                     assert invocation_observer.partition(room_id) == [(mid,)]
 
                     fault.release()
-                    await capture.wait_for_processed(mid, identity.id)
+                    await capture.wait_for_processed(
+                        mid, identity.id, retries=EXPECTED_RETRIES
+                    )
 
                 assert invocation_observer.partition(room_id) == [(mid,), (mid,)]
 
@@ -102,7 +108,7 @@ class TestFailureContinuation:
             }
 
             control.release_confirmation.set()
-            await capture.wait_for_processed(mid, agent.id)
+            await capture.wait_for_processed(mid, agent.id, retries=EXPECTED_RETRIES)
 
             assert control.retry_admitted_after_confirmation
             assert control.retry_executed_after_confirmation

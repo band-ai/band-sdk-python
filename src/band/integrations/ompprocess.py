@@ -40,8 +40,7 @@ OMP_SESSION_DIR_FLAG = "--session-dir"
 DEFAULT_OMP_COMMAND: tuple[str, ...] = ("omp", OMP_MODE_FLAG, OMP_RPC_MODE)
 RELATIVE_MCP_COMMAND_PREFIXES = ("./", "../", ".\\", "..\\")
 
-# The native RPC ask dialog and MCP status events need a newer OMP than the
-# ACP bridge's pin.
+# Native MCP status events need a newer OMP than the ACP bridge's pin.
 OMP_NATIVE_PINNED_PACKAGE = "@oh-my-pi/pi-coding-agent@18.8.9"
 
 # Plugin names prefix the MCP server names OMP mints, so the plugin root's
@@ -187,12 +186,13 @@ def omp_mcp_ready_command(plugin: str) -> str:
 
 
 def omp_mcp_arguments(plugin: str) -> tuple[str, ...]:
-    """Enable native MCP status events without changing the user's persisted settings."""
+    """Keep permission callbacks while disabling interactive extension UI."""
     return (
         "--plugin-dir",
         plugin,
         OMP_MODE_FLAG,
         OMP_RPC_UI_MODE,
+        "--no-ui",
         "--extension",
         str(Path(plugin) / OMP_MCP_STARTUP_JS),
         "--config",
@@ -306,7 +306,8 @@ def omp_mcp_plugin(
         )
         # Quiet startup suppresses the native status bus, not just UI rendering.
         _write_private(
-            root / OMP_MCP_STARTUP_CONFIG, json.dumps({"startup": {"quiet": False}})
+            root / OMP_MCP_STARTUP_CONFIG,
+            json.dumps({"startup": {"quiet": False}, "ask": {"enabled": False}}),
         )
         _write_private(
             root / OMP_MCP_STARTUP_JS,

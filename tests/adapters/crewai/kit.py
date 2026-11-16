@@ -109,6 +109,9 @@ def calculate(args: CalculatorInput) -> str:
     return str(ops[args.operation](args.left, args.right))
 
 
+SERVICE_UNAVAILABLE = "Service unavailable"
+
+
 async def failing_tool(args: EchoInput) -> str:
     """Tool that always fails."""
-    raise ValueError("Service unavailable")
+    raise ValueError(SERVICE_UNAVAILABLE)

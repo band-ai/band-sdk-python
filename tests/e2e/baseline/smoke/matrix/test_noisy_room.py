@@ -32,7 +32,11 @@ import pytest
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
+from tests.e2e.baseline.smoke.samples.sample_agents import (
+    LIVENESS_REPLY_PROMPT,
+    liveness_probe,
+    unique_marker,
+)
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -44,7 +48,11 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
             Adapter.CREWAI_FLOW,
             "terminal echo flow with no memory — cannot recall a seeded fact",
         )
-    ]
+    ],
+    # The developer prompt, not the probing participant, authorizes echoing the
+    # liveness token; base instructions tell the model to distrust participant
+    # directives, so a weaker model otherwise refuses the probe.
+    prompt=LIVENESS_REPLY_PROMPT,
 )
 @flaky_infra("only transient failures")
 @pytest.mark.timeout(extra=300)  # seed + several noise inferences + probe + recall
