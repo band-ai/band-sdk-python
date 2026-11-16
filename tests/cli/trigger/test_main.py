@@ -10,6 +10,16 @@ import pytest
 from band.cli.trigger import main
 from tests.logsupport import band_log_env, restored_logging
 
+BASE_ARGV = [
+    "band-trigger",
+    "--api-key",
+    "k",
+    "--target-handle",
+    "@a/b",
+    "--message",
+    "hi",
+]
+
 
 def _fake_asyncio_run(return_value=None, side_effect=None):
     """Create a fake asyncio.run that closes the coroutine to avoid warnings.
@@ -31,15 +41,7 @@ class TestMain:
     def test_exits_0_on_success(self, monkeypatch):
         monkeypatch.setattr(
             "sys.argv",
-            [
-                "band-trigger",
-                "--api-key",
-                "k",
-                "--target-handle",
-                "@a/b",
-                "--message",
-                "hi",
-            ],
+            BASE_ARGV,
         )
         with (
             patch(
@@ -51,34 +53,20 @@ class TestMain:
             main()
         assert exc_info.value.code == 0
 
-    def test_exits_1_on_missing_api_key(self, monkeypatch):
+    def test_exits_1_on_missing_api_key(self, monkeypatch, capsys):
         monkeypatch.delenv("BAND_API_KEY", raising=False)
         monkeypatch.setattr("sys.argv", ["band-trigger"])
 
-        with (
-            patch(
-                "band.cli.trigger.asyncio.run",
-                side_effect=_fake_asyncio_run(
-                    side_effect=ValueError("API key is required")
-                ),
-            ),
-            pytest.raises(SystemExit) as exc_info,
-        ):
+        with restored_logging(), pytest.raises(SystemExit) as exc_info:
             main()
+
         assert exc_info.value.code == 1
+        assert "API key is required" in capsys.readouterr().err
 
     def test_exits_1_on_unexpected_error(self, monkeypatch):
         monkeypatch.setattr(
             "sys.argv",
-            [
-                "band-trigger",
-                "--api-key",
-                "k",
-                "--target-handle",
-                "@a/b",
-                "--message",
-                "hi",
-            ],
+            BASE_ARGV,
         )
         with (
             patch(
@@ -93,17 +81,7 @@ class TestMain:
     def test_exits_1_on_timeout(self, monkeypatch):
         monkeypatch.setattr(
             "sys.argv",
-            [
-                "band-trigger",
-                "--api-key",
-                "k",
-                "--target-handle",
-                "@a/b",
-                "--message",
-                "hi",
-                "--timeout",
-                "30",
-            ],
+            [*BASE_ARGV, "--timeout", "30"],
         )
         with (
             patch(
@@ -118,17 +96,7 @@ class TestMain:
     def test_timeout_error_message(self, monkeypatch, capsys):
         monkeypatch.setattr(
             "sys.argv",
-            [
-                "band-trigger",
-                "--api-key",
-                "k",
-                "--target-handle",
-                "@a/b",
-                "--message",
-                "hi",
-                "--timeout",
-                "45",
-            ],
+            [*BASE_ARGV, "--timeout", "45"],
         )
         with (
             patch(
@@ -144,15 +112,7 @@ class TestMain:
     def test_writes_room_id_to_stdout(self, monkeypatch, capsys):
         monkeypatch.setattr(
             "sys.argv",
-            [
-                "band-trigger",
-                "--api-key",
-                "k",
-                "--target-handle",
-                "@a/b",
-                "--message",
-                "hi",
-            ],
+            BASE_ARGV,
         )
         with (
             patch(
@@ -174,15 +134,7 @@ class TestMain:
         """
         monkeypatch.setattr(
             "sys.argv",
-            [
-                "band-trigger",
-                "--api-key",
-                "k",
-                "--target-handle",
-                "@a/b",
-                "--message",
-                "hi",
-            ],
+            BASE_ARGV,
         )
 
         def _run_and_log(coro):
@@ -206,15 +158,7 @@ class TestMain:
     def test_writes_error_to_stderr(self, monkeypatch, capsys):
         monkeypatch.setattr(
             "sys.argv",
-            [
-                "band-trigger",
-                "--api-key",
-                "k",
-                "--target-handle",
-                "@a/b",
-                "--message",
-                "hi",
-            ],
+            BASE_ARGV,
         )
         with (
             patch(

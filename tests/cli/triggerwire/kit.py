@@ -4,13 +4,13 @@ routes each auth mode reaches, and a readable projection of sent requests."""
 from __future__ import annotations
 
 import argparse
-import json
 from typing import Any, NamedTuple
 
 import httpx
 from pytest_httpx import HTTPXMock
 
 from band.cli.trigger import PEERS_PAGE_SIZE, AuthMode, build_parser
+from tests.httpwire import request_json
 
 REST_URL = "https://band.test/"
 API_KEY = "trigger-key"
@@ -64,7 +64,7 @@ def wire_calls(requests: list[httpx.Request]) -> list[WireCall]:
             request.method,
             request.url.path,
             dict(request.url.params),
-            json.loads(request.content) if request.content else None,
+            request_json(request),
         )
         for request in requests
     ]
@@ -117,7 +117,7 @@ def answer(
 
 
 def peers_page(
-    peers: list[dict[str, str]], page: int, total_pages: int
+    peers: list[dict[str, str]], page: int, total_pages: int, total_count: int
 ) -> dict[str, Any]:
     return {
         "data": [
@@ -127,7 +127,7 @@ def peers_page(
         "metadata": {
             "page": page,
             "page_size": PEERS_PAGE_SIZE,
-            "total_count": len(peers),
+            "total_count": total_count,
             "total_pages": total_pages,
         },
     }
@@ -137,13 +137,14 @@ def answer_peer_pages(
     httpx_mock: HTTPXMock, mode: AuthMode, pages: list[list[dict[str, str]]]
 ) -> None:
     """Serve the peer directory as ``pages``, one response per page."""
+    total_count = sum(len(peers) for peers in pages)
     for page, peers in enumerate(pages, start=1):
         answer(
             httpx_mock,
             mode,
             "GET",
             PEERS,
-            peers_page(peers, page=page, total_pages=len(pages)),
+            peers_page(peers, page, len(pages), total_count),
             params=page_params(page),
         )
 

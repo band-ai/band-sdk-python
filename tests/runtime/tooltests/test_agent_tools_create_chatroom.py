@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import httpx
 import pytest
 
 from band.runtime.tools import AgentTools
+from tests.httpwire import request_json
 from tests.identifiers import UUID_ID
 from tests.runtime.helpers import rest_client_over
 
 ROOM_ID = "room-123"
 STAMP = "2026-01-01T00:00:00Z"
+CREATE_CHAT = ("POST", "/api/v1/agent/chats")
 
 
 class TestAgentToolsCreateChatroom:
@@ -30,7 +31,9 @@ class TestAgentToolsCreateChatroom:
         sent: list[tuple[str, str, Any]] = []
 
         def platform(request: httpx.Request) -> httpx.Response:
-            sent.append((request.method, request.url.path, json.loads(request.content)))
+            sent.append((request.method, request.url.path, request_json(request)))
+            if (request.method, request.url.path) != CREATE_CHAT:
+                return httpx.Response(404)
             return httpx.Response(
                 200,
                 json={
@@ -44,4 +47,4 @@ class TestAgentToolsCreateChatroom:
             )
 
         assert room_id == ROOM_ID
-        assert sent == [("POST", "/api/v1/agent/chats", {"chat": chat})]
+        assert sent == [(*CREATE_CHAT, {"chat": chat})]

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import httpx
 
 from band.platform.event import MessageEvent
+from tests.httpwire import request_json
 
 REST_URL = "https://test.invalid"
 AGENT_API_URL = f"{REST_URL}/api/v1/agent"
@@ -28,8 +28,7 @@ HUB_ROOM_CREATED = {
 
 def sent(request: httpx.Request) -> tuple[str, str, Any]:
     """The method, URL and JSON body of one request the platform received."""
-    body = json.loads(request.content) if request.content else None
-    return request.method, str(request.url), body
+    return request.method, str(request.url), request_json(request)
 
 
 class HubRoom:

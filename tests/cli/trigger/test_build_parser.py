@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.cli.trigger import AuthMode, build_parser
+from band.cli.trigger import DEFAULT_REST_URL, AuthMode, build_parser
 
 
 class TestBuildParser:
@@ -37,7 +37,7 @@ class TestBuildParser:
         parser = build_parser()
         args = parser.parse_args([])
 
-        assert args.rest_url == "https://app.band.ai/"
+        assert args.rest_url == DEFAULT_REST_URL
 
     def test_default_auth_mode(self, monkeypatch):
         monkeypatch.delenv("BAND_AUTH_MODE", raising=False)

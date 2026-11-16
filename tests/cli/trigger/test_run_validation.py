@@ -6,14 +6,14 @@ import argparse
 
 import pytest
 
-from band.cli.trigger import AuthMode, run
+from band.cli.trigger import DEFAULT_REST_URL, AuthMode, run
 
 
 def _make_args(**overrides) -> argparse.Namespace:
     """Create a Namespace with sensible defaults for run()."""
     defaults = {
         "api_key": "test-api-key",
-        "rest_url": "https://app.band.ai/",
+        "rest_url": DEFAULT_REST_URL,
         "auth_mode": AuthMode.AGENT,
         "target_handle": "@owner/agent",
         "message": "Hello agent",
