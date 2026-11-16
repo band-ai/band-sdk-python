@@ -21,6 +21,7 @@ from band.core.types import ApprovalMode
 from band.workspaces import WorkspaceResolver, is_host_absolute
 
 TransportKind = Literal["stdio", "ws"]
+ReasoningSummary = Literal["auto", "concise", "detailed", "none"]
 
 
 # One acquisition starts the process, refreshes ``model/list`` online and
@@ -111,7 +112,7 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # Not validated here: the supported efforts vary by model and Codex CLI
     # version (model/list reports them), and the backend rejects unknown ones.
     reasoning_effort: str | None = None
-    reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
+    reasoning_summary: ReasoningSummary | None = None
     # Explicit-kwarg-only (see settings_customise_sources): rejected outright
     # in CodexAdapter.__init__ -- never populated from CODEX_CWD.
     cwd: str | None = None

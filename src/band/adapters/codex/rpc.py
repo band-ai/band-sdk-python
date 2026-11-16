@@ -43,10 +43,6 @@ class CodexClientProtocol(Protocol):
 _METHOD_NOT_FOUND = -32601
 
 
-def text_item(text: str) -> dict[str, Any]:
-    return {"type": "inputText", "text": text}
-
-
 async def refuse_unhandled_request(
     client: CodexClientProtocol, *, request_id: int | str, method: str
 ) -> None:
