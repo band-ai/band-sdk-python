@@ -319,8 +319,8 @@ jobs:
     - name: Install + sign in the Docker Sandboxes CLI (kit)
       if: matrix.lane == 'kit'
       env:
-        SBX_DOCKER_USERNAME: ${{ secrets.E2E_DOCKER_USERNAME }}
-        SBX_DOCKER_TOKEN: ${{ secrets.E2E_DOCKER_TOKEN }}
+        SBX_DOCKER_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        SBX_DOCKER_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       run: bash .github/scripts/setup-sbx.sh
 
     # -----------------------------------------------------------------------------
