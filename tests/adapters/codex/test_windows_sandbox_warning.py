@@ -7,7 +7,8 @@ from typing import Any
 
 import pytest
 
-from band.adapters.codex import CodexAdapter, CodexSandboxMode, CodexWindowsSandbox
+from band.adapters import codex as codex_package
+from band.adapters.codex import CodexSandboxMode, CodexWindowsSandbox
 from band.adapters.codex.sandbox import (
     WINDOWS_SANDBOX_MISSING_WARNING,
     WINDOWS_SANDBOX_SETUP_WARNING,
@@ -21,15 +22,16 @@ from band.integrations.codex.types import (
 from tests.adapters.codex.kit import StartCodex, ToolSchemaFakeTools, send_bootstrap
 from tests.adapters.codexturns import FakeCodexClient, turn_completed
 
-ADAPTER_LOGGER = CodexAdapter.__module__
+# The package logger: every Codex module logs beneath it.
+CODEX_LOGGER = codex_package.__name__
 
 
 def logged_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """The adapter's warning messages, in order."""
+    """The Codex package's warning messages, in order."""
     return [
         record.getMessage()
         for record in caplog.records
-        if record.name == ADAPTER_LOGGER and record.levelno == logging.WARNING
+        if record.name.startswith(CODEX_LOGGER) and record.levelno == logging.WARNING
     ]
 
 
@@ -104,7 +106,7 @@ class TestWindowsSandboxWarning:
         )
         adapter = await started_codex(client, **config)
 
-        with caplog.at_level(logging.WARNING, logger=ADAPTER_LOGGER):
+        with caplog.at_level(logging.WARNING, logger=CODEX_LOGGER):
             await send_bootstrap(adapter, tools=ToolSchemaFakeTools())
 
         assert (readiness_requests(client), logged_warnings(caplog)) == (1, warnings)
@@ -143,7 +145,7 @@ class TestWindowsSandboxWarning:
         client = FakeCodexClient(events=[turn_completed()], platform_os=platform_os)
         adapter = await started_codex(client, **config)
 
-        with caplog.at_level(logging.WARNING, logger=ADAPTER_LOGGER):
+        with caplog.at_level(logging.WARNING, logger=CODEX_LOGGER):
             await send_bootstrap(adapter, tools=ToolSchemaFakeTools())
 
         assert (readiness_requests(client), logged_warnings(caplog)) == (0, [])
@@ -164,7 +166,7 @@ class TestWindowsSandboxWarning:
             first, second, sandbox=CodexSandboxMode.WORKSPACE_WRITE
         )
 
-        with caplog.at_level(logging.WARNING, logger=ADAPTER_LOGGER):
+        with caplog.at_level(logging.WARNING, logger=CODEX_LOGGER):
             await send_bootstrap(adapter, room_id="room-a", tools=ToolSchemaFakeTools())
             await send_bootstrap(adapter, room_id="room-b", tools=ToolSchemaFakeTools())
 
