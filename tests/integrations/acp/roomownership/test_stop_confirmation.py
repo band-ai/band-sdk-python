@@ -78,9 +78,9 @@ class TestStopConfirmation:
 
     @pytest.mark.asyncio
     async def test_a_cancel_that_cannot_be_sent_recovers_while_the_prompt_waits(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
     ) -> None:
-        agent = FakeACPAgent().will_say("ok")
+        agent = FakeACPAgent().will_say("ok").breaks_cancel()
         prompting = holds_prompt(agent, 1)
         async with (
             inline(agent) as session,
@@ -90,10 +90,6 @@ class TestStopConfirmation:
             room, runtime = session.room(), session.runtime()
             turns = session.adapter.backend_turns
 
-            async def refuse_cancel(session_id: str) -> None:
-                raise ConnectionError(session_id)
-
-            monkeypatch.setattr(runtime, "cancel_turn", refuse_cancel)
             turns.cancel(DEFAULT_ROOM)
             await turns.drain()
 

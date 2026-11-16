@@ -41,7 +41,7 @@ from band.core.exceptions import (
     CleanupIncompleteError,
 )
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, send_event_safe
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import await_owned_result, spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn_lifecycle import BackendTurns
@@ -142,7 +142,9 @@ class CopilotSDKAdapterConfig(BaseAdapterConfig):
         custom_section: Extra system-prompt section.
         reasoning_effort: Reasoning effort for reasoning-capable models.
         inject_history_on_resume_failure: Retained for configuration compatibility.
-            Unconfirmed resume failures never create replacement sessions.
+            A resume that cannot be disposed latches the room unavailable
+            without creating a replacement; a disposed resume clears the
+            recorded identity so the next turn may create a fresh session.
         session_id_prefix: Prefix for per-room Copilot session ids, which
             names an agent's sessions on disk. None (default) derives
             ``band-{agent-id}-`` from the immutable Band agent id. Each
@@ -191,6 +193,9 @@ class RoomSession:
     seed: SessionSeed = field(default_factory=SessionSeed)
     resumable: str | None = None
     recorded: str | None = None
+    # True once bootstrap has considered history's room_to_session entry, so a
+    # disposed failed resume is not re-adopted from the same history payload.
+    history_applied: bool = False
     activity: SessionActivity | None = None
     # The turn whose idle observer and callback count are still live.
     turn: SessionTurn | None = None
@@ -443,9 +448,11 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         # Start eagerly so the runtime download/spawn cost lands at boot
         # (visible in logs) instead of inside the first message's turn.
         try:
-            async with asyncio.timeout(self.config.transition_timeout_s):
-                await self._session_manager.ensure_started()
-                await self._check_auth(client)
+            await await_owned_result(
+                self._start_client(client),
+                timeout=self.config.transition_timeout_s,
+                label="Copilot client start",
+            )
         except BaseException:
             # Failed startup must not leak a running owned client
             # (Agent.stop is never called when start() raises).
@@ -456,6 +463,12 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             agent_name,
             self.config.model or "<copilot default>",
         )
+
+    async def _start_client(self, client: Any) -> None:
+        """Start the Copilot client and confirm auth when hosted inference needs it."""
+        assert self._session_manager is not None
+        await self._session_manager.ensure_started()
+        await self._check_auth(client)
 
     async def _check_auth(self, client: Any) -> None:
         """Require GitHub auth only when inference uses the Copilot service."""
@@ -484,8 +497,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         via ``client=`` — then its owner stops it).
         """
         await self.backend_turns.settled(room_id)
-        self._room_tools.pop(room_id, None)
         self._require_session_settled(room_id)
+        self._room_tools.pop(room_id, None)
         if self._session_manager:
             await self._session_manager.cleanup_session(room_id)
         if (
@@ -551,21 +564,27 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 # message holds the room, so neither a queued message nor a
                 # late call from the stopped turn reaches this turn's tools.
                 self._room_tools[room_id] = tools
+                prepare = asyncio.ensure_future(
+                    self._prepare_turn(
+                        room_id,
+                        history,
+                        tools,
+                        messages,
+                        is_session_bootstrap=is_session_bootstrap,
+                    )
+                )
                 try:
-                    async with asyncio.timeout(self.config.transition_timeout_s):
-                        live = await self.backend_turns.started(
-                            room_id,
-                            self._prepare_turn(
-                                room_id,
-                                history,
-                                tools,
-                                messages,
-                                is_session_bootstrap=is_session_bootstrap,
-                            ),
-                        )
+                    live = await await_owned_result(
+                        self.backend_turns.started(room_id, prepare),
+                        timeout=self.config.transition_timeout_s,
+                        label=f"Copilot session setup for room {room_id}",
+                    )
                     assert live is not None
                     session = live.session
                 except Exception:
+                    if not prepare.done():
+                        # Transition budget expired: keep prepare for late cleanup.
+                        self.backend_turns.abandon_start_wait(room_id, prepare)
                     logger.exception("Room %s: Copilot session setup failed", room_id)
                     await tools.send_failure(
                         AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
@@ -718,8 +737,13 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         session = manager.get_session(room_id)
         if session is None:
             # A seeded session this process knows is never older than the record.
-            if is_session_bootstrap and room.resumable is None:
+            if (
+                is_session_bootstrap
+                and room.resumable is None
+                and not room.history_applied
+            ):
                 room.resumable = room.recorded = history.room_to_session.get(room_id)
+                room.history_applied = True
             await manager.ensure_started()
             kwargs = self._session_kwargs(
                 room_id, self._build_bridged_tools(room_id, tools)
@@ -777,8 +801,15 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
                 stored_id, **kwargs
             )
         except Exception:
-            # The SDK can fail after resume succeeded, while applying options.
-            self.backend_turns.abandon_start(room_id)
+            # Resume may have partially applied options; dispose before latching.
+            try:
+                await self._session_manager.client.delete_session(stored_id)
+            except Exception:
+                self.backend_turns.abandon_start(room_id)
+                raise
+            room.resumable = None
+            if room.recorded == stored_id:
+                room.recorded = None
             raise
         room.live, room.seed = stored_id, SessionSeed(restored=True)
         logger.info("Room %s: resumed Copilot session %s", room_id, stored_id)

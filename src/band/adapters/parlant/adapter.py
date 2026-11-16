@@ -32,8 +32,9 @@ from band.adapters.parlant.responses import relay_agent_response
 from band.adapters.parlant.rooms import RoomSessions
 from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
+from band.core.exceptions import CleanupIncompleteError
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import await_owned, await_owned_result, spawn_owned
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
@@ -295,8 +296,11 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
             )
 
         try:
-            async with asyncio.timeout(self.config.transition_timeout_s):
-                app = await self._lifecycle.start(prepare)
+            app = await await_owned_result(
+                self._lifecycle.start(prepare),
+                timeout=self.config.transition_timeout_s,
+                label="Parlant server start",
+            )
         except BaseException:
             self._forget_guidelines_if_agent_gone()
             raise
@@ -402,13 +406,16 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
                 participants=list(tools.participants),
             )
             if is_session_bootstrap and addressed_history:
-                async with asyncio.timeout(self.config.transition_timeout_s):
-                    injected = await inject_history(
+                injected = await await_owned_result(
+                    inject_history(
                         app=rooms.app,
                         session_id=session_id,
                         history=addressed_history,
                         agent_name=self.agent_name or FALLBACK_AGENT_NAME,
-                    )
+                    ),
+                    timeout=self.config.transition_timeout_s,
+                    label=f"Parlant history inject for room {room_id}",
+                )
                 logger.info(
                     "Room %s: Injected %s messages from history", room_id, injected
                 )
@@ -461,8 +468,11 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
         tools: AgentToolsProtocol,
     ) -> SessionId:
         try:
-            async with asyncio.timeout(self.config.transition_timeout_s):
-                return await rooms.session_for(room_id, customer_name=customer_name)
+            return await await_owned_result(
+                rooms.session_for(room_id, customer_name=customer_name),
+                timeout=self.config.transition_timeout_s,
+                label=f"Parlant session for room {room_id}",
+            )
         except Exception as e:
             logger.error("Failed to get/create session for room %s: %s", room_id, e)
             await tools.send_failure(
@@ -493,10 +503,13 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
         )
         async with self.backend_turns.running(room_id, handle):
             try:
-                async with asyncio.timeout(self.config.transition_timeout_s):
-                    offset = await post_user_message(
+                offset = await await_owned_result(
+                    post_user_message(
                         app=app, session_id=session_id, message=user_message
-                    )
+                    ),
+                    timeout=self.config.transition_timeout_s,
+                    label=f"Parlant post for room {room_id}",
+                )
                 gave_up = await relay_agent_response(
                     app=app,
                     session_id=session_id,
@@ -511,8 +524,11 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
                 if gave_up:
                     await self.backend_turns.stop(room_id)
                 elif handle is not None:
-                    async with asyncio.timeout(self.config.transition_timeout_s):
-                        await self._join_finished_processing(handle)
+                    await await_owned_result(
+                        self._join_finished_processing(handle),
+                        timeout=self.config.transition_timeout_s,
+                        label=f"Parlant drain for room {room_id}",
+                    )
             except BaseException:
                 origin.revoke()
                 await self.backend_turns.stop(room_id)
@@ -584,9 +600,11 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
     async def cleanup_all(self) -> None:
         """Release all sessions and the owned Parlant server (call on stop)."""
         await self.backend_turns.drain()
-        if self._settlements:
-            await asyncio.wait(
-                set(self._settlements), timeout=self.config.transition_timeout_s
+        if self._settlements and not await await_owned(
+            set(self._settlements), self.config.transition_timeout_s
+        ):
+            raise CleanupIncompleteError(
+                "Parlant stop settlements still running after their transition budget"
             )
         if self._engine_hooks is not None:
             self._engine_hooks.on_acknowledging.remove(capture_engine_origin)

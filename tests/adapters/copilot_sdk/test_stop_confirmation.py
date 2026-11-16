@@ -10,9 +10,7 @@ from band.adapters.copilot_sdk import CopilotSDKAdapter
 from band.core.exceptions import (
     CleanupIncompleteError,
     InputNotAccepted,
-    ProviderUnavailableError,
 )
-from band.core.turn_lifecycle import BACKEND_CANCEL_TIMEOUT_SECONDS
 from band.runtime.tools import BandTool
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
@@ -49,10 +47,11 @@ class TestStopConfirmation:
             await client.deleting.wait()
             with pytest.raises(RuntimeError, match="prompt rejected"):
                 await turn
-            with pytest.raises(ProviderUnavailableError):
+            with pytest.raises(InputNotAccepted):
                 await run_message(adapter, tools)
             assert len(client.sessions) == 1
             assert client.deleted == []
+            assert not adapter.backend_turns.unavailable("room-1")
         finally:
             client.delete_released.set()
             await wait_until(
@@ -77,14 +76,15 @@ class TestStopConfirmation:
         session.holds_aborted_idle = True
         with pytest.raises(RuntimeError, match="prompt failed before idle"):
             await run_message(adapter, tools)
-        with pytest.raises(ProviderUnavailableError):
+        with pytest.raises(InputNotAccepted):
             await run_message(adapter, tools)
+        assert not adapter.backend_turns.unavailable("room-1")
 
         await session.disconnect()
         with pytest.raises(CleanupIncompleteError):
             await adapter.on_cleanup("room-1")
         assert session.disconnected
-        with pytest.raises(ProviderUnavailableError):
+        with pytest.raises(InputNotAccepted):
             await run_message(adapter, tools)
         assert len(client.sessions) == 1
 
@@ -162,8 +162,7 @@ class TestStopConfirmation:
         await cancel_turn(turn)
         await wait_until(lambda: "abort" in session.journal)
 
-        await asyncio.sleep(BACKEND_CANCEL_TIMEOUT_SECONDS + 1)
-        assert not adapter.backend_turns.stopping(ROOM_ID)
+        await wait_until(lambda: not adapter.backend_turns.stopping(ROOM_ID))
         assert self.blocked(adapter)
 
         session.deliver_aborted_idle()

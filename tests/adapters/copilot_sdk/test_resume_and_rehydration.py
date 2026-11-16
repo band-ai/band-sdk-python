@@ -6,7 +6,7 @@ import pytest
 
 from band.adapters.copilot_sdk import HISTORY_HEADING, CopilotSDKAdapterConfig
 from band.converters.copilot_sdk import COPILOT_RESUME_RECORD, CopilotSDKSessionState
-from band.core.exceptions import ProviderUnavailableError
+from band.core.exceptions import CleanupIncompleteError, ProviderUnavailableError
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
@@ -48,7 +48,7 @@ class TestResumeAndRehydration:
 
     @pytest.mark.parametrize("inject_history", [True, False])
     @pytest.mark.parametrize("failure", [RuntimeError("setup failed"), TimeoutError()])
-    async def test_resume_failure_never_creates_a_replacement(
+    async def test_disposed_resume_failure_allows_a_fresh_session(
         self, inject_history: bool, failure: Exception
     ) -> None:
         client = FakeCopilotClient(resume_error=failure)
@@ -62,12 +62,40 @@ class TestResumeAndRehydration:
         )
         with pytest.raises(type(failure)):
             await run_message(adapter, tools, history=history)
+        assert client.deleted == [RECORDED_ID]
         client.resume_error = None
+        await run_message(adapter, tools, history=history)
+        assert client.resume_calls == [RECORDED_ID]
+        assert client.deleted == [RECORDED_ID]
+        assert len(client.create_calls) == 1
+        assert len(client.sessions) == 1
+
+    @pytest.mark.parametrize("inject_history", [True, False])
+    async def test_undisposed_resume_failure_latches_unavailable(
+        self, inject_history: bool
+    ) -> None:
+        client = FakeCopilotClient(resume_error=RuntimeError("setup failed"))
+        client.delete_error = RuntimeError("delete failed")
+        adapter = await make_started_adapter(
+            client,
+            CopilotSDKAdapterConfig(inject_history_on_resume_failure=inject_history),
+        )
+        tools = ToolSchemaFakeTools()
+        history = CopilotSDKSessionState(
+            text="[Alice]: earlier", room_to_session=recorded()
+        )
+        with pytest.raises(RuntimeError, match="delete failed"):
+            await run_message(adapter, tools, history=history)
+        client.resume_error = None
+        client.delete_error = None
         with pytest.raises(ProviderUnavailableError):
             await run_message(adapter, tools, history=history)
         assert client.resume_calls == [RECORDED_ID]
         assert client.create_calls == []
         assert client.sessions == []
+        with pytest.raises(CleanupIncompleteError):
+            await adapter.on_cleanup("room-1")
+        assert adapter.backend_turns.unavailable("room-1")
 
     @pytest.mark.asyncio
     async def test_fresh_room_with_history_text_injects_it(self):

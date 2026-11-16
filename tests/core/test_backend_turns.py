@@ -8,6 +8,7 @@ import logging
 import pytest
 
 from band.core.turn_lifecycle import BACKEND_CANCEL_TIMEOUT_SECONDS, BackendTurns
+from band.testing import FakeAgentTools
 from tests.core.recordingcancel import RecordingCancel
 
 ROOM = "room-1"
@@ -191,9 +192,40 @@ class TestBackendTurns:
 
         assert loop.time() - started == BACKEND_CANCEL_TIMEOUT_SECONDS
         assert cancel.finished == []
+        assert not turns.unavailable(ROOM)
+        assert turns.blocker(ROOM) is not None
         assert [(r.levelno, r.exc_info and r.exc_info[0]) for r in caplog.records] == [
             (logging.WARNING, TimeoutError)
         ]
+
+    @pytest.mark.looptime
+    async def test_failed_cancelled_start_confirms_without_unavailable(
+        self, turns: BackendTurns[str], cancel: RecordingCancel
+    ) -> None:
+        refused = asyncio.get_running_loop().create_future()
+        await self.cancel_while_starting(turns, refused)
+        refused.set_exception(RuntimeError("setup failed"))
+        await turns.drain()
+
+        assert cancel.sent == []
+        assert ROOM not in turns._unconfirmed
+        assert not turns.unavailable(ROOM)
+        await turns.require_admission(ROOM, FakeAgentTools())
+
+    @pytest.mark.looptime
+    async def test_stop_deadline_keeps_unconfirmed_until_matching_confirm(
+        self, cancel: RecordingCancel
+    ) -> None:
+        cancel.hold()
+        turns = BackendTurns(cancel, provider="test", requires_confirmation=True)
+        async with turns.running(ROOM, HANDLE):
+            turns.cancel(ROOM)
+        await turns.settled(ROOM)
+        assert not turns.unavailable(ROOM)
+        assert turns.blocker(ROOM) is not None
+        turns.confirm_stopped(ROOM, HANDLE)
+        cancel.release.set()
+        await turns.require_admission(ROOM, FakeAgentTools())
 
     @pytest.mark.parametrize("ending", [TimeoutError, RuntimeError, None])
     async def test_a_turn_that_ends_itself_sends_nothing(

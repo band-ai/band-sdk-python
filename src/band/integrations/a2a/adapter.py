@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing
@@ -38,6 +39,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
     send_event_safe,
 )
+from band.core.retention.cleanup import await_owned_result
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn_lifecycle import BackendTurns
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
@@ -197,7 +199,11 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 streaming=self.config.streaming, httpx_client=self._http_client
             )
         )
-        self._client = await factory.create_from_url(self.config.remote_url)
+        self._client = await await_owned_result(
+            factory.create_from_url(self.config.remote_url),
+            timeout=self.config.transition_timeout_s,
+            label="A2A client setup",
+        )
 
         logger.info(
             "Connected to A2A agent at %s (streaming=%s, auth=%s)",
@@ -256,9 +262,19 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 )
                 run, read = continued, []
                 if run is None:
-                    run = await self.backend_turns.started(
-                        room_id, _reveal_task(self._client, room_id, events, read)
+                    reveal = asyncio.ensure_future(
+                        _reveal_task(self._client, room_id, events, read)
                     )
+                    try:
+                        run = await await_owned_result(
+                            self.backend_turns.started(room_id, reveal),
+                            timeout=self.config.transition_timeout_s,
+                            label=f"A2A task reveal for room {room_id}",
+                        )
+                    except Exception:
+                        if not reveal.done():
+                            self.backend_turns.abandon_start_wait(room_id, reveal)
+                        raise
                 async for event in _prepended(read, events):
                     await self._handle_event(
                         event, tools, room_id, msg.sender_id, msg.sender_name, run

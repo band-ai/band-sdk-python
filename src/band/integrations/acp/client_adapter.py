@@ -200,9 +200,9 @@ class ACPTurn:
 
     ``generation`` is the residency the prompt started on, captured before any
     await so a stop bound to this turn never reaches a successor's process.
-    A stop settles once the cancel was attempted and the prompt's wait is over:
-    only the agent answering the prompt proves the turn ended, since
-    ``session/cancel`` is a notification.
+    Whether an answered prompt confirms the stop is adapter-specific
+    (``PROMPT_ANSWER_CONFIRMS_STOP``); ``session/cancel`` alone is only a
+    notification.
     """
 
     runtime: ACPRuntime
@@ -421,9 +421,9 @@ class ACPClientAdapter(
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    # A backend whose native work can outlive an answered prompt must not
-    # confirm a stop from that answer: only its process's release reopens the
-    # room.
+    # Default ACP: an answered prompt settles the stop. Adapters whose native
+    # work can outlive that answer override this to False so only process
+    # release reopens the room.
     PROMPT_ANSWER_CONFIRMS_STOP: ClassVar[bool] = True
 
     def __init__(
@@ -867,7 +867,7 @@ class ACPClientAdapter(
         room_id: str,
     ) -> None:
         room = self._room(room_id)
-        await self.backend_turns.settled(room_id)
+        await self.backend_turns.require_admission(room_id, tools)
 
         async def prompt_room() -> None:
             async with self._using_room(room, tools) as runtime:

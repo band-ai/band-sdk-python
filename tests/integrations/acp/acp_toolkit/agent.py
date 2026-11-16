@@ -148,6 +148,9 @@ class FakeACPAgent:
         self._new_session_gate: Gate | None = None
         self._close_gate: Gate | None = None
         self._new_session_error: RequestError | None = None
+        # When set, the in-process pair makes the client's session/cancel raise
+        # this error so an unsent cancel recovers through the real cancel path.
+        self._cancel_error: BaseException | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
@@ -304,6 +307,13 @@ class FakeACPAgent:
     def breaks_session_load(self, error: RequestError | None = None) -> FakeACPAgent:
         """Make every ``session/load`` fail with a non-missing-session error."""
         self._session_load_error = error or RequestError.internal_error()
+        return self
+
+    def breaks_cancel(self, error: BaseException | None = None) -> FakeACPAgent:
+        """Make the client's ``session/cancel`` fail as an unsent cancel."""
+        self._cancel_error = (
+            error if error is not None else ConnectionError("session cancel failed")
+        )
         return self
 
     def will_stream(self, *parts: str) -> FakeACPAgent:

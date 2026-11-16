@@ -74,12 +74,10 @@ class TestDisposalJoinBudget:
     @pytest.mark.usefixtures("native_startup_ready")
     @pytest.mark.asyncio
     async def test_cancelled_turn_keeps_its_cancellation_when_the_close_resists(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, launches: Launches, tmp_path: Path
     ) -> None:
         resistant = HeldCloseRuntime()
-        monkeypatch.setattr(
-            "band.adapters.omp.lifecycle.OmpRpcClient", lambda *a, **kw: resistant
-        )
+        launches.runtime_factory = lambda: resistant
         adapter = OmpAdapter(
             OmpAdapterConfig(cwd=str(tmp_path), turn_timeout_s=BUDGET_S), emit=()
         )

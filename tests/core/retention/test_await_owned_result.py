@@ -6,7 +6,6 @@ import asyncio
 
 import pytest
 
-from band.core.retention import cleanup
 from band.core.retention.cleanup import await_owned_result
 from tests.adapters.hold import Hold
 
@@ -26,13 +25,28 @@ class TestAwaitOwnedResult:
             finally:
                 finished.set()
 
+        held = asyncio.create_task(ensure())
         with pytest.raises(TimeoutError, match="Band MCP server start"):
-            await await_owned_result(
-                ensure(), timeout=0.05, label="Band MCP server start"
-            )
-        held = [task for task in cleanup._held if not task.done()]
-        assert len(held) == 1
+            await await_owned_result(held, timeout=0.05, label="Band MCP server start")
+        assert not held.done()
         gate.released.set()
-        assert await held[0] == "ready"
-        assert held[0] not in cleanup._held
+        assert await held == "ready"
         assert finished.is_set()
+
+    @pytest.mark.looptime
+    async def test_a_gate_that_finishes_before_the_wait_returns_its_result(
+        self,
+    ) -> None:
+        gate = Hold()
+
+        async def ensure() -> str:
+            await gate.wait()
+            return "ready"
+
+        held = asyncio.create_task(ensure())
+        gate.released.set()
+        assert (
+            await await_owned_result(held, timeout=1.0, label="Band MCP server start")
+            == "ready"
+        )
+        assert held.done()

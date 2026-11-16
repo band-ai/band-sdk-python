@@ -650,6 +650,13 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
             stack.push_async_callback(close_connection, conn)
             stack.callback(agent.lifecycle.append, EXIT_RECORD)
             agent.hang_up = writer_a.close
+            if (cancel_error := agent._cancel_error) is not None:
+
+                async def broken_cancel(session_id: str, **kwargs: Any) -> None:
+                    del session_id, kwargs
+                    raise cancel_error
+
+                conn.cancel = broken_cancel  # type: ignore[method-assign]
             try:
                 yield conn, agent_conn
             finally:

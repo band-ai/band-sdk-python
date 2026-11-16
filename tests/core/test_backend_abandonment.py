@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.core.exceptions import ProviderUnavailableError
+from band.core.exceptions import InputNotAccepted
 from band.core.turn_lifecycle import BackendTurns
 from band.testing import FakeAgentTools
 from tests.core.recordingcancel import RecordingCancel
@@ -14,7 +14,7 @@ from tests.core.recordingcancel import RecordingCancel
 
 @pytest.mark.looptime
 class TestBackendAbandonment:
-    async def test_ack_without_settlement_eventually_fails_input_then_recovers(
+    async def test_unconfirmed_stop_blocks_until_matching_confirmation(
         self,
     ) -> None:
         cancel = RecordingCancel()
@@ -23,15 +23,16 @@ class TestBackendAbandonment:
             await turns.stop("room")
         ready = turns.blocker("room")
         assert ready is not None
-        with pytest.raises(ProviderUnavailableError):
-            await ready
-        with pytest.raises(ProviderUnavailableError):
+        assert not ready.done()
+        with pytest.raises(InputNotAccepted):
             await turns.require_admission("room", FakeAgentTools())
+        assert not turns.unavailable("room")
         async with turns.running("other", "independent"):
             assert turns.active_handle("other") == "independent"
         turns.confirm_stopped("room", "wrong")
-        assert turns.unavailable("room")
+        assert turns.blocker("room") is ready
         turns.confirm_stopped("room", "old")
+        await ready
         async with turns.running("room", "new"):
             assert turns.active_handle("room") == "new"
 
@@ -60,8 +61,9 @@ class TestBackendAbandonment:
                 await entered.wait()
             await turns.settled("room")
             await cancelled.wait()
-            with pytest.raises(ProviderUnavailableError):
+            with pytest.raises(InputNotAccepted):
                 await turns.require_admission("room", FakeAgentTools())
+            assert not turns.unavailable("room")
             assert not finished.is_set()
         finally:
             release.set()
@@ -95,8 +97,9 @@ class TestBackendAbandonment:
             with pytest.raises(asyncio.CancelledError):
                 await caller
             await turns.settled("room")
-            with pytest.raises(ProviderUnavailableError):
+            with pytest.raises(InputNotAccepted):
                 await turns.require_admission("room", FakeAgentTools())
+            assert not turns.unavailable("room")
             assert not cleaned.is_set()
         finally:
             release.set()

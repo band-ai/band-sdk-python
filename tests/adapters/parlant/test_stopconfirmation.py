@@ -6,11 +6,11 @@ from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from band_sdk_core import backend_stop_unconfirmed_message
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.adapters.parlant.adapter import PROVIDER
-from band.core.exceptions import ProviderUnavailableError
-from band.core.turn_lifecycle import PROVIDER_UNAVAILABLE_MESSAGE
+from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.parlant.engine import EngineSession, Holdout
 from tests.adapters.parlant.helpers import SESSION_ID, RecordingBackgroundTasks
@@ -20,10 +20,10 @@ pytestmark = [pytest.mark.usefixtures("parlant_sessions"), pytest.mark.looptime]
 
 ROOM_ID = "room-123"
 TEARDOWN_BUDGET_SECONDS = 7.0
-UNCONFIRMED_REPORT = {
+BLOCKED_REPORT = {
     "provider": PROVIDER,
     "code": None,
-    "message": PROVIDER_UNAVAILABLE_MESSAGE,
+    "message": backend_stop_unconfirmed_message(),
     "detail": None,
 }
 
@@ -85,13 +85,14 @@ class TestParlantStopConfirmation:
         await run_turn(adapter)
 
         assert self.stop_unconfirmed(adapter)
-        with pytest.raises(ProviderUnavailableError):
+        assert not adapter.backend_turns.unavailable(ROOM_ID)
+        with pytest.raises(InputNotAccepted):
             await run_turn(adapter)
         assert first_post.await_count == 1
-        assert reported_failures(mock_tools) == [UNCONFIRMED_REPORT]
+        assert reported_failures(mock_tools) == [BLOCKED_REPORT]
 
         await adapter.on_cleanup(ROOM_ID)
-        with pytest.raises(ProviderUnavailableError):
+        with pytest.raises(InputNotAccepted):
             await run_turn(adapter)
         assert first_post.await_count == 1
 
@@ -187,9 +188,11 @@ class TestParlantStopConfirmation:
         )
         await run_turn(adapter)
 
-        await adapter.cleanup_all()
+        with pytest.raises(CleanupIncompleteError):
+            await adapter.cleanup_all()
 
         assert self.stop_unconfirmed(adapter)
         await engine.finish()
         await wait_until(lambda: not self.stop_unconfirmed(adapter))
         assert not self.stop_unconfirmed(adapter)
+        await adapter.cleanup_all()
