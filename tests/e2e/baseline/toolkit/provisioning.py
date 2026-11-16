@@ -471,9 +471,8 @@ class ResourceManager:
         if room_id in self._provisioned_room_ids:
             self._provisioned_room_ids.remove(room_id)
 
-    async def reap_all(self, *, strict: bool = False) -> None:
-        """Attempt every owned deletion; strict acceptance reports all failures."""
-        failures: list[Exception] = []
+    async def reap_all(self) -> None:
+        """Attempt every owned deletion, keeping failed ids for a later retry."""
         for kind, ids, reap in (
             ("room", list(self._provisioned_room_ids), self.reap_room),
             ("agent", list(self._provisioned_agent_ids), self.reap_agent),
@@ -482,14 +481,10 @@ class ResourceManager:
                 logger.info("Reaping %s %s", kind, resource_id)
                 try:
                     await reap(resource_id)
-                except Exception as error:
-                    error.add_note(f"Cleanup incomplete for {kind} {resource_id}")
-                    failures.append(error)
+                except Exception:
                     logger.warning(
                         "Failed to reap %s %s", kind, resource_id, exc_info=True
                     )
-        if strict and failures:
-            raise ExceptionGroup("Platform resource cleanup incomplete", failures)
 
     @asynccontextmanager
     async def reap_on_exit(self, *, enabled: bool = True) -> AsyncGenerator[None, None]:

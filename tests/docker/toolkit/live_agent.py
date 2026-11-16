@@ -13,9 +13,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from tests.docker.echo_agent import ECHO_PREFIX
 from tests.docker.toolkit.docker_cli import Container, Image
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.observations.replies import Replies
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.toolkit.tasks import off_loop
 
 SDK_PYTHON = "$BAND_SDK_PYTHON"
 
@@ -23,6 +26,16 @@ SDK_PYTHON = "$BAND_SDK_PYTHON"
 # text and shipped into the container via `$BAND_SDK_PYTHON -c <source>`, so a
 # refactor there shows up here instead of silently drifting until this runs.
 ECHO_AGENT_SCRIPT = (Path(__file__).parents[1] / "echo_agent.py").read_text()
+
+
+def assert_echoed(replies: Replies, message: str) -> None:
+    """The kit's echo agent answered ``message`` with ``ECHO_PREFIX``.
+
+    The echoed content carries the platform's mention token ahead of the text,
+    so the prefix and the original text are each matched verbatim, separately.
+    """
+    replies.assert_contains_exact(ECHO_PREFIX)
+    replies.assert_contains_exact(message)
 
 
 @asynccontextmanager
@@ -55,7 +68,7 @@ async def live_containerized_echo_agent(
     agent = await resource_manager.provision_agent(label)
     room_id = await resource_manager.provision_room(participants=[agent.id])
 
-    with Container.run(
+    container_cm = Container.run(
         image,
         name_prefix="band-python-kit-live-test",
         env={
@@ -64,7 +77,8 @@ async def live_containerized_echo_agent(
             "BAND_WS_URL": baseline_settings.endpoints.ws_url,
             "BAND_REST_URL": baseline_settings.endpoints.rest_url,
         },
-    ) as container:
+    )
+    async with off_loop(container_cm) as container:
         container.run_python_background(
             ECHO_AGENT_SCRIPT, interpreter=SDK_PYTHON, user="agent"
         )

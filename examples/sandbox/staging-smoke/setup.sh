@@ -25,10 +25,11 @@ mkdir -p .sandbox-smoke
 chmod 700 .sandbox-smoke
 mkdir -p "$SBX_WORKSPACE"
 
-SANDBOX_EXISTS="$(sbx ls --json | python3 -c "
-import json, os, sys
+SANDBOX_EXISTS="$(sbx ls --json | uv run python -c "
+import os, sys
+from band.docker.sbx_process import sbx_json
 # .get(...) or []: a machine with zero sandboxes may report null / omit the key.
-sandboxes = json.load(sys.stdin).get('sandboxes') or []
+sandboxes = sbx_json(sys.stdin.read()).get('sandboxes') or []
 name = os.environ['SBX_SANDBOX']
 print('yes' if any(s['name'] == name for s in sandboxes) else 'no')
 ")"

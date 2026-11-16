@@ -221,12 +221,10 @@ class TestCleanupDeploymentBinding:
         )
         monkeypatch.setattr(
             self_registration,
-            "_prepare_workspace",
+            "prepare_workspace",
             lambda directory, *, endpoints: tmp_path,
         )
-        monkeypatch.setattr(
-            self_registration, "_deployment_hosts", lambda endpoints: []
-        )
+        monkeypatch.setattr(self_registration, "deployment_hosts", lambda endpoints: [])
         monkeypatch.setattr(
             self_registration,
             "allow_network_for_hosts",

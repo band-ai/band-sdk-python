@@ -359,6 +359,8 @@ smoke/inspection/test_usage.py:
       adapters: [omp]
     - reason: usage lives in user-supplied flow internals
       adapters: [crewai_flow]
+smoke/kit/test_containerized_echo.py::TestContainerizedEcho:
+  test_containerized_agent_replies_over_live_platform: kit
 smoke/matrix/test_activity_lifecycle.py::TestActivityLifecycle:
   test_old_room_cleanup_preserves_a_fresh_followup:
     pass: [agno, anthropic, claude_sdk, copilot_sdk, crewai, gemini, google_adk, langgraph, nooa, pydantic_ai, strands]

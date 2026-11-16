@@ -149,7 +149,6 @@ class CollectionGateSettings(BaseSettings):
     ci: bool = False  # CI
     e2e_tests_enabled: bool = False  # E2E_TESTS_ENABLED
     docker_tests_enabled: bool = False  # DOCKER_TESTS_ENABLED
-    sandbox_tests_enabled: bool = False  # SANDBOX_TESTS_ENABLED
     vscode_chat_tests_enabled: bool = False  # VSCODE_CHAT_TESTS_ENABLED
 
 
@@ -173,7 +172,6 @@ def pytest_ignore_collect(collection_path: Path) -> bool | None:
 GATED_MARKERS: dict[str, str] = {
     "e2e": "e2e_tests_enabled",
     "docker_build": "docker_tests_enabled",
-    "sandbox": "sandbox_tests_enabled",
     "vscode_chat": "vscode_chat_tests_enabled",
 }
 
@@ -183,7 +181,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
     tests/e2e/ gates itself through its own conftest; this covers marked
     tests living elsewhere (e.g. the codex ACP protocol tests). These
-    suites spawn real backends, real `docker build`s, sbx microVMs, or a
+    suites spawn real backends, real `docker build`s, or a
     live VS Code window — none may ride a normal unit run, and none can
     rely on mere tool availability (CI runners do have Docker), so each
     needs its explicit opt-in.
