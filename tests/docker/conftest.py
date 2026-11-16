@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from tests.docker.sbx_banner import UPDATE_BANNER
 from tests.docker.toolkit.docker_cli import (
     BAND_PYTHON_KIT_DOCKERFILE,
     Container,
@@ -105,3 +107,38 @@ def graph() -> dict[str, dict[str, Any]]:
             ]
         }
     return documents
+
+
+@pytest.fixture
+def sbx_policy_peer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """An `sbx` on PATH that answers network-policy commands like v0.47.0.
+
+    Its `policy check --json` reply carries the update banner, decides from
+    ``SBX_PEER_ALLOWED``, and exits 1 for a denial; any other command fails.
+    Returns the file each invocation's argv is appended to as a JSON line.
+    """
+    binary = tmp_path / "sbx-peer"
+    binary.mkdir()
+    calls = tmp_path / "sbx-calls.jsonl"
+    peer = binary / "sbx"
+    peer.write_text(
+        f"#!{sys.executable}\n"
+        + r"""import json, os, sys
+args = sys.argv[1:]
+with open(os.environ['SBX_PEER_CALLS'], 'a') as calls:
+    calls.write(json.dumps(args) + '\n')
+if args[:3] == ['policy', 'check', 'network'] and args[-1] == '--json':
+    allowed = os.environ['SBX_PEER_ALLOWED'] == 'true'
+    print(json.dumps({'allowed': allowed}) + '\n' + os.environ['SBX_PEER_BANNER'])
+    sys.exit(0 if allowed else 1)
+if args[:3] in (['policy', 'allow', 'network'], ['policy', 'rm', 'network']):
+    sys.exit(0)
+print(f'unsupported sbx command: {args}', file=sys.stderr)
+sys.exit(2)
+"""
+    )
+    peer.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{binary}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("SBX_PEER_CALLS", str(calls))
+    monkeypatch.setenv("SBX_PEER_BANNER", UPDATE_BANNER)
+    return calls

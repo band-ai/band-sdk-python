@@ -1,10 +1,14 @@
 """Shared `sbx`-subprocess execution and output parsing.
 
-`band.docker.provision` (the live CLI), the sbx helpers under
-`tests/docker/toolkit/`, and the self-registration example run `sbx`
-subprocesses, redact any secret from a failure's error message, and read
-`sbx`'s `--json` output -- `src/` code cannot import from `tests/`, so this is
-the one place they all import that logic from instead of hand-duplicating it.
+`src/` code cannot import from `tests/`, so the logic both sides need lives
+here once:
+
+- `run_sbx_subprocess` runs a CLI subprocess and redacts any secret from a
+  failure's error message: `band.docker.provision` (the live CLI) and the
+  docker helpers in `tests/docker/toolkit/docker_cli.py`.
+- `sbx_json` reads `sbx`'s `--json` output: `band.docker.provision`,
+  `tests/docker/toolkit/sbx_cli.py`, the self-registration example, and the
+  docker demo's and staging smoke's shell scripts.
 """
 
 from __future__ import annotations

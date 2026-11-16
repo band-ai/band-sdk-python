@@ -284,7 +284,12 @@ launch_one dev agents/dev band-demo-dev band-python-kit-cli:local openai""",
         )
         assert result.returncode == 0, result.stderr
         calls = [json.loads(line)["args"] for line in events.read_text().splitlines()]
-        assert calls[-1] == ["policy", "allow", "network", "demo.band.test"]
+        assert calls == [
+            ["policy", "check", "network", "demo.band.test", "--json"],
+            ["policy", "allow", "network", "demo.band.test"],
+        ]
+        policy_ledger = script.parent / ".demo" / "run" / "policy"
+        assert policy_ledger.read_text().splitlines() == ["demo.band.test"]
 
     def test_demo_policy_listing_reads_past_the_sbx_update_banner(
         self,

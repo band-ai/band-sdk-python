@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from tests.docker.echo_agent import ECHO_PREFIX
 from tests.docker.toolkit.docker_cli import Container, Image
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.observations.replies import Replies
@@ -28,13 +29,13 @@ ECHO_AGENT_SCRIPT = (Path(__file__).parents[1] / "echo_agent.py").read_text()
 
 
 def assert_echoed(replies: Replies, message: str) -> None:
-    """The kit's echo agents answered ``message`` with their ``echo:`` prefix.
+    """The kit's echo agent answered ``message`` with ``ECHO_PREFIX``.
 
-    The content carries the platform's mention token ahead of the text, so the
-    prefix and the original text are matched separately.
+    The echoed content carries the platform's mention token ahead of the text,
+    so the prefix and the original text are each matched verbatim, separately.
     """
-    replies.assert_contains_any(["echo:"])
-    replies.assert_contains_any([message])
+    replies.assert_contains_exact(ECHO_PREFIX)
+    replies.assert_contains_exact(message)
 
 
 @asynccontextmanager
