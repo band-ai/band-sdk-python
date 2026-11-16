@@ -575,8 +575,7 @@ class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
 
     async def on_cleanup(self, room_id: str) -> None:
         """Forget the room's Parlant session when the agent leaves it."""
-        await self.backend_turns.settled(room_id)
-        if self.backend_turns.unconfirmed_handle(room_id) is not None:
+        if not await self.backend_turns.ready_to_forget(room_id):
             return
         if self._rooms is not None:
             self._rooms.forget(room_id)

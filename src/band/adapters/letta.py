@@ -1276,8 +1276,7 @@ class LettaAdapter(BatchInputAdapter[LettaSessionState]):
         the state mutation holds the lock — the consolidation LLM turn must
         not block other rooms' setup.
         """
-        await self.backend_turns.settled(room_id)
-        if self.backend_turns.unconfirmed_handle(room_id) is not None:
+        if not await self.backend_turns.ready_to_forget(room_id):
             # Leaving cannot settle remote work or authorize another inference.
             return
         async with self._rpc_lock:

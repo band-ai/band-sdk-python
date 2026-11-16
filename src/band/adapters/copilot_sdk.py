@@ -492,7 +492,6 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             room := self._sessions.get(room_id)
         ) is not None and room.activity is not None:
             await room.activity.close()
-        self._room_tools.pop(room_id, None)
         self._sessions.pop(room_id, None)
         self._turn_state.pop(room_id, None)
 

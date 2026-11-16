@@ -68,6 +68,9 @@ class A2ATaskRun:
     # even while this turn is still delivering that state.
     finished: bool = False
 
+    def owns(self, task: Task) -> bool:
+        return task.id == self.task_id
+
 
 async def _prepended(
     read: list[StreamResponse], rest: AsyncIterator[StreamResponse]
@@ -294,7 +297,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         self._task_senders.setdefault(key, {"id": sender_id, "name": sender_name or ""})
 
         state = task.status.state
-        if run is not None and task.id == run.task_id and state in TERMINAL_TASK_STATES:
+        if run is not None and run.owns(task) and state in TERMINAL_TASK_STATES:
             run.finished = True
         try:
             await self._deliver_task_update(task, tools, self._task_senders[key])
@@ -320,7 +323,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                         task.id,
                     )
                 self._finalize_task(room_id, task.id)
-                if run is not None and task.id == run.task_id:
+                if run is not None and run.owns(task):
                     self.backend_turns.confirm_stopped(room_id, run)
 
     async def _deliver_message(
@@ -367,7 +370,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             raise
         if (
             task is not None
-            and task.id == run.task_id
+            and run.owns(task)
             and task.status.state in TERMINAL_TASK_STATES
         ):
             run.finished = True
@@ -465,8 +468,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up A2A context for room."""
-        await self.backend_turns.settled(room_id)
-        if self.backend_turns.unconfirmed_handle(room_id) is not None:
+        if not await self.backend_turns.ready_to_forget(room_id):
             return
         self._contexts.pop(room_id, None)
         self._tasks.pop(room_id, None)

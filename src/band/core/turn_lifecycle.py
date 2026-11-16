@@ -398,17 +398,16 @@ class BackendTurns(Generic[H]):
     def note_waiting(self, room_id: str, message_id: str) -> None:
         """Record an original deferred on this room's unconfirmed stop."""
         stop = self._unconfirmed.get(room_id)
-        if stop is None:
-            return
-        stop.waiting.add(message_id)
-        if stop.unavailable:
-            self._latch_waiting(room_id, frozenset({message_id}))
+        if stop is not None:
+            self._record_waiting(stop, message_id)
 
     def note_waiting_on(self, ready: asyncio.Future[None], message_id: str) -> None:
         """Record a deferred original from its readiness future."""
         stop = self._by_ready.get(ready)
-        if stop is None:
-            return
+        if stop is not None:
+            self._record_waiting(stop, message_id)
+
+    def _record_waiting(self, stop: UnconfirmedStop[H], message_id: str) -> None:
         stop.waiting.add(message_id)
         if stop.unavailable:
             self._latch_waiting(stop.room_id, frozenset({message_id}))
@@ -431,13 +430,14 @@ class BackendTurns(Generic[H]):
             self._latch_waiting(room_id, failed)
         finally:
             if not stop.ready.done():
-                stop.ready.set_exception(
-                    ProviderUnavailableError(
-                        AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
-                    )
-                )
+                stop.ready.set_exception(self._unavailable_failure())
                 stop.ready.exception()
         return failed
+
+    def _unavailable_failure(self) -> ProviderUnavailableError:
+        return ProviderUnavailableError(
+            AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
+        )
 
     def _latch_waiting(self, room_id: str, identities: frozenset[str]) -> None:
         """Notify delivery latches; one latch failure must not starve the rest."""
@@ -445,7 +445,6 @@ class BackendTurns(Generic[H]):
             try:
                 latch(room_id, identities)
             except Exception as error:
-                # One latch failure must not starve readiness or other latches.
                 logger.warning(
                     "Failure latch for room %s raised (%s)",
                     room_id,
@@ -470,9 +469,7 @@ class BackendTurns(Generic[H]):
         await self.settled(room_id)
         prior = self._unconfirmed.get(room_id)
         if prior is not None and prior.unavailable:
-            raise ProviderUnavailableError(
-                AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
-            )
+            raise self._unavailable_failure()
         if prior is not None and not prior.ready.done():
             raise InputNotAccepted(
                 "The previous backend turn is not ready", ready=prior.ready
@@ -617,6 +614,11 @@ class BackendTurns(Generic[H]):
             # deferred originals already carry their terminal delivery outcome.
             self.confirm_stopped(room_id, stop.handle)
 
+    async def ready_to_forget(self, room_id: str) -> bool:
+        """Wait for any in-flight stop; False while matching evidence is still owed."""
+        await self.settled(room_id)
+        return self.unconfirmed_handle(room_id) is None
+
     async def require_admission(self, room_id: str, tools: AgentToolsProtocol) -> None:
         """Refuse before execution while a stop is pending, unconfirmed, or unavailable."""
         stop = self._unconfirmed.get(room_id)
@@ -636,24 +638,13 @@ class BackendTurns(Generic[H]):
                 # A finished release typed this way is a real failure; a still-
                 # running or enrolled wait leaves recovery owned for retry.
                 if retained.snapshot.error is not None:
-                    logger.warning(
-                        "Backend recovery failed (%s); marking room unavailable",
-                        type(error).__name__,
-                    )
-                    self.mark_unavailable(room_id)
-                    raise await self._unavailable_error(tools, stop) from error
+                    raise await self._fail_recovery(tools, stop, error) from error
                 logger.warning(
                     "Backend recovery remains blocked (%s)",
                     type(error).__name__,
                 )
             except Exception as error:
-                # Any failed release makes the room unavailable; keep ownership.
-                logger.warning(
-                    "Backend recovery failed (%s); marking room unavailable",
-                    type(error).__name__,
-                )
-                self.mark_unavailable(room_id)
-                raise await self._unavailable_error(tools, stop) from error
+                raise await self._fail_recovery(tools, stop, error) from error
             else:
                 self.confirm_stopped(room_id, stop.handle)
         blocker = self.blocker(room_id)
@@ -668,6 +659,20 @@ class BackendTurns(Generic[H]):
             )
         raise InputNotAccepted("The previous backend turn is not ready", ready=blocker)
 
+    async def _fail_recovery(
+        self,
+        tools: AgentToolsProtocol,
+        stop: UnconfirmedStop[H],
+        error: BaseException,
+    ) -> ProviderUnavailableError:
+        """Mark the room unavailable after a failed release and report once."""
+        logger.warning(
+            "Backend recovery failed (%s); marking room unavailable",
+            type(error).__name__,
+        )
+        self.mark_unavailable(stop.room_id)
+        return await self._unavailable_error(tools, stop)
+
     async def _unavailable_error(
         self, tools: AgentToolsProtocol, stop: UnconfirmedStop[H]
     ) -> ProviderUnavailableError:
@@ -675,9 +680,7 @@ class BackendTurns(Generic[H]):
         await self._report_once(
             tools, stop, PROVIDER_UNAVAILABLE_MESSAGE, "unavailable"
         )
-        return ProviderUnavailableError(
-            AgentFailure(self._provider, PROVIDER_UNAVAILABLE_MESSAGE)
-        )
+        return self._unavailable_failure()
 
     async def _report_once(
         self,
@@ -775,7 +778,11 @@ class BackendTurns(Generic[H]):
         await self._cancel_and_confirm(room_id, handle, stop)
 
     def _spawn_stop(
-        self, room_id: str, stop: Awaitable[None], *, cancel_on_timeout: bool = True
+        self,
+        room_id: str,
+        stop: Coroutine[Any, Any, None],
+        *,
+        cancel_on_timeout: bool = True,
     ) -> None:
         task = spawn_owned(
             self._wait_stop(room_id, stop, cancel_on_timeout=cancel_on_timeout),
@@ -787,13 +794,14 @@ class BackendTurns(Generic[H]):
         task.add_done_callback(partial(self._forget_stop, room_id))
 
     async def _wait_stop(
-        self, room_id: str, stop: Awaitable[None], *, cancel_on_timeout: bool
+        self,
+        room_id: str,
+        stop: Coroutine[Any, Any, None],
+        *,
+        cancel_on_timeout: bool,
     ) -> None:
-        async def execute() -> None:
-            await stop
-
         operation = spawn_owned(
-            execute(), label=f"{self._provider} cancellation for room {room_id}"
+            stop, label=f"{self._provider} cancellation for room {room_id}"
         )
         try:
             if await await_owned({operation}, BACKEND_CANCEL_TIMEOUT_SECONDS):
