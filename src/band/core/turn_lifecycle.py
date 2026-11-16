@@ -551,16 +551,24 @@ class BackendTurns(Generic[H]):
     ) -> H | None:
         """Await ``start`` under a transition budget and bind its handle.
 
-        Expiry or host cancel abandons the wait through ``abandon_start_wait``
-        so late identity is cleanup-only; the start awaitable stays owned for
-        that cleanup. One owner covers both ``TimeoutError`` and
-        ``CancelledError`` — adapters must not wrap ``started`` themselves.
+        Budget expiry or host cancel abandons the wait through
+        ``abandon_start_wait`` so late identity is cleanup-only; the start
+        awaitable stays owned for that cleanup. A ``TimeoutError`` raised by
+        ``start`` itself is a failed start, not a budget abandon. Adapters
+        must not wrap ``started`` themselves when a transition budget owns
+        the wait.
         """
         call = asyncio.ensure_future(start)
         try:
             handle = await await_owned_result(call, timeout=timeout, label=label)
-        except (TimeoutError, asyncio.CancelledError):
+        except asyncio.CancelledError:
             self.abandon_start_wait(room_id, call)
+            raise
+        except TimeoutError:
+            # Budget expiry leaves ``call`` running; a provider-raised
+            # TimeoutError finishes ``call`` and must not abandon the wait.
+            if not call.done():
+                self.abandon_start_wait(room_id, call)
             raise
         if handle is not None:
             self.bind(room_id, handle)
@@ -817,14 +825,18 @@ class BackendTurns(Generic[H]):
                 # Keep an unavailable latch already set by abandon_start.
                 self.confirm_stopped(room_id, None)
             return
-        if self._unconfirmed.get(room_id) is not stop:
-            return
         if handle is None:
-            self.confirm_stopped(room_id, None)
+            if self._unconfirmed.get(room_id) is stop:
+                self.confirm_stopped(room_id, None)
             return
         # Late identity after abandonment: cleanup only, never publish or rebind.
-        self._unconfirmed_stop(room_id, handle)
-        await self._cancel_and_confirm(room_id, handle, stop)
+        if self._unconfirmed.get(room_id) is stop:
+            self._unconfirmed_stop(room_id, handle)
+            await self._cancel_and_confirm(room_id, handle, stop)
+            return
+        # Admission already moved on (matching confirm or a successor stop);
+        # still cancel the orphaned provider operation without rebinding.
+        await self._cancel(handle)
 
     def _spawn_stop(
         self,

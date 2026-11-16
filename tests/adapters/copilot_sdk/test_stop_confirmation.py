@@ -120,22 +120,7 @@ class TestStopConfirmation:
     def blocked(adapter: CopilotSDKAdapter) -> bool:
         return adapter.backend_turns.unconfirmed_handle(ROOM_ID) is not None
 
-    async def test_only_the_sessions_own_idle_confirms_the_stop(self):
-        adapter, session, turn = await self.stopped_turn()
-        await cancel_turn(turn)
-        await wait_until(lambda: "abort" in session.journal)
-
-        assert self.blocked(adapter)
-        session.deliver_subagent_idle()
-        await spin()
-        assert self.blocked(adapter)
-
-        session.deliver_aborted_idle()
-        assert not self.blocked(adapter)
-        await stop_room(adapter, ROOM_ID)
-        assert len(session.handlers) == self.ACTIVITY_OBSERVER_ONLY
-
-    async def test_the_next_message_prompts_only_after_the_confirmation(self):
+    async def test_the_next_message_prompts_only_after_the_sessions_own_idle(self):
         adapter, session, turn = await self.stopped_turn()
         await cancel_turn(turn)
         await wait_until(lambda: "abort" in session.journal)
@@ -146,6 +131,7 @@ class TestStopConfirmation:
         assert pending.value.ready is not None
         assert len(session.prompts) == 2
 
+        # A subagent idle is not this stop's confirmation evidence.
         session.deliver_subagent_idle()
         await spin()
         assert self.blocked(adapter)
@@ -155,21 +141,29 @@ class TestStopConfirmation:
         await pending.value.ready
         await adapter.on_event(turn_input(ToolSchemaFakeTools()))
         assert len(session.prompts) == 3
+        await stop_room(adapter, ROOM_ID)
+        assert len(session.handlers) == self.ACTIVITY_OBSERVER_ONLY
 
     @pytest.mark.looptime
-    async def test_an_idle_after_the_stop_was_abandoned_still_confirms_it(self):
+    async def test_an_idle_after_the_stop_was_abandoned_still_admits_the_next_turn(
+        self,
+    ):
         adapter, session, turn = await self.stopped_turn()
         await cancel_turn(turn)
         await wait_until(lambda: "abort" in session.journal)
+        session.turn_events = []
 
         await wait_until(lambda: not adapter.backend_turns.stopping(ROOM_ID))
-        assert self.blocked(adapter)
+        with pytest.raises(InputNotAccepted) as pending:
+            await adapter.on_event(turn_input(ToolSchemaFakeTools()))
+        assert len(session.prompts) == 2
 
         session.deliver_aborted_idle()
-        assert not self.blocked(adapter)
-        assert len(session.handlers) == self.ACTIVITY_OBSERVER_ONLY
+        await pending.value.ready
+        await adapter.on_event(turn_input(ToolSchemaFakeTools()))
+        assert len(session.prompts) == 3
 
-    async def test_an_in_flight_tool_callback_holds_the_confirmation(self):
+    async def test_an_in_flight_tool_callback_holds_admission_until_it_returns(self):
         tools = HeldRestTools()
         tools.hold_tool_calls = True
         callbacks: list[asyncio.Task[object]] = []
@@ -204,12 +198,16 @@ class TestStopConfirmation:
         await wait_until(tools.tool_started.is_set)
         await cancel_turn(turn)
         await wait_until(lambda: "abort" in session.journal)
+        session.turn_events = []
 
         session.deliver_aborted_idle()
         await spin()
-        blocked_by_the_callback = self.blocked(adapter)
+        with pytest.raises(InputNotAccepted) as pending:
+            await adapter.on_event(turn_input(ToolSchemaFakeTools()))
+        assert len(session.prompts) == 2
+
         tools.tool_released.set()
         await asyncio.gather(*callbacks)
-
-        assert blocked_by_the_callback
-        assert not self.blocked(adapter)
+        await pending.value.ready
+        await adapter.on_event(turn_input(ToolSchemaFakeTools()))
+        assert len(session.prompts) == 3

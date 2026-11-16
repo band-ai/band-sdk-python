@@ -274,3 +274,34 @@ class TestOwnedJoins:
         finally:
             gate.released.set()
             await foreign
+
+    @pytest.mark.looptime
+    async def test_wait_timeout_leaves_owned_target_running(
+        self, host: ResidenceHost
+    ) -> None:
+        room = host.room().room
+        gate = Hold()
+        child = room.start_owned(gate.wait)
+        timed_out = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def join() -> None:
+            with pytest.raises(TimeoutError, match="owned work exceeded"):
+                await room.wait_owned(child, timeout=0.05)
+            timed_out.set()
+            await room.wait_owned(child)
+            finished.set()
+
+        waiter = room.start_owned(join)
+        try:
+            await gate.arrived()
+            await timed_out.wait()
+            assert not child.done()
+            assert not child.cancelling()
+            gate.released.set()
+            await finished.wait()
+            await child
+            await waiter
+        finally:
+            gate.released.set()
+            await asyncio.gather(child, waiter, return_exceptions=True)

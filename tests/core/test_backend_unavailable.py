@@ -58,7 +58,7 @@ class TestBackendUnavailable:
                 ("test", PROVIDER_UNAVAILABLE_MESSAGE),
             ]
 
-    async def test_reopen_after_unavailable_admits_only_after_confirmation(
+    async def test_successful_release_after_failed_recovery_reopens_admission(
         self,
     ) -> None:
         async with ResidenceHost() as host:
@@ -70,18 +70,25 @@ class TestBackendUnavailable:
             )
             tools = FakeAgentTools()
             handle = "operation"
+            generation = resident.room.snapshot.generation
             turns.recovering(
                 "room",
                 handle,
                 resident.room,
-                generation=resident.room.snapshot.generation,
+                generation=generation,
             )
             with pytest.raises(ProviderUnavailableError):
                 await turns.require_admission("room", tools)
+            assert turns.unavailable("room")
+            assert failure_reports(tools) == [("test", PROVIDER_UNAVAILABLE_MESSAGE)]
+            # Physical release still pending: sticky unavailable refuses again.
+            with pytest.raises(ProviderUnavailableError):
+                await turns.require_admission("room", FakeAgentTools())
             resident.fail_close = False
-            await resident.room.wait_released(generation=resident.room.generation)
+            await resident.room.wait_released(generation=generation)
             assert not resident.live
-            await turns.require_admission("room", tools)
+            assert not turns.unavailable("room")
+            await turns.require_admission("room", FakeAgentTools())
 
     async def test_stale_confirmation_cannot_reopen_a_newer_unavailable_stop(
         self,
@@ -137,6 +144,27 @@ class TestBackendUnavailable:
         assert latched == [frozenset({"queued-1"})]
         assert ready.done()
         assert turns.blocker(ROOM_ID) is None
+
+    async def test_waiting_after_unavailable_latches_immediately(self) -> None:
+        turns = BackendTurns(
+            RecordingCancel(), provider="test", requires_confirmation=True
+        )
+        async with turns.running(ROOM_ID, "backend-turn"):
+            turns.cancel(ROOM_ID)
+        await turns.settled(ROOM_ID)
+        ready = turns.blocker(ROOM_ID)
+        assert ready is not None
+        latched: list[frozenset[str]] = []
+        turns.add_failure_latch(lambda _room, ids: latched.append(ids))
+        turns.mark_unavailable(ROOM_ID)
+        assert latched == [frozenset()]
+        turns.note_waiting(ROOM_ID, "late-deferred")
+        turns.note_waiting_on(ready, "via-ready")
+        assert latched == [
+            frozenset(),
+            frozenset({"late-deferred"}),
+            frozenset({"via-ready"}),
+        ]
 
     async def test_unavailable_report_is_not_suppressed_by_a_prior_blocked_report(
         self,

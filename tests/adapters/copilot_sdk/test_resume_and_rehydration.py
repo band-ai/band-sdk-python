@@ -46,16 +46,15 @@ class TestResumeAndRehydration:
         # Resumed sessions restore history from disk — no re-injection.
         assert HISTORY_HEADING not in session.prompts[0]
 
-    @pytest.mark.parametrize("inject_history", [True, False])
     @pytest.mark.parametrize("failure", [RuntimeError("setup failed"), TimeoutError()])
     async def test_disposed_resume_failure_allows_a_fresh_session(
-        self, inject_history: bool, failure: Exception
+        self, failure: Exception
     ) -> None:
+        # inject_history_on_resume_failure is config-compat only for Copilot:
+        # a disposed resume clears the recorded identity; the next turn creates.
+        # TimeoutError must not be treated as a start-budget abandon.
         client = FakeCopilotClient(resume_error=failure)
-        adapter = await make_started_adapter(
-            client,
-            CopilotSDKAdapterConfig(inject_history_on_resume_failure=inject_history),
-        )
+        adapter = await make_started_adapter(client)
         tools = ToolSchemaFakeTools()
         history = CopilotSDKSessionState(
             text="[Alice]: earlier", room_to_session=recorded()
@@ -63,23 +62,21 @@ class TestResumeAndRehydration:
         with pytest.raises(type(failure)):
             await run_message(adapter, tools, history=history)
         assert client.deleted == [RECORDED_ID]
+        assert client.create_calls == []
+        assert client.sessions == []
         client.resume_error = None
         await run_message(adapter, tools, history=history)
         assert client.resume_calls == [RECORDED_ID]
         assert client.deleted == [RECORDED_ID]
         assert len(client.create_calls) == 1
-        assert len(client.sessions) == 1
+        (session,) = client.sessions
+        assert not session.resumed
+        assert len(session.prompts) == 1
 
-    @pytest.mark.parametrize("inject_history", [True, False])
-    async def test_undisposed_resume_failure_latches_unavailable(
-        self, inject_history: bool
-    ) -> None:
+    async def test_undisposed_resume_failure_latches_unavailable(self) -> None:
         client = FakeCopilotClient(resume_error=RuntimeError("setup failed"))
         client.delete_error = RuntimeError("delete failed")
-        adapter = await make_started_adapter(
-            client,
-            CopilotSDKAdapterConfig(inject_history_on_resume_failure=inject_history),
-        )
+        adapter = await make_started_adapter(client)
         tools = ToolSchemaFakeTools()
         history = CopilotSDKSessionState(
             text="[Alice]: earlier", room_to_session=recorded()
@@ -95,7 +92,10 @@ class TestResumeAndRehydration:
         assert client.sessions == []
         with pytest.raises(CleanupIncompleteError):
             await adapter.on_cleanup("room-1")
-        assert adapter.backend_turns.unavailable("room-1")
+        # CleanupIncompleteError abandons the wait only; the latch stays sticky.
+        with pytest.raises(ProviderUnavailableError):
+            await run_message(adapter, tools, history=history)
+        assert client.create_calls == []
 
     @pytest.mark.asyncio
     async def test_fresh_room_with_history_text_injects_it(self):

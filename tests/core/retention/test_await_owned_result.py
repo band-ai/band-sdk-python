@@ -90,3 +90,22 @@ class TestAwaitOwnedResult:
             )
             == "ready"
         )
+
+    @pytest.mark.looptime
+    async def test_a_future_gate_stays_held_after_an_abandoned_wait(self) -> None:
+        gate = Hold()
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+
+        async def resolve() -> None:
+            await gate.wait()
+            future.set_result("ready")
+
+        resolver = asyncio.create_task(resolve())
+        with pytest.raises(TimeoutError, match="Band MCP server start"):
+            await await_owned_result(
+                future, timeout=0.05, label="Band MCP server start"
+            )
+        assert not future.done()
+        gate.released.set()
+        assert await future == "ready"
+        await resolver

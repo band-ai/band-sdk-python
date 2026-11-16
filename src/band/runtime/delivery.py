@@ -382,9 +382,7 @@ class DeliveryLifecycle:
             )
         except InputNotAccepted as refusal:
             if (error := self._terminal_provider_failure(refusal)) is not None:
-                return await self._fail(
-                    scope, control=control, error=error, allow_retry=False
-                )
+                return await self._fail_terminal(scope, control=control, error=error)
             identity = self._first_id(scope)
             if refusal.ready is not None:
                 for event in scope.originals:
@@ -392,17 +390,15 @@ class DeliveryLifecycle:
             self.host.defer_delivery(identity, reason=refusal)
             return TurnOutcome.NOT_ACCEPTED
         except ProviderUnavailableError as error:
-            return await self._fail_unavailable(scope, control=control, error=error)
+            return await self._fail_terminal(scope, control=control, error=error)
         except RoomExecutionStoppedError:
             return TurnOutcome.RETRY_LATER
         except Exception as error:  # noqa: BLE001 -- the delivery boundary owns failure settlement
+            if isinstance(error, TerminalProviderFailure):
+                return await self._fail_terminal(scope, control=control, error=error)
             log_delivery_error(
                 error, "Error processing messages in room %s", self.room_id
             )
-            if isinstance(error, TerminalProviderFailure):
-                return await self._fail(
-                    scope, control=control, error=error, allow_retry=False
-                )
             if not scope.admitted:
                 return self._unadmitted_outcome()
             return await self._fail(scope, control=control, error=error)
@@ -486,15 +482,23 @@ class DeliveryLifecycle:
             self.host.request_delivery_recovery()
 
     def bind_backend_turns(self, turns: object) -> None:
-        """Wire provider-unavailable latching into shared backend ownership."""
+        """Wire provider-unavailable latching into shared backend ownership.
+
+        Requires the latch, waiting note, and unavailability probe together so a
+        partial stand-in cannot latch deferred ids while leaving arrivals free.
+        """
         add_latch = getattr(turns, "add_failure_latch", None)
         note_waiting = getattr(turns, "note_waiting_on", None)
-        if not callable(add_latch):
+        unavailable = getattr(turns, "unavailable", None)
+        if (
+            not callable(add_latch)
+            or not callable(note_waiting)
+            or not callable(unavailable)
+        ):
             return
         add_latch(self._latch_unavailable)
-        self._note_backend_waiting = note_waiting if callable(note_waiting) else None
-        unavailable = getattr(turns, "unavailable", None)
-        self._backend_unavailable = unavailable if callable(unavailable) else None
+        self._note_backend_waiting = note_waiting
+        self._backend_unavailable = unavailable
 
     def receive(self, event: PlatformEvent) -> None:
         """Latch input arriving during unavailability before recovery can overtake it."""
@@ -514,14 +518,14 @@ class DeliveryLifecycle:
             return
         self.fail_unavailable(identities | self.host.queued_model_inputs())
 
-    async def _fail_unavailable(
+    async def _fail_terminal(
         self,
         scope: TurnScope,
         *,
         control: bool,
-        error: ProviderUnavailableError,
+        error: TerminalProviderFailure,
     ) -> TurnOutcome:
-        """Terminal failure even when provider execution was never admitted."""
+        """Terminal, non-retrying failure even when provider execution was never admitted."""
         if not scope.admitted and scope.phase is AttemptPhase.PREPARING:
             if not scope.originals:
                 return self._unadmitted_outcome()

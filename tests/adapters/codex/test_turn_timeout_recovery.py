@@ -73,6 +73,12 @@ class TestTurnTimeoutRecovery:
             )
             await room.send("second")
 
+            assert [
+                failure["code"] for failure in reported_failures(room.deliveries[0])
+            ] == [FAILURE_CODE_TIMEOUT]
+            assert client.params_of(CodexRequestMethod.TURN_INTERRUPT) == [
+                {"threadId": FIRST_THREAD_ID, "turnId": "turn-1"}
+            ]
             assert (client.starts, client.closes) == (2, 1)
             assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
         finally:

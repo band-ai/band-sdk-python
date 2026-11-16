@@ -193,15 +193,29 @@ class GatedRefusalAdapter(SimpleAdapter[Any]):
 class RecoveringAdapter(BatchInputAdapter[Any]):
     """Admit through the real backend owner before executing the input."""
 
-    def __init__(self, turns: BackendTurns[object]) -> None:
+    def __init__(
+        self, turns: BackendTurns[object], *, control_content: str | None = None
+    ) -> None:
         super().__init__()
         self.turns = turns
+        self.control_content = control_content
         self.refused = asyncio.Event()
         self.completed: list[str] = []
+        self.controls: list[str] = []
 
     @property
     def backend_turns(self) -> BackendTurns[object]:
         return self.turns
+
+    def is_control_message(self, msg: Any) -> bool:
+        return self.control_content is not None and msg.content == self.control_content
+
+    async def try_handle_control(self, msg: Any, tools: Any) -> bool:
+        if not self.is_control_message(msg):
+            return False
+        self.controls.append(msg.id)
+        tools.turn.settle()
+        return True
 
     async def on_turn(
         self, messages: Any, tools: Any, *args: Any, **kwargs: Any

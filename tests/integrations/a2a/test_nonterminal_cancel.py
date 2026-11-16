@@ -64,8 +64,11 @@ class TestNonterminalCancel:
             await adapter.on_cleanup(ROOM_ID)
             with pytest.raises(ProviderUnavailableError):
                 await adapter.on_event(turn_input(tools))
+            # Leave/rejoin never re-invokes the remote, and the refusal is sticky.
             assert client.continued == [""]
+            assert len(client.cancelled) == 1
             assert failure_reports(tools) == [("a2a", PROVIDER_UNAVAILABLE_MESSAGE)]
+            assert adapter.backend_turns.unavailable(ROOM_ID)
         finally:
             await cancel_turn(turn)
             await adapter.cleanup_all()

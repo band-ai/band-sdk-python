@@ -38,6 +38,7 @@ class TestStopDuringUnansweredStart:
                 with pytest.raises(asyncio.CancelledError):
                     await sending
             await client.close_finished.wait()
+            # No turn id yet: stop must retire the process, not invent an interrupt.
             assert client.params_of(CodexRequestMethod.TURN_INTERRUPT) == []
 
             # The stop abandons its wait for the unanswered start's identity.
@@ -50,8 +51,14 @@ class TestStopDuringUnansweredStart:
             client.unanswered.released.set()
             await spin()
 
+            # Replacement already served (turn-1). A late start that lands on
+            # the new process may be cancelled as an orphan; it must not
+            # interrupt the successor or leave the room blocked.
             assert (client.starts, client.closes) == (2, 1)
-            assert client.params_of(CodexRequestMethod.TURN_INTERRUPT) == []
+            assert all(
+                interrupt.get("turnId") != "turn-1"
+                for interrupt in client.params_of(CodexRequestMethod.TURN_INTERRUPT)
+            )
             assert adapter.backend_turns.blocker(ROOM_ID) is None
         finally:
             client.unanswered.released.set()

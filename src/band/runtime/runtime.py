@@ -136,7 +136,8 @@ class AgentRuntime:
                 originals
             is_message_control: Optional read-only recognition of a delivery
                 the adapter would handle as a control
-            on_execution_created: Bind each default room before it receives input
+            on_execution_created: Bind each room ``ExecutionContext`` before
+                it receives input, including factory-built contexts
 
         Raises:
             BandConfigError: ``consume_all_queued`` with a custom execution
@@ -370,12 +371,19 @@ class AgentRuntime:
         if self._execution_factory is None:
             return self._default_execution(room_id)
         try:
-            return self._execution_factory(
+            execution = self._execution_factory(
                 room_id, self.link, hub_room_id=self._hub_room_id
             )
         except TypeError:
             # Legacy factories accept only (room_id, link).
-            return self._execution_factory(room_id, self.link)
+            execution = self._execution_factory(room_id, self.link)
+        # Factories often construct ExecutionContext without the Agent hook;
+        # bind unavailable latching here so custom rooms match the default path.
+        if self._on_execution_created is not None and isinstance(
+            execution, ExecutionContext
+        ):
+            self._on_execution_created(execution)
+        return execution
 
     def _default_execution(self, room_id: str) -> ExecutionContext:
         return ExecutionContext(

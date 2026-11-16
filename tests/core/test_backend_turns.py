@@ -284,6 +284,55 @@ class TestBackendTurns:
         await turns.require_admission(ROOM, FakeAgentTools())
 
     @pytest.mark.looptime
+    async def test_start_within_timeout_enrolls_late_cleanup(
+        self, cancel: RecordingCancel
+    ) -> None:
+        turns = BackendTurns(cancel, provider="test", requires_confirmation=True)
+        release = asyncio.Event()
+        prepared = asyncio.Event()
+
+        async def prepare() -> str:
+            prepared.set()
+            await release.wait()
+            return HANDLE
+
+        async def turn() -> None:
+            async with turns.running(ROOM):
+                await turns.start_within(
+                    ROOM, prepare(), timeout=0.05, label=f"setup for {ROOM}"
+                )
+
+        task = asyncio.create_task(turn())
+        await prepared.wait()
+        with pytest.raises(TimeoutError):
+            await task
+        assert not turns.unavailable(ROOM)
+        release.set()
+        await turns.drain()
+        assert cancel.sent == [HANDLE]
+        turns.confirm_stopped(ROOM, HANDLE)
+        await turns.require_admission(ROOM, FakeAgentTools())
+
+    @pytest.mark.looptime
+    async def test_start_within_provider_timeout_does_not_abandon_the_wait(
+        self, cancel: RecordingCancel
+    ) -> None:
+        turns = BackendTurns(cancel, provider="test", requires_confirmation=True)
+
+        async def prepare() -> str:
+            raise TimeoutError("provider refused the start")
+
+        with pytest.raises(TimeoutError, match="provider refused the start"):
+            async with turns.running(ROOM):
+                await turns.start_within(
+                    ROOM, prepare(), timeout=30.0, label=f"setup for {ROOM}"
+                )
+        assert not turns.stopping(ROOM)
+        assert turns.blocker(ROOM) is None
+        assert cancel.sent == []
+        await turns.require_admission(ROOM, FakeAgentTools())
+
+    @pytest.mark.looptime
     async def test_failed_start_keeps_abandon_start_unavailable(
         self, cancel: RecordingCancel
     ) -> None:

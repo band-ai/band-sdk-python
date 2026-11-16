@@ -94,6 +94,17 @@ class TestDisposalJoinBudget:
                 with pytest.raises(asyncio.CancelledError):
                     await turn
                 assert await admission_is_refused(adapter)
+                assert not resistant.closed
+                assert len(launches.runtimes) == 1
+
+                resistant.closing.released.set()
+                await adapter.on_cleanup("room-123")
+                launches.runtime_factory = RecordingRuntime
+                tools = FakeAgentTools()
+                await run_turn(adapter, tools)
+
+                assert resistant.closed and len(launches.runtimes) == 2
+                assert tools.turn.replied
         finally:
             resistant.closing.released.set()
             if turn is not None:

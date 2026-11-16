@@ -34,8 +34,12 @@ class TestFailedCreate:
             await run_message(adapter, tools)
         with pytest.raises(CleanupIncompleteError):
             await adapter.cleanup_all()
+        # CleanupIncomplete abandons the wait only; no create/delete retry.
+        with pytest.raises(ProviderUnavailableError):
+            await run_message(adapter, tools)
         assert len(client.create_calls) == 1
         assert client.deleted == []
+        assert client.sessions == []
 
     @pytest.mark.looptime
     async def test_an_interrupted_create_deletes_the_session_it_asked_for(self):

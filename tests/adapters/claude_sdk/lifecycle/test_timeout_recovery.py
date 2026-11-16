@@ -37,9 +37,10 @@ class TestTimeoutRecovery:
         with pytest.raises(ProviderUnavailableError):
             await room.send("and now?")
 
+        # Sticky outage: no replacement CLI while the stuck process is held.
         assert len(room.claude.sessions) == 1
         assert room.claude.sessions[0].alive
-        assert room.adapter.backend_turns.unavailable(room.room_id)
+        assert len(room.claude.prompts) == 2
 
         room.claude.refuse_close = False
         await room.leave()
@@ -47,6 +48,7 @@ class TestTimeoutRecovery:
 
         assert room.chat == ["Hello.", "Fresh room."]
         assert [session.alive for session in room.claude.sessions] == [False, True]
+        assert len(room.claude.prompts) == 3
 
     async def test_a_call_of_the_replaced_cli_never_resolves_to_a_later_turn(
         self, claude_room: OpenRoom

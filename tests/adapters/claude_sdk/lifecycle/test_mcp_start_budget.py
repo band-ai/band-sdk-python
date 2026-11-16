@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET, OpenRoom
 from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 
@@ -33,6 +34,8 @@ class TestMcpStartBudget:
             finally:
                 start_released.set()
 
+        # Budget abandons the wait: the prior reply stands, the CLI is not
+        # re-prompted, and the failed turn reports once.
         assert room.chat == ["Hello."]
         assert len(room.claude.prompts) == 1
-        assert len(room.failures) == 1
+        assert room.failures == [GENERIC_PROVIDER_FAILURE_MESSAGE]

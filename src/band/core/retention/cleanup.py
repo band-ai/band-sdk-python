@@ -9,6 +9,7 @@ import weakref
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator
 from contextlib import contextmanager
+from inspect import iscoroutine
 from typing import Any, TypeVar, cast
 
 from band.core.exceptions import CleanupIncompleteError
@@ -32,6 +33,15 @@ def spawn_owned(operation: Coroutine[Any, Any, T], *, label: str) -> asyncio.Tas
     no caller is waiting to report it."""
     task: asyncio.Task[T] = asyncio.create_task(operation)
     _labels[task] = label
+    _held.add(task)
+    task.add_done_callback(_held.discard)
+    task.add_done_callback(_log_unreported)
+    return task
+
+
+def _own_existing(task: asyncio.Task[T], *, label: str) -> asyncio.Task[T]:
+    """Keep an already-scheduled task alive under owned-abandonment rules."""
+    _labels.setdefault(task, label)
     _held.add(task)
     task.add_done_callback(_held.discard)
     task.add_done_callback(_log_unreported)
@@ -118,15 +128,17 @@ async def await_owned_result(
     keeps the task alive for cleanup or late-identity observation; a deadline
     never proves the gate settled.
     """
-    task: asyncio.Task[T]
     if isinstance(operation, asyncio.Task):
-        task = operation
-        _labels.setdefault(task, label)
-        _held.add(task)
-        task.add_done_callback(_held.discard)
-        task.add_done_callback(_log_unreported)
-    else:
+        task = _own_existing(operation, label=label)
+    elif iscoroutine(operation):
         task = spawn_owned(cast("Coroutine[Any, Any, T]", operation), label=label)
+    else:
+        # Futures and other non-coroutine awaitables cannot be passed to
+        # create_task; observe them from an owned task that outlives this wait.
+        async def observe() -> T:
+            return await operation
+
+        task = spawn_owned(observe(), label=label)
     if await await_owned({task}, timeout):
         return task.result()
     raise TimeoutError(f"{label} exceeded its budget")

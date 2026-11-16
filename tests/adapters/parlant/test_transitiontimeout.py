@@ -105,7 +105,18 @@ class TestParlantTransitionTimeout:
         await run_turn(adapter)
 
         assert loop.time() - began == pytest.approx(TRANSITION_SECONDS + POLL_SECONDS)
+        # A failed poll abandons waiting only: no reply, no sticky latch, no
+        # failure report that would claim the provider is unavailable.
         assert mock_tools.messages_sent == []
+        assert reported_failures(mock_tools) == []
+        assert adapter.backend_turns.unconfirmed_handle(ROOM_ID) is None
+        assert not adapter.backend_turns.unavailable(ROOM_ID)
+        mock_app.sessions.wait_for_more_events = AsyncMock(return_value=False)
+        mock_app.sessions.create_customer_message = AsyncMock(
+            return_value=MagicMock(offset=1)
+        )
+        await run_turn(adapter)
+        assert mock_app.sessions.create_customer_message.await_count == 1
 
     async def test_an_answered_turn_whose_engine_never_ends_is_stopped_at_the_bound(
         self,

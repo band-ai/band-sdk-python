@@ -76,10 +76,12 @@ class TestLocalAbandonment:
             await adapter.on_event(turn_input(timed_out))
         await adapter.backend_turns.drain()
         client.release.set()
-        with pytest.raises(ProviderUnavailableError):
-            await adapter.on_event(turn_input(new_tools()))
+        later = await refused_as_unavailable(adapter)
 
         assert [f["code"] for f in reported_failures(timed_out)] == [
             FAILURE_CODE_TIMEOUT
         ]
+        assert timed_out.messages_sent == later.messages_sent == []
         assert client.journal == [mode.sent, mode.cancel]
+        assert client.sent == [mode.sent]
+        assert adapter.backend_turns.unavailable(ROOM_ID)

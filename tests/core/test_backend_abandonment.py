@@ -9,6 +9,7 @@ import pytest
 from band.core.exceptions import InputNotAccepted
 from band.core.turn_lifecycle import BackendTurns
 from band.testing import FakeAgentTools
+from tests.adapters.waiting import until
 from tests.core.recordingcancel import RecordingCancel
 
 
@@ -104,4 +105,84 @@ class TestBackendAbandonment:
         finally:
             release.set()
             await cleaned.wait()
+        await turns.require_admission("room", FakeAgentTools())
+
+    async def test_late_start_identity_is_cancelled_after_admission_clears(
+        self,
+    ) -> None:
+        """confirm_stopped(None) must not orphan a start that still reveals a handle."""
+        entered, release, cleaned = (asyncio.Event() for _ in range(3))
+        cancel = RecordingCancel()
+
+        async def start() -> str:
+            entered.set()
+            await release.wait()
+            return "late"
+
+        async def tracked_cancel(handle: str) -> None:
+            await cancel(handle)
+            cleaned.set()
+
+        turns = BackendTurns(
+            tracked_cancel, provider="test", requires_confirmation=True
+        )
+
+        async def run() -> None:
+            async with turns.running("room"):
+                await turns.started("room", start())
+
+        caller = asyncio.create_task(run())
+        try:
+            await entered.wait()
+            caller.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+            assert turns.blocker("room") is not None
+            turns.confirm_stopped("room", None)
+            assert not turns.unavailable("room")
+        finally:
+            release.set()
+            await cleaned.wait()
+        await turns.drain()
+        assert cancel.sent == ["late"]
+        await turns.require_admission("room", FakeAgentTools())
+
+    async def test_orphaned_late_start_does_not_rebind_a_successor_stop(
+        self,
+    ) -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+        cancel = RecordingCancel()
+        turns = BackendTurns(cancel, provider="test", requires_confirmation=True)
+
+        async def start() -> str:
+            entered.set()
+            await release.wait()
+            return "orphaned"
+
+        async def run() -> None:
+            async with turns.running("room"):
+                await turns.started("room", start())
+
+        caller = asyncio.create_task(run())
+        await entered.wait()
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        turns.confirm_stopped("room", None)
+        # Abandonment budget ends waiting; the start task stays owned for cleanup.
+        await turns.settled("room")
+        assert not turns.stopping("room")
+        async with turns.running("room", "successor"):
+            turns.cancel("room")
+        await turns.settled("room")
+        successor = turns.blocker("room")
+        assert successor is not None and not successor.done()
+        release.set()
+        await until(
+            lambda: "orphaned" in cancel.sent,
+            failure="orphaned start was not cancelled",
+        )
+        assert turns.blocker("room") is successor
+        assert not successor.done()
+        turns.confirm_stopped("room", "successor")
         await turns.require_admission("room", FakeAgentTools())
