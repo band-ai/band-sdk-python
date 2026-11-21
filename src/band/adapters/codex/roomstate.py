@@ -40,14 +40,6 @@ class ThreadSettings:
         ]
 
 
-@dataclass(frozen=True)
-class HistoryResume:
-    """Whether a recorded thread still has its one retry available."""
-
-    thread_id: str
-    retry_due: bool
-
-
 @dataclass
 class RoomCodexClient:
     """One Band room's Codex process and what its thread was started with.
@@ -84,8 +76,9 @@ class RoomCodexClient:
     seed: SessionSeed = dataclass_field(default_factory=SessionSeed)
     # Band history names the thread: its resume record was posted.
     recorded: bool = False
-    # Resolve repeated history against the room's retry or archive decision.
-    history_resume: HistoryResume | None = None
+    pending_history_retry: str | None = None
+    # A failed record write can leave an older thread in Band history.
+    excluded_history_threads: set[str] = dataclass_field(default_factory=set)
     # Runtime can commit this context before a native turn receives it.
     participants_due: bool = False
     pending_system_context: list[str] = dataclass_field(default_factory=list)
@@ -119,36 +112,31 @@ class RoomCodexClient:
         )
 
     def take_history_resume(self, recorded: str | None) -> tuple[str | None, bool]:
-        """Pick the recorded thread and spend its pending retry before sending."""
-        retry = self.history_resume
-        if retry is None:
-            return recorded, False
-        if recorded is not None and recorded != retry.thread_id:
-            self.history_resume = None
-            return recorded, False
-        if not retry.retry_due:
-            return None, False
-        # The retry is spent even if STOP lands before its reply.
-        self.history_resume = HistoryResume(retry.thread_id, retry_due=False)
-        return retry.thread_id, True
+        """Prefer a current record and spend any pending retry before sending."""
+        retry = self.pending_history_retry
+        named = (
+            recorded
+            if recorded and recorded not in self.excluded_history_threads
+            else retry
+        )
+        if retry is not None:
+            self.pending_history_retry = None
+            self.excluded_history_threads.add(retry)
+        return named, retry is not None and named == retry
 
     def archive_thread(self, mapped_thread: str | None) -> None:
         """Forget the thread and keep repeated history from restoring it."""
-        thread_id = mapped_thread
-        if thread_id is None and self.history_resume is not None:
-            thread_id = self.history_resume.thread_id
-        if thread_id is not None:
-            self.history_resume = HistoryResume(thread_id, retry_due=False)
+        if mapped_thread is not None:
+            self.excluded_history_threads.add(mapped_thread)
+        if self.pending_history_retry is not None:
+            self.excluded_history_threads.add(self.pending_history_retry)
+            self.pending_history_retry = None
         self.forget_thread()
 
-    async def retain_system_context(
-        self, contacts: str | None, participants: str | None
-    ) -> None:
-        """Retain context the runtime may commit while provider startup fails."""
-        if contacts:
-            self.pending_system_context.append(contacts)
-        if participants is not None:
-            self.participants_due = True
+    async def retain_system_context(self, latest: str | None) -> None:
+        """Keep system context until a native turn completes with it."""
+        if latest:
+            self.pending_system_context.append(latest)
 
     def require_client(self) -> CodexClientProtocol:
         if self.client is None:

@@ -278,3 +278,25 @@ class TestUnansweredHistoryResume:
         assert resumed_threads(fresh) == []
         assert turn_threads(fresh) == [FIRST_THREAD_ID]
         assert failure_messages(tools) == []
+
+    async def test_archiving_an_unrecorded_replacement_keeps_the_old_resume_spent(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        fresh = FakeCodexClient(events=[*answered_turn(), *answered_turn("turn-2")])
+        adapter = await started_codex(
+            silent_resume(), silent_resume(), fresh, features={"emit": ()}
+        )
+        with pytest.raises(TimeoutError):
+            await send_bootstrap(adapter, history=RECORDED)
+        with pytest.raises(TimeoutError):
+            await send_bootstrap(adapter, history=RECORDED)
+
+        lost_record = ToolSchemaFakeTools()
+        lost_record.send_event_error = ConnectionError("resume record unavailable")
+        await send_bootstrap(adapter, tools=lost_record, history=RECORDED)
+        await send_bootstrap(adapter, content=ARCHIVE, history=RECORDED)
+        await send_bootstrap(adapter, history=RECORDED)
+
+        assert resumed_threads(fresh) == []
+        first, second = turn_threads(fresh)
+        assert first != second

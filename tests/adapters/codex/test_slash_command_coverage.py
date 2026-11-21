@@ -21,11 +21,13 @@ from tests.adapters.codex.kit import (
     agent_input,
     answered_turn,
     make_platform_message,
+    recorded_thread,
     replayed_history,
     send_bootstrap,
     stored,
 )
 from tests.adapters.codexturns import (
+    FIRST_THREAD_ID,
     FakeCodexClient,
     event_notification,
     make_codex_adapter,
@@ -185,8 +187,12 @@ class TestSlashCommandCoverage:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bootstrap", [False, True], ids=["live", "recorded-history"]
+    )
     async def test_thread_archive_starts_a_fresh_thread_seeded_from_the_room(
         self,
+        bootstrap: bool,
     ) -> None:
         """After /thread archive the next turn starts a new thread, replays the
         room's stored transcript into it, and records it in place of the old."""
@@ -198,7 +204,16 @@ class TestSlashCommandCoverage:
         tools = ToolSchemaFakeTools()
         seeding = agent_input("hello", tools, raw_history=TRANSCRIPT)
         archive = agent_input("/thread archive", tools, is_session_bootstrap=False)
-        following = agent_input("start over", tools, is_session_bootstrap=False)
+        following = agent_input(
+            "start over",
+            tools,
+            raw_history=[
+                *TRANSCRIPT,
+                stored(seeding.msg),
+                recorded_thread(FIRST_THREAD_ID),
+            ],
+            is_session_bootstrap=bootstrap,
+        )
         tools.set_room_context(
             [*TRANSCRIPT, *(stored(i.msg) for i in (seeding, archive, following))]
         )

@@ -79,7 +79,7 @@ from band.adapters.codex.narration import (
     unfinished_turn_text,
     unstreamed_messages,
 )
-from band.adapters.codex.roomstate import HistoryResume, RoomCodexClient, ThreadSettings
+from band.adapters.codex.roomstate import RoomCodexClient, ThreadSettings
 from band.adapters.codex.rpc import (
     CodexClientProtocol,
     event_params,
@@ -517,6 +517,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         """Run one turn to completion, leasing its room's process throughout."""
         owner = await owner_ready
         async with room.rpc_lock:
+            room.participants_due |= participants_msg is not None
             try:
                 if command is not None and await self._run_local_command(
                     room=room, msg=messages[0], tools=tools, command=command
@@ -524,9 +525,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     return
                 async with (
                     room.retained.use(
-                        prepare=partial(
-                            room.retain_system_context, contacts_msg, participants_msg
-                        )
+                        prepare=partial(room.retain_system_context, contacts_msg)
                     ),
                     detached_turn(tools, room_id=room.room_id),
                 ):
@@ -1846,7 +1845,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             )
         except CodexUnanswered:
             if not last_try:
-                room.history_resume = HistoryResume(named, retry_due=True)
+                room.pending_history_retry = named
             else:
                 logger.warning(
                     "Room %s: giving up Codex thread %s; its resume went "
