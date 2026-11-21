@@ -19,13 +19,13 @@ import logging
 import os
 import shutil
 from collections.abc import AsyncIterator, Sequence
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from acp import spawn_agent_process
-from acp.exceptions import RequestError
+from acp import spawn_agent_process, text_block
 from acp.schema import (
     HttpHeader,
     HttpMcpServer,
@@ -54,6 +54,7 @@ from band.integrations.mcp.engine import (
 )
 from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import AgentTools
+from tests.e2e.baseline.toolkit.workspaceroot import InheritedTemporaryDirectory
 from tests.integrations.mcp.localserver.kit import EchoInput
 from tests.runtime.conftest import make_participant
 from tests.toolkit.timeouts import backstop_timeout
@@ -523,43 +524,31 @@ class TestCodexAcpEndToEnd:
 
     @pytest.mark.asyncio
     async def test_codex_acp_list_sessions(self, acp_client: BandACPClient) -> None:
-        """Should list created sessions (if supported by the agent)."""
-
-        ctx = _spawn_codex_acp(acp_client)
-        conn, _proc = await ctx.__aenter__()
-        try:
-            await asyncio.wait_for(
-                conn.initialize(protocol_version=1),
-                timeout=_INIT_TIMEOUT,
-            )
-
-            # Create a session
-            session = await asyncio.wait_for(
-                conn.new_session(cwd="/tmp"),
-                timeout=_INIT_TIMEOUT,
-            )
-
-            # list_sessions is optional per ACP protocol — some agents don't implement it
-            try:
-                result = await asyncio.wait_for(
-                    conn.list_sessions(),
+        """List the session after Codex has persisted its first turn."""
+        with InheritedTemporaryDirectory("band-acp-list-") as workspace:
+            cwd = str(Path(workspace).resolve())
+            async with _spawn_codex_acp(acp_client) as (conn, _proc):
+                await asyncio.wait_for(
+                    conn.initialize(protocol_version=1),
                     timeout=_INIT_TIMEOUT,
                 )
-                logger.info("Listed sessions: %s", result)
-                assert result is not None
-                assert len(result.sessions) >= 1
-                session_ids = {s.session_id for s in result.sessions}
-                if session.session_id not in session_ids:
-                    pytest.skip(
-                        "codex-acp session/list did not include the newly created "
-                        "session in this environment"
-                    )
-            except RequestError as e:
-                if "Method not found" in str(e):
-                    pytest.skip("codex-acp does not support session/list")
-                raise
-        finally:
-            await ctx.__aexit__(None, None, None)
+                session = await asyncio.wait_for(
+                    conn.new_session(cwd=cwd),
+                    timeout=_INIT_TIMEOUT,
+                )
+                await asyncio.wait_for(
+                    conn.prompt(
+                        session_id=session.session_id,
+                        prompt=[text_block("Say hello.")],
+                    ),
+                    timeout=_PROMPT_TIMEOUT,
+                )
+                result = await asyncio.wait_for(
+                    conn.list_sessions(cwd=cwd),
+                    timeout=_INIT_TIMEOUT,
+                )
+
+        assert session.session_id in {item.session_id for item in result.sessions}
 
     @pytest.mark.asyncio
     async def test_spawn_process_safety(self, acp_client: BandACPClient) -> None:

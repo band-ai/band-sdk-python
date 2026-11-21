@@ -25,6 +25,7 @@ from tests.adapters.copilot_sdk.fakes import (
 from tests.adapters.waiting import spin
 from tests.framework_conformance.stopprobes import cancel_turn, stop_room, wait_until
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
+from tests.toolkit.clock import binary_clock_resolution
 
 pytestmark = requires_copilot_sdk
 
@@ -113,7 +114,7 @@ class TestStopConfirmation:
         (session,) = client.sessions
         session.holds_aborted_idle = True
         turn = asyncio.create_task(adapter.on_event(turn_input(HeldRestTools())))
-        await wait_until(hang.reached.is_set)
+        await hang.reached.wait()
         return adapter, session, turn
 
     @staticmethod
@@ -144,24 +145,27 @@ class TestStopConfirmation:
         await stop_room(adapter, ROOM_ID)
         assert len(session.handlers) == self.ACTIVITY_OBSERVER_ONLY
 
-    @pytest.mark.looptime
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_an_idle_after_the_stop_was_abandoned_still_admits_the_next_turn(
         self,
-    ):
+    ) -> None:
         adapter, session, turn = await self.stopped_turn()
         await cancel_turn(turn)
-        await wait_until(lambda: "abort" in session.journal)
+        await session.aborting.wait()
         session.turn_events = []
 
-        await wait_until(lambda: not adapter.backend_turns.stopping(ROOM_ID))
+        await adapter.backend_turns.settled(ROOM_ID)
+        assert session.aborted
         with pytest.raises(InputNotAccepted) as pending:
             await adapter.on_event(turn_input(ToolSchemaFakeTools()))
+        assert pending.value.ready is not None
         assert len(session.prompts) == 2
 
         session.deliver_aborted_idle()
         await pending.value.ready
         await adapter.on_event(turn_input(ToolSchemaFakeTools()))
         assert len(session.prompts) == 3
+        await adapter.cleanup_all()
 
     async def test_an_in_flight_tool_callback_holds_admission_until_it_returns(self):
         tools = HeldRestTools()
