@@ -196,6 +196,15 @@ class RetainedRoom:
         except RoomClosingError:
             task.cancel()
             raise
+        self._enroll(task)
+
+    def own_callback(self, task: asyncio.Task[Any], *, generation: int) -> None:
+        """Enroll a provider callback from accepted work through the settle grace."""
+        if self._work_cancelled or not self.may_finish(generation):
+            raise RoomClosingError(f"Room {self.room_id} cannot accept this callback")
+        self._enroll(task)
+
+    def _enroll(self, task: asyncio.Task[Any]) -> None:
         self._owned.add(task)
         task.add_done_callback(self._disown)
         self._schedule()

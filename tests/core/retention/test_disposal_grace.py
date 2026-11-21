@@ -104,6 +104,42 @@ class TestDisposalGrace:
         assert work.cancelled() and work.cancelling() == 1
         assert resident.releases == [ReleaseCause.FINAL]
 
+    async def test_callback_can_join_during_grace_but_not_after_cancellation(
+        self, graceful_host: ResidenceHost
+    ) -> None:
+        resident = graceful_host.room()
+        work = await parked_work(resident, Hold())
+        disposal = await leaving(graceful_host, resident)
+        started, finalizing = Hold(), Hold()
+
+        async def callback() -> None:
+            try:
+                await started.wait()
+            finally:
+                await finalizing.wait()
+
+        request = asyncio.create_task(callback())
+        try:
+            resident.room.own_callback(request, generation=resident.room.generation)
+            await started.arrived()
+            await graceful_host.clock.advance(SETTLE_GRACE_S)
+            await finalizing.arrived()
+
+            current = asyncio.current_task()
+            assert current is not None
+            with pytest.raises(RoomClosingError):
+                resident.room.own_callback(current, generation=resident.room.generation)
+            assert not current.cancelling()
+            assert resident.releases == [] and not disposal.done()
+        finally:
+            started.released.set()
+            finalizing.released.set()
+            await asyncio.wait({request})
+            await disposal
+
+        assert work.cancelled() and request.cancelled()
+        assert resident.releases == [ReleaseCause.FINAL]
+
     async def test_a_report_timeout_in_the_grace_leaves_one_joinable_disposal(
         self, graceful_impatient_host: ResidenceHost
     ) -> None:
