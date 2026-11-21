@@ -2,29 +2,39 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
+from band.adapters.codex import CodexAdapter, CodexCommand
 from band.adapters.codex.adapter import SYSTEM_CONTEXT_PREFIX
+from band.adapters.codex.commands import CodexSubcommand
 from band.agent import Agent
 from band.converters.codex import CODEX_RESUME_RECORD
+from band.core.types import HistoryProvider
 from band.integrations.codex import CodexJsonRpcError
 from band.integrations.codex.types import CodexRequestMethod
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
+from band.runtime.formatters import build_participants_message
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
 from tests.adapters.codex.kit import (
     ALICE,
     ROOM_ID,
+    ToolSchemaFakeTools,
+    UnansweredRequestClient,
     agent_input,
+    answered_turn,
     recorded_thread,
     replayed_history,
 )
 from tests.adapters.codex.seedpeer import INITIALIZE_FAILURE, native_thread_id
 from tests.adapters.codex.seedtransport import PARTICIPANT_FAILURE, SeedTransport
+from tests.adapters.codexturns import FIRST_THREAD_ID, FakeCodexClient
 from tests.conftest import make_message_event
 from tests.roomhistory import stored
 from tests.runtime.runtimecontrol.kit import never_executes
@@ -123,3 +133,93 @@ class TestSeedDelivery:
         assert CODEX_RESUME_RECORD.candidates(peer.events) == {
             ROOM_ID: native_thread_id(1)
         }
+
+    @pytest.mark.looptime
+    async def test_the_retried_history_resume_receives_the_committed_roster(
+        self,
+        seed_transport: SeedTransport,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
+    ) -> None:
+        silent = UnansweredRequestClient(
+            events=[], held=CodexRequestMethod.THREAD_RESUME, settle_on_close=True
+        )
+        resumed = FakeCodexClient(events=[*answered_turn(), *answered_turn("turn-2")])
+        adapter = await started_codex(silent, resumed)
+        context = ExecutionContext(
+            ROOM_ID,
+            SimpleNamespace(rest=seed_transport.rest),
+            never_executes,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        context.set_participants([ALICE])
+        preprocessor = DefaultPreprocessor()
+        first = await preprocessor.process(
+            context, make_message_event(room_id=ROOM_ID, msg_id="first"), "agent-1"
+        )
+        assert first is not None
+        first = replace(
+            first, history=HistoryProvider(raw=[recorded_thread(FIRST_THREAD_ID)])
+        )
+        with pytest.raises(TimeoutError):
+            await Agent._commit_unless_refused(first, adapter.on_event(first))
+
+        for msg_id in ("retry", "later"):
+            delivery = await preprocessor.process(
+                context, make_message_event(room_id=ROOM_ID, msg_id=msg_id), "agent-1"
+            )
+            assert delivery is not None
+            assert delivery.participants_msg is None
+            await Agent._commit_unless_refused(delivery, adapter.on_event(delivery))
+
+        roster = f"{SYSTEM_CONTEXT_PREFIX} {build_participants_message(context.participants)}"
+        retried, later = resumed.params_of(CodexRequestMethod.TURN_START)
+        assert [turn["threadId"] for turn in (retried, later)] == [FIRST_THREAD_ID] * 2
+        assert [part["text"] for part in retried["input"]].count(roster) == 1
+        assert roster not in [part["text"] for part in later["input"]]
+
+    async def test_a_local_command_does_not_consume_a_roster_update(
+        self,
+        seed_transport: SeedTransport,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
+    ) -> None:
+        client = FakeCodexClient(events=[*answered_turn(), *answered_turn("turn-2")])
+        adapter = await started_codex(client, features={"emit": ()})
+        context = ExecutionContext(
+            ROOM_ID,
+            SimpleNamespace(rest=seed_transport.rest),
+            never_executes,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        context.set_participants([ALICE])
+        preprocessor = DefaultPreprocessor()
+        first = await preprocessor.process(
+            context, make_message_event(room_id=ROOM_ID, msg_id="first"), "agent-1"
+        )
+        assert first is not None
+        await Agent._commit_unless_refused(first, adapter.on_event(first))
+
+        context.set_participants([])
+        command = await preprocessor.process(
+            context,
+            make_message_event(
+                room_id=ROOM_ID,
+                msg_id="command",
+                content=f"/{CodexCommand.THREAD} {CodexSubcommand.INFO}",
+            ),
+            "agent-1",
+        )
+        assert command is not None
+        assert command.participants_msg == build_participants_message([])
+        command = replace(command, tools=ToolSchemaFakeTools())
+        await Agent._commit_unless_refused(command, adapter.on_event(command))
+
+        following = await preprocessor.process(
+            context, make_message_event(room_id=ROOM_ID, msg_id="following"), "agent-1"
+        )
+        assert following is not None
+        assert following.participants_msg is None
+        await Agent._commit_unless_refused(following, adapter.on_event(following))
+
+        _, native_following = client.params_of(CodexRequestMethod.TURN_START)
+        roster = f"{SYSTEM_CONTEXT_PREFIX} {build_participants_message([])}"
+        assert [part["text"] for part in native_following["input"]].count(roster) == 1

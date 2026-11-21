@@ -76,7 +76,11 @@ class RoomCodexClient:
     seed: SessionSeed = dataclass_field(default_factory=SessionSeed)
     # Band history names the thread: its resume record was posted.
     recorded: bool = False
-    # Runtime commits these deltas even when a turn fails; its successor needs them.
+    pending_history_retry: str | None = None
+    # A failed record write can leave an older thread in Band history.
+    excluded_history_threads: set[str] = dataclass_field(default_factory=set)
+    # Runtime can commit this context before a native turn receives it.
+    participants_due: bool = False
     pending_system_context: list[str] = dataclass_field(default_factory=list)
     # Serializes this room's turns, local commands and their preparation; a
     # turn parked on a manual approval blocks only this room. Approval
@@ -106,6 +110,28 @@ class RoomCodexClient:
         self.bind_thread(
             registration=None, settings=ThreadSettings(), seed=SessionSeed()
         )
+
+    def take_history_resume(self, recorded: str | None) -> tuple[str | None, bool]:
+        """Prefer a current record and spend any pending retry before sending."""
+        retry = self.pending_history_retry
+        named = (
+            recorded
+            if recorded and recorded not in self.excluded_history_threads
+            else retry
+        )
+        if retry is not None:
+            self.pending_history_retry = None
+            self.excluded_history_threads.add(retry)
+        return named, retry is not None and named == retry
+
+    def archive_thread(self, mapped_thread: str | None) -> None:
+        """Forget the thread and keep repeated history from restoring it."""
+        if mapped_thread is not None:
+            self.excluded_history_threads.add(mapped_thread)
+        if self.pending_history_retry is not None:
+            self.excluded_history_threads.add(self.pending_history_retry)
+            self.pending_history_retry = None
+        self.forget_thread()
 
     async def retain_system_context(self, latest: str | None) -> None:
         """Keep system context until a native turn completes with it."""

@@ -754,15 +754,21 @@ class HeldTurnClient(CountingCloseClient):
 
 
 class UnansweredRequestClient(CountingCloseClient):
-    """An app-server that leaves its first ``held`` request unanswered until
-    the test releases it; later requests, on any process, answer normally."""
+    """Hold one RPC until the test releases it or the connection closes."""
 
-    def __init__(self, *, events: list[RpcEvent], held: CodexRequestMethod) -> None:
+    def __init__(
+        self,
+        *,
+        events: list[RpcEvent],
+        held: CodexRequestMethod,
+        settle_on_close: bool = False,
+    ) -> None:
         super().__init__(events=events)
         self.held = held
         self.unanswered = Hold()
         self.unanswered_finished = asyncio.Event()
-        self._pending = True
+        self.unanswered_params: dict[str, Any] | None = None
+        self._settle_on_close = settle_on_close
 
     async def request(
         self,
@@ -771,17 +777,25 @@ class UnansweredRequestClient(CountingCloseClient):
         *,
         retry_on_overload: bool = True,
     ) -> dict[str, Any]:
-        held = method == self.held and self._pending
+        held = method == self.held and self.unanswered_params is None
         try:
             if held:
-                self._pending = False
+                self.unanswered_params = dict(params or {})
                 await self.unanswered.wait()
+                if self._settle_on_close and self.closed:
+                    raise ConnectionError("Codex process closed during the request")
             return await super().request(
                 method, params, retry_on_overload=retry_on_overload
             )
         finally:
             if held:
                 self.unanswered_finished.set()
+
+    async def close(self) -> None:
+        await super().close()
+        if self._settle_on_close and self.unanswered.reached.is_set():
+            self.unanswered.released.set()
+            await self.unanswered_finished.wait()
 
 
 class CleaningTurnInput(BaseModel):

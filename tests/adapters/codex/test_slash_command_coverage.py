@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.adapters.codex.commands import HELP_TEXT
 from band.converters.codex import CODEX_RESUME_RECORD
 from band.integrations.codex.types import CodexRequestMethod, CodexSessionState
@@ -21,11 +22,13 @@ from tests.adapters.codex.kit import (
     agent_input,
     answered_turn,
     make_platform_message,
+    recorded_thread,
     replayed_history,
     send_bootstrap,
     stored,
 )
 from tests.adapters.codexturns import (
+    FIRST_THREAD_ID,
     FakeCodexClient,
     event_notification,
     make_codex_adapter,
@@ -185,20 +188,33 @@ class TestSlashCommandCoverage:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bootstrap", [False, True], ids=["live", "recorded-history"]
+    )
     async def test_thread_archive_starts_a_fresh_thread_seeded_from_the_room(
         self,
+        bootstrap: bool,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
     ) -> None:
         """After /thread archive the next turn starts a new thread, replays the
         room's stored transcript into it, and records it in place of the old."""
         fake_client = FakeCodexClient(
             events=[*answered_turn("turn-1"), *answered_turn("turn-2")]
         )
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        await adapter.on_started("Agent", "A coding agent")
+        adapter = await started_codex(fake_client)
         tools = ToolSchemaFakeTools()
         seeding = agent_input("hello", tools, raw_history=TRANSCRIPT)
         archive = agent_input("/thread archive", tools, is_session_bootstrap=False)
-        following = agent_input("start over", tools, is_session_bootstrap=False)
+        following = agent_input(
+            "start over",
+            tools,
+            raw_history=[
+                *TRANSCRIPT,
+                stored(seeding.msg),
+                recorded_thread(FIRST_THREAD_ID),
+            ],
+            is_session_bootstrap=bootstrap,
+        )
         tools.set_room_context(
             [*TRANSCRIPT, *(stored(i.msg) for i in (seeding, archive, following))]
         )
