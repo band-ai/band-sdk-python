@@ -2,24 +2,39 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Awaitable, Callable
+
+import httpx
 import pytest
 
-from band.adapters.codex import CodexAdapterConfig
-from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
-from band.integrations.codex.types import (
-    CodexRequestMethod,
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
+    FailureMetadataKey,
+    TurnResultAlreadyReported,
 )
+from band.core.types import MessageType
+from band.integrations.codex.types import CodexNotificationMethod, CodexRequestMethod
+from band.runtime.tools.agent import AgentTools
 from band.testing import (
     reported_failures,
 )
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
+    agent_input,
     send_bootstrap,
 )
 from tests.adapters.codexturns import (
+    FIRST_THREAD_ID,
     FakeCodexClient,
+    event_notification,
     make_codex_adapter,
 )
+from tests.runtime.helpers import rest_client_over
+
+REPORTED_ERROR = "Something went wrong"
 
 
 class TestTurnTimeout:
@@ -110,3 +125,72 @@ class TestTurnTimeout:
             for tools in deliveries
         ] == [[FAILURE_CODE_TIMEOUT], [FAILURE_CODE_TIMEOUT]]
         assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
+
+    @pytest.mark.looptime
+    async def test_a_turn_that_reported_an_error_times_out_without_a_second_failure(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        """Codex reports an error and never completes the turn. The limit still
+        interrupts it, and the error stays the turn's one failure."""
+        client = FakeCodexClient(
+            events=[
+                event_notification(
+                    CodexNotificationMethod.ERROR,
+                    {"error": {"message": REPORTED_ERROR}, "willRetry": False},
+                )
+            ]
+        )
+        adapter = await started_codex(client)
+        tools = ToolSchemaFakeTools()
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await send_bootstrap(adapter, tools=tools)
+
+        assert [failure["message"] for failure in reported_failures(tools)] == [
+            REPORTED_ERROR
+        ]
+        assert client.params_of(CodexRequestMethod.TURN_INTERRUPT) == [
+            {"threadId": FIRST_THREAD_ID, "turnId": "turn-1"}
+        ]
+
+    @pytest.mark.looptime
+    async def test_timeout_reports_when_the_earlier_error_could_not_be_posted(
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+    ) -> None:
+        written_codes: list[str] = []
+
+        def post_event(request: httpx.Request) -> httpx.Response:
+            assert request.method == "POST" and request.url.path.endswith("/events")
+            event = json.loads(request.content)["event"]
+            assert event["message_type"] == MessageType.ERROR
+            if event["content"] == REPORTED_ERROR:
+                raise httpx.ConnectError(
+                    "first failure delivery unavailable", request=request
+                )
+            written_codes.append(event["metadata"][FailureMetadataKey.FAILURE]["code"])
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": "posted",
+                        "message_type": MessageType.ERROR,
+                        "success": True,
+                    }
+                },
+            )
+
+        client = FakeCodexClient(
+            events=[
+                event_notification(
+                    CodexNotificationMethod.ERROR,
+                    {"error": {"message": REPORTED_ERROR}, "willRetry": False},
+                )
+            ]
+        )
+        adapter = await started_codex(client, features={"emit": ()})
+        async with rest_client_over(post_event) as rest:
+            tools = AgentTools(ROOM_ID, rest)
+            with pytest.raises(TurnResultAlreadyReported):
+                await adapter.on_event(agent_input("start", tools))
+
+        assert written_codes == [FAILURE_CODE_TIMEOUT]
