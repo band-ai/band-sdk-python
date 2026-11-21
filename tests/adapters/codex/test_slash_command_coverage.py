@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.adapters.codex.commands import HELP_TEXT
 from band.converters.codex import CODEX_RESUME_RECORD
 from band.integrations.codex.types import CodexRequestMethod, CodexSessionState
@@ -193,14 +194,14 @@ class TestSlashCommandCoverage:
     async def test_thread_archive_starts_a_fresh_thread_seeded_from_the_room(
         self,
         bootstrap: bool,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
     ) -> None:
         """After /thread archive the next turn starts a new thread, replays the
         room's stored transcript into it, and records it in place of the old."""
         fake_client = FakeCodexClient(
             events=[*answered_turn("turn-1"), *answered_turn("turn-2")]
         )
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        await adapter.on_started("Agent", "A coding agent")
+        adapter = await started_codex(fake_client)
         tools = ToolSchemaFakeTools()
         seeding = agent_input("hello", tools, raw_history=TRANSCRIPT)
         archive = agent_input("/thread archive", tools, is_session_bootstrap=False)
