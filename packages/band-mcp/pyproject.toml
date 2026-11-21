@@ -1,6 +1,6 @@
 [project]
 name = "band-mcp"
-version = "9.2.1"
+version = "9.3.0"
 description = "Model Context Protocol (MCP) server for Band integration"
 readme = "README.md"
 authors = [{ name = "band" }]
@@ -32,7 +32,7 @@ dependencies = [
     # band-sdk's, so the released wheel could not install at all.
     "band-client-rest",
     # Release Please updates the floor with both shared release candidates.
-    "band-sdk>=9.2.1", # x-release-please-version
+    "band-sdk>=9.3.0", # x-release-please-version
     "uvicorn>=0.30.0",  # Required for SSE transport mode
 ]
 
