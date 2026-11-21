@@ -141,13 +141,14 @@ smoke/adapters/test_agno_activity.py::TestAgnoActivity:
     pass: [agno]
 smoke/adapters/test_claude_sdk_settings.py::TestClaudeSdkSettings:
   test_a_settings_file_acts_while_the_room_gets_its_reply: core
-smoke/adapters/test_codex.py:
-  test_codex_shell_approval_is_required[approve]: backends
-  test_codex_shell_approval_is_required[decline]: backends
+smoke/adapters/test_codex.py::TestCodexThoughts:
   test_codex_thoughts_are_not_placeholders: backends
 smoke/adapters/test_codex_background.py::TestCodexBackground:
   test_session_close_terminates_a_native_child_after_its_turn[native-control]: backends
   test_session_close_terminates_a_native_child_after_its_turn[opt-out]: backends
+smoke/adapters/test_codex_shell_approval.py::TestCodexShellApproval:
+  test_codex_shell_approval_is_required[approve]: backends
+  test_codex_shell_approval_is_required[decline]: backends
 smoke/adapters/test_crewai.py:
   test_crewai_executes_custom_tool: crewai
   test_crewai_flow_replies: crewai
