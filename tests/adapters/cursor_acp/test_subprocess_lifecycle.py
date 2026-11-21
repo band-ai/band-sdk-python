@@ -15,6 +15,7 @@ from band.testing import failure_reports
 from tests.adapters.cursor_acp.kit import permission_requests
 from tests.adapters.cursor_acp.process import (
     CursorProcess,
+    CursorProcessTools,
     RecoveryClose,
     allow_write,
     asked_question,
@@ -39,9 +40,54 @@ from tests.integrations.acp.acp_toolkit.workspacepeer import (
     CursorPeerEvent,
     cursor_workflow,
 )
+from tests.toolkit.timecontrol import controlled_clock
 
 
 class TestSubprocessLifecycle:
+    @pytest.mark.looptime
+    async def test_unanswered_session_retires_its_child_before_retrying(
+        self, cursor_process: CursorProcess
+    ) -> None:
+        process = cursor_process
+        workspace = process.workspace()
+        workspace.mkdir(parents=True)
+        hold = workspace / CURSOR_SETUP_HOLD
+        hold.touch()
+        instruction = write_instruction("recovered")
+        tools = CursorProcessTools("room-a")
+        closing = Hold()
+        async with (
+            controlled_clock() as clock,
+            clock.background(
+                process.host.deliver("room-a", instruction, tools)
+            ) as turn,
+        ):
+            try:
+                await clock.run_io(
+                    until(
+                        (workspace / CURSOR_SETUP_READY).exists,
+                        failure="The first child never allocated its held session",
+                    )
+                )
+                child = cast(LifecycleChild, process.host.children[0])
+                child.closing = closing
+                clock.advance(process.adapter.config.retention.transition_timeout_s)
+                await clock.run_io(closing.arrived())
+                assert process.host.exited == [False]
+                assert process.observed(CursorPeerEvent.PROMPT_STARTED) == []
+            finally:
+                hold.unlink(missing_ok=True)
+                closing.released.set()
+            await clock.run_io(turn)
+
+        assert tools.chat == ["recovered"]
+        assert failure_reports(tools) == []
+        (prompt,) = process.observed(CursorPeerEvent.PROMPT_STARTED)
+        assert instruction in prompt
+        assert process.host.exited == [True, False]
+        await process.host.leave("room-a")
+        assert process.host.exited == [True, True]
+
     @pytest.mark.parametrize("cleanup", list(RecoveryClose))
     async def test_a_parked_decision_loses_authority_with_its_process(
         self, cursor_process: CursorProcess, cleanup: RecoveryClose
