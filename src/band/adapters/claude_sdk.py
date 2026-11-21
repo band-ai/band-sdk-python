@@ -1038,7 +1038,7 @@ class ClaudeSDKAdapter(
         if session is None or session.activity is None or not isinstance(call_id, str):
             raise ValueError("Claude MCP request has no proven execution origin")
         tools = session.activity.resolve(call_id).tools
-        session.retain_mcp_request()
+        session.retain_mcp_request(generation=session.activity.generation)
         shared = self._mcp_room_tools.get(room_id)
         if isinstance(shared, DedupingAgentTools):
             return cast(AgentToolsProtocol, shared.for_origin(tools))
