@@ -174,6 +174,28 @@ async def started_codex() -> AsyncIterator[Callable[..., Awaitable[CodexAdapter]
 
 
 @pytest_asyncio.fixture(loop_scope="function")
+async def started_rooms() -> AsyncIterator[Callable[..., Awaitable[CodexAdapter]]]:
+    """Start Codex adapters built from ``config`` that serve each room from its
+    own fake app-server in ``clients``; each is shut down at the end."""
+    adapters: list[CodexAdapter] = []
+
+    async def start(
+        clients: dict[str, FakeCodexClient], config: CodexAdapterConfig, **kwargs: Any
+    ) -> CodexAdapter:
+        adapter = CodexAdapter(config, **kwargs)
+        patch_codex_clients_by_room(adapter, clients)
+        await adapter.on_started("Codex Agent", "A coding agent")
+        adapters.append(adapter)
+        return adapter
+
+    yield start
+    # A command a test left open is waited for on the loop's clock.
+    with looptime.enabled(strict=True):
+        for adapter in adapters:
+            await adapter.cleanup_all()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
 async def seed_transport(tmp_path: Path) -> AsyncIterator[SeedTransport]:
     """Own the native processes and real REST client at external transport seams."""
     peer = SeedTransport(tmp_path)

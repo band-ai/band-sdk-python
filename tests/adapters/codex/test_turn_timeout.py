@@ -127,8 +127,22 @@ class TestTurnTimeout:
         assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
 
     @pytest.mark.looptime
+    @pytest.mark.parametrize(
+        ("idle_timeout", "timeout_message"),
+        [
+            pytest.param(None, "Codex turn timed out after 10.0s", id="total"),
+            pytest.param(
+                2.0,
+                "Codex turn timed out after 2.0s of silence (turn_idle_timeout_s)",
+                id="idle",
+            ),
+        ],
+    )
     async def test_a_turn_that_reported_an_error_times_out_without_a_second_failure(
-        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
+        self,
+        started_codex: Callable[..., Awaitable[CodexAdapter]],
+        idle_timeout: float | None,
+        timeout_message: str,
     ) -> None:
         """Codex reports an error and never completes the turn. The limit still
         interrupts it, and the error stays the turn's one failure."""
@@ -140,12 +154,15 @@ class TestTurnTimeout:
                 )
             ]
         )
-        adapter = await started_codex(client)
+        adapter = await started_codex(
+            client, turn_timeout_s=10.0, turn_idle_timeout_s=idle_timeout
+        )
         tools = ToolSchemaFakeTools()
 
-        with pytest.raises(TurnResultAlreadyReported):
+        with pytest.raises(TurnResultAlreadyReported) as timeout:
             await send_bootstrap(adapter, tools=tools)
 
+        assert str(timeout.value) == timeout_message
         assert [failure["message"] for failure in reported_failures(tools)] == [
             REPORTED_ERROR
         ]

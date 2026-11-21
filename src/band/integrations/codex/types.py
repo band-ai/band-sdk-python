@@ -47,6 +47,8 @@ class CodexItemType(StrEnum):
     MCP_TOOL_CALL = "mcpToolCall"
     WEB_SEARCH = "webSearch"
     IMAGE_VIEW = "imageView"
+    IMAGE_GENERATION = "imageGeneration"
+    SLEEP = "sleep"
     COLLAB_AGENT_TOOL_CALL = "collabAgentToolCall"
     # multi_agent_v2 announces sub-agents with this instead of a collab call.
     SUB_AGENT_ACTIVITY = "subAgentActivity"

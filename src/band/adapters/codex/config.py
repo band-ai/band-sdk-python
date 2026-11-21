@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -137,6 +137,29 @@ class CodexAdapterConfig(EnvAdapterConfig):
     approval_wait_timeout_s: float = 300.0
     approval_timeout_decision: ApprovalDecision = "decline"
     turn_timeout_s: float = 180.0
+    # Stops a turn that receives no event for this long. Answering the turn's own
+    # request -- a Band tool call, a parked approval -- is not silence. None (the
+    # default) never checks. ``turn_timeout_s`` stays the turn's total limit. It
+    # too is checked only while the turn waits for an event, but the time an
+    # answer takes counts toward it: a turn whose approval comes after the total
+    # has run out is stopped as soon as the approval returns.
+    # Set it above the model's longest single step: reasoning without summaries,
+    # the wait for the first output and the writing of a long tool argument send
+    # no event and open no item, and one such step can last most of a minute.
+    # The same holds for a retry: an ``error`` that Codex will retry restarts
+    # this clock and is not reported, so a backoff longer than the limit stops
+    # the turn as silence.
+    # Work the turn delegates is seen only through the turn's own collab item,
+    # which earns ``turn_tool_idle_timeout_s`` while it is open: a sub-agent's
+    # notifications name its own turn and do not restart this clock.
+    turn_idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    # The silence allowed instead while an item the turn started is still open:
+    # a command, a tool call or a context compaction. Each can run for long and
+    # send no event until it ends, and its open item shows the turn is working.
+    # None gives such a turn ``turn_idle_timeout_s`` like any other.
+    turn_tool_idle_timeout_s: float | None = Field(
+        default=None, gt=0, allow_inf_nan=False
+    )
     client_name: str = "band_codex_adapter"
     client_title: str = "Band Codex Adapter"
     client_version: str = "0.1.0"
@@ -220,6 +243,25 @@ class CodexAdapterConfig(EnvAdapterConfig):
         return checked.model_copy(
             update={"transition_timeout_s": CODEX_TRANSITION_TIMEOUT_S}
         )
+
+    @model_validator(mode="after")
+    def _check_silence_limits_can_apply(self) -> Self:
+        idle, tool = self.turn_idle_timeout_s, self.turn_tool_idle_timeout_s
+        if idle is None:
+            if tool is not None:
+                raise ValueError(
+                    "turn_tool_idle_timeout_s only extends turn_idle_timeout_s; "
+                    "set turn_idle_timeout_s too"
+                )
+            return self
+        if not idle < self.turn_timeout_s:
+            raise ValueError("turn_idle_timeout_s must be below turn_timeout_s")
+        if tool is not None and tool < idle:
+            raise ValueError(
+                "turn_tool_idle_timeout_s must not be below turn_idle_timeout_s; "
+                "it is the longer allowance, for a turn whose tool is running"
+            )
+        return self
 
     @field_validator("codex_command", mode="before")
     @classmethod
