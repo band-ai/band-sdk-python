@@ -910,6 +910,9 @@ dev-strands-nooa = [
     { name = "strands-agents", extra = ["openai"], marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or extra == 'extra-8-band-sdk-dev-strands-nooa' or extra == 'extra-8-band-sdk-nooa' or extra == 'extra-8-band-sdk-strands' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra != 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-parlant' and extra != 'extra-8-band-sdk-pydantic-ai')" },
     { name = "tenacity" },
 ]
+external-worker = [
+    { name = "httpx" },
+]
 gemini = [
     { name = "google-genai" },
 ]
@@ -1029,6 +1032,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev-crewai'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'dev-parlant'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'dev-strands-nooa'", specifier = ">=0.24.0" },
+    { name = "httpx", marker = "extra == 'external-worker'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'opencode'", specifier = ">=0.24.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.130.0" },
     { name = "hypothesis", marker = "extra == 'dev-crewai'", specifier = ">=6.130.0" },
@@ -1187,7 +1191,7 @@ requires-dist = [
     { name = "werkzeug", marker = "extra == 'dev-parlant'", specifier = ">=3.1.6" },
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
-provides-extras = ["logging", "desktop", "codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "copilot-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "omp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "strands", "nooa", "dev", "dev-crewai", "dev-parlant", "dev-strands-nooa"]
+provides-extras = ["logging", "desktop", "codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "copilot-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "omp", "external-worker", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "strands", "nooa", "dev", "dev-crewai", "dev-parlant", "dev-strands-nooa"]
 
 [[package]]
 name = "band-sdk-core"

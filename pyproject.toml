@@ -143,6 +143,9 @@ acp = [
 omp = [
     "psutil>=6",
 ]
+external_worker = [
+    "httpx>=0.24.0",  # HTTP trigger for the external worker
+]
 slack = [
     "slack-sdk>=3.27.0",     # AsyncWebClient, signature verifier, Socket Mode
     "starlette>=0.40.0",     # HTTP server framework
