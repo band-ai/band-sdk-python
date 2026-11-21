@@ -8,16 +8,22 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any, NamedTuple
 
+from band.adapters.codex.items import SILENCE_ALLOWANCE_ITEM_TYPES, item_call_id
 from band.adapters.codex.rpc import (
     CodexClientProtocol,
     delegated_threads,
+    event_params,
     event_thread_id,
     event_turn_id,
 )
 from band.core.protocols import AgentToolsProtocol
 from band.core.turn_lifecycle import TurnTask
 from band.integrations.codex import RpcEvent
-from band.integrations.codex.types import CodexItemType, CodexTurnStatus
+from band.integrations.codex.types import (
+    CodexItemType,
+    CodexNotificationMethod,
+    CodexTurnStatus,
+)
 from band.runtime.sessionresume import SessionSeed
 
 
@@ -148,6 +154,7 @@ class NativeTurn:
     early: list[RpcEvent] = dataclass_field(default_factory=list)
     sub_agents: set[str] = dataclass_field(default_factory=set)
     unattributed: list[RpcEvent] = dataclass_field(default_factory=list)
+    open_work: set[str] = dataclass_field(default_factory=set)
     # Why the process stopped -- its closing notice or the reader's failure,
     # queued behind its requests.
     loss: RpcEvent | Exception | None = None
@@ -155,10 +162,6 @@ class NativeTurn:
     @property
     def lost(self) -> bool:
         return self.loss is not None
-
-    def started(self, identity: tuple[str, str, str]) -> bool:
-        """Whether the item ``identity`` names began in this native turn."""
-        return identity[:2] == (self.thread_id, self.turn_id)
 
     def owns(self, event: RpcEvent) -> bool:
         # Every event a turn handles names its turn; thread-scoped ones do not.
@@ -173,6 +176,7 @@ class NativeTurn:
 
     def deliver(self, event: RpcEvent) -> None:
         """Queue an owned event, then the held requests it names a sub-agent for."""
+        self._observe_open_work(event)
         self.events.put_nowait(event)
         if not (receivers := delegated_threads(event) - self.sub_agents):
             return
@@ -183,6 +187,28 @@ class NativeTurn:
                 self.events.put_nowait(request)
             else:
                 self.unattributed.append(request)
+
+    def _observe_open_work(self, event: RpcEvent) -> None:
+        if (
+            event.method
+            not in (
+                CodexNotificationMethod.ITEM_STARTED,
+                CodexNotificationMethod.ITEM_COMPLETED,
+            )
+            or event_thread_id(event) != self.thread_id
+        ):
+            return
+        item = event_params(event).get("item")
+        if (
+            not isinstance(item, dict)
+            or item.get("type") not in SILENCE_ALLOWANCE_ITEM_TYPES
+        ):
+            return
+        if item_id := item_call_id(item):
+            if event.method == CodexNotificationMethod.ITEM_STARTED:
+                self.open_work.add(item_id)
+            else:
+                self.open_work.discard(item_id)
 
     def claim(self, event: RpcEvent) -> bool:
         """Deliver or hold ``event``; False when this turn can never own it."""

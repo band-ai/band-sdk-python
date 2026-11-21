@@ -254,11 +254,8 @@ class CodexAdapterConfig(EnvAdapterConfig):
                     "set turn_idle_timeout_s too"
                 )
             return self
-        if idle >= self.turn_timeout_s:
-            raise ValueError(
-                "turn_idle_timeout_s must be below turn_timeout_s; the total "
-                "limit would always end the turn first"
-            )
+        if not idle < self.turn_timeout_s:
+            raise ValueError("turn_idle_timeout_s must be below turn_timeout_s")
         if tool is not None and tool < idle:
             raise ValueError(
                 "turn_tool_idle_timeout_s must not be below turn_idle_timeout_s; "

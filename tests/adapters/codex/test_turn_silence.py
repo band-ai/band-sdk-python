@@ -102,13 +102,16 @@ class TestTurnSilence:
         )
 
     async def test_a_silent_turn_frees_its_room_when_the_interrupt_goes_unanswered(
-        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
+        self, started_codex: Callable[..., Awaitable[CodexAdapter]]
     ) -> None:
         """Silence ends a turn through the same bounded interrupt as the total
         limit: one failure, the process closed, and the next message answered."""
         client = FakeCodexClient()
+        replacement = FakeCodexClient(events=answered_turn())
         client.interrupt_released.clear()
-        adapter = await started_rooms({ROOM_ID: client}, silence_guarded())
+        adapter = await started_codex(
+            client, replacement, turn_idle_timeout_s=IDLE_S, turn_timeout_s=CEILING_S
+        )
         silent, tools = ToolSchemaFakeTools(), ToolSchemaFakeTools()
 
         async with running_turn(adapter, silent) as turn:
@@ -121,12 +124,13 @@ class TestTurnSilence:
             assert failures(silent) == silent_for(IDLE_S)
             with pytest.raises(TurnResultAlreadyReported):
                 await turn
-        client.script(*answered_turn("turn-2"))
         await send_bootstrap(adapter, tools=tools)
 
         assert failures(silent) == silent_for(IDLE_S)
         assert client.closed
         assert failures(tools) == []
+        assert len(client.params_of(CodexRequestMethod.TURN_START)) == 1
+        assert len(replacement.params_of(CodexRequestMethod.TURN_START)) == 1
 
     async def test_each_event_restarts_the_silence_clock(
         self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
@@ -316,16 +320,18 @@ class TestTurnSilence:
         ]
 
     @pytest.mark.parametrize(
-        "idle_s",
-        [CEILING_S, CEILING_S + 1],
-        ids=["equal-to-the-total", "above-the-total"],
+        ("idle_s", "total_s"),
+        [
+            pytest.param(CEILING_S, CEILING_S, id="equal-to-the-total"),
+            pytest.param(CEILING_S + 1, CEILING_S, id="above-the-total"),
+            pytest.param(IDLE_S, float("nan"), id="total-is-not-a-number"),
+        ],
     )
     async def test_an_idle_limit_that_could_never_apply_is_refused(
-        self, idle_s: float
+        self, idle_s: float, total_s: float
     ) -> None:
-        """The total limit would always end the turn first."""
         with pytest.raises(ValidationError, match="turn_timeout_s") as refused:
-            silence_guarded(turn_idle_timeout_s=idle_s)
+            silence_guarded(turn_idle_timeout_s=idle_s, turn_timeout_s=total_s)
 
         assert [(error["loc"], error["type"]) for error in refused.value.errors()] == [
             ((), "value_error")

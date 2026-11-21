@@ -47,9 +47,18 @@ ROUTING_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
 # Items that show as the turn's activity from item/started to item/completed.
 ACTIVITY_ITEM_TYPES = TOOL_ITEM_TYPES | {CodexItemType.CONTEXT_COMPACTION}
 
+# Native work may stay quiet even when the room has no activity to render.
+SILENCE_ONLY_ITEM_TYPES = frozenset(
+    {CodexItemType.IMAGE_GENERATION, CodexItemType.SLEEP}
+)
+SILENCE_ALLOWANCE_ITEM_TYPES = ACTIVITY_ITEM_TYPES | SILENCE_ONLY_ITEM_TYPES
+
 
 UNRENDERED_ITEM_TYPES = (
-    REQUESTED_TOOL_ITEM_TYPES | MESSAGE_ITEM_TYPES | ROUTING_ITEM_TYPES
+    REQUESTED_TOOL_ITEM_TYPES
+    | MESSAGE_ITEM_TYPES
+    | ROUTING_ITEM_TYPES
+    | SILENCE_ONLY_ITEM_TYPES
 )
 
 

@@ -8,6 +8,7 @@ from typing import Any
 from band.adapters.codex import CodexAdapterConfig
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.integrations.codex import RpcEvent
+from band.integrations.codex.types import CodexNotificationMethod
 from tests.adapters.codexturns import FIRST_THREAD_ID, event_notification
 
 # The silence a turn is allowed, and a total limit no test's turn reaches.
@@ -39,7 +40,7 @@ def sub_agent_thinking(thread_id: str) -> RpcEvent:
 
 def _reasoning_delta(named: dict[str, str]) -> RpcEvent:
     return event_notification(
-        "item/reasoning/summaryTextDelta",
+        CodexNotificationMethod.REASONING_SUMMARY_DELTA,
         {**named, "itemId": "reasoning-1", "delta": "."},
     )
 

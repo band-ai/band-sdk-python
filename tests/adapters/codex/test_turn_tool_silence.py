@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
-from band.integrations.codex.types import CodexRequestMethod
+from band.integrations.codex.types import CodexItemType, CodexRequestMethod
 from tests.adapters.codex.activity.kit import (
     COMPACTION,
     DOCS_LOOKUP,
@@ -41,6 +41,16 @@ TOOL_LIMIT = "turn_tool_idle_timeout_s"
 # A tool's silence between the idle limit and the tool allowance.
 QUIET_TOOL_S = 600.0
 SECOND_TURN_ID = "turn-2"
+IMAGE_GENERATION = {
+    "type": CodexItemType.IMAGE_GENERATION,
+    "id": "image-1",
+    "status": "in_progress",
+}
+NATIVE_SLEEP = {
+    "type": CodexItemType.SLEEP,
+    "id": "sleep-1",
+    "durationMs": int(QUIET_TOOL_S * 1000),
+}
 
 
 def tool_patient() -> CodexAdapterConfig:
@@ -52,8 +62,22 @@ def tool_patient() -> CodexAdapterConfig:
 class TestTurnToolSilence:
     @pytest.mark.parametrize(
         "tool",
-        [LIST_FILES, DOCS_LOOKUP, COMPACTION, SUB_AGENT_WAIT],
-        ids=["command", "mcp-tool", "context-compaction", "delegated-work"],
+        [
+            LIST_FILES,
+            DOCS_LOOKUP,
+            COMPACTION,
+            SUB_AGENT_WAIT,
+            IMAGE_GENERATION,
+            NATIVE_SLEEP,
+        ],
+        ids=[
+            "command",
+            "mcp-tool",
+            "context-compaction",
+            "delegated-work",
+            "image",
+            "sleep",
+        ],
     )
     async def test_a_tool_silent_past_the_idle_limit_is_left_running(
         self,
@@ -104,8 +128,15 @@ class TestTurnToolSilence:
             == INTERRUPTED_FIRST_TURN
         )
 
-    async def test_the_idle_limit_applies_again_once_the_command_completes(
-        self, started_rooms: Callable[..., Awaitable[CodexAdapter]]
+    @pytest.mark.parametrize(
+        "tool",
+        [LIST_FILES, IMAGE_GENERATION, NATIVE_SLEEP],
+        ids=["command", "image", "sleep"],
+    )
+    async def test_the_idle_limit_applies_again_once_the_tool_completes(
+        self,
+        tool: dict[str, Any],
+        started_rooms: Callable[..., Awaitable[CodexAdapter]],
     ) -> None:
         client = FakeCodexClient()
         adapter = await started_rooms({ROOM_ID: client}, tool_patient())
@@ -113,9 +144,9 @@ class TestTurnToolSilence:
 
         async with running_turn(adapter, tools) as turn:
             await client.turn_started.wait()
-            client.emit_turn(FIRST_TURN_ID, item_started(LIST_FILES))
+            client.emit_turn(FIRST_TURN_ID, item_started(tool))
             await asyncio.sleep(QUIET_TOOL_S)
-            client.emit_turn(FIRST_TURN_ID, item_completed(LIST_FILES))
+            client.emit_turn(FIRST_TURN_ID, item_completed(tool))
             await asyncio.sleep(IDLE_S - MARGIN_S)
             assert not turn.done()
             assert failures(tools) == []

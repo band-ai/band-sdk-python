@@ -7,6 +7,7 @@ from band.adapters.codex.items import (
     MESSAGE_ITEM_TYPES,
     REQUESTED_TOOL_ITEM_TYPES,
     ROUTING_ITEM_TYPES,
+    SILENCE_ONLY_ITEM_TYPES,
     THOUGHT_ITEM_TYPES,
     TOOL_ITEM_TYPES,
 )
@@ -137,7 +138,7 @@ class TestCodexTypes:
     def test_codex_item_type_fully_classified(self) -> None:
         """Every ``CodexItemType`` lands in exactly one of the adapter's
         buckets: tool-like, requested tool, thought-like, the skipped
-        messages, or read only for routing.
+        messages, routing, or silence tracking.
 
         A new item type added to the enum without also updating one of these
         sets currently falls through to a silent ``logger.debug`` — no room
@@ -151,6 +152,7 @@ class TestCodexTypes:
             THOUGHT_ITEM_TYPES,
             MESSAGE_ITEM_TYPES,
             ROUTING_ITEM_TYPES,
+            SILENCE_ONLY_ITEM_TYPES,
         )
 
         assert set().union(*buckets) == set(CodexItemType)
