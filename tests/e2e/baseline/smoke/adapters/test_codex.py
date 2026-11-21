@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexSandboxMode
 from band.core.types import Emit
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.flaky import flaky_infra
@@ -28,13 +28,13 @@ from tests.e2e.baseline.smoke.samples.approvals import (
     DIALECTS,
     AgentSetup,
     Outcome,
-    marker_command,
+    appending_command,
     written_lines,
 )
 from tests.e2e.baseline.smoke.samples.codexpeer import (
     NATIVE_DEADLINE_S,
     ShellPeer,
-    closing_reply,
+    finish_shell_turn,
     native_client,
     required_approval,
     shell_peer,
@@ -74,25 +74,41 @@ async def test_codex_shell_approval_is_required(
         AgentSetup(workdir, NATIVE_DEADLINE_S),
     )
     assert isinstance(adapter, CodexAdapter)
-    peer = ShellPeer(marker_command(marker, target), workdir, done)
+    # Keep untrusted command approval while allowing the approved append inside
+    # the disposable workspace without relying on a sandbox denial and retry.
+    config = adapter.config.model_copy(
+        update={"sandbox": CodexSandboxMode.WORKSPACE_WRITE}
+    )
+    peer = ShellPeer(appending_command(marker, target), workdir, done)
     async with (
         shell_peer(peer) as url,
-        native_client(adapter.config, workdir / "home", workdir, url) as client,
+        native_client(config, workdir / "home", workdir, url) as client,
     ):
         async with asyncio.timeout(NATIVE_DEADLINE_S):
-            await start_shell_turn(client, adapter.config, workdir)
+            await start_shell_turn(client, config, workdir)
             approval = await required_approval(client)
             assert not target.exists(), "Shell write occurred before approval"
             assert approval.id is not None
+            assert isinstance(approval.params, dict)
+            assert Path(approval.params["cwd"]) == workdir, approval.params
             decision = "accept" if outcome is Outcome.APPROVE else "decline"
             await client.respond(approval.id, {"decision": decision})
-            reply, extra_approvals = await closing_reply(client)
+            result = await finish_shell_turn(client)
     assert peer.calls == 1
-    assert extra_approvals == 0, "One command requested more than one approval"
-    assert reply == done
+    assert result.extra_approvals == 0, "One command requested more than one approval"
+    assert len(result.commands) == 1, (result.commands, peer.output)
+    command = result.commands[0]
+    assert command["id"] == approval.params["itemId"], command
+    assert Path(command["cwd"]) == workdir, command
+    assert result.reply == done
     if outcome is Outcome.APPROVE:
+        assert (command["status"], command["exitCode"]) == ("completed", 0), command
+        assert target.exists(), (
+            f"Command reported success without writing {target}: {command}"
+        )
         assert written_lines(target) == [marker]
     else:
+        assert command["status"] == "declined", command
         assert not target.exists(), "Declined shell write was executed"
 
 
