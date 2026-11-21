@@ -35,6 +35,7 @@ from band.integrations.codex.types import (
     build_agent_failure,
     parse_plan_steps,
 )
+from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -714,12 +715,12 @@ async def error_notification(
         )
         return False
     logger.error("Codex error: %s", message)
-    await tools.send_failure(
+    report = await tools.send_failure(
         build_agent_failure(
             error, thread_id=ref.thread_id, turn_id=ref.turn_id, room_id=ref.room_id
         )
     )
-    return True
+    return not is_failed_tool_output(report)
 
 
 async def turn_failed(

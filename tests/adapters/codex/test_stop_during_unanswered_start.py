@@ -71,6 +71,8 @@ class TestStopDuringUnansweredStart:
             assert reported_failures(stopped) == reported_failures(tools) == []
         finally:
             client.unanswered.released.set()
+            if client.unanswered.reached.is_set():
+                await client.unanswered_finished.wait()
 
     @pytest.mark.looptime
     async def test_the_process_is_retired_and_a_late_answer_never_interrupts(

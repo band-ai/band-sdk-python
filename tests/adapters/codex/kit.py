@@ -761,6 +761,7 @@ class UnansweredRequestClient(CountingCloseClient):
         super().__init__(events=events)
         self.held = held
         self.unanswered = Hold()
+        self.unanswered_finished = asyncio.Event()
         self._pending = True
 
     async def request(
@@ -770,12 +771,17 @@ class UnansweredRequestClient(CountingCloseClient):
         *,
         retry_on_overload: bool = True,
     ) -> dict[str, Any]:
-        if method == self.held and self._pending:
-            self._pending = False
-            await self.unanswered.wait()
-        return await super().request(
-            method, params, retry_on_overload=retry_on_overload
-        )
+        held = method == self.held and self._pending
+        try:
+            if held:
+                self._pending = False
+                await self.unanswered.wait()
+            return await super().request(
+                method, params, retry_on_overload=retry_on_overload
+            )
+        finally:
+            if held:
+                self.unanswered_finished.set()
 
 
 class CleaningTurnInput(BaseModel):
