@@ -33,6 +33,7 @@ from band.core.types import (
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
+    ACPNewSessionTimeout,
     ACPPermissionRequest,
     McpServerResolver,
 )
@@ -410,26 +411,36 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     ) -> None:
         room = turn.room
         try:
-            async with (
-                self._using_room(room, turn.tools) as runtime,
-                self._holding(turn),
-                detached_turn(turn.tools, room_id=room.room_id),
-            ):
-                await self._prompt_room(
-                    room,
-                    runtime,
-                    messages,
-                    turn.tools,
-                    history,
-                    participants_msg,
-                    contacts_msg,
-                    is_session_bootstrap=is_session_bootstrap,
-                )
-                if not turn.tools.turn.complete:
-                    mentions = await automatic_mentions(turn.tools, turn.audience)
-                    if turn.closed or self._turns.get(room.room_id) is not turn:
-                        raise asyncio.CancelledError
-                    await finish_automatic_reply(turn.tools, None, mentions)
+            for retry_new_session_timeout in (True, False):
+                async with (
+                    self._using_room(room, turn.tools) as runtime,
+                    self._holding(turn),
+                    detached_turn(turn.tools, room_id=room.room_id),
+                ):
+                    try:
+                        await self._prompt_room(
+                            room,
+                            runtime,
+                            messages,
+                            turn.tools,
+                            history,
+                            participants_msg,
+                            contacts_msg,
+                            is_session_bootstrap=is_session_bootstrap,
+                            retry_new_session_timeout=retry_new_session_timeout,
+                        )
+                    except ACPNewSessionTimeout:
+                        if not retry_new_session_timeout:
+                            raise
+                        # Drop this lease before reacquiring. The room owner
+                        # confirms release before a successor can send anything.
+                        continue
+                    if not turn.tools.turn.complete:
+                        mentions = await automatic_mentions(turn.tools, turn.audience)
+                        if turn.closed or self._turns.get(room.room_id) is not turn:
+                            raise asyncio.CancelledError
+                        await finish_automatic_reply(turn.tools, None, mentions)
+                    return
         finally:
             _close_turn(turn)
             self._forget_turn(turn)

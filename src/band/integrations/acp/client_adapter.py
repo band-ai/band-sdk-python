@@ -219,6 +219,10 @@ class ACPTurnTimeoutError(TimeoutError):
     """The adapter deadline expired before the ACP prompt completed."""
 
 
+class ACPNewSessionTimeout(TimeoutError):
+    """The setup deadline expired with an unanswered ``session/new``."""
+
+
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 # What ACP's session/new takes; YAML/JSON entries validate into these.
 SessionMcpServer = HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio
@@ -901,6 +905,7 @@ class ACPClientAdapter(
         contacts_msg: str | None,
         *,
         is_session_bootstrap: bool,
+        retry_new_session_timeout: bool = False,
     ) -> None:
         """Prompt the room's session under the caller's lease; a failure that
         leaves the process unusable requests its recovery."""
@@ -919,6 +924,15 @@ class ACPClientAdapter(
             await self._report_config_error(tools, error)
             return
         except Exception as error:
+            if retry_new_session_timeout and isinstance(error, ACPNewSessionTimeout):
+                room.retained.recover(generation=generation, reason=str(error))
+                logger.warning(
+                    "ACP session/new timed out (room=%s, generation=%s); "
+                    "retrying after process recovery",
+                    room_id,
+                    generation,
+                )
+                raise
             await self._fail_turn(room, generation, tools, error)
             raise
         runtime.reset_session(session_id)
@@ -1497,12 +1511,17 @@ class ACPClientAdapter(
     async def _await_setup(self, room: ACPRoom, setup: asyncio.Task[str]) -> None:
         """Wait for the room's session setup within ``transition_timeout_s``.
 
-        An expired wait fails only this turn: the setup stays owned by the room,
-        and the failed turn's recovery retires the process it may still use.
+        The setup stays owned by the room after an expired wait. Distinguish a
+        pending native creation request from a resolver, restore or config wait.
         """
-        await room.retained.wait_owned(
-            setup, timeout=self.config.retention.transition_timeout_s
-        )
+        try:
+            await room.retained.wait_owned(
+                setup, timeout=self.config.retention.transition_timeout_s
+            )
+        except TimeoutError as error:
+            if room.new_session_request is setup:
+                raise ACPNewSessionTimeout(str(error)) from error
+            raise
 
     def _require_current_runtime(
         self, room: ACPRoom, runtime: ACPRuntime, *, finishing: bool = False
@@ -1666,10 +1685,16 @@ class ACPClientAdapter(
         mcp_servers: list[object],
     ) -> AsyncIterator[NewSessionResponse]:
         """Yield a new session, closing it unless initialization completes."""
-        session = await runtime.create_session_response(
-            cwd=room.workspace,
-            mcp_servers=mcp_servers,
-        )
+        room.new_session_request = asyncio.current_task()
+        logger.debug("Requesting ACP session/new for room %s", room.room_id)
+        try:
+            session = await runtime.create_session_response(
+                cwd=room.workspace,
+                mcp_servers=mcp_servers,
+            )
+        finally:
+            room.new_session_request = None
+        logger.debug("Received ACP session/new response for room %s", room.room_id)
         try:
             yield session
         except asyncio.CancelledError:
