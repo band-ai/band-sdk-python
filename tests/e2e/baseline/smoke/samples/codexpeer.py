@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from band.integrations.uvicorn_server import ManagedUvicornServer
 NATIVE_DEADLINE_S = 60
 # The local peer implements this model's flat shell-tool wire format.
 SHELL_MODEL = "gpt-5.3-codex"
+SHELL_CALL_ID = "shell-write"
 
 
 class ShellPeer:
@@ -37,6 +39,7 @@ class ShellPeer:
         self.workdir = workdir
         self.closing = closing
         self.calls = 0
+        self.output: dict[str, Any] | None = None
 
     def _shell_call(self, tools: list[dict[str, Any]]) -> dict[str, Any]:
         names = {tool.get("name") for tool in tools}
@@ -46,15 +49,12 @@ class ShellPeer:
             name = "shell_command"
         else:
             raise AssertionError(f"Codex advertised no supported shell tool: {names}")
-        match name:
-            case "exec_command":
-                arguments = {"cmd": self.command}
-            case "shell_command":
-                arguments = {"command": self.command, "workdir": str(self.workdir)}
+        command_key = "cmd" if name == "exec_command" else "command"
+        arguments = {command_key: self.command, "workdir": str(self.workdir)}
         self.calls += 1
         return {
             "type": "function_call",
-            "call_id": "shell-write",
+            "call_id": SHELL_CALL_ID,
             "name": name,
             "arguments": json.dumps(arguments),
         }
@@ -64,9 +64,16 @@ class ShellPeer:
         if self.calls == 0:
             item = self._shell_call(body["tools"])
         else:
-            assert any(
-                part.get("type") == "function_call_output" for part in body["input"]
-            ), "Codex did not return the shell result"
+            self.output = next(
+                (
+                    part
+                    for part in body["input"]
+                    if part.get("type") == "function_call_output"
+                    and part.get("call_id") == SHELL_CALL_ID
+                ),
+                None,
+            )
+            assert self.output is not None, "Codex did not return the shell result"
             item = {
                 "type": "message",
                 "id": "closing",
@@ -171,24 +178,35 @@ async def required_approval(client: CodexStdioClient) -> RpcEvent:
                 raise AssertionError(f"Codex failed before approval: {event.params}")
 
 
-async def closing_reply(client: CodexStdioClient) -> tuple[str, int]:
-    replies: list[str] = []
-    extra_approvals = 0
+@dataclass
+class ShellTurn:
+    """The closing message and native observations from a shell turn."""
+
+    reply: str = ""
+    extra_approvals: int = 0
+    commands: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def finish_shell_turn(client: CodexStdioClient) -> ShellTurn:
+    result = ShellTurn()
     while True:
         event = await client.recv_event()
         match event.method:
             case CodexApprovalMethod.COMMAND_EXECUTION:
-                extra_approvals += 1
+                result.extra_approvals += 1
                 assert event.id is not None
                 await client.respond(event.id, {"decision": "decline"})
             case "item/completed":
                 assert isinstance(event.params, dict)
                 item = event.params["item"]
-                if item.get("type") == CodexItemType.AGENT_MESSAGE:
-                    replies.append(item["text"])
+                match item.get("type"):
+                    case CodexItemType.AGENT_MESSAGE:
+                        result.reply += item["text"]
+                    case CodexItemType.COMMAND_EXECUTION:
+                        result.commands.append(item)
             case "turn/completed":
                 assert isinstance(event.params, dict)
                 assert event.params["turn"]["status"] == "completed", event.params
-                return "".join(replies), extra_approvals
+                return result
             case "transport/closed" | "error":
                 raise AssertionError(f"Codex failed after approval: {event.params}")

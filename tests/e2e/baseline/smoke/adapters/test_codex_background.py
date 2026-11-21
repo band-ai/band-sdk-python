@@ -15,7 +15,7 @@ from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.codexpeer import (
     NATIVE_DEADLINE_S,
     ShellPeer,
-    closing_reply,
+    finish_shell_turn,
     native_client,
     shell_peer,
     start_shell_turn,
@@ -72,7 +72,7 @@ class TestCodexBackground:
                 async with asyncio.timeout(NATIVE_DEADLINE_S):
                     await start_shell_turn(client, config, tmp_path)
                     child = await native_process_gate.connection()
-                    reply, _ = await closing_reply(client)
-                    assert reply == closing
+                    result = await finish_shell_turn(client)
+                    assert result.reply == closing
                     assert await asyncio.to_thread(process_is_alive, child.process)
             assert not await asyncio.to_thread(process_is_alive, child.process)
