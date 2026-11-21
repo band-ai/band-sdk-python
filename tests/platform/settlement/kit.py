@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -138,14 +137,13 @@ class SettlementPeer:
 
 @asynccontextmanager
 async def refused_rest_client() -> AsyncIterator[AsyncRestClient]:
-    """A real client aimed at a port nothing listens on."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    async with httpx.AsyncClient() as http:
-        yield AsyncRestClient(
-            api_key="test-key", base_url=f"http://127.0.0.1:{port}", httpx_client=http
-        )
+    """Make the connection fail at the HTTP transport boundary."""
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("Connection refused", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
+        yield AsyncRestClient(api_key="test-key", base_url=PEER_URL, httpx_client=http)
 
 
 def link_over(rest: AsyncRestClient) -> BandLink:

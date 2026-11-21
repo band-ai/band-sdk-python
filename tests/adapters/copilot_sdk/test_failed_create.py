@@ -6,7 +6,11 @@ import asyncio
 
 import pytest
 
-from band.core.exceptions import CleanupIncompleteError, ProviderUnavailableError
+from band.core.exceptions import (
+    CleanupIncompleteError,
+    InputNotAccepted,
+    ProviderUnavailableError,
+)
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
@@ -15,7 +19,7 @@ from tests.adapters.copilot_sdk.fakes import (
     requires_copilot_sdk,
     run_message,
 )
-from tests.runtime.conftest import wait_for_condition
+from tests.toolkit.clock import binary_clock_resolution
 
 pytestmark = requires_copilot_sdk
 
@@ -41,8 +45,8 @@ class TestFailedCreate:
         assert client.deleted == []
         assert client.sessions == []
 
-    @pytest.mark.looptime
-    async def test_an_interrupted_create_deletes_the_session_it_asked_for(self):
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
+    async def test_an_interrupted_create_deletes_the_session_it_asked_for(self) -> None:
         client = FakeCopilotClient()
         client.hold_create = True
         adapter = await make_started_adapter(client)
@@ -53,11 +57,13 @@ class TestFailedCreate:
         )
         with pytest.raises(CleanupIncompleteError):
             await adapter.on_cleanup("room-1")
+        with pytest.raises(InputNotAccepted) as pending:
+            await run_message(adapter, tools, is_session_bootstrap=False)
+        assert pending.value.ready is not None
+
         client.create_released.set()
-        await wait_for_condition(lambda: client.deleted == client.create_calls)
-        await wait_for_condition(
-            lambda: not adapter.backend_turns.unavailable("room-1")
-        )
+        await pending.value.ready
+        assert client.deleted == client.create_calls
         await run_message(adapter, tools, is_session_bootstrap=False)
 
         interrupted, created = client.create_calls
@@ -67,6 +73,7 @@ class TestFailedCreate:
             created,
         ]
         assert client.sessions[0].prompts == []
+        await adapter.cleanup_all()
 
     async def test_a_failed_create_deletes_the_session_it_asked_for(self):
         client = FakeCopilotClient(create_error=RuntimeError("runtime refused"))
