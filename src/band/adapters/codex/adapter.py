@@ -79,7 +79,7 @@ from band.adapters.codex.narration import (
     unfinished_turn_text,
     unstreamed_messages,
 )
-from band.adapters.codex.roomstate import RoomCodexClient, ThreadSettings
+from band.adapters.codex.roomstate import HistoryResume, RoomCodexClient, ThreadSettings
 from band.adapters.codex.rpc import (
     CodexClientProtocol,
     event_params,
@@ -111,6 +111,7 @@ from band.adapters.codex.turnstate import (
     TURN_PROCESSING_ERROR,
     CodexContinuityError,
     CodexTurn,
+    CodexUnanswered,
     NativeMessage,
     NativeTurn,
     TurnResult,
@@ -523,7 +524,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                     return
                 async with (
                     room.retained.use(
-                        prepare=partial(room.retain_system_context, contacts_msg)
+                        prepare=partial(
+                            room.retain_system_context, contacts_msg, participants_msg
+                        )
                     ),
                     detached_turn(tools, room_id=room.room_id),
                 ):
@@ -641,6 +644,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             await self.backend_turns.started(
                 room_id, self._reveal_codex_turn(room, native, start.params, thread_id)
             )
+            room.participants_due = False
             if start.injects_prompt:
                 self._prompt_injected_rooms.add(room_id)
             await self._emit_turn_started(
@@ -753,9 +757,9 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
             if seed.replay_due
             else []
         )
-        if seed.replay_due and participants_msg is None:
-            # The runtime sends the roster only when it changes, so a thread
-            # abandoned unseeded may have taken the latest one with it.
+        if participants_msg is None and (seed.replay_due or room.participants_due):
+            # Rebuild the latest roster when the last delivery committed it
+            # before Codex accepted the prompt.
             participants_msg = build_participants_message(tools.participants)
         turn_input, has_pending_prompt_injection = self._build_turn_input(
             messages=messages,
@@ -1523,7 +1527,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         if answered:
             return request.result()
         self._recover_unconfirmed(unproven)
-        raise TimeoutError(f"Codex {method} exceeded its budget")
+        raise CodexUnanswered(f"Codex {method} exceeded its budget")
 
     def _unproven_request(
         self, room: RoomCodexClient, client: CodexClientProtocol
@@ -1787,9 +1791,11 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 self._confirm_restored_tools(room, tools, thread_id)
             return thread_id
         client = room.require_client()
-        if is_session_bootstrap and (named := history.room_to_thread.get(room_id)):
+        recorded = history.room_to_thread.get(room_id) if is_session_bootstrap else None
+        named, last_try = room.take_history_resume(recorded)
+        if named is not None:
             resumed = await self._resume_from_history(
-                room=room, client=client, named=named, tools=tools
+                room=room, client=client, named=named, tools=tools, last_try=last_try
             )
             if resumed is not None:
                 return resumed
@@ -1823,8 +1829,14 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
         client: CodexClientProtocol,
         named: str,
         tools: AgentToolsProtocol,
+        last_try: bool,
     ) -> str | None:
-        """Resume the thread Band history names; None falls back to a new one."""
+        """Resume the thread Band history names; None falls back to a new one.
+
+        An unanswered resume fails the turn. Unless ``last_try``, the room's
+        next turn tries the thread again on the new process; after that the
+        room gives the thread up, and a new thread takes its place.
+        """
         room_id = room.room_id
         try:
             result = await self._bounded_request(
@@ -1832,6 +1844,17 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 CodexRequestMethod.THREAD_RESUME,
                 self._resume_params(room, named),
             )
+        except CodexUnanswered:
+            if not last_try:
+                room.history_resume = HistoryResume(named, retry_due=True)
+            else:
+                logger.warning(
+                    "Room %s: giving up Codex thread %s; its resume went "
+                    "unanswered twice",
+                    room_id,
+                    named,
+                )
+            raise
         except CodexJsonRpcError as exc:
             logger.warning(
                 "thread/resume failed for room %s thread %s: %s", room_id, named, exc
@@ -2530,7 +2553,7 @@ class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState])
                 )
             case CodexSubcommand.ARCHIVE:
                 mapped_thread = self._forget_room_thread(room_id)
-                self._require_active_client_state().forget_thread()
+                self._require_active_client_state().archive_thread(mapped_thread)
                 return (
                     f"Thread `{mapped_thread or 'none'}` archived. "
                     "A new thread will be created on next message."
