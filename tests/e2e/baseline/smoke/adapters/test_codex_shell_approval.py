@@ -29,7 +29,6 @@ from tests.e2e.baseline.smoke.samples.codexpeer import (
 from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
 from tests.e2e.baseline.toolkit.adapters import Adapter
 
-
 APPROVED_MARKER = "approved-shell-write"
 
 
