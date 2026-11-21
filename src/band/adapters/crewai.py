@@ -32,7 +32,7 @@ from band.integrations.crewai import (
 )
 from band.integrations.crewai.turn import ToolTurn, settle_tool_turns, tool_turn
 from band.runtime.custom_tools import CustomToolDef
-from band.runtime.formatters import format_current_inputs
+from band.runtime.formatters import build_participants_message, format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import BandTool
 
@@ -382,9 +382,12 @@ class CrewAIAdapter(BatchInputAdapter[CrewAIMessages]):
                 f"context only. Do not repeat any action described in it:]\n{history_text}"
             )
 
-        if participants_msg:
-            sections.append(f"[System]: {participants_msg}")
+        if participants_msg is None:
+            # Each kickoff starts fresh, even when preprocessing has no roster update.
+            participants_msg = build_participants_message(tools.participants)
+        else:
             logger.info("Room %s: Participants updated", room_id)
+        sections.append(f"[System]: {participants_msg}")
 
         if contacts_msg:
             sections.append(f"[System]: {contacts_msg}")
