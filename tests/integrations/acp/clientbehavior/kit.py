@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from acp.exceptions import RequestError
 from acp.helpers import start_tool_call
 from acp.schema import ToolCallStart
 
@@ -84,6 +85,14 @@ def closes_the_prompt(prompt: str, live: str) -> bool:
 
 def band_mcp_url(agent: FakeACPAgent, session_id: str) -> str:
     return agent.mcp_server(session_id, BAND_MCP_SERVER_NAME).url
+
+
+UNRESTORABLE_MODEL_DETAILS = "Could not restore model openai/retired-model"
+
+
+def typescript_agent_error(details: str) -> RequestError:
+    """The error a TypeScript ACP agent (OMP) answers when its handler throws."""
+    return RequestError.internal_error({"details": details})
 
 
 def rehydration_history(
