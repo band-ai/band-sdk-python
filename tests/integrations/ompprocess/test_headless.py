@@ -1,9 +1,4 @@
-"""Band launches native OMP with headless extensions and no interactive ask tool.
-
-These tests start the installed ``omp`` executable with the SDK-owned plugin
-and launch arguments. They never run inference: startup and the probe are
-slash commands, and the isolated home holds no real provider credentials.
-"""
+"""Check native OMP approval routing and ask tool exposure with no live model."""
 
 from __future__ import annotations
 
@@ -17,10 +12,21 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel, Field
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
 pytest.importorskip("psutil", reason="psutil not installed (band-sdk[omp])")
 
-from band.integrations.omp import finalize_omp_command
+from band.adapters.omp import OMP_TOOL_APPROVAL_HEADER, OmpAdapter, OmpAdapterConfig
+from band.adapters.omp.config import OmpPermissionRequest
+from band.integrations.omp import (
+    DEFAULT_OMP_MODEL,
+    OMP_FORM_APPROVE,
+    OMP_FORM_DENY,
+    finalize_omp_command,
+)
 from band.integrations.ompprocess import (
     DEFAULT_OMP_COMMAND,
     omp_mcp_arguments,
@@ -39,6 +45,11 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
+from band.integrations.uvicorn_server import ManagedUvicornServer
+from band.runtime.tools.types import BandTool
+from band.testing import FakeAgentTools
+from tests.adapters.omp.turns import run_turn
+from tests.lifecycle import running
 
 pytestmark = [
     pytest.mark.skipif(
@@ -66,7 +77,7 @@ class NativeToolState(BaseModel):
     dumpTools: list[NativeTool]
 
 
-class HeadlessReceipt(BaseModel):
+class UIReceipt(BaseModel):
     hasUI: bool = Field(strict=True)
 
 
@@ -98,7 +109,9 @@ def omp_home(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest_asyncio.fixture(loop_scope="function")
-async def band_session(tmp_path: Path, omp_home: Path) -> AsyncIterator[NativeSession]:
+async def band_session(
+    tmp_path: Path, omp_home: Path, request: pytest.FixtureRequest
+) -> AsyncIterator[NativeSession]:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     # An operator overlay that re-enables ask must not outrank the SDK overlay.
@@ -113,6 +126,7 @@ async def band_session(tmp_path: Path, omp_home: Path) -> AsyncIterator[NativeSe
         str(operator_config),
         "--extension",
         str(probe),
+        *getattr(request, "param", ()),
     )
     isolation = {
         "HOME": str(omp_home),
@@ -141,6 +155,51 @@ async def band_session(tmp_path: Path, omp_home: Path) -> AsyncIterator[NativeSe
             await runtime.close()
 
 
+class ReplyProvider:
+    def __init__(self, arguments: dict[str, object]) -> None:
+        self.arguments = arguments
+
+    async def respond(self, request: Request) -> Response:
+        body = await request.json()
+        if any(item.get("type") == "function_call_output" for item in body["input"]):
+            item = {
+                "type": "message",
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Done.", "annotations": []}
+                ],
+            }
+        else:
+            item = {
+                "type": "function_call",
+                "id": "fc-1",
+                "call_id": "call-1",
+                "name": BandTool.SEND_MESSAGE,
+                "arguments": json.dumps(self.arguments),
+            }
+        response = {"id": "response-" + item["id"], "status": "completed"}
+        events = [
+            {"type": "response.created", "response": response},
+            {"type": "response.output_item.done", "output_index": 0, "item": item},
+            {
+                "type": "response.completed",
+                "response": {
+                    **response,
+                    "output": [item],
+                    "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                },
+            },
+        ]
+        return Response(
+            "".join(
+                f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+                for event in events
+            ),
+            media_type="text/event-stream",
+        )
+
+
 class TestHeadlessNativeOmp:
     async def test_band_sessions_offer_no_interactive_ask_tool(
         self, band_session: NativeSession
@@ -154,8 +213,16 @@ class TestHeadlessNativeOmp:
         assert ASK_TOOL not in tools
         assert READ_TOOL in tools
 
-    async def test_extensions_run_without_an_interactive_ui(
-        self, band_session: NativeSession
+    @pytest.mark.parametrize(
+        ("band_session", "has_ui"),
+        [
+            pytest.param((), True, id="default"),
+            pytest.param(("--no-ui",), False, id="explicit-no-ui"),
+        ],
+        indirect=["band_session"],
+    )
+    async def test_extensions_respect_operator_ui_setting(
+        self, band_session: NativeSession, has_ui: bool
     ) -> None:
         events: list[str] = []
 
@@ -174,7 +241,76 @@ class TestHeadlessNativeOmp:
             )
 
         assert OmpEventType.AGENT_START not in events
-        receipt = HeadlessReceipt.model_validate_json(
+        receipt = UIReceipt.model_validate_json(
             band_session.receipt.read_text(encoding="utf-8")
         )
-        assert receipt.hasUI is False
+        assert receipt.hasUI is has_ui
+
+    async def test_band_reply_reaches_native_approval_and_dispatch(
+        self, tmp_path: Path, omp_home: Path
+    ) -> None:
+        arguments: dict[str, object] = {
+            "content": "Scripted Band reply",
+            "mentions": ["user"],
+        }
+        server = ManagedUvicornServer(
+            Starlette(
+                routes=[
+                    Route(
+                        "/v1/responses",
+                        ReplyProvider(arguments).respond,
+                        methods=["POST"],
+                    )
+                ]
+            ),
+            host="127.0.0.1",
+            port=0,
+        )
+        agent_home = tmp_path / "agent"
+        agent_home.mkdir()
+        permissions: list[OmpPermissionRequest] = []
+
+        async def approve(request: OmpPermissionRequest) -> str:
+            permissions.append(request)
+            return OMP_FORM_APPROVE
+
+        async with running(server):
+            (agent_home / "models.yml").write_text(
+                f"providers:\n  openai:\n    baseUrl: http://127.0.0.1:{server.bound_port}/v1\n",
+                encoding="utf-8",
+            )
+            adapter = OmpAdapter(
+                OmpAdapterConfig(
+                    cwd=str(tmp_path),
+                    model=DEFAULT_OMP_MODEL,
+                    api_key=UNUSED_API_KEY,
+                    env={
+                        "HOME": str(omp_home),
+                        "USERPROFILE": str(omp_home),
+                        "PI_CODING_AGENT_DIR": str(agent_home),
+                    },
+                ),
+                resolve_permission=approve,
+            )
+            room_id = "permission-probe"
+            tools = FakeAgentTools()
+            try:
+                async with asyncio.timeout(STARTUP_BUDGET_S):
+                    await run_turn(adapter, tools, room_id=room_id)
+            finally:
+                await adapter.on_cleanup(room_id)
+
+        assert [
+            (request.room_id, request.title.splitlines()[0], request.options)
+            for request in permissions
+        ] == [
+            (
+                room_id,
+                f"{OMP_TOOL_APPROVAL_HEADER}{BandTool.SEND_MESSAGE}",
+                (OMP_FORM_APPROVE, OMP_FORM_DENY),
+            )
+        ]
+        assert tools.tool_calls == [
+            {"tool_name": BandTool.SEND_MESSAGE, "arguments": arguments}
+        ]
+        assert tools.turn.replied

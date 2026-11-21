@@ -186,13 +186,13 @@ def omp_mcp_ready_command(plugin: str) -> str:
 
 
 def omp_mcp_arguments(plugin: str) -> tuple[str, ...]:
-    """Keep permission callbacks while disabling interactive extension UI."""
+    """Keep the RPC UI channel available for native tool approval."""
+    # OMP gates native approvals on the extension UI, even in rpc-ui mode.
     return (
         "--plugin-dir",
         plugin,
         OMP_MODE_FLAG,
         OMP_RPC_UI_MODE,
-        "--no-ui",
         "--extension",
         str(Path(plugin) / OMP_MCP_STARTUP_JS),
         "--config",
