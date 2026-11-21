@@ -93,6 +93,13 @@ pytest_plugins = ["pytester", "tests.testdurations"]
 _ADAPTER_CONFIG_ENV_PREFIXES = ("CODEX_", "LETTA_", "OPENCODE_")
 
 
+def pytest_sessionstart() -> None:
+    """Require tests to acquire their event loops through an explicit owner."""
+    # looptime probes for a loop even in synchronous tests. Disable lazy
+    # creation before the first test so a later test cannot inherit its leak.
+    asyncio.set_event_loop(None)
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Block ``.env.test``'s adapter-config keys before collection can leak them.
 
