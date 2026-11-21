@@ -460,7 +460,7 @@ smoke/matrix/test_create_chatroom.py:
 smoke/matrix/test_custom_prompt.py:
   test_custom_prompt_takes_effect_and_coexists_with_platform_tools:
     pass: [agno, anthropic, claude_sdk, copilot_sdk, crewai, gemini, google_adk, langgraph, nooa, pydantic_ai, strands]
-smoke/matrix/test_identity_and_roster.py:
+smoke/matrix/test_identity_and_roster.py::TestIdentityAndRoster:
   test_reports_identity_and_roster:
     pass: [agno, anthropic, claude_sdk, copilot_sdk, crewai, gemini, google_adk, langgraph, nooa, pydantic_ai, strands]
   test_reports_peer_description_from_passive_roster:

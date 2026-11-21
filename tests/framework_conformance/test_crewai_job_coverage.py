@@ -70,6 +70,7 @@ class TestCrewAIJobCoverage:
         assert needed == {
             Path("tests/adapters/test_crewai_flow_phase3.py"),
             Path("tests/adapters/crewai/test_batch_history.py"),
+            Path("tests/adapters/crewai/test_passive_roster.py"),
             Path("tests/adapters/crewaiturnend/test_turn_ending.py"),
             Path("tests/adapters/crewaiturnend/test_custom_batch.py"),
             Path("tests/adapters/crewaiturnend/test_custom_decline.py"),

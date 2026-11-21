@@ -204,6 +204,7 @@ jobs:
           -n 4 --dist worksteal \
           tests/adapters/test_crewai_flow_phase3.py \
           tests/adapters/crewai/test_batch_history.py \
+          tests/adapters/crewai/test_passive_roster.py \
           tests/adapters/crewaiturnend/test_turn_ending.py \
           tests/adapters/crewaiturnend/test_custom_batch.py \
           tests/adapters/crewaiturnend/test_custom_decline.py \
