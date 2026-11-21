@@ -93,7 +93,7 @@ claude_sdk = [
     "mcp>=1.28.1,<2",
 ]
 copilot_sdk = [
-    "github-copilot-sdk>=1.0.5",  # Bundles/downloads the Copilot CLI runtime; needs GitHub Copilot auth
+    "github-copilot-sdk>=1.0.18",  # Bundles/downloads the Copilot CLI runtime; needs GitHub Copilot auth
 ]
 parlant = [
     # Floor at 3.3.2: older versions stall the in-process server's post-preamble
@@ -104,7 +104,7 @@ parlant = [
     "werkzeug>=3.1.6",
 ]
 crewai = [
-    "crewai==1.15.36",
+    "crewai==1.15.41",
     "openai>=2.0.0,<3",  # CrewAI requires the legacy OpenAI client
     "nest-asyncio>=1.6.0",  # Required for sync-to-async bridging in CrewAI tools
     "pillow>=12.1.1",
@@ -204,7 +204,7 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
-    "pytest-randomly==5.0.0",
+    "pytest-randomly==5.1.0",
     "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
@@ -223,7 +223,7 @@ dev = [
     # Include claude_sdk for testing
     "claude-agent-sdk>=0.2.159",
     # Include copilot_sdk for testing
-    "github-copilot-sdk>=1.0.5",
+    "github-copilot-sdk>=1.0.18",
     # Include langgraph for testing
     "langchain>=1.0.0",
     "langchain-core>=1.2.11",
@@ -288,7 +288,7 @@ dev-crewai = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
-    "pytest-randomly==5.0.0",
+    "pytest-randomly==5.1.0",
     "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
@@ -299,7 +299,7 @@ dev-crewai = [
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
-    "crewai==1.15.36",
+    "crewai==1.15.41",
     "openai>=2.0.0,<3",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
@@ -324,7 +324,7 @@ dev-parlant = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
-    "pytest-randomly==5.0.0",
+    "pytest-randomly==5.1.0",
     "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
@@ -358,7 +358,7 @@ dev-strands-nooa = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
-    "pytest-randomly==5.0.0",
+    "pytest-randomly==5.1.0",
     "pytest-xdist>=3.2.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",

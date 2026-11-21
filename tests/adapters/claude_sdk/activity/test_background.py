@@ -32,7 +32,8 @@ class TestClaudeBackgroundOrigins:
         room, original, recorder, origin = background_origin
         session = room.session_manager.session(room.room_id)
         assert session is not None and session.activity is not None
-        assert origin.tools is original
+        assert origin.tools.turn is original.turn
+        assert origin.tools.origin is origin.owner
         assert not origin.owner.task.done()
         assert recorder.events[-1] == shown_tool("Bash")
 

@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
-from mcp.types import CallToolResult, TextContent
 
 from band.integrations.mcp.engine import (
     CustomToolSpec,
@@ -19,6 +18,7 @@ from band.integrations.mcp.engine import (
 from band.runtime.tools.schema import tool_execution_failure
 from band.testing.fake_tools import FakeAgentTools
 from tests.integrations.activitykit import LookupInput
+from tests.mcp.toolresults import mcp_tool_error
 
 LOOKUP_DOWN = "lookup service down"
 FAILURE_REASON = "no definition for that note"
@@ -36,18 +36,6 @@ def structured_failure_lookup(inp: LookupInput) -> dict[str, Any]:
 
 def string_failure_lookup(inp: LookupInput) -> str:
     return STRING_FAILURE
-
-
-def mcp_tool_error(tool_name: str, message: str) -> CallToolResult:
-    """FastMCP's rendering of any exception raised by a tool."""
-    return CallToolResult(
-        content=[
-            TextContent(
-                type="text", text=f"Error executing tool {tool_name}: {message}"
-            )
-        ],
-        isError=True,
-    )
 
 
 class TestCustomToolFailures:

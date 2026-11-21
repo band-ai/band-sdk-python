@@ -31,6 +31,7 @@ from tests.adapters.pydanticai.kit import (
     _tool_feedback,
     _tool_returns,
 )
+from tests.framework_conformance.outcomeprobes import DECLINE_ACK
 
 
 class TestExplicitDecline:
@@ -54,7 +55,7 @@ class TestExplicitDecline:
         assert model.requests == 1
         assert len(results) == 1
         assert results[0].output is None
-        assert _tool_returns(results[0]) == [{"status": "no_reply"}]
+        assert _tool_returns(results[0]) == [DECLINE_ACK]
         assert tools.turn.replied
         assert reported_failures(tools) == []
 
@@ -70,11 +71,11 @@ class TestExplicitDecline:
 
         assert model.requests == 1
         assert _emitted_tool_results(tools) == [
-            (BandTool.NO_REPLY, "{'status': 'no_reply'}", "decline-1")
+            (BandTool.NO_REPLY, str(DECLINE_ACK), "decline-1")
         ]
         prior = list(adapter._message_history[tools.room_id])
         assert _history_tool_returns(prior) == [
-            (BandTool.NO_REPLY, "decline-1", {"status": "no_reply"})
+            (BandTool.NO_REPLY, "decline-1", DECLINE_ACK)
         ]
         assert all(_is_replayable_history_message(message) for message in prior)
         _assert_billed_responses(tools, prior)

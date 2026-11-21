@@ -44,6 +44,19 @@ class ACPSessionRestoreError(RuntimeError):
         self.session_id = session_id
 
 
+def request_error_text(error: RequestError) -> str:
+    """Return the error's message with the ``data.details`` an agent attached.
+
+    TypeScript ACP agents (OMP among them) answer a request whose handler threw
+    with a generic ``Internal error`` and put the handler's message in
+    ``data.details``, so the message alone does not say what failed.
+    """
+    details = error.data.get("details") if isinstance(error.data, dict) else None
+    if not isinstance(details, str) or not details:
+        return str(error)
+    return f"{error} ({details})"
+
+
 class ACPSessionOperations(ABC):
     """Control sessions through a lifecycle-owned connection."""
 
@@ -157,7 +170,9 @@ class ACPSessionOperations(ABC):
                 f"no answer within {ACP_SESSION_LOAD_TIMEOUT_SECONDS} seconds",
             ) from error
         except RequestError as error:
-            raise ACPSessionRestoreError(session_id, str(error)) from error
+            raise ACPSessionRestoreError(
+                session_id, request_error_text(error)
+            ) from error
         self._record_config_options(session_id, response)
         return response
 
@@ -291,6 +306,5 @@ class ACPSessionOperations(ABC):
     @staticmethod
     def _is_missing_session_error(error: RequestError) -> bool:
         """Whether an ACP ``session/load`` failure means the session is absent."""
-        return error.code == -32002 or (
-            "session" in str(error).lower() and "not found" in str(error).lower()
-        )
+        text = request_error_text(error).lower()
+        return error.code == -32002 or ("session" in text and "not found" in text)

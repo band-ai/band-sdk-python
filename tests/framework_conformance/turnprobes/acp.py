@@ -18,6 +18,7 @@ from tests.framework_conformance.turnprobes import (
     turn_input,
     user_message,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 if TYPE_CHECKING:
     from band.core.types import AgentInput
@@ -87,8 +88,11 @@ async def settle_cursor_acp(tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "acp": TurnOutcomeProbe(run=run_acp, relays=False),
+    "acp": TurnOutcomeProbe(loop=TurnLoop.PROVIDER, run=run_acp, relays=False),
     "cursor_acp": TurnOutcomeProbe(
-        run=run_cursor_acp, settle=settle_cursor_acp, relays=False
+        loop=TurnLoop.PROVIDER,
+        run=run_cursor_acp,
+        settle=settle_cursor_acp,
+        relays=False,
     ),
 }

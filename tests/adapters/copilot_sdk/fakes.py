@@ -28,7 +28,7 @@ from band.converters.copilot_sdk import CopilotSDKSessionState
 from band.core.types import USAGE_METADATA_KEY, MessageType, PlatformMessage
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
-from tests.framework_conformance.turnprobes import turn_input
+from tests.framework_conformance.turnprobes import ToolCall, turn_input
 from tests.roomhistory import DEFAULT_HISTORY_INSERTED_AT
 
 requires_copilot_sdk = pytest.mark.skipif(
@@ -37,6 +37,7 @@ requires_copilot_sdk = pytest.mark.skipif(
 )
 
 if _COPILOT_SDK_AVAILABLE:
+    from copilot import JsonRpcError, SessionMetadata, ToolInvocation, ToolResult
     from copilot.generated.session_events import (
         AssistantUsageData,
         SessionErrorData,
@@ -46,6 +47,12 @@ if _COPILOT_SDK_AVAILABLE:
 # An earlier room message, and the line it becomes in a replayed transcript.
 EARLIER_MESSAGE = "my name is Alice"
 EARLIER_LINE = f"[Alice]: {EARLIER_MESSAGE}"
+#: The question the model asks the room through ask_user.
+QUESTION = {
+    "question": "Which channel should I deploy to?",
+    "choices": ["stable", "beta", "canary"],
+    "allowFreeform": True,
+}
 
 
 class ObservedCopilotAdapter(CopilotSDKAdapter):
@@ -354,6 +361,11 @@ class FakeCopilotClient:
         self.hold_resume = False
         self.resuming = asyncio.Event()
         self.resume_released = asyncio.Event()
+        # Fault injection: ids the runtime no longer has on disk. Resuming,
+        # deleting, and looking one up fail as the Copilot CLI does.
+        self.lost: set[str] = set()
+        self.metadata_error: Exception | None = None
+        self.metadata_calls: list[str] = []
 
     async def start(self) -> None:
         self.started = True
@@ -398,7 +410,23 @@ class FakeCopilotClient:
                 await self.delete_released.wait()
         if self.delete_error:
             raise self.delete_error
+        if session_id in self.lost:
+            raise RuntimeError(
+                f"Failed to delete session {session_id}: "
+                f"Session file not found for {session_id}"
+            )
         self.deleted.append(session_id)
+
+    async def get_session_metadata(self, session_id: str) -> Any:
+        self.metadata_calls.append(session_id)
+        if self.metadata_error:
+            raise self.metadata_error
+        if session_id in self.lost:
+            return None
+        now = datetime.now(UTC)
+        return SessionMetadata(
+            session_id=session_id, start_time=now, modified_time=now, is_remote=False
+        )
 
     async def resume_session(self, session_id: str, **kwargs: Any) -> Any:
         self.resume_calls.append(session_id)
@@ -407,6 +435,12 @@ class FakeCopilotClient:
             await self.resume_released.wait()
         if self.resume_error:
             raise self.resume_error
+        if session_id in self.lost:
+            raise JsonRpcError(
+                -32603,
+                "Request session.resume failed with message: Failed to load "
+                f"session events: Session not found: {session_id}",
+            )
         session = FakeCopilotSession(
             session_id,
             kwargs,
@@ -460,4 +494,24 @@ async def run_event(
     """Run one turn through ``on_event``, where the runtime judges it."""
     await adapter.on_event(
         turn_input(tools, msg=make_platform_message(room_id=room_id, content=content))
+    )
+
+
+def tool_call_id(call: ToolCall) -> str:
+    """The id ``call_tool`` gives the model's ``call``."""
+    return f"call-{call.name}"
+
+
+async def call_tool(
+    session: FakeCopilotSession, call: ToolCall, *, agent_id: str | None = None
+) -> ToolResult:
+    """The model, or its sub-agent ``agent_id``, calling ``call`` through the
+    session's registered tool."""
+    return await session.find_tool(call.name).handler(
+        ToolInvocation(
+            tool_call_id=tool_call_id(call),
+            tool_name=call.name,
+            arguments=call.arguments,
+            agent_id=agent_id,
+        )
     )

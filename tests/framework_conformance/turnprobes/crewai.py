@@ -19,6 +19,7 @@ from tests.framework_conformance.turnprobes import (
     TurnScript,
     turn_input,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 
 class ScriptedCrewAgent:
@@ -51,4 +52,6 @@ async def run_crewai(script: TurnScript, tools: FakeAgentTools) -> None:
     await adapter.on_event(turn_input(tools))
 
 
-PROBES: dict[str, TurnOutcomeProbe] = {"crewai": TurnOutcomeProbe(run=run_crewai)}
+PROBES: dict[str, TurnOutcomeProbe] = {
+    "crewai": TurnOutcomeProbe(loop=TurnLoop.SDK, run=run_crewai)
+}

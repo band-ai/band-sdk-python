@@ -17,7 +17,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import pkgutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from band_sdk_core import TurnVerdict
 
@@ -25,6 +25,7 @@ import band
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.simple_adapter import SimpleAdapter
 from band.runtime.tools import BandTool
+from band.runtime.tools.agent import ParticipantAddResult
 from band.testing import failure_reports
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.turnprobes import (
@@ -42,6 +43,7 @@ from tests.framework_conformance.turnprobes import (
     toolloop,
     turn_tools,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 TURN_OUTCOME_PROBES: dict[str, TurnOutcomeProbe] = {
     **acp.PROBES,
@@ -58,6 +60,14 @@ TURN_OUTCOME_PROBES: dict[str, TurnOutcomeProbe] = {
 ANSWER = "The vault code is 4471-ECHO."
 REPLY = ToolCall(BandTool.SEND_MESSAGE, {"content": ANSWER, "mentions": ["@alice"]})
 DECLINE = ToolCall(BandTool.NO_REPLY, {"reason": "FYI only"})
+#: What ``turn_tools`` answers a turn's first ``REPLY`` with.
+REPLY_SENT = {
+    "id": "msg-0",
+    "recipients": [{"handle": "alice", "id": "alice", "name": None}],
+    "success": True,
+}
+#: What ``turn_tools`` answers ``DECLINE`` with.
+DECLINE_ACK = {"status": "no_reply"}
 
 
 @dataclass(frozen=True)
@@ -65,6 +75,7 @@ class TurnResult:
     verdict: TurnVerdict
     messages: list[str]
     failures: list[tuple[str, str]]
+    participants_added: list[ParticipantAddResult] = field(default_factory=list)
 
 
 async def run_turn(probe: TurnOutcomeProbe, script: TurnScript) -> TurnResult:
@@ -82,6 +93,7 @@ def observed(tools: FakeAgentTools, verdict: TurnVerdict) -> TurnResult:
         verdict=verdict,
         messages=tools.chat,
         failures=failure_reports(tools),
+        participants_added=tools.participants_added,
     )
 
 
@@ -94,6 +106,14 @@ COMPLETING_SCRIPTS = {
 
 def probe_params() -> list[str]:
     return sorted(TURN_OUTCOME_PROBES)
+
+
+def provider_loop_probe_params() -> list[str]:
+    return [
+        name
+        for name in probe_params()
+        if TURN_OUTCOME_PROBES[name].loop is TurnLoop.PROVIDER
+    ]
 
 
 def relaying_probe_params() -> list[str]:

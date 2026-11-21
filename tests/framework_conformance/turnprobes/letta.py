@@ -9,6 +9,7 @@ from tests.framework_conformance.turnprobes import (
     TurnScript,
     turn_input,
 )
+from tests.framework_conformance.turnprobes.turnloop import TurnLoop
 
 
 async def run_letta_turn(script: TurnScript, tools: FakeAgentTools) -> None:
@@ -28,5 +29,5 @@ async def run_letta_turn(script: TurnScript, tools: FakeAgentTools) -> None:
 
 
 PROBES: dict[str, TurnOutcomeProbe] = {
-    "letta": TurnOutcomeProbe(run=run_letta_turn, relays=True)
+    "letta": TurnOutcomeProbe(loop=TurnLoop.PROVIDER, run=run_letta_turn, relays=True)
 }

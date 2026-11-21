@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    declares_turn_effect,
+    get_custom_tool_name,
+)
+from band.runtime.tools import TurnEffect
+
 
 class WeatherInput(BaseModel):
     """Get current weather for a city."""
@@ -57,3 +64,40 @@ class FrameworkSignal(Exception):
 async def failing_tool(args: WeatherInput) -> str:
     """Tool that raises an exception."""
     raise ValueError(API_UNAVAILABLE)
+
+
+class SkipInput(BaseModel):
+    """Decline to reply to this message."""
+
+
+SKIPPED = "skipped"
+
+
+@declares_turn_effect(TurnEffect.DECLINE)
+async def skip(args: SkipInput) -> str:
+    """A custom tool declared as the turn's decline."""
+    return SKIPPED
+
+
+class HeldDeclineInput(BaseModel):
+    """Decline to reply, once released."""
+
+
+class DeployInput(BaseModel):
+    """Deploy the service."""
+
+
+SKIP = get_custom_tool_name(SkipInput)
+DEPLOY = get_custom_tool_name(DeployInput)
+
+
+def recording_deploy() -> tuple[CustomToolDef, list[DeployInput]]:
+    """A custom tool declared as real work, and the calls it ran."""
+    ran: list[DeployInput] = []
+
+    @declares_turn_effect(TurnEffect.ACT)
+    async def deploy(args: DeployInput) -> str:
+        ran.append(args)
+        return "deployed"
+
+    return (DeployInput, deploy), ran

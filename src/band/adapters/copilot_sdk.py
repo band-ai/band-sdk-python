@@ -60,6 +60,7 @@ from band.integrations.copilot_sdk.room_ask_user import (
     ASK_USER_ROOM,
     ROOM_ASK_USER_GUIDANCE,
     delivery_failed_answer,
+    freeform_answer,
     no_recipients_answer,
     question_delivered_answer,
     render_room_question,
@@ -81,6 +82,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.turn import calling_as, declined_turn_refusal
 
 try:
     from copilot import (
@@ -142,9 +144,11 @@ class CopilotSDKAdapterConfig(BaseAdapterConfig):
         custom_section: Extra system-prompt section.
         reasoning_effort: Reasoning effort for reasoning-capable models.
         inject_history_on_resume_failure: Retained for configuration compatibility.
-            A resume that cannot be disposed latches the room unavailable
-            without creating a replacement; a disposed resume clears the
-            recorded identity so the next turn may create a fresh session.
+            A recorded session the runtime no longer has is replaced in the
+            same turn by a fresh session seeded with the room's history. Any
+            other failed resume is disposed and fails the turn, clearing the
+            recorded identity so the next turn creates a fresh session; one
+            that cannot be disposed latches the room unavailable.
         session_id_prefix: Prefix for per-room Copilot session ids, which
             names an agent's sessions on disk. None (default) derives
             ``band-{agent-id}-`` from the immutable Band agent id. Each
@@ -194,7 +198,7 @@ class RoomSession:
     resumable: str | None = None
     recorded: str | None = None
     # True once bootstrap has considered history's room_to_session entry, so a
-    # disposed failed resume is not re-adopted from the same history payload.
+    # forgotten session is not re-adopted from the same history payload.
     history_applied: bool = False
     activity: SessionActivity | None = None
     # The turn whose idle observer and callback count are still live.
@@ -209,6 +213,12 @@ class RoomSession:
         """Record that the live session's seeding prompt completed."""
         self.seed.confirm()
         self.resumable = self.live
+
+    def forget(self, session_id: str) -> None:
+        """Stop resuming ``session_id``, which the runtime lost or disposed."""
+        self.resumable = None
+        if self.recorded == session_id:
+            self.recorded = None
 
 
 @dataclass
@@ -790,28 +800,54 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
 
     async def _resume_session(
         self, room_id: str, stored_id: str, kwargs: dict[str, Any]
-    ) -> CopilotSession:
-        """Resume only when the provider confirms all session setup completed."""
+    ) -> CopilotSession | None:
+        """Resume the recorded session, or return None when the runtime lost it.
+
+        A failed resume of a session the runtime still has may have partially
+        applied options, so it is disposed and the turn fails.
+        """
         assert self._session_manager is not None
+        client = self._session_manager.client
         room = self._room(room_id)
         try:
-            session = await self._session_manager.client.resume_session(
-                stored_id, **kwargs
-            )
+            session = await client.resume_session(stored_id, **kwargs)
         except Exception:
-            # Resume may have partially applied options; dispose before latching.
+            if await self._session_lost(stored_id):
+                logger.warning(
+                    "Room %s: Copilot no longer has session %s; starting fresh",
+                    room_id,
+                    stored_id,
+                )
+                room.forget(stored_id)
+                return None
             try:
-                await self._session_manager.client.delete_session(stored_id)
+                await client.delete_session(stored_id)
             except Exception:
                 self.backend_turns.abandon_start(room_id)
                 raise
-            room.resumable = None
-            if room.recorded == stored_id:
-                room.recorded = None
+            room.forget(stored_id)
             raise
         room.live, room.seed = stored_id, SessionSeed(restored=True)
         logger.info("Room %s: resumed Copilot session %s", room_id, stored_id)
         return session
+
+    async def _session_lost(self, session_id: str) -> bool:
+        """Return True only when the runtime confirms it has no such session.
+
+        A lost session holds no runtime state, so there is nothing to dispose.
+        A failed lookup proves nothing and counts as not lost.
+        """
+        assert self._session_manager is not None
+        try:
+            metadata = await self._session_manager.client.get_session_metadata(
+                session_id
+            )
+        except Exception:
+            logger.warning(
+                "Copilot session %s lookup failed", session_id, exc_info=True
+            )
+            return False
+        return metadata is None
 
     async def _create_session(
         self, room_id: str, kwargs: dict[str, Any]
@@ -917,6 +953,8 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
             # A late dispatch after the turn/room ended (the SDK never
             # cancels pending asks) must degrade, not crash the RPC.
             return room_inactive_answer()
+        if refusal := declined_turn_refusal(room_tools):
+            return freeform_answer(refusal)
         rendered = render_room_question(request)
         # The question is the turn's reply, so a "waiting for your answer"
         # wrap-up is not relayed on top of it.
@@ -980,12 +1018,13 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
     def _make_tool_handler(self, room_id: str) -> Callable[[ToolInvocation], Any]:
         """Build the per-room tool handler Copilot invokes for bridged tools.
 
-        A closure only to bind ``room_id``; the logic lives in
+        Binds ``room_id`` and runs each call as the sub-agent that issued it
+        (``None`` for the root agent); the logic lives in
         :meth:`_execute_bridged_tool`.
         """
 
         async def handle(invocation: ToolInvocation) -> ToolResult:
-            with self._callback(room_id):
+            with self._callback(room_id), calling_as(invocation.agent_id):
                 return await self._execute_bridged_tool(room_id, invocation)
 
         return handle
@@ -1013,6 +1052,10 @@ class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
         should_report = Emit.TOOL_CALLS in self.features.emit
         if should_report:
             await self._report_tool_call(room_tools, invocation, arguments)
+        if refusal := declined_turn_refusal(room_tools):
+            return await self._fail_tool_call(
+                room_tools, invocation, refusal, report=should_report
+            )
 
         try:
             custom_tool = find_custom_tool(self._custom_tools, tool_name)

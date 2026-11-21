@@ -74,7 +74,9 @@ class ACPRoom:
     best-effort closes of retired sessions, which finish before the process
     is released.
     ``session_setup`` is the shared, room-owned initializer; its lease keeps
-    cancellation settlement ahead of process closure. ``abandoned_setup`` is
+    cancellation settlement ahead of process closure. ``new_session_request``
+    identifies the task while it awaits the native creation response.
+    ``abandoned_setup`` is
     the initializer its last waiter left: a callback can clear its task's
     cancellation with ``uncancel()``, so abandonment is recorded here, not
     read back from the task. ``session_waiters`` counts prompts running or
@@ -90,6 +92,7 @@ class ACPRoom:
     reservation: asyncio.Lock = field(default_factory=asyncio.Lock)
     session_closes: set[asyncio.Task[None]] = field(default_factory=set)
     session_setup: asyncio.Task[str] | None = None
+    new_session_request: asyncio.Task[object] | None = None
     setup_observer: SessionSetupObserver | None = None
     abandoned_setup: asyncio.Task[str] | None = None
     session_waiters: int = 0

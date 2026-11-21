@@ -22,6 +22,7 @@ from band.integrations.copilot_sdk.room_ask_user import (
 from band.testing import FakeAgentTools
 from tests.adapters.audiences import ROOM_MEMBERS
 from tests.adapters.copilot_sdk.fakes import (
+    QUESTION,
     FakeCopilotClient,
     ObservedCopilotAdapter,
     make_started_adapter,
@@ -39,12 +40,6 @@ from tests.framework_conformance.batchprobes import (
 from tests.toolkit.tasks import background
 
 pytestmark = requires_copilot_sdk
-
-QUESTION = {
-    "question": "Which channel should I deploy to?",
-    "choices": ["stable", "beta", "canary"],
-    "allowFreeform": True,
-}
 
 
 def ask_mid_turn(request: dict[str, Any], answers: list[dict[str, Any]]) -> Any:

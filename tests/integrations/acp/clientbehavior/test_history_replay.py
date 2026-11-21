@@ -16,22 +16,33 @@ from tests.integrations.acp.acp_toolkit import (
 from tests.integrations.acp.clientbehavior.kit import (
     MARCO_REPLAY_LINE,
     REPLAY_HEADER_LINE,
+    UNRESTORABLE_MODEL_DETAILS,
     closes_the_prompt,
     marco_message,
     rehydration_history,
     replay_boundary,
     room_text_message,
+    typescript_agent_error,
 )
 
 
 class TestHistoryReplay:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "missing",
+        [
+            RequestError.resource_not_found(),
+            typescript_agent_error("ACP session not found: stale-session"),
+        ],
+        ids=["resource-not-found", "typescript-agent-not-found-details"],
+    )
     async def test_replay_injected_when_remote_session_is_gone(
-        self,
+        self, missing: RequestError
     ) -> None:
         """session/load fails for the persisted id -> the transcript is replayed,
         framed as context, and the live message stays last and unduplicated."""
         agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
+        agent.breaks_session_load(missing)
         history = rehydration_history(
             MARCO_REPLAY_LINE,
             "[Fake Agent]: Noted.",
@@ -71,21 +82,36 @@ class TestHistoryReplay:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("refusal", "reason"),
+        [
+            (RequestError.internal_error(), "Internal error"),
+            (
+                typescript_agent_error(UNRESTORABLE_MODEL_DETAILS),
+                f"Internal error ({UNRESTORABLE_MODEL_DETAILS})",
+            ),
+        ],
+        ids=["internal-error", "typescript-agent-other-details"],
+    )
     async def test_a_load_that_errors_is_not_replaced_on_the_same_process(
-        self,
+        self, refusal: RequestError, reason: str
     ) -> None:
         """A remote that errors on session/load (a protocol error, not "not found")
-        may still be loading: no session is created beside it, the turn fails,
-        and the next turn's session belongs to a fresh process."""
+        may still be loading: no session is created beside it, the turn fails
+        naming the agent's reason, and the next turn's session belongs to a
+        fresh process."""
         agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
-        agent.breaks_session_load()
+        agent.breaks_session_load(refusal)
         history = rehydration_history(MARCO_REPLAY_LINE, session="wedged-session")
 
         async with acp_adapter(agent) as session:
-            with pytest.raises(ACPSessionRestoreError):
+            with pytest.raises(ACPSessionRestoreError) as refused:
                 await session.send(
                     "What is my favorite color?", bootstrap=True, history=history
                 )
+            assert str(refused.value) == (
+                f"ACP session wedged-session could not be restored: {reason}"
+            )
             failed = session.last_reply
             first_runtime = session.runtime()
             assert agent.sessions == []

@@ -10,6 +10,7 @@ import pytest
 from band.core.exceptions import BandError
 from band.runtime.tools.schema import tool_execution_failure, tool_result_text
 from band.testing import FakeAgentTools, failure_reports
+from band.testing.fake_tools import DISPATCHED_TOOL_RESULT
 from tests.adapters.codex.kit import ROOM_ID, CodexTurn, run_codex_turn
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -21,7 +22,6 @@ from tests.hostcontrol import host_control_errors
 from tests.runtime.customtools.kit import API_UNAVAILABLE, WeatherInput, failing_tool
 
 NO_FORECAST = "no forecast for that city"
-SENT = {"status": "ok"}  # FakeAgentTools' result for any platform tool
 
 
 class TestCustomToolFailures:
@@ -53,7 +53,7 @@ class TestCustomToolFailures:
         failure = tool_execution_failure("weather", ValueError(API_UNAVAILABLE))
         assert turn.client.responses == [
             (1, self.answer(failure, success=False)),
-            (2, self.answer(json.dumps(SENT), success=True)),
+            (2, self.answer(json.dumps(DISPATCHED_TOOL_RESULT), success=True)),
         ]
         assert failure_reports(turn.tools) == []
         assert turn.tools.turn.replied
@@ -74,7 +74,7 @@ class TestCustomToolFailures:
 
         assert turn.client.responses == [
             (1, self.answer(tool_result_text(value), success=False)),
-            (2, self.answer(json.dumps(SENT), success=True)),
+            (2, self.answer(json.dumps(DISPATCHED_TOOL_RESULT), success=True)),
         ]
         assert failure_reports(turn.tools) == []
         assert turn.tools.turn.replied

@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import uuid
 from collections.abc import Callable
-from copy import deepcopy
+from copy import copy, deepcopy
 from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any, Literal
@@ -60,6 +60,7 @@ from band.core.task_types import (
     task_ref,
 )
 from band.core.turn import MISSING_REPLY, Turn
+from band.core.turn_lifecycle import TurnTask
 from band.core.types import (
     Capability,
     ContactRequestAction,
@@ -98,6 +99,10 @@ _FAKE_TIMESTAMP = datetime(2025, 1, 1, tzinfo=UTC)
 def total_pages(total: int, page_size: int) -> int:
     """Page count the platform reports for ``total`` items at ``page_size``."""
     return max(1, (total + page_size - 1) // page_size) if total else 0
+
+
+#: What ``FakeAgentTools.execute_tool_call_structured`` returns for any tool.
+DISPATCHED_TOOL_RESULT: dict[str, str] = {"status": "ok"}
 
 
 def page_slice(
@@ -320,7 +325,6 @@ class FakeAgentTools:
         self.tasks: list[dict[str, Any]] = [
             Task.model_validate(task).model_dump() for task in (tasks or [])
         ]
-        self._task_seq: int = max((t["number"] for t in self.tasks), default=0)
         self.board: dict[str, Any] = (
             Board.model_validate(board).model_dump()
             if board is not None
@@ -334,6 +338,24 @@ class FakeAgentTools:
         self._observers: list[tuple[Callable[[], bool], asyncio.Future[None]]] = []
         self.turn = Turn()
         self._activity_observer: ActivityObserver | None = None
+        self._origin: TurnTask | None = None
+
+    @property
+    def origin(self) -> TurnTask | None:
+        """The subagent this view calls as; ``None`` for the turn's own model."""
+        return self._origin
+
+    def _for_resource(
+        self, owner: TurnTask, *, subagent: bool = False
+    ) -> FakeAgentTools:
+        """A resource's view, as ``AgentTools`` gives one.
+
+        It shares the room's logs, state and turn; a subagent's calls as ``owner``.
+        """
+        view = copy(self)
+        if subagent:
+            view._origin = owner
+        return view
 
     @property
     def agent_id(self) -> str | None:
@@ -593,7 +615,7 @@ class FakeAgentTools:
         Validated and canonicalized the same way constructor seeds are, so a
         context mutated mid-test stays as faithful as one seeded up front.
         """
-        self._room_context = [
+        self._room_context[:] = [
             _canonicalize_context_item(message) for message in messages
         ]
 
@@ -997,12 +1019,11 @@ class FakeAgentTools:
         join. ``supersedes_id`` marks the replaced task "superseded" and
         points its ``superseded_by_id`` at the new task, like the real API.
         """
-        self._task_seq += 1
         now = _FAKE_TIMESTAMP
         new_id = str(uuid.uuid4())
         task = Task(
             id=new_id,
-            number=self._task_seq,
+            number=max((t["number"] for t in self.tasks), default=0) + 1,
             chat_room_id=self.room_id,
             subject=subject,
             detail=detail or "",
@@ -1135,8 +1156,8 @@ class FakeAgentTools:
         The tool methods are not called, so the successful call's effect is
         recorded here."""
         self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
-        outcome = ToolCallOutcome(value={"status": "ok"}, ok=True)
-        record_tool_result(self.turn, tool_name, outcome.value)
+        outcome = ToolCallOutcome(value=dict(DISPATCHED_TOOL_RESULT), ok=True)
+        record_tool_result(self, tool_name, outcome.value)
         return outcome
 
     # --- Assertion helpers ---
