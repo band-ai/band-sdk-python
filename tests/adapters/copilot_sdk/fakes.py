@@ -37,7 +37,7 @@ requires_copilot_sdk = pytest.mark.skipif(
 )
 
 if _COPILOT_SDK_AVAILABLE:
-    from copilot import ToolInvocation, ToolResult
+    from copilot import JsonRpcError, SessionMetadata, ToolInvocation, ToolResult
     from copilot.generated.session_events import (
         AssistantUsageData,
         SessionErrorData,
@@ -361,6 +361,11 @@ class FakeCopilotClient:
         self.hold_resume = False
         self.resuming = asyncio.Event()
         self.resume_released = asyncio.Event()
+        # Fault injection: ids the runtime no longer has on disk. Resuming,
+        # deleting, and looking one up fail as the Copilot CLI does.
+        self.lost: set[str] = set()
+        self.metadata_error: Exception | None = None
+        self.metadata_calls: list[str] = []
 
     async def start(self) -> None:
         self.started = True
@@ -405,7 +410,23 @@ class FakeCopilotClient:
                 await self.delete_released.wait()
         if self.delete_error:
             raise self.delete_error
+        if session_id in self.lost:
+            raise RuntimeError(
+                f"Failed to delete session {session_id}: "
+                f"Session file not found for {session_id}"
+            )
         self.deleted.append(session_id)
+
+    async def get_session_metadata(self, session_id: str) -> Any:
+        self.metadata_calls.append(session_id)
+        if self.metadata_error:
+            raise self.metadata_error
+        if session_id in self.lost:
+            return None
+        now = datetime.now(UTC)
+        return SessionMetadata(
+            session_id=session_id, start_time=now, modified_time=now, is_remote=False
+        )
 
     async def resume_session(self, session_id: str, **kwargs: Any) -> Any:
         self.resume_calls.append(session_id)
@@ -414,6 +435,12 @@ class FakeCopilotClient:
             await self.resume_released.wait()
         if self.resume_error:
             raise self.resume_error
+        if session_id in self.lost:
+            raise JsonRpcError(
+                -32603,
+                "Request session.resume failed with message: Failed to load "
+                f"session events: Session not found: {session_id}",
+            )
         session = FakeCopilotSession(
             session_id,
             kwargs,
