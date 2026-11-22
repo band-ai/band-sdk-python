@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.3.0](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v9.2.1...band-mcp-v9.3.0) (2026-11-22)
+
+
+### Miscellaneous Chores
+
+* **band-mcp:** Synchronize band versions
+
 ## [9.2.1](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.2.15...band-mcp-v9.2.1) (2026-11-13)
 
 
