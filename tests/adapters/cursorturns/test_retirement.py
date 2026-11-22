@@ -10,7 +10,7 @@ import pytest
 from band.core.exceptions import CleanupIncompleteError
 from band.core.retention import RoomRetentionConfig
 from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
-from tests.adapters.cursorturns.conftest import OpenCursor, cursor_session
+from tests.adapters.cursorturns.conftest import cursor_session
 from tests.adapters.cursorturns.kit import (
     ROOM_A,
     active_turn,
@@ -28,7 +28,7 @@ from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
 
 TRANSITION_S = 1.0
-CONFIG = {
+EXPIRY_CONFIG = {
     "retention": RoomRetentionConfig(transition_timeout_s=TRANSITION_S),
     "inject_band_tools": False,
 }
@@ -48,7 +48,7 @@ class TestCursorRetirementBound:
             try:
                 session = await clock.run_io(
                     resources.enter_async_context(
-                        cursor_session(provider.agent, **CONFIG)
+                        cursor_session(provider.agent, **EXPIRY_CONFIG)
                     )
                 )
                 await resources.enter_async_context(
@@ -80,7 +80,7 @@ class TestCursorRetirementBound:
             try:
                 session = await clock.run_io(
                     resources.enter_async_context(
-                        cursor_session(provider.agent, **CONFIG)
+                        cursor_session(provider.agent, **EXPIRY_CONFIG)
                     )
                 )
                 sending = await resources.enter_async_context(
@@ -104,21 +104,38 @@ class TestCursorRetirementBound:
                 provider.finish.set()
                 await clock.run_io(resources.aclose())
 
-    async def test_a_completed_turn_retires_without_a_grace_period(
-        self, open_cursor: OpenCursor
-    ) -> None:
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
+    async def test_a_completed_turn_retires_without_a_grace_period(self) -> None:
         provider = busy_provider("prompt")
-        session = await open_cursor(
-            provider.agent, turn_settle_timeout_s=TURN_SETTLE_GRACE_S, **CONFIG
-        )
-        sending = await occupy(session, provider)
-        turn = active_turn(session)
-        try:
-            await finish_turn(provider, sending)
-            await terminated(session, turn)
-            await retire(cursor_adapter(session), ROOM_A)
-            assert cancels_sent(provider.agent) == []
-            assert await is_accepted(session, room=ROOM_A)
-        finally:
-            provider.finish.set()
-            await asyncio.gather(sending, return_exceptions=True)
+        teardown = provider.agent.exits_slowly()
+        async with controlled_clock() as clock:
+            resources = AsyncExitStack()
+            try:
+                session = await clock.run_io(
+                    resources.enter_async_context(
+                        cursor_session(
+                            provider.agent,
+                            turn_settle_timeout_s=TURN_SETTLE_GRACE_S,
+                            inject_band_tools=False,
+                        )
+                    )
+                )
+                sending = await resources.enter_async_context(
+                    background(await clock.run_io(occupy(session, provider)))
+                )
+                turn = active_turn(session)
+                await clock.run_io(finish_turn(provider, sending))
+                await terminated(session, turn)
+                retiring = await resources.enter_async_context(
+                    background(retire(cursor_adapter(session), ROOM_A))
+                )
+                # Teardown must begin while the grace-period clock is stationary.
+                await teardown.received.wait()
+                teardown.release.set()
+                await clock.run_io(retiring)
+                assert cancels_sent(provider.agent) == []
+                assert await clock.run_io(is_accepted(session, room=ROOM_A))
+            finally:
+                teardown.release.set()
+                provider.finish.set()
+                await clock.run_io(resources.aclose())
