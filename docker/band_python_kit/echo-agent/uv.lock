@@ -69,7 +69,7 @@ requires-dist = [
 
 [[package]]
 name = "band-sdk"
-version = "9.2.0"
+version = "9.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "async-lru" },
@@ -84,9 +84,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "ruamel-yaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/57/405604ad98b3b746318731a596270bc69dcc1ff8a4d91280bb3b4c4260a9/band_sdk-9.2.0.tar.gz", hash = "sha256:6162ffd3b71895884291b2031124021a39c644e9732d66ac502563f90bfd2d33", size = 1030452, upload-time = "2026-11-12T09:22:25.791Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/86/299d3d27f3f9516857c0f075a206cb0c093aebd56f306e926154a62aaa53/band_sdk-9.2.1.tar.gz", hash = "sha256:549c38415e6422645d826036f315353cb231e9b3952841dece8204f7a8b105bd", size = 1033646, upload-time = "2026-11-13T13:02:49.372Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/1c/8b4d4c56e58c3aec30b55de0c3a87d5254c1726af6c40907d42ea7007fdd/band_sdk-9.2.0-py3-none-any.whl", hash = "sha256:73bfaa5fa828a6fb458162130c1c143e7473eaed0e6f4551304827f254ef4af5", size = 1138933, upload-time = "2026-11-12T09:22:23.269Z" },
+    { url = "https://files.pythonhosted.org/packages/96/4b/0c450a09d8944eca5e7e16e4e9322abe2fc934082fafd3147725a9f778f4/band_sdk-9.2.1-py3-none-any.whl", hash = "sha256:98f1c3cdfbf8577443da93ce50f8036329aa6aa3bbea0ff736f439c110bd31d7", size = 1142345, upload-time = "2026-11-13T13:02:46.993Z" },
 ]
 
 [[package]]
