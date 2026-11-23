@@ -17,6 +17,8 @@ class TestBaselineCollection:
     ) -> None:
         monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
         monkeypatch.setenv("E2E_TESTS_ENABLED", "false")
+        monkeypatch.delenv("BAND_E2E_SCORECARD_JSON", raising=False)
+        monkeypatch.delenv("BAND_E2E_LANE", raising=False)
         suite = pytester.mkdir("live")
         shutil.copyfile(
             Path(baseline.__file__).with_name("conftest.py"), suite / "conftest.py"
