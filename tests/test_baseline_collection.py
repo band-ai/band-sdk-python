@@ -16,6 +16,8 @@ class TestBaselineCollection:
         self, pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+        # Pytester reads captured child output as UTF-8 on every platform.
+        monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
         monkeypatch.setenv("E2E_TESTS_ENABLED", "false")
         monkeypatch.setenv("BAND_E2E_SCORECARD_JSON", "")
         monkeypatch.setenv("BAND_E2E_LANE", "")
