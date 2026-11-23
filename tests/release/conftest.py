@@ -161,10 +161,10 @@ def publisher_install(
     tmp_path: Path, mcp_publish_steps: dict[str, str]
 ) -> Callable[[Path], subprocess.CompletedProcess[str]]:
     """Execute production wheel-constraint generation and the real install step offline."""
+    (tmp_path / "uv.toml").write_text("[pip]\nno-index = true\n")
     environment = {
         **os.environ,
         "RUNNER_TEMP": str(tmp_path),
-        "UV_NO_INDEX": "1",
         "UV_FIND_LINKS": str(tmp_path),
         "UV_PYTHON": sys.executable,
     }

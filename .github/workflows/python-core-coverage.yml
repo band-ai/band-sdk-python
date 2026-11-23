@@ -61,6 +61,10 @@ jobs:
         working-directory: band-sdk-python
         run: uv sync --all-packages --locked --extra dev
 
+      - name: Install pinned release fixture dependencies
+        working-directory: band-sdk-python
+        run: npm ci --prefix tests/release/candidates --ignore-scripts
+
       - name: Resolve pinned band-sdk-core version
         id: pin
         working-directory: band-sdk-python
