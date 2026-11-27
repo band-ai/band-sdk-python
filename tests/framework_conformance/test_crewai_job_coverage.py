@@ -86,6 +86,7 @@ class TestCrewAIJobCoverage:
             Path("tests/integrations/crewai/completion/test_blank_completion.py"),
             Path("tests/integrations/crewai/activity/test_execution.py"),
             Path("tests/integrations/crewai/activity/test_send_event.py"),
+            Path("tests/framework_conformance/activitycapture/test_crewai_requests.py"),
             Path("tests/integrations/crewai/test_custom_identity.py"),
             Path("tests/integrations/crewai/test_dependency_contract.py"),
             Path("tests/integrations/crewai/test_failure_boundary.py"),
