@@ -13,6 +13,7 @@ from tests.e2e.baseline.toolkit.activity import ActivityCapture
 from tests.e2e.baseline.toolkit.activitywork import ActivityWork, Operation
 from tests.e2e.baseline.toolkit.adapters import specs
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.crewairequests import activity_model_requests
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
@@ -21,7 +22,7 @@ from tests.example_agents.anthropic.peer import shared_api
 BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=12)
 PROMPT = "For each request call the requested activity tool afresh, then report its complete opaque result using band_send_message. Earlier results cannot answer a new request."
 # NOOA reports its awaited interpreter phase around nested method execution.
-NATIVE_ACTIVITY_NAMES = {Adapter.NOOA: "execute_python"}
+NATIVE_ACTIVITY_NAMES: dict[str, str] = {Adapter.NOOA: "execute_python"}
 TOOL_LOOP = tuple(spec.id for spec in specs(runs_tool_loop=True))
 NO_TOOL_LOOP = "no LLM tool loop for a custom ToolSpec"
 
@@ -66,6 +67,7 @@ class TestActivityLifecycle:
                     ),
                 ),
                 work.releasing_on_exit(),
+                activity_model_requests(cell.adapter_id, work) as model_requests,
             ):
                 initial = observed.cursor()
                 a = await user_ops.send_message(
@@ -141,13 +143,18 @@ class TestActivityLifecycle:
                     [work[Operation.A].result, work[Operation.B].result]
                 )
                 await observed.finished(first, identity.id, since=c_finishing)
-                calls = await left.tool_calls(sender_id=identity.id)
-                work.assert_model_repeats(Operation.A, calls)
-                work.assert_model_repeats(Operation.C, calls)
-                work.assert_model_repeats(
-                    Operation.B, await right.tool_calls(sender_id=identity.id)
-                )
+                left_calls = await left.tool_calls(sender_id=identity.id)
+                right_calls = await right.tool_calls(sender_id=identity.id)
                 observed.assert_private(
                     work.note,
                     *(invocation.result for invocation in work.operations.values()),
                 )
+            work.assert_model_repeats(
+                Operation.A, left_calls, model_requests=model_requests
+            )
+            work.assert_model_repeats(
+                Operation.B, right_calls, model_requests=model_requests
+            )
+            work.assert_model_repeats(
+                Operation.C, left_calls, model_requests=model_requests
+            )
