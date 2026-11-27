@@ -701,14 +701,14 @@ class DeliveryLifecycle:
         if pending is None:
             raise ValueError(f"message {identity} has no pending terminal write")
         with observe_delivery_phase("ack", self.room_id, identity):
-            match pending["status"]:
-                case DeliveryStatus.PROCESSED:
+            match pending:
+                case {"status": DeliveryStatus.PROCESSED}:
                     result = await self.link.mark_processed_result(
                         self.room_id, identity
                     )
-                case DeliveryStatus.FAILED:
+                case {"status": DeliveryStatus.FAILED, "error": str(error)}:
                     result = await self.link.mark_failed_result(
-                        self.room_id, identity, pending.get("error")
+                        self.room_id, identity, error
                     )
                 case _:
                     raise ValueError(f"unknown terminal intent {pending['status']!r}")
