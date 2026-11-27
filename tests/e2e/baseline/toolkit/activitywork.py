@@ -103,19 +103,34 @@ class ActivityWork:
             )
         return self[key].result
 
-    def assert_model_repeats(self, key: Operation, calls: Sequence[ToolCall]) -> None:
+    def assert_model_repeats(
+        self,
+        key: Operation,
+        calls: Sequence[ToolCall],
+        *,
+        model_requests: Sequence[ToolCall] | None = None,
+    ) -> None:
         """Require a distinct model call for each repeated execution."""
         repeats = self[key].repeats
         if not repeats:
             return
-        matching = [
-            call
-            for call in calls
-            if call.name == self.tool.name
-            and call.args.get("key") == key.value
-            and call.args.get("private_note") == self.note
-        ]
-        call_ids = [call.tool_call_id for call in matching]
+
+        def matching_ids(events: Sequence[ToolCall]) -> list[str | None]:
+            return [
+                call.tool_call_id
+                for call in events
+                if call.name == self.tool.name
+                and call.args.get("key") == key.value
+                and call.args.get("private_note") == self.note
+            ]
+
+        call_ids = matching_ids(calls)
+        if model_requests is not None and all(call_id is None for call_id in call_ids):
+            assert len(call_ids) == repeats + 1, (
+                f"Operation {key.value} executed {repeats + 1} times but reported "
+                f"{len(call_ids)} room tool calls"
+            )
+            call_ids = matching_ids(model_requests)
         assert (
             len(call_ids) == repeats + 1
             and all(call_ids)
