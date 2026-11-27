@@ -176,14 +176,14 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
       ``extra=``), prepended (``append=False``) so this clean ``timeout(n)`` is the
       marker pytest-timeout reads, ahead of any ``extra=``/bare form it would reject.
     """
-    assert_agent_fixtures_wired(items)
-    assert_every_item_is_schedulable(items)
-
+    # Pytest passes the entire session's items even to a nested conftest.
     baseline_items = [item for item in items if _is_baseline_item(item)]
+    assert_agent_fixtures_wired(baseline_items)
+    assert_every_item_is_schedulable(baseline_items)
     assert_flaky_is_classified(baseline_items)
 
     settings = BaselineSettings()
-    apply_lane_skips(settings.run.lane, items)
+    apply_lane_skips(settings.run.lane, baseline_items)
 
     session_marker = pytest.mark.asyncio(loop_scope="session")
     base = settings.e2e_timeout

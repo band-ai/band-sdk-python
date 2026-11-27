@@ -634,8 +634,8 @@ def invite_instruction(peer_name: str, peer_id: str) -> str:
     """Drive the agent to add a peer to the room via band_add_participant (only).
     Mirrors the ``add agent (id ...)`` phrasing of the recruitment collab test."""
     return (
-        f"There is an agent named {peer_name} (id {peer_id}) who is not in this room. "
-        "Use band_add_participant to add them to this room."
+        f"I need {peer_name} (id {peer_id}) here to help verify message delivery. "
+        "Please use band_add_participant to invite them to this room."
     )
 
 

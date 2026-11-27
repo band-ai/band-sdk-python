@@ -220,6 +220,7 @@ jobs:
           tests/integrations/crewai/completion/test_blank_completion.py \
           tests/integrations/crewai/activity/test_execution.py \
           tests/integrations/crewai/activity/test_send_event.py \
+          tests/framework_conformance/activitycapture/test_crewai_requests.py \
           tests/integrations/crewai/test_custom_identity.py \
           tests/integrations/crewai/test_dependency_contract.py \
           tests/integrations/crewai/test_failure_boundary.py \

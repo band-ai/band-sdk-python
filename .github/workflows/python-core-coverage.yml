@@ -26,7 +26,7 @@ concurrency:
 jobs:
   coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       # Single source of truth: crates/py/scripts/coverage_python_consumer.py's
       # REPORT_DIR, relative to band-sdk-core's checkout root.
@@ -60,6 +60,10 @@ jobs:
       - name: Install band-sdk-python dependencies
         working-directory: band-sdk-python
         run: uv sync --all-packages --locked --extra dev
+
+      - name: Install pinned release fixture dependencies
+        working-directory: band-sdk-python
+        run: npm ci --prefix tests/release/candidates --ignore-scripts
 
       - name: Resolve pinned band-sdk-core version
         id: pin
