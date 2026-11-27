@@ -158,14 +158,18 @@ def run_candidate_gate(
 
 @pytest.fixture
 def publisher_install(
-    tmp_path: Path, mcp_publish_steps: dict[str, str]
+    tmp_path: Path, mcp_publish_steps: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> Callable[[Path], subprocess.CompletedProcess[str]]:
     """Execute production wheel-constraint generation and the real install step offline."""
+    for key in tuple(os.environ):
+        if key.startswith("UV_"):
+            monkeypatch.delenv(key)
     environment = {
-        **os.environ,
         "RUNNER_TEMP": str(tmp_path),
-        "UV_NO_INDEX": "1",
-        "UV_FIND_LINKS": str(tmp_path),
+        "UV_CACHE_DIR": str(tmp_path / "uv-cache"),
+        "UV_FIND_LINKS": tmp_path.as_uri(),
+        "UV_NO_CONFIG": "true",
+        "UV_OFFLINE": "true",
         "UV_PYTHON": sys.executable,
     }
 
