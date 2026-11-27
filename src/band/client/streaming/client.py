@@ -324,7 +324,9 @@ class WireEvent(StrEnum):
     TASK_UPDATED = "task_updated"
 
 
-_PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
+# Keyed by wire event name (``str``). ``WireEvent`` members are the SSoT for
+# those names, but lookups use the transport's ``message.event`` string.
+_PAYLOAD_MODELS: dict[str, type[WirePayload]] = {
     WireEvent.MESSAGE_CREATED: MessageCreatedPayload,
     WireEvent.MESSAGE_UPDATED: MessageCreatedPayload,
     WireEvent.ROOM_ADDED: RoomAddedPayload,
@@ -615,8 +617,10 @@ class WebSocketClient:
             return
 
         # Validate (band-sdk-core) and hydrate into typed payload models for
-        # known event types.
-        model = _PAYLOAD_MODELS.get(message.event)
+        # known event types. System frames carry ``SystemEvent``, not a wire
+        # name, so they never have a payload model.
+        event = message.event
+        model = _PAYLOAD_MODELS.get(event) if isinstance(event, str) else None
         if model is not None:
             try:
                 validated = model.from_wire(message.event, message.payload)
