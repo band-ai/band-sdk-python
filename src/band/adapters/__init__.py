@@ -13,6 +13,7 @@ Install the extra you need::
     uv add band-sdk[gemini]
     uv add band-sdk[a2a]
     uv add band-sdk[a2a_gateway]
+    uv add band-sdk[external_worker]
     uv add band-sdk[codex]
     uv add band-sdk[google_adk]
     uv add band-sdk[opencode]
@@ -109,6 +110,12 @@ if TYPE_CHECKING:
     from band.adapters.cursor_acp import (
         CursorACPAdapterConfig as CursorACPAdapterConfig,
     )
+    from band.adapters.external_worker import (
+        ExternalWorkerAdapter as ExternalWorkerAdapter,
+    )
+    from band.adapters.external_worker import (
+        ExternalWorkerAdapterConfig as ExternalWorkerAdapterConfig,
+    )
     from band.adapters.gemini import GeminiAdapter as GeminiAdapter
     from band.adapters.gemini import (
         GeminiAdapterConfig as GeminiAdapterConfig,
@@ -196,6 +203,7 @@ __all__, __getattr__ = lazy_exports(
     crewai_flow=["CrewAIFlowAdapter", "CrewAIFlowAdapterConfig"],
     a2a=["A2AAdapter", "A2AAdapterConfig"],
     a2a_gateway=["A2AGatewayAdapter", "A2AGatewayAdapterConfig"],
+    external_worker=["ExternalWorkerAdapter", "ExternalWorkerAdapterConfig"],
     codex=["CodexAdapter", "CodexAdapterConfig"],
     acp=[
         "ACPConfigRequest",
